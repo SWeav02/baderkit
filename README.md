@@ -1,1 +1,83 @@
-# baderkit
+# BaderKit
+
+## About
+
+BaderKit is a python implementation of Bader's Atomic Theory of Atoms in Molecules. It is largely based on the algorithms of [Henkelman et. al.](https://theory.cm.utexas.edu/henkelman/code/bader/) at UT Austin. The app is loosely part of my PhD at UNC Chapel Hill in the [Warren Lab](https://materials-lab.io/) with funding from the [NSF's GRFP](https://nsfgrfp.org/), but is largely my own passion project aimed at making my life easier when developing other packages.
+
+BaderKit aims to reproduce the algorithms available in the Henkelman excellent Fortran code, but utilizes Python's class oriented system to allow for easy extension to other projects. I have reimplemented the code primarily using [Numba](https://numba.pydata.org/numba-doc/dev/index.html) and [NumPy](https://numpy.org/doc/stable/index.html) to maintain speed where I can. [Pymatgen](https://pymatgen.org/) is used under the hood to build out several core classes to improve ease of use.
+
+This project is currently an early work in progress. So far, I have implemented a simple Bader class and CLI. I hope to add the following algorithms:
+ 
+
+ - [x]  On Grid [Comput. Mater. Sci. 36, 354-360 (2006)](https://www.sciencedirect.com/science/article/abs/pii/S0927025605001849)
+ - [ ] Near Grid [J. Phys.: Condens. Matter 21, 084204 (2009)](https://iopscience.iop.org/article/10.1088/0953-8984/21/8/084204)
+ - [x] Weighted [J. Chem. Phys. 134, 064111 (2011)](https://pubs.aip.org/aip/jcp/article-abstract/134/6/064111/645588/Accurate-and-efficient-algorithm-for-Bader-charge?redirectedFrom=fulltext)
+ 
+## Installation
+ 
+Once all methods are successfully implemented I will make the package available on Pip and Conda. For now, it can be installed with the following instructions.
+ 
+ 1. Create a new Conda env and activate it
+ 2. Clone this repo to a local folder
+ 3. Navigate to the folder
+ 4. Run `conda env --file dev_environment.yml`
+ 5. Run `pip install -e .`
+
+You can also install the package with other python environment managers simply using the final command, though be warry that I haven't setup proper dependencies yet.
+ 
+## Use
+The Bader class can be easily called through python in a directory with VASP output files.
+
+```python
+from baderkit.core import Bader
+from pathlib import Path
+
+# instantiate the class
+bader = Bader.from_vasp(
+    charge_filename = "path/to/CHGCAR",
+    reference_filename = "path/to/CHGCAR_sum", # Optional. Defaults to charge_file data if empty
+    method="weight", # Optional. Defaults to weight
+    directory = Path("path/to/dir") # Optional. The directory to write to.
+    )
+
+# run bader and get a summary of results
+results = bader.results_summary
+
+# Or access results as class properties. For example:
+atom_charges = bader.atom_charges # The total charge assigned to each atom
+labels = bader.atom_labels # An array assigning each point in the charge grid to an atom
+```
+For now, the `Bader` class only has a convenience function for loading VASP files. However, the Bader class can also be created from a Path object and Baderkit's custom Grid class. 
+
+Behind the scenes, the Grid class inherits from Pymatgen's [VolumetricData class](https://pymatgen.org/pymatgen.io.vasp.html#pymatgen.io.vasp.outputs.VolumetricData) allowing for creation from a variety of formats. The `Grid` class has convenience functions for loading from `.cube` and `hdf5` files, but can also be created directly from a Pymatgen Structure and a dictionary of containing Array's representing the Charge Density.
+
+```python
+from baderkit.core import Bader
+from baderkit.utilities import Grid
+from pathlib import Path
+
+# Create a Grid object from a .cube or any other source you can load into NumPy arrays
+charge_grid = Grid.from_cube("path/to/charge-density.cube")
+# Optionally indicate the path you would like to write any results to
+path = Path("path/to/dir")
+# Create the Bader object
+bader = Bader(
+    charge_grid = charge_grid,
+    reference_grid = charge_grid,
+    method="weight", # Optional
+    directory = path,
+    )
+
+# run bader and get a summary of results
+results = bader.results_summary
+```
+
+In addition to the Python interface, BaderKit can be run from the command line. Currently only VASP files are supported.
+1. Activate your environment with BaderKit installed
+2. Run `baderkit run CHGCAR -ref CHGCAR_sum`
+
+Additional methods can be obtained by running `baderkit run --help`. Eventually, I intend to add replicas of the methods available in the Henkelman group's code. I also plan to add support for .cube files and a helper function for creating CHGCAR_sum reference files.
+
+## Contributing
+
+If you are interested in this project and have suggestions, please use this repositories Issues or Discussions tab. Any suggestions or discussion would be deeply appreciated!
