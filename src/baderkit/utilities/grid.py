@@ -10,7 +10,7 @@ from typing import Literal, Self
 import numpy as np
 import plotly.graph_objects as go
 from numpy.typing import NDArray
-from pymatgen.io.vasp import VolumetricData
+from pymatgen.io.vasp import Poscar, VolumetricData
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from scipy.interpolate import RegularGridInterpolator, griddata
 from scipy.ndimage import binary_dilation, label, zoom
@@ -615,29 +615,6 @@ class Grid(VolumetricData):
             self.structure.copy(),
             self.data.copy(),
         )
-
-    @classmethod
-    def from_vasp(cls, grid_file: str | Path) -> Self:
-        """
-        Create a grid instance using a CHGCAR or ELFCAR file.
-
-        Parameters
-        ----------
-        grid_file : str | Path
-            The file the instance should be made from. Should be a VASP
-            CHGCAR or ELFCAR type file.
-
-        Returns
-        -------
-        Self
-            Grid from the specified file.
-
-        """
-        logging.info(f"Loading {grid_file} from file")
-        # Create string to add structure to.
-        poscar, data, _ = cls.parse_file(grid_file)
-
-        return cls(poscar.structure, data)
 
     # TODO: The following is my own implementation for reading ELFCARs/CHGCARs
     # that is faster than the default pymatgen parser. It currently fails in
@@ -1489,7 +1466,135 @@ class Grid(VolumetricData):
         return self.get_cart_coords_from_frac(frac_coords)
 
     ###########################################################################
-    # Functions for plotting grid using pyvista
+    # Functions for loading from files or strings
     ###########################################################################
+    @classmethod
+    def from_vasp(cls, grid_file: str | Path) -> Self:
+        """
+        Create a grid instance using a CHGCAR or ELFCAR file.
 
-    # I plan to implement some basic plotting of isosurfaces.
+        Parameters
+        ----------
+        grid_file : str | Path
+            The file the instance should be made from. Should be a VASP
+            CHGCAR or ELFCAR type file.
+
+        Returns
+        -------
+        Self
+            Grid from the specified file.
+
+        """
+        logging.info(f"Loading {grid_file} from file")
+        # Create string to add structure to.
+        poscar, data, data_aug = cls.parse_file(grid_file)
+
+        return cls(poscar.structure, data, data_aug=data_aug)
+
+    @classmethod
+    def from_vasp_string(cls, file_string: str) -> Self:
+        """
+        Returns a Grid object from the string contents of a VASP file. This method
+        is a reimplementation of Pymatgen's [Parser](https://github.com/materialsproject/pymatgen/blob/v2025.5.28/src/pymatgen/io/vasp/outputs.py#L3704-L3813)
+        """
+        poscar_read = False
+        poscar_string: list[str] = []
+        dataset: NDArray = np.zeros((1, 1, 1))
+        all_dataset: list[NDArray] = []
+        # for holding any strings in input that are not Poscar
+        # or VolumetricData (typically augmentation charges)
+        all_dataset_aug: dict[int, list[str]] = {}
+        dim: list[int] = []
+        dimline = ""
+        read_dataset = False
+        ngrid_pts = 0
+        data_count = 0
+        poscar = None
+        lines = file_string.split("\n")
+        for line in lines:
+            original_line = line
+            line = line.strip()
+            if read_dataset:
+                for tok in line.split():
+                    if data_count < ngrid_pts:
+                        # This complicated procedure is necessary because
+                        # VASP outputs x as the fastest index, followed by y
+                        # then z.
+                        no_x = data_count // dim[0]
+                        dataset[data_count % dim[0], no_x % dim[1], no_x // dim[1]] = (
+                            float(tok)
+                        )
+                        data_count += 1
+                if data_count >= ngrid_pts:
+                    read_dataset = False
+                    data_count = 0
+                    all_dataset.append(dataset)
+
+            elif not poscar_read:
+                if line != "" or len(poscar_string) == 0:
+                    poscar_string.append(line)  # type:ignore[arg-type]
+                elif line == "":
+                    poscar = Poscar.from_str("\n".join(poscar_string))
+                    poscar_read = True
+
+            elif not dim:
+                dim = [int(i) for i in line.split()]
+                ngrid_pts = dim[0] * dim[1] * dim[2]
+                dimline = line  # type:ignore[assignment]
+                read_dataset = True
+                dataset = np.zeros(dim)
+
+            elif line == dimline:
+                # when line == dimline, expect volumetric data to follow
+                # so set read_dataset to True
+                read_dataset = True
+                dataset = np.zeros(dim)
+
+            else:
+                # store any extra lines that were not part of the
+                # volumetric data so we know which set of data the extra
+                # lines are associated with
+                key = len(all_dataset) - 1
+                if key not in all_dataset_aug:
+                    all_dataset_aug[key] = []
+                all_dataset_aug[key].append(original_line)  # type:ignore[arg-type]
+
+        if len(all_dataset) == 4:
+            data = {
+                "total": all_dataset[0],
+                "diff_x": all_dataset[1],
+                "diff_y": all_dataset[2],
+                "diff_z": all_dataset[3],
+            }
+            data_aug = {
+                "total": all_dataset_aug.get(0),
+                "diff_x": all_dataset_aug.get(1),
+                "diff_y": all_dataset_aug.get(2),
+                "diff_z": all_dataset_aug.get(3),
+            }
+
+            # Construct a "diff" dict for scalar-like magnetization density,
+            # referenced to an arbitrary direction (using same method as
+            # pymatgen.electronic_structure.core.Magmom, see
+            # Magmom documentation for justification for this)
+            # TODO: re-examine this, and also similar behavior in
+            # Magmom - @mkhorton
+            # TODO: does CHGCAR change with different SAXIS?
+            diff_xyz = np.array([data["diff_x"], data["diff_y"], data["diff_z"]])
+            diff_xyz = diff_xyz.reshape((3, dim[0] * dim[1] * dim[2]))
+            ref_direction = np.array([1.01, 1.02, 1.03])
+            ref_sign = np.sign(np.dot(ref_direction, diff_xyz))
+            diff = np.multiply(np.linalg.norm(diff_xyz, axis=0), ref_sign)
+            data["diff"] = diff.reshape((dim[0], dim[1], dim[2]))
+
+        elif len(all_dataset) == 2:
+            data = {"total": all_dataset[0], "diff": all_dataset[1]}
+            data_aug = {
+                "total": all_dataset_aug.get(0),
+                "diff": all_dataset_aug.get(1),
+            }
+        else:
+            data = {"total": all_dataset[0]}
+            data_aug = {"total": all_dataset_aug.get(0)}
+
+        return cls(poscar.structure, data, data_aug=data_aug)

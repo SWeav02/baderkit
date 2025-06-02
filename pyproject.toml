@@ -54,6 +54,8 @@ dependencies=[
     "pymatgen",
     "scipy",
     "numba",
+    "pyvista", # for plotting grid
+    "streamlit", # for web GUI
     # Extra (smaller) dependencies & utilities
     "markdown",  # for docs and markdown rendering in html templates
     "rich", # for coloring CLI outputs and progress bars

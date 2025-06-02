@@ -4,6 +4,7 @@
 Defines a helper class for plotting Grids
 """
 from itertools import product
+from pathlib import Path
 
 import numpy as np
 import pyvista as pv
@@ -29,7 +30,7 @@ class StructurePlotter:
         show_lattice: bool = True,
         wrap_atoms: bool = True,
         lattice_thickness: float = 0.1,
-        atom_metallicness: int = 0.0,
+        atom_metallicness: float = 0.0,
         show_axes: bool = True,
         **kwargs,
     ):
@@ -50,7 +51,7 @@ class StructurePlotter:
             self.radii = [s.specie.atomic_radius for s in structure]
         if colors is None:
             self.colors = [
-                ATOM_COLORS.get(s.specie.symbol, (1, 1, 1)) for s in structure
+                ATOM_COLORS.get(s.specie.symbol, "#FFFFFF") for s in structure
             ]
 
     @staticmethod
@@ -171,13 +172,19 @@ class StructurePlotter:
 
         return plotter
 
+    def get_structure_plot_html(self, path: Path | None = None):
+        plotter = self.get_structure_plot()
+        if path is not None:
+            plotter.export_html(path)
+        return plotter.export_html()
+
 
 class GridPlotter(StructurePlotter):
     def __init__(
         self,
         grid: Grid,
         show_caps: bool = True,
-        default_iso: float = None,
+        iso_val: float = None,
         surface_opacity: float = 0.8,
         cap_opacity: float = 0.8,
         colormap: float = "viridis",  # Can be any colormap in matplotlib
@@ -193,7 +200,7 @@ class GridPlotter(StructurePlotter):
 
         # Grid specific items
         self.show_caps = show_caps
-        self.default_iso = default_iso
+        self.iso_val = iso_val
         self.surface_opacity = surface_opacity
         self.cap_opacity = cap_opacity
         self.colormap = colormap
@@ -203,8 +210,8 @@ class GridPlotter(StructurePlotter):
         self.cap_color = cap_color
 
         # determine default iso if not provided
-        if default_iso is None:
-            self.default_iso = (grid.total.max() + grid.total.min()) / 2
+        if iso_val is None:
+            self.iso_val = np.mean(grid.total)
 
         # wrap values around to get one extra voxel on the far side of each axis.
         self.values = np.pad(
@@ -251,31 +258,44 @@ class GridPlotter(StructurePlotter):
             kwargs["cmap"] = self.colormap
         return kwargs
 
-    def get_grid_plot(self):
+    def get_grid_plot(self) -> pv.Plotter():
         # get initial plotter with structure
         plotter = self.get_structure_plot()
 
-        def update_isosurface(value):
-            # Remove old actors
-            plotter.remove_actor("iso")
-            plotter.remove_actor("cap") if "cap" in plotter.actors else None
-            # Generate new iso surface
-            iso_dict = self.get_surface_mesh_dict(value)
-            # Add new iso mesh
-            plotter.add_mesh(iso_dict["iso"], **self.get_surface_kwargs())
-            # Add cap mesh if present
-            if "cap" in iso_dict:
-                plotter.add_mesh(iso_dict["cap"], **self.get_cap_kwargs())
+        # # Widgets do not work with html so for now I'm removing this
+        # def update_isosurface(value):
+        #     # Remove old actors
+        #     plotter.remove_actor("iso")
+        #     plotter.remove_actor("cap") if "cap" in plotter.actors else None
+        #     # Generate new iso surface
+        #     iso_dict = self.get_surface_mesh_dict(value)
+        #     # Add new iso mesh
+        #     plotter.add_mesh(iso_dict["iso"], **self.get_surface_kwargs())
+        #     # Add cap mesh if present
+        #     if "cap" in iso_dict:
+        #         plotter.add_mesh(iso_dict["cap"], **self.get_cap_kwargs())
 
-        # Add the slider widget
-        plotter.add_slider_widget(
-            callback=update_isosurface,
-            rng=[self.min_val, self.max_val],
-            value=self.default_iso,
-            title="Isosurface Value",
-            pointa=(0.9, 0.1),
-            pointb=(0.9, 0.5),
-            slider_width=0.03,
-            tube_width=0.01,
-        )
+        # # Add the slider widget
+        # plotter.add_slider_widget(
+        #     callback=update_isosurface,
+        #     rng=[self.min_val, self.max_val],
+        #     value=self.iso_val,
+        #     title="Isosurface Value",
+        #     pointa=(0.9, 0.1),
+        #     pointb=(0.9, 0.5),
+        #     slider_width=0.03,
+        #     tube_width=0.01,
+        # )
+
+        iso_dict = self.get_surface_mesh_dict(self.iso_val)
+        # Add new iso mesh
+        plotter.add_mesh(iso_dict["iso"], **self.get_surface_kwargs())
+        # Add cap mesh if present
+        if "cap" in iso_dict:
+            plotter.add_mesh(iso_dict["cap"], **self.get_cap_kwargs())
         return plotter
+
+    def get_grid_plot_html(self, path: Path | None = None):
+        plotter = self.get_grid_plot()
+        html = plotter.export_html(path)
+        return html
