@@ -12,6 +12,7 @@ from pymatgen.core.structure import Site, Structure
 from vtk import vtkMatrix4x4, vtkTransform
 
 from baderkit.plotting.defaults import ATOM_COLORS
+from baderkit.utilities import Grid
 
 
 class StructurePlotter:
@@ -30,6 +31,7 @@ class StructurePlotter:
         lattice_thickness: float = 0.1,
         atom_metallicness: int = 0.0,
         show_axes: bool = True,
+        **kwargs,
     ):
         # relabel structure
         structure.relabel_sites()
@@ -145,7 +147,7 @@ class StructurePlotter:
         axes = pv.AxesActor()
         return axes
 
-    def get_plot(self):
+    def get_structure_plot(self):
         plotter = pv.Plotter()
         # add atoms
         atom_meshes = self.get_all_site_meshes()
@@ -167,4 +169,113 @@ class StructurePlotter:
             plotter.axes_actor = axes
             plotter.show_axes()
 
+        return plotter
+
+
+class GridPlotter(StructurePlotter):
+    def __init__(
+        self,
+        grid: Grid,
+        show_caps: bool = True,
+        default_iso: float = None,
+        surface_opacity: float = 0.8,
+        cap_opacity: float = 0.8,
+        colormap: float = "viridis",  # Can be any colormap in matplotlib
+        use_solid_surface_color: bool = False,
+        use_solid_cap_color: bool = False,
+        surface_color: tuple = (1.0, 1.0, 1.0),
+        cap_color: tuple = (1.0, 1.0, 1.0),
+        **kwargs,
+    ):
+        # apply StructurePlotter kwargs
+        structure = grid.structure
+        super().__init__(structure=structure, **kwargs)
+
+        # Grid specific items
+        self.show_caps = show_caps
+        self.default_iso = default_iso
+        self.surface_opacity = surface_opacity
+        self.cap_opacity = cap_opacity
+        self.colormap = colormap
+        self.use_solid_surface_color = use_solid_surface_color
+        self.use_solid_cap_color = use_solid_cap_color
+        self.surface_color = surface_color
+        self.cap_color = cap_color
+
+        # determine default iso if not provided
+        if default_iso is None:
+            self.default_iso = (grid.total.max() + grid.total.min()) / 2
+
+        # wrap values around to get one extra voxel on the far side of each axis.
+        self.values = np.pad(
+            grid.total, pad_width=((0, 1), (0, 1), (0, 1)), mode="wrap"
+        )
+        self.min_val = self.values.min()
+        # make min val slightly above 0
+        self.min_val += +0.0000001 * self.min_val
+        self.max_val = self.values.max()
+        # generate the structured grid
+        indices = np.indices(self.values.shape).reshape(3, -1, order="F").T
+        points = grid.get_cart_coords_from_vox(indices)
+        structured_grid = pv.StructuredGrid()
+        structured_grid.points = points
+        structured_grid.dimensions = self.values.shape
+        structured_grid["values"] = self.values.ravel(order="F")
+        self.structured_grid = structured_grid
+
+        # generate the surface
+        self.surface = structured_grid.extract_surface()
+
+    def get_surface_mesh_dict(self, iso_value: float) -> dict:
+        mesh_dict = {}
+        mesh_dict["iso"] = self.structured_grid.contour([iso_value])
+        if self.show_caps:
+            mesh_dict["cap"] = self.surface.contour_banded(
+                2, rng=[iso_value, self.max_val], generate_contour_edges=False
+            )
+        return mesh_dict
+
+    def get_cap_kwargs(self) -> dict:
+        kwargs = {"opacity": self.cap_opacity, "pbr": True, "name": "cap"}
+        if self.use_solid_cap_color:
+            kwargs["color"] = self.cap_color
+        else:
+            kwargs["cmap"] = self.colormap
+        return kwargs
+
+    def get_surface_kwargs(self) -> dict:
+        kwargs = {"opacity": self.surface_opacity, "pbr": True, "name": "iso"}
+        if self.use_solid_surface_color:
+            kwargs["color"] = self.surface_color
+        else:
+            kwargs["cmap"] = self.colormap
+        return kwargs
+
+    def get_grid_plot(self):
+        # get initial plotter with structure
+        plotter = self.get_structure_plot()
+
+        def update_isosurface(value):
+            # Remove old actors
+            plotter.remove_actor("iso")
+            plotter.remove_actor("cap") if "cap" in plotter.actors else None
+            # Generate new iso surface
+            iso_dict = self.get_surface_mesh_dict(value)
+            # Add new iso mesh
+            plotter.add_mesh(iso_dict["iso"], **self.get_surface_kwargs())
+            # Add cap mesh if present
+            if "cap" in iso_dict:
+                plotter.add_mesh(iso_dict["cap"], **self.get_cap_kwargs())
+
+        # Add the slider widget
+        plotter.add_slider_widget(
+            callback=update_isosurface,
+            rng=[self.min_val, self.max_val],
+            value=self.default_iso,
+            title="Isosurface Value",
+            pointa=(0.9, 0.1),
+            pointb=(0.9, 0.5),
+            slider_width=0.03,
+            tube_width=0.01,
+        )
         return plotter
