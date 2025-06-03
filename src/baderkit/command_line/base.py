@@ -6,8 +6,13 @@ Defines the base 'baderkit' command that all other commands stem from.
 
 from enum import Enum
 from pathlib import Path
+import sys
+import os
+import subprocess
 
 import typer
+from streamlit import config as _config
+from streamlit.web.bootstrap import run as _run
 
 from baderkit.core import Bader
 
@@ -73,3 +78,32 @@ def run(
 
     # TODO:
     # Add methods for printing basin and atom volumes
+
+@baderkit_app.command()
+def webapp():
+    """
+    Starts the web interface
+    """
+    # get this files path
+    current_file = Path(__file__).resolve()
+    # get relative path to streamlit app
+    webapp_path = current_file.parent.parent / "streamlit" / "webapp.py"
+    process = subprocess.Popen(
+        ["streamlit", "run", str(webapp_path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
+    )
+    
+    # Look for prompt and send blank input if needed
+    for line in process.stdout:
+        print(line, end="")  # Optional: show Streamlit output
+        if "email" in line:
+            process.stdin.write("\n")
+            process.stdin.flush()
+            break  # After this, Streamlit should proceed normally
+    
+    
+    

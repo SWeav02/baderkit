@@ -9,8 +9,7 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 from numpy.typing import NDArray
-from pymatgen.core.structure import Site, Structure
-from vtk import vtkMatrix4x4, vtkTransform
+from pymatgen.core.structure import Structure
 
 from baderkit.plotting.defaults import ATOM_COLORS
 from baderkit.utilities import Grid
