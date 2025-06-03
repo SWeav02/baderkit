@@ -4,15 +4,15 @@
 Defines a helper class for plotting Grids
 """
 from itertools import product
-from pathlib import Path
+from io import StringIO
 
 import numpy as np
 import pyvista as pv
 from numpy.typing import NDArray
-from pymatgen.core.structure import Structure
+import panel
 
 from baderkit.plotting.defaults import ATOM_COLORS
-from baderkit.utilities import Grid
+from baderkit.utilities import Grid, Structure
 
 
 class StructurePlotter:
@@ -31,6 +31,9 @@ class StructurePlotter:
         lattice_thickness: float = 0.1,
         atom_metallicness: float = 0.0,
         show_axes: bool = True,
+        background: str = "#FFFFFF",
+        view_indices: NDArray = [1,0,0],
+        # parallel_projection: bool = True,
         **kwargs,
     ):
         # relabel structure
@@ -43,7 +46,9 @@ class StructurePlotter:
         self.radii = radii
         self.colors = colors
         self.atom_metallicness = atom_metallicness
-        self.show_axes = show_axes
+        self.background = background
+        self.view_indices = view_indices
+        # self.parallel_projection = parallel_projection
         # if radii or colors are not provided we generate them
         # automatically
         if radii is None:
@@ -81,6 +86,39 @@ class StructurePlotter:
         shifts = set(product(*transforms))
         return [np.array(frac_coord) + np.array(shift) for shift in shifts]
 
+    def get_camera_position(self):
+        h,k,l = self.view_indices
+        # check for all 0s and adjust
+        if all([x==0 for x in [h,k,l]]):
+            h,k,l = 1,0,0
+        # convert to cart coords
+        view_direction = self.structure.get_cart_from_miller(h, k, l)
+        # construct camera position
+        # Define camera distance from the origin
+        # TODO: Calculate this somehow
+        camera_distance = 30.0
+        
+        # Set focal point as center of lattice
+        matrix = self.structure.lattice.matrix
+        far_corner = np.sum(matrix, axis=0)
+        focal_point = far_corner/2
+        
+        camera_position = focal_point + camera_distance * view_direction
+        
+        # Use the z-axis as the view up, unless its parallel
+        # TODO: Make sure this is rigorous
+        z_axis = np.array([0, 0, 1])
+        if np.allclose(np.abs(np.dot(view_direction, z_axis)), 1.0):
+            view_up = np.array([0, 1, 0])  # fallback to y-axis if z is parallel
+        else:
+            view_up = z_axis
+        # return camera position
+        return [
+            tuple(camera_position),  # where the camera is
+            tuple(focal_point),      # where it's looking
+            tuple(view_up)           # which direction is up
+        ]
+    
     def get_site_mesh(self, site_idx: int):
         site = self.structure[site_idx]
         radius = self.radii[site_idx]
@@ -142,13 +180,10 @@ class StructurePlotter:
         # combine and return
         return pv.merge(lines)
 
-    def get_axes_actor(self):
-        # TODO: Find a way to make this not point along cartesian axes
-        axes = pv.AxesActor()
-        return axes
-
-    def get_structure_plot(self):
-        plotter = pv.Plotter()
+    def get_structure_plot(self, off_screen: bool = False):
+        plotter = pv.Plotter(off_screen=off_screen)
+        # set background
+        plotter.set_background(self.background)
         # add atoms
         atom_meshes = self.get_all_site_meshes()
         for atom_mesh, color in zip(atom_meshes, self.colors):
@@ -162,26 +197,39 @@ class StructurePlotter:
         if self.show_lattice:
             lattice_mesh = self.get_lattice_mesh()
             plotter.add_mesh(lattice_mesh, line_width=self.lattice_thickness, color="k")
-
-        # add axes if desired
-        if self.show_axes:
-            axes = self.get_axes_actor()
-            plotter.axes_actor = axes
-            plotter.show_axes()
-
+        
+        # set camera direction
+        plotter.camera_position = self.get_camera_position()
+        
+        # set camera perspective type
+        # if self.parallel_projection:
+        #     plotter.enable_parallel_projection()
+        
         return plotter
 
-    def get_structure_plot_html(self, path: Path | None = None):
-        plotter = self.get_structure_plot()
-        if path is not None:
-            plotter.export_html(path)
-        return plotter.export_html()
+    def get_structure_plot_html(self, width: int, height: int):
+        plotter = self.get_structure_plot(off_screen=True)
+        plotter.show(auto_close=False)
+        vtk_pane = panel.pane.VTK(
+            plotter.ren_win, 
+            width=width, 
+            height=height,
+            
+            )
+        # Create HTML file
+        with StringIO() as model_bytes:
+            vtk_pane.save(
+                model_bytes,
+            )
+            panel_html = model_bytes.getvalue()
+        return panel_html
 
 
 class GridPlotter(StructurePlotter):
     def __init__(
         self,
         grid: Grid,
+        show_surface: bool = True,
         show_caps: bool = True,
         iso_val: float = None,
         surface_opacity: float = 0.8,
@@ -198,6 +246,7 @@ class GridPlotter(StructurePlotter):
         super().__init__(structure=structure, **kwargs)
 
         # Grid specific items
+        self.show_surface = show_surface
         self.show_caps = show_caps
         self.iso_val = iso_val
         self.surface_opacity = surface_opacity
@@ -234,7 +283,8 @@ class GridPlotter(StructurePlotter):
 
     def get_surface_mesh_dict(self, iso_value: float) -> dict:
         mesh_dict = {}
-        mesh_dict["iso"] = self.structured_grid.contour([iso_value])
+        if self.show_surface:
+            mesh_dict["iso"] = self.structured_grid.contour([iso_value])
         if self.show_caps:
             mesh_dict["cap"] = self.surface.contour_banded(
                 2, rng=[iso_value, self.max_val], generate_contour_edges=False
@@ -257,44 +307,28 @@ class GridPlotter(StructurePlotter):
             kwargs["cmap"] = self.colormap
         return kwargs
 
-    def get_grid_plot(self) -> pv.Plotter():
+    def get_grid_plot(self, off_screen: bool = False) -> pv.Plotter():
         # get initial plotter with structure
-        plotter = self.get_structure_plot()
-
-        # # Widgets do not work with html so for now I'm removing this
-        # def update_isosurface(value):
-        #     # Remove old actors
-        #     plotter.remove_actor("iso")
-        #     plotter.remove_actor("cap") if "cap" in plotter.actors else None
-        #     # Generate new iso surface
-        #     iso_dict = self.get_surface_mesh_dict(value)
-        #     # Add new iso mesh
-        #     plotter.add_mesh(iso_dict["iso"], **self.get_surface_kwargs())
-        #     # Add cap mesh if present
-        #     if "cap" in iso_dict:
-        #         plotter.add_mesh(iso_dict["cap"], **self.get_cap_kwargs())
-
-        # # Add the slider widget
-        # plotter.add_slider_widget(
-        #     callback=update_isosurface,
-        #     rng=[self.min_val, self.max_val],
-        #     value=self.iso_val,
-        #     title="Isosurface Value",
-        #     pointa=(0.9, 0.1),
-        #     pointb=(0.9, 0.5),
-        #     slider_width=0.03,
-        #     tube_width=0.01,
-        # )
-
+        plotter = self.get_structure_plot(off_screen=off_screen)
+        # get dict of surface meshes
         iso_dict = self.get_surface_mesh_dict(self.iso_val)
         # Add new iso mesh
-        plotter.add_mesh(iso_dict["iso"], **self.get_surface_kwargs())
+        if "iso" in iso_dict.keys():
+            plotter.add_mesh(iso_dict["iso"], **self.get_surface_kwargs())
         # Add cap mesh if present
         if "cap" in iso_dict:
             plotter.add_mesh(iso_dict["cap"], **self.get_cap_kwargs())
         return plotter
 
-    def get_grid_plot_html(self, path: Path | None = None):
-        plotter = self.get_grid_plot()
-        html = plotter.export_html(path)
-        return html
+    def get_grid_plot_html(self, width: int, height: int):
+        plotter = self.get_grid_plot(off_screen=True)
+        plotter.show(auto_close=False)
+        vtk_pane = panel.pane.VTK(plotter.ren_win, width=width, height=height)
+        # breakpoint()
+        # Create HTML file
+        with StringIO() as model_bytes:
+            vtk_pane.save(
+                model_bytes,
+            )
+            panel_html = model_bytes.getvalue()
+        return panel_html

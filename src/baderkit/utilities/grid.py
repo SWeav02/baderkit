@@ -8,14 +8,14 @@ from pathlib import Path
 from typing import Literal, Self
 
 import numpy as np
-import plotly.graph_objects as go
 from numpy.typing import NDArray
 from pymatgen.io.vasp import Poscar, VolumetricData
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from scipy.interpolate import RegularGridInterpolator, griddata
+from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
+from baderkit.utilities.structure import Structure
 
 class Grid(VolumetricData):
     """
@@ -25,7 +25,11 @@ class Grid(VolumetricData):
     NOTE: Many properties are cached to prevent expensive repeat calculations.
     To recalculate properties, make a new Grid instance
     """
-
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # convert structure to baderkit utility version
+        self.structure = Structure.from_dict(self.structure.as_dict())
+        
     @property
     def total(self) -> NDArray[float]:
         return self.data["total"]
@@ -612,8 +616,9 @@ class Grid(VolumetricData):
 
         """
         return Grid(
-            self.structure.copy(),
-            self.data.copy(),
+            structure=self.structure.copy(),
+            data=self.data.copy(),
+            data_aug=self.data_aug,
         )
 
     # TODO: The following is my own implementation for reading ELFCARs/CHGCARs
@@ -930,8 +935,9 @@ class Grid(VolumetricData):
         else:
             # get the new data dict and return a new grid
             data = {"total": new_total}
-
-        return cls(cls.structure, data)
+        
+        # TODO: Add augment data
+        return cls(structure=cls.structure, data=data)
 
     @classmethod
     def split_to_spin(
@@ -976,14 +982,15 @@ class Grid(VolumetricData):
         # convert to dicts
         spin_up_data = {"total": spin_up_data}
         spin_down_data = {"total": spin_down_data}
-
+        
+        # TODO: Add augment data?
         spin_up_grid = cls(
-            cls.structure.copy(),
-            spin_up_data,
+            structure = cls.structure.copy(),
+            data = spin_up_data,
         )
         spin_down_grid = cls(
-            cls.structure.copy(),
-            spin_down_data,
+            structure = cls.structure.copy(),
+            data = spin_down_data,
         )
 
         return spin_up_grid, spin_down_grid
@@ -1489,7 +1496,7 @@ class Grid(VolumetricData):
         # Create string to add structure to.
         poscar, data, data_aug = cls.parse_file(grid_file)
 
-        return cls(poscar.structure, data, data_aug=data_aug)
+        return cls(structure = poscar.structure, data = data, data_aug=data_aug)
 
     @classmethod
     def from_vasp_string(cls, file_string: str) -> Self:
@@ -1597,4 +1604,4 @@ class Grid(VolumetricData):
             data = {"total": all_dataset[0]}
             data_aug = {"total": all_dataset_aug.get(0)}
 
-        return cls(poscar.structure, data, data_aug=data_aug)
+        return cls(structure=poscar.structure, data=data, data_aug=data_aug)
