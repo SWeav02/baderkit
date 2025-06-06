@@ -1,29 +1,35 @@
 # -*- coding: utf-8 -*-
 
 import itertools
-import math
 import logging
+import math
 from functools import cached_property
 from pathlib import Path
 from typing import Literal, Self
 
 import numpy as np
 from numpy.typing import NDArray
-from pymatgen.io.vasp import VolumetricData
+from pymatgen.io.vasp import Poscar, VolumetricData
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from scipy.interpolate import RegularGridInterpolator
-from scipy.ndimage import label, zoom, binary_dilation
+from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
+
+from baderkit.utilities.structure import Structure
 
 class Grid(VolumetricData):
     """
     This class is a wraparound for Pymatgen's VolumetricData class with additional
     properties and methods.
-    
-    NOTE: Many properties are cached to prevent expensive repeat calculations. 
+
+    NOTE: Many properties are cached to prevent expensive repeat calculations.
     To recalculate properties, make a new Grid instance
     """
-
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # convert structure to baderkit utility version
+        self.structure = Structure.from_dict(self.structure.as_dict())
+        
     @property
     def total(self) -> NDArray[float]:
         return self.data["total"]
@@ -78,14 +84,14 @@ class Grid(VolumetricData):
         Array of fractional coordinates for each atom.
         """
         return self.structure.frac_coords
-    
+
     @property
     def all_voxel_coords(self) -> NDArray[int]:
         """
         The coordinates for all voxels in the grid in voxel indices.
         """
         return np.indices(self.shape).reshape(3, -1).T
-        
+
     @cached_property
     def all_voxel_frac_coords(self) -> NDArray[float]:
         """
@@ -95,12 +101,19 @@ class Grid(VolumetricData):
         return self.get_frac_coords_from_vox(voxel_indices)
 
     @cached_property
+    def all_voxel_cart_coords(self) -> NDArray[float]:
+        """
+        The cartesian coordinates for all of the voxel in the grid
+        """
+        frac_coords = self.all_voxel_frac_coords
+        return self.get_cart_coords_from_frac(frac_coords)
+
+    @cached_property
     def voxel_dist_to_origin(self) -> NDArray[float]:
         """
         The distance from each voxel to the origin in cartesian coordinates
         """
-        frac_coords = self.all_voxel_frac_coords
-        cart_coords = self.get_cart_coords_from_frac(frac_coords)
+        cart_coords = self.all_voxel_cart_coords
         corners = [
             np.array([0, 0, 0]),
             self.a,
@@ -181,7 +194,7 @@ class Grid(VolumetricData):
         # of their distances and return the maximum
         max_distance = max([np.linalg.norm(vector) for vector in voxel_vertices])
         return max_distance
-    
+
     @cached_property
     def voxel_voronoi_facets(self) -> tuple[NDArray, NDArray, NDArray, NDArray]:
         """
@@ -191,26 +204,26 @@ class Grid(VolumetricData):
         # I go out to 2 voxels away here. I think 1 would probably be fine, but
         # this doesn't take much more time and I'm certain this will capture the
         # full voronoi cell.
-        voxel_positions = np.array(list(itertools.product([-2,-1,0,1,2], repeat=3)))
-        center = math.floor(len(voxel_positions)/2)
+        voxel_positions = np.array(list(itertools.product([-2, -1, 0, 1, 2], repeat=3)))
+        center = math.floor(len(voxel_positions) / 2)
         cart_positions = self.get_cart_coords_from_vox(voxel_positions)
         voronoi = Voronoi(cart_positions)
         site_neighbors = []
         facet_vertices = []
         facet_areas = []
-        
+
         def facet_area(vertices):
             # You can use a 2D or 3D area formula for a polygon
             # Here we assume the vertices are in a 2D plane for simplicity
             # For 3D, a more complicated approach (e.g., convex hull or triangulation) is needed
             p0 = np.array(vertices[0])
             area = 0
-            for i in range(1, len(vertices)-1):
+            for i in range(1, len(vertices) - 1):
                 p1 = np.array(vertices[i])
-                p2 = np.array(vertices[i+1])
+                p2 = np.array(vertices[i + 1])
                 area += np.linalg.norm(np.cross(p1 - p0, p2 - p0)) / 2.0
             return area
-        
+
         for i, neighbor_pair in enumerate(voronoi.ridge_points):
             if center in neighbor_pair:
                 neighbor = [i for i in neighbor_pair if i != center][0]
@@ -222,9 +235,9 @@ class Grid(VolumetricData):
                 facet_areas.append(area)
         transforms = voxel_positions[np.array(site_neighbors)]
         cart_transforms = cart_positions[np.array(site_neighbors)]
-        transform_dists = np.linalg.norm(cart_transforms,axis=1)
+        transform_dists = np.linalg.norm(cart_transforms, axis=1)
         return transforms, transform_dists, np.array(facet_areas), facet_vertices
-    
+
     @cached_property
     def voxel_26_neighbors(self) -> NDArray[int]:
         """
@@ -237,10 +250,12 @@ class Grid(VolumetricData):
             An Nx3 array of transformations from any voxel to its neighbors.
 
         """
-        neighbors = [i for i in itertools.product([-1,0,1], repeat=3) if i != (0,0,0)]
-        
+        neighbors = [
+            i for i in itertools.product([-1, 0, 1], repeat=3) if i != (0, 0, 0)
+        ]
+
         return np.array(neighbors).astype(int)
-    
+
     @cached_property
     def voxel_26_neighbor_dists(self) -> NDArray[float]:
         """
@@ -254,7 +269,7 @@ class Grid(VolumetricData):
         cart_coords = self.get_cart_coords_from_vox(self.voxel_26_neighbors)
         dists = np.linalg.norm(cart_coords, axis=1)
         return dists
-    
+
     @cached_property
     def permutations(self) -> list:
         """
@@ -308,7 +323,7 @@ class Grid(VolumetricData):
         The equivalent atoms in the Structure.
         """
         return self.symmetry_data.equivalent_atoms
-    
+
     @cached_property
     def maxima_mask(self) -> NDArray[bool]:
         """
@@ -321,8 +336,9 @@ class Grid(VolumetricData):
         """
         # avoid circular import
         from baderkit.core.numba_functions import get_maxima
+
         return get_maxima(self.total, neighbor_transforms=self.voxel_26_neighbors)
-    
+
     @cached_property
     def maxima_indices(self) -> NDArray[int]:
         """
@@ -355,7 +371,7 @@ class Grid(VolumetricData):
             The interpolated value at each fractional coordinate.
 
         """
-        
+
         coords = self.get_voxel_coords_from_frac(np.array(frac_coords))
         padded_data = np.pad(self.total, 10, mode="wrap")
 
@@ -425,8 +441,8 @@ class Grid(VolumetricData):
         # Add dist of 1 at center to avoid divide by 0 later
         dists = np.insert(dists, 13, 1)
         # reshape to 3x3x3 grid
-        dists = dists.reshape([3,3,3])
-        
+        dists = dists.reshape([3, 3, 3])
+
         # Start hill climbing
         while True:
             # get the value at the current point
@@ -438,7 +454,7 @@ class Grid(VolumetricData):
             grad = (box - value) / dists
             # get the location and value of the maximum in this box
             max_idx = np.array(np.unravel_index(np.argmax(grad), grad.shape))
-            max_val = grad[max_idx[0],max_idx[1],max_idx[2]]
+            max_val = grad[max_idx[0], max_idx[1], max_idx[2]]
             # If the max gradient is 0, we have reached our peak
             if max_val == 0:
                 break
@@ -459,7 +475,7 @@ class Grid(VolumetricData):
         new_frac_coords = self.get_frac_coords_from_vox(current_coords)
 
         return new_frac_coords
-    
+
     @staticmethod
     def get_2x_supercell(self, data: NDArray | None = None) -> NDArray:
         """
@@ -475,7 +491,7 @@ class Grid(VolumetricData):
         NDArray
             A new array with the data doubled in each direction
         """
-        new_data = np.tile(data, (2,2,2))
+        new_data = np.tile(data, (2, 2, 2))
         return new_data
 
     def get_voxels_in_radius(self, radius: float, voxel: NDArray) -> NDArray[int]:
@@ -550,7 +566,9 @@ class Grid(VolumetricData):
 
         return np.column_stack(final_shell_indices)
 
-    def get_padded_grid_axes(self, padding: int = 0) -> tuple[NDArray, NDArray, NDArray]:
+    def get_padded_grid_axes(
+        self, padding: int = 0
+    ) -> tuple[NDArray, NDArray, NDArray]:
         """
         Gets the the possible indices for each dimension of a padded grid.
         e.g. if the original charge density grid is 20x20x20, and is padded
@@ -586,7 +604,7 @@ class Grid(VolumetricData):
             grid.shape[2] + padding * 2,
         )
         return a, b, c
-    
+
     def copy(self) -> Self:
         """
         Convenience method to get a copy of the current Grid.
@@ -598,33 +616,11 @@ class Grid(VolumetricData):
 
         """
         return Grid(
-            self.structure.copy(),
-            self.data.copy(),
+            structure=self.structure.copy(),
+            data=self.data.copy(),
+            data_aug=self.data_aug,
         )
 
-    @classmethod
-    def from_vasp(cls, grid_file: str | Path) -> Self:
-        """
-        Create a grid instance using a CHGCAR or ELFCAR file.
-
-        Parameters
-        ----------
-        grid_file : str | Path
-            The file the instance should be made from. Should be a VASP
-            CHGCAR or ELFCAR type file.
-
-        Returns
-        -------
-        Self
-            Grid from the specified file.
-
-        """
-        logging.info(f"Loading {grid_file} from file")
-        # Create string to add structure to.
-        poscar, data, _ = cls.parse_file(grid_file)
-
-        return cls(poscar.structure, data)
-    
     # TODO: The following is my own implementation for reading ELFCARs/CHGCARs
     # that is faster than the default pymatgen parser. It currently fails in
     # some instances.
@@ -632,7 +628,7 @@ class Grid(VolumetricData):
     # def from_vasp(cls, filename: str | Path):
     #     """
     #     Create a grid instance using a CHGCAR or ELFCAR file
-        
+
     #     Args:
     #         filename (string):
     #             The file the instance should be made from. Should be a VASP
@@ -647,38 +643,38 @@ class Grid(VolumetricData):
     #         # Read header lines first
     #         next(f)  # line 0
     #         scale = float(next(f).strip())  # line 1
-        
+
     #         lattice_matrix = np.array([[float(x) for x in next(f).split()] for _ in range(3)]) * scale
-        
+
     #         atom_types = next(f).split()
     #         atom_counts = list(map(int, next(f).split()))
     #         total_atoms = sum(atom_counts)
-        
+
     #         # Skip the 'Direct' or 'Cartesian' line
     #         next(f)
-        
+
     #         coords = np.array([
     #             list(map(float, next(f).split()))
     #             for _ in range(total_atoms)
     #         ])
-        
+
     #         lattice = Lattice(lattice_matrix)
     #         atom_list = [elem for typ, count in zip(atom_types, atom_counts) for elem in [typ]*count]
     #         structure = Structure(lattice=lattice, species=atom_list, coords=coords)
-        
+
     #         # Read the FFT grid line
     #         # skip empty line
     #         next(f)
     #         nx, ny, nz = map(int, next(f).split())
     #         ngrid = nx * ny * nz
-        
+
     #         # Read the rest of the file as a single string to avoid Python loop overhead
     #         # Read the remainder of the file as a single string
     #         rest = f.read()
     #         # Now we split the file at the next line that has the ngrid if it
     #         # exists
     #         data_strings = rest.split(f"{nx}  {ny}  {nz}")
-            
+
     #         data = []
     #         for data_string in data_strings:
     #             # Truncate everything after the word "augmentation"
@@ -687,14 +683,14 @@ class Grid(VolumetricData):
     #                 data_string = data_string[:cutoff_index]
     #             # Split into values and convert to float
     #             data_array = np.fromiter((float(x) for x in data_string.split()), dtype=float)
-                
+
     #             # remove shape line if necessary
     #             if len(data_array) > ngrid:
     #                 delete_indices = np.arange(ngrid, ngrid+3)
     #                 data_array = np.delete(data_array, delete_indices)
-                
+
     #             data.append(data_array)
-            
+
     #         # Fast check for spin-polarized case
     #         if len(data) == 1:
     #             data_array=data[0]
@@ -706,7 +702,7 @@ class Grid(VolumetricData):
     #             data = {"total": total, "diff": diff}
     #         else:
     #             raise ValueError("Unexpected number of data points: does not match grid size.")
-        
+
     #     return Grid(structure, data)
 
     def get_atoms_in_volume(self, volume_mask: NDArray[bool]) -> NDArray[int]:
@@ -727,24 +723,22 @@ class Grid(VolumetricData):
 
         """
         # Make sure the shape of the mask is the same as the grid
-        assert np.all(np.equal(self.shape, volume_mask.shape)), "Mask and Grid must be the same shape"
+        assert np.all(
+            np.equal(self.shape, volume_mask.shape)
+        ), "Mask and Grid must be the same shape"
         # Get the voxel coordinates for each atom
         site_voxel_coords = self.get_voxel_coords_from_frac(
             self.structure.frac_coords
-            ).astype(int)
+        ).astype(int)
         # Return the indices of the atoms that are in the mask
         atoms_in_volume = volume_mask[
-            site_voxel_coords[:,0],
-            site_voxel_coords[:,1],
-            site_voxel_coords[:,2]
-            ]
+            site_voxel_coords[:, 0], site_voxel_coords[:, 1], site_voxel_coords[:, 2]
+        ]
         return np.argwhere(atoms_in_volume)
 
     def get_atoms_surrounded_by_volume(
-            self,
-            volume_mask: NDArray[bool], 
-            return_type: bool = False
-            ) -> NDArray[int]:
+        self, volume_mask: NDArray[bool], return_type: bool = False
+    ) -> NDArray[int]:
         """
         Checks if a mask completely surrounds any of the atoms
         in the structure. This method uses scipy's ndimage package to
@@ -767,7 +761,9 @@ class Grid(VolumetricData):
 
         """
         # Make sure the shape of the mask is the same as the grid
-        assert np.all(np.equal(self.shape, volume_mask.shape)), "Mask and Grid must be the same shape"
+        assert np.all(
+            np.equal(self.shape, volume_mask.shape)
+        ), "Mask and Grid must be the same shape"
         # first we get any atoms that are within the mask itself. These won't be
         # found otherwise because they will always sit in unlabeled regions.
         structure = np.ones([3, 3, 3])
@@ -794,7 +790,7 @@ class Grid(VolumetricData):
         # any voxel in the feature should have different labels in each section.
         # If not, the feature is connected to itself in multiple directions and
         # must surround many atoms.
-        transformations = np.array(list(itertools.product([0,1], repeat=3)))
+        transformations = np.array(list(itertools.product([0, 1], repeat=3)))
         transformations = self.get_voxel_coords_from_frac(transformations)
         # Check each atom to determine how many atoms it surrounds
         surrounded_sites = []
@@ -807,7 +803,9 @@ class Grid(VolumetricData):
             # Get the feature label at each transformation. If the atom is not surrounded
             # by this basin, at least some of these feature labels will be the same
             features = inverted_feature_supercell[
-                transformed_coords[:, 0], transformed_coords[:, 1], transformed_coords[:, 2]
+                transformed_coords[:, 0],
+                transformed_coords[:, 1],
+                transformed_coords[:, 2],
             ]
             if len(np.unique(features)) == 8:
                 # The atom is completely surrounded by this basin and the basin belongs
@@ -824,11 +822,11 @@ class Grid(VolumetricData):
         if return_type:
             return surrounded_sites, types
         return surrounded_sites
-    
+
     def check_if_infinite_feature(self, volume_mask: NDArray[bool]) -> bool:
         """
         Checks if a mask extends infinitely in at least one direction.
-        This method uses scipy's ndimage package to label features in the mask 
+        This method uses scipy's ndimage package to label features in the mask
         combined with a supercell to check if the label matches between unit cells.
 
         Parameters
@@ -846,7 +844,7 @@ class Grid(VolumetricData):
         # we return False as there is no feature.
         if (~volume_mask).all():
             return False
-        
+
         structure = np.ones([3, 3, 3])
         # Now we create a supercell of the mask so we can check connections to
         # neighboring cells. This will be used to check if the feature connects
@@ -856,7 +854,7 @@ class Grid(VolumetricData):
         feature_supercell = self.label(supercell_mask, structure)
         # Now we check if we have the same label in any of the adjacent unit
         # cells. If yes we have an infinite feature.
-        transformations = np.array(list(itertools.product([0,1], repeat=3)))
+        transformations = np.array(list(itertools.product([0, 1], repeat=3)))
         transformations = self.get_voxel_coords_from_frac(transformations)
         initial_coord = np.argwhere(volume_mask)[0]
         transformed_coords = (transformations + initial_coord).astype(int)
@@ -866,7 +864,7 @@ class Grid(VolumetricData):
         features = feature_supercell[
             transformed_coords[:, 0], transformed_coords[:, 1], transformed_coords[:, 2]
         ]
-        
+
         inf_feature = False
         # If any of the transformed coords have the same feature value, this
         # feature extends between unit cells in at least 1 direction and is
@@ -876,7 +874,7 @@ class Grid(VolumetricData):
             inf_feature = True
 
         return inf_feature
-    
+
     @classmethod
     def regrid(
         cls,
@@ -937,14 +935,15 @@ class Grid(VolumetricData):
         else:
             # get the new data dict and return a new grid
             data = {"total": new_total}
+        
+        # TODO: Add augment data
+        return cls(structure=cls.structure, data=data)
 
-        return cls(cls.structure, data)
-    
     @classmethod
     def split_to_spin(
-            cls, 
-            data_type: Literal["elf", "charge"] = "elf",
-            ) -> tuple[Self, Self]:
+        cls,
+        data_type: Literal["elf", "charge"] = "elf",
+    ) -> tuple[Self, Self]:
         """
         Splits the grid to two Grid objects representing the spin up and spin down contributions
 
@@ -962,7 +961,9 @@ class Grid(VolumetricData):
         """
 
         # first check if the grid has spin parts
-        assert cls.is_spin_polarized, "Only one set of data detected. The grid cannot be split into spin up and spin down"
+        assert (
+            cls.is_spin_polarized
+        ), "Only one set of data detected. The grid cannot be split into spin up and spin down"
 
         # Now we get the separate data parts. If the data is ELF, the parts are
         # stored as total=spin up and diff = spin down
@@ -981,14 +982,15 @@ class Grid(VolumetricData):
         # convert to dicts
         spin_up_data = {"total": spin_up_data}
         spin_down_data = {"total": spin_down_data}
-
+        
+        # TODO: Add augment data?
         spin_up_grid = cls(
-            cls.structure.copy(),
-            spin_up_data,
+            structure = cls.structure.copy(),
+            data = spin_up_data,
         )
         spin_down_grid = cls(
-            cls.structure.copy(),
-            spin_down_data,
+            structure = cls.structure.copy(),
+            data = spin_down_data,
         )
 
         return spin_up_grid, spin_down_grid
@@ -1029,10 +1031,7 @@ class Grid(VolumetricData):
         # instance because we want to keep any useful information such as whether
         # the grid is spin polarized or not.
 
-        return cls(
-            structure=cls.structure.copy(),
-            data=data
-            )
+        return cls(structure=cls.structure.copy(), data=data)
 
     @staticmethod
     def label(input: NDArray, structure: NDArray = np.ones([3, 3, 3])) -> NDArray[int]:
@@ -1045,7 +1044,7 @@ class Grid(VolumetricData):
         input : NDArray
             The array to label.
         structure : NDArray, optional
-            The structureing elemetn defining feature connections. 
+            The structureing elemetn defining feature connections.
             The default is np.ones([3, 3, 3]).
 
         Returns
@@ -1131,7 +1130,9 @@ class Grid(VolumetricData):
         return labeled_array
 
     @staticmethod
-    def periodic_center_of_mass(labels: NDArray[int], label_vals: NDArray[int]=None) -> NDArray:
+    def periodic_center_of_mass(
+        labels: NDArray[int], label_vals: NDArray[int] = None
+    ) -> NDArray:
         """
         Computes center of mass for each label in a 3D periodic array.
 
@@ -1175,7 +1176,7 @@ class Grid(VolumetricData):
         centers = centers.round(6)
 
         return centers
-    
+
     # The following method finds critical points using the gradient. However, this
     # assumes an orthogonal unit cell and should be improved.
     # @staticmethod
@@ -1194,7 +1195,7 @@ class Grid(VolumetricData):
     #     array : NDArray
     #         The array to find critical points in.
     #     threshold : float, optional
-    #         The threshold below which the hessian will be considered 0. 
+    #         The threshold below which the hessian will be considered 0.
     #         The default is 5e-03.
     #     return_hessian_s : bool, optional
     #         Whether or not to return the hessian signs. The default is True.
@@ -1415,7 +1416,7 @@ class Grid(VolumetricData):
             Cartesian coordinates as an Nx3 Array.
 
         """
-        
+
         return frac_coords @ self.matrix
 
     def get_frac_coords_from_vox(self, vox_coords: NDArray) -> NDArray[float]:
@@ -1433,8 +1434,8 @@ class Grid(VolumetricData):
             Fractional coordinates as an Nx3 Array.
 
         """
-        
-        return vox_coords/self.shape
+
+        return vox_coords / self.shape
 
     def get_voxel_coords_from_frac(self, frac_coords: NDArray) -> NDArray[int]:
         """
@@ -1471,55 +1472,136 @@ class Grid(VolumetricData):
         frac_coords = self.get_frac_coords_from_vox(vox_coords)
         return self.get_cart_coords_from_frac(frac_coords)
 
-    # def _plot_points(self, points, ax, fig, color, size: int = 20):
-    #     """
-    #     Plots points of form [x,y,z] using matplotlib
+    ###########################################################################
+    # Functions for loading from files or strings
+    ###########################################################################
+    @classmethod
+    def from_vasp(cls, grid_file: str | Path) -> Self:
+        """
+        Create a grid instance using a CHGCAR or ELFCAR file.
 
-    #     Args:
-    #         points (list): A list of points to plot
-    #         fig: A matplotlib.pyplot.figure() instance
-    #         ax: A matplotlib Subplot instance
-    #         color (str): The color to plot the points
-    #         size (int): The pt size to plot
-    #     """
-    #     x = []
-    #     y = []
-    #     z = []
-    #     for point in points:
-    #         x.append(point[0])
-    #         y.append(point[1])
-    #         z.append(point[2])
-    #     ax.scatter(x, y, z, c=color, s=size)
+        Parameters
+        ----------
+        grid_file : str | Path
+            The file the instance should be made from. Should be a VASP
+            CHGCAR or ELFCAR type file.
 
-    # def _plot_unit_cell(self, ax, fig):
-    #     """
-    #     Plots the unit cell of a structure using matplotlib
+        Returns
+        -------
+        Self
+            Grid from the specified file.
 
-    #     Args:
-    #         fig: A matplotlib.pyplot.figure() instance
-    #         ax: A matplotlib Subplot instance
-    #     """
-    #     if ax is None or fig is None:
-    #         fig = plt.figure()
-    #         ax = fig.add_subplot(projection="3d")
+        """
+        logging.info(f"Loading {grid_file} from file")
+        # Create string to add structure to.
+        poscar, data, data_aug = cls.parse_file(grid_file)
 
-    #     # Get the points at the lattice vertices to plot and plot them
-    #     a = self.a
-    #     b = self.b
-    #     c = self.c
-    #     points = [np.array([0, 0, 0]), a, b, c, a + b, a + c, b + c, a + b + c]
-    #     self._plot_points(points, ax, fig, "purple")
+        return cls(structure = poscar.structure, data = data, data_aug=data_aug)
 
-    #     # get the structure to plot.
-    #     structure = self.structure
-    #     species = structure.symbol_set
+    @classmethod
+    def from_vasp_string(cls, file_string: str) -> Self:
+        """
+        Returns a Grid object from the string contents of a VASP file. This method
+        is a reimplementation of Pymatgen's [Parser](https://github.com/materialsproject/pymatgen/blob/v2025.5.28/src/pymatgen/io/vasp/outputs.py#L3704-L3813)
+        """
+        poscar_read = False
+        poscar_string: list[str] = []
+        dataset: NDArray = np.zeros((1, 1, 1))
+        all_dataset: list[NDArray] = []
+        # for holding any strings in input that are not Poscar
+        # or VolumetricData (typically augmentation charges)
+        all_dataset_aug: dict[int, list[str]] = {}
+        dim: list[int] = []
+        dimline = ""
+        read_dataset = False
+        ngrid_pts = 0
+        data_count = 0
+        poscar = None
+        lines = file_string.split("\n")
+        for line in lines:
+            original_line = line
+            line = line.strip()
+            if read_dataset:
+                for tok in line.split():
+                    if data_count < ngrid_pts:
+                        # This complicated procedure is necessary because
+                        # VASP outputs x as the fastest index, followed by y
+                        # then z.
+                        no_x = data_count // dim[0]
+                        dataset[data_count % dim[0], no_x % dim[1], no_x // dim[1]] = (
+                            float(tok)
+                        )
+                        data_count += 1
+                if data_count >= ngrid_pts:
+                    read_dataset = False
+                    data_count = 0
+                    all_dataset.append(dataset)
 
-    #     # get a color map to distinguish between sites
-    #     color_map = matplotlib.colormaps.get_cmap("tab10")
-    #     # Go through each atom type and plot all instances with the same color
-    #     for i, specie in enumerate(species):
-    #         color = color_map(i)
-    #         sites_indices = structure.indices_from_symbol(specie)
-    #         for site in sites_indices:
-    #             coords = structure[site].coords
-    #             self._plot_points([coords], ax, fig, color, size=40)
+            elif not poscar_read:
+                if line != "" or len(poscar_string) == 0:
+                    poscar_string.append(line)  # type:ignore[arg-type]
+                elif line == "":
+                    poscar = Poscar.from_str("\n".join(poscar_string))
+                    poscar_read = True
+
+            elif not dim:
+                dim = [int(i) for i in line.split()]
+                ngrid_pts = dim[0] * dim[1] * dim[2]
+                dimline = line  # type:ignore[assignment]
+                read_dataset = True
+                dataset = np.zeros(dim)
+
+            elif line == dimline:
+                # when line == dimline, expect volumetric data to follow
+                # so set read_dataset to True
+                read_dataset = True
+                dataset = np.zeros(dim)
+
+            else:
+                # store any extra lines that were not part of the
+                # volumetric data so we know which set of data the extra
+                # lines are associated with
+                key = len(all_dataset) - 1
+                if key not in all_dataset_aug:
+                    all_dataset_aug[key] = []
+                all_dataset_aug[key].append(original_line)  # type:ignore[arg-type]
+
+        if len(all_dataset) == 4:
+            data = {
+                "total": all_dataset[0],
+                "diff_x": all_dataset[1],
+                "diff_y": all_dataset[2],
+                "diff_z": all_dataset[3],
+            }
+            data_aug = {
+                "total": all_dataset_aug.get(0),
+                "diff_x": all_dataset_aug.get(1),
+                "diff_y": all_dataset_aug.get(2),
+                "diff_z": all_dataset_aug.get(3),
+            }
+
+            # Construct a "diff" dict for scalar-like magnetization density,
+            # referenced to an arbitrary direction (using same method as
+            # pymatgen.electronic_structure.core.Magmom, see
+            # Magmom documentation for justification for this)
+            # TODO: re-examine this, and also similar behavior in
+            # Magmom - @mkhorton
+            # TODO: does CHGCAR change with different SAXIS?
+            diff_xyz = np.array([data["diff_x"], data["diff_y"], data["diff_z"]])
+            diff_xyz = diff_xyz.reshape((3, dim[0] * dim[1] * dim[2]))
+            ref_direction = np.array([1.01, 1.02, 1.03])
+            ref_sign = np.sign(np.dot(ref_direction, diff_xyz))
+            diff = np.multiply(np.linalg.norm(diff_xyz, axis=0), ref_sign)
+            data["diff"] = diff.reshape((dim[0], dim[1], dim[2]))
+
+        elif len(all_dataset) == 2:
+            data = {"total": all_dataset[0], "diff": all_dataset[1]}
+            data_aug = {
+                "total": all_dataset_aug.get(0),
+                "diff": all_dataset_aug.get(1),
+            }
+        else:
+            data = {"total": all_dataset[0]}
+            data_aug = {"total": all_dataset_aug.get(0)}
+
+        return cls(structure=poscar.structure, data=data, data_aug=data_aug)
