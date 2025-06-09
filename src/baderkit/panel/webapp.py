@@ -3,6 +3,8 @@
 import pyvista as pv
 import panel as pn
 import inspect
+import sys
+import argparse
 
 from baderkit.core import Bader
 from baderkit.plotting import BaderPlotter
@@ -13,13 +15,31 @@ from baderkit.panel.sections import (
     get_view_widgets
     )
 
+# Get bader results first
+args = sys.argv
+print("Arguments:", args)
+
+parser = argparse.ArgumentParser()
+args = parser.parse_args()
+parser.add_argument('--charge_file', type=str, default='CHGCAR')
+parser.add_argument('--reference_file', type=str, default=None, nargs='?')
+parser.add_argument('--method', type=str, default='weight')
+parsed_args, _ = parser.parse_known_args()
+charge_file = parsed_args.charge_file
+reference_file = parsed_args.reference_file
+method = parsed_args.method
+bader = Bader.from_vasp(
+    charge_filename=charge_file,
+    reference_filename=reference_file,
+    method=method,
+    )
+
 pn.extension('vtk', 'tabulator', design='material')
-pv.global_theme.allow_empty_mesh = True
-# Always set PyVista to plot off screen with Trame
+
+# Always set PyVista to plot off screen with Panel
 pv.OFF_SCREEN = True
 
 # get initial plotter
-bader = Bader.from_vasp("C:/Users/sammw/Documents/github/baderkit/test_files/CHGCAR")
 plotter = BaderPlotter(bader, off_screen=True)
 plotter.plotter.suppress_rendering = True
 # Update camera angle

@@ -79,31 +79,65 @@ def run(
     # TODO:
     # Add methods for printing basin and atom volumes
 
-# @baderkit_app.command()
-# def webapp():
-#     """
-#     Starts the web interface
-#     """
-#     # get this files path
-#     current_file = Path(__file__).resolve()
-#     # get relative path to streamlit app
-#     webapp_path = current_file.parent.parent / "streamlit" / "webapp.py"
-#     process = subprocess.Popen(
-#         ["streamlit", "run", str(webapp_path)],
-#         stdin=subprocess.PIPE,
-#         stdout=subprocess.PIPE,
-#         stderr=subprocess.STDOUT,
-#         text=True,
-#         bufsize=1
-#     )
+@baderkit_app.command()
+def webapp(
+        charge_file: Path = typer.Argument(
+            ...,
+            help="The path to the charge density file",
+        ),
+        reference_file: Path = typer.Option(
+            None,
+            "--reference_file",
+            "-ref",
+            help="The path to the reference file",
+        ),
+        method: Method = typer.Option(
+            Method.weight,
+            "--method",
+            "-m",
+            help="The method to use for separating bader basins",
+            case_sensitive=False,
+        ),
+        ):
+    """
+    Starts the web interface
+    """
+    # get this files path
+    current_file = Path(__file__).resolve()
+    # get relative path to streamlit app
+    webapp_path = current_file.parent.parent / "panel" / "webapp.py"
+    args = [
+        "panel", 
+        "serve", 
+        str(webapp_path), 
+        "--args", 
+        f"charge_file={charge_file}",
+        f"method={method}"
+    ]
+    if reference_file is not None:
+        args.append(f"reference_file={reference_file}")
     
-#     # Look for prompt and send blank input if needed
-#     for line in process.stdout:
-#         print(line, end="")  # Optional: show Streamlit output
-#         if "email" in line:
-#             process.stdin.write("\n")
-#             process.stdin.flush()
-#             break  # After this, Streamlit should proceed normally
+    subprocess.run(
+        args = args,
+        check=True
+    )
+
+    # process = subprocess.Popen(
+    #     [
+    #         "panel", 
+    #         "serve", 
+    #         str(webapp_path), 
+    #         "--args", 
+    #         f"charge_file={charge_file}",
+    #         f"reference_file={reference_file}",
+    #         f"method={method}"
+    #         ],
+    #     stdin=subprocess.PIPE,
+    #     stdout=subprocess.PIPE,
+    #     stderr=subprocess.STDOUT,
+    #     text=True,
+    #     bufsize=1
+    # )
     
     
     
