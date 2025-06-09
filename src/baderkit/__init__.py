@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # high level imports
-from .core import Bader
-
 import importlib.metadata
 import logging
 
 from rich.logging import RichHandler
+
+from .core import Bader
 
 __version__ = importlib.metadata.version("baderkit")
 
