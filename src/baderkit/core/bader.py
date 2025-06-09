@@ -12,7 +12,9 @@ from numpy.typing import NDArray
 from pymatgen.core import Structure
 from rich.progress import track
 
-from baderkit.utilities import (  # get_near_grid_assignments,; get_hybrid_basin_weights,
+from baderkit.utilities import (  
+    get_near_grid_assignments,
+    refine_near_grid_edges,
     Grid,
     get_basin_charge_volume_from_label,
     get_edges,
@@ -32,7 +34,7 @@ class Bader:
         self,
         charge_grid: Grid,
         reference_grid: Grid,
-        method: Literal["ongrid", "weight"] = None,
+        method: Literal["ongrid", "neargrid", "weight", "hybrid-weight"] = None,
         directory: Path = Path("."),
     ):
         self.charge_grid = charge_grid
@@ -203,8 +205,8 @@ class Bader:
         if self.method == "ongrid":
             self._run_bader_on_grid()
 
-        # elif self.method == "neargrid":
-        #     self._run_bader_near_grid()
+        elif self.method == "neargrid":
+            self._run_bader_near_grid()
 
         elif self.method == "weight":
             self._run_bader_weight()
@@ -303,122 +305,121 @@ class Bader:
         basin_charges /= self.charge_grid.shape.prod()
         self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
 
-    # def _run_bader_near_grid(self):
-    #     """
-    #     Assigns voxels to basins and calculates charge using the near-grid
-    #     method:
-    #         G. Henkelman, A. Arnaldsson, and H Jonsson.
-    #         A fast and robust algorithm for Bader decomposition of charge density,
-    #         J. Phys.: Condens. Matter 21, 084204 (2009).
-    #     """
-    #     grid = self.reference_grid.copy()
-    #     data = grid.total
+    def _run_bader_near_grid(self):
+        """
+        Assigns voxels to basins and calculates charge using the near-grid
+        method:
+            G. Henkelman, A. Arnaldsson, and H Jonsson.
+            A fast and robust algorithm for Bader decomposition of charge density,
+            J. Phys.: Condens. Matter 21, 084204 (2009).
+        """
+        grid = self.reference_grid.copy()
+        data = grid.total
 
-    #     logging.info("Calculating gradient")
-    #     # Calculate the gradient in fractional coords
-    #     du,dv,dw = 1/grid.shape
-    #     frac_gradients = []
-    #     for axis, step in zip((0,1,2), (du,dv,dw)):
-    #     # for axis in (0,1,2):
-    #         # TODO: Also compare with center point in case it is above both of these
-    #         shifted_up_data = np.roll(data, -1, axis)
-    #         shifted_down_data = np.roll(data, 1, axis)
-    #         shift_diff = shifted_up_data-shifted_down_data
-    #         # zero out where both are lower than the central data
-    #         shift_diff[(shifted_up_data<data)&(shifted_down_data<data)] = 0
-    #         frac_gradients.append(shift_diff/(2*step))
-    #         # frac_gradients.append(shift_diff/2)
-    #     frac_gradients_stack = np.stack(frac_gradients)
-    #     # convert to cartesian to remove bias of non-orthogonal lattices
-    #     lattice_matrix = grid.structure.lattice.matrix
-    #     M = np.linalg.inv(lattice_matrix)
-    #     cart_gradients = np.einsum('ia,axyz->ixyz', M, frac_gradients_stack)
-    #     # convert back to fractional coordinates.
-    #     dir_gradients = np.einsum('ai,ixyz->axyz', lattice_matrix, cart_gradients)
-    #     dir_grad_flat = dir_gradients.reshape(3,grid.voxel_num).T
-    #     # Normalize each row so that the highest value is 1
-
-    #     with np.errstate(divide='ignore', invalid='ignore'):
-    #         max_vals = np.max(np.abs(dir_grad_flat), axis=1)
-    #         rgrad = dir_grad_flat/max_vals[:, np.newaxis]
-    #     # replace nan values resulting from divide by 0
-    #     rgrad[np.isnan(rgrad)] = 0
-    #     # Now we calculate the rgrid value.
-    #     rgrid = np.round(rgrad).astype(np.int64)
-    #     delta_rs = rgrad-rgrid
-    #     # Calculate expected neighbor to avoid calc in loop. Note we don't wrap the coord
-    #     # here because we will need to during the loop anyways
-    #     flat_voxel_coords =  np.indices(data.shape).reshape(3, -1).T
-    #     pointer_voxel_coords = flat_voxel_coords + rgrid
-    #     # Calculate the location of 0 shifts
-    #     zero_grads = np.sum(rgrid, axis=1) == 0
-    #     # Now we have two steps left. We need to start at a voxel and hill climb using
-    #     # rgrid, keeping track of the accumulated delta_rs. If the delta r every goes
-    #     # above 0.5 on any axis we correct the gradient and subtract the correction from
-    #     # our delta r. We stop when we reach a maximum or an already labeled voxel. This
-    #     # allows us to skip if we've hit an existing voxel. Then we need to perform a
-    #     # single refinement.
-    #     logging.info("Calculating initial assignments")
-    #     # get the labels of each voxel. This allows us to point a new voxel to its corresponding
-    #     # rgrid and delta r
-    #     flat_voxel_indices = np.arange(np.prod(data.shape))
-    #     voxel_indices = flat_voxel_indices.reshape(data.shape)
-    #     neighbors = list(product([-1,0,1], repeat=3))
-    #     neighbors = np.array([i for i in neighbors if i != (0,0,0)], dtype=np.int64)
-    #     cart_neighbors = grid.get_cart_coords_from_vox(neighbors)
-    #     neigh_dists = np.linalg.norm(cart_neighbors, axis=1)
-    #     assignments, updated_pointer_voxel_coords, maxima_mask = get_near_grid_assignments(
-    #         data=data,
-    #         flat_voxel_coords=flat_voxel_coords,
-    #         pointer_voxel_coords=pointer_voxel_coords,
-    #         voxel_indices=voxel_indices,
-    #         zero_grads=zero_grads,
-    #         rgrid=rgrid,
-    #         delta_rs=delta_rs,
-    #         neighbors=neighbors,
-    #         neighbor_dists=neigh_dists,
-    #         )
-    #     # assign maxima fractional coords
-    #     flat_maxima_mask = maxima_mask.ravel()
-    #     maxima_vox_coords = flat_voxel_coords[flat_maxima_mask]
-    #     maxima_frac_coords = grid.get_frac_coords_from_vox(maxima_vox_coords)
-    #     self._basin_maxima_frac = maxima_frac_coords
-    #     # Now we need to refine the edges. First we find them
-    #     edge_mask = get_edges(labeled_array=assignments, neighbor_transforms=neighbors)
-    #     # remove maxima from the mask in case we have any particularly small basins
-    #     edge_mask = edge_mask & ~maxima_mask
-    #     flat_edge_mask = edge_mask.ravel()
-    #     edge_voxel_coords = flat_voxel_coords[flat_edge_mask]
-    #     # We also need to unlabel any edges so that we don't accidentally assign to
-    #     # an incorrect edge
-    #     refined_assignments = assignments.copy()
-    #     refined_assignments[edge_mask] = 0
-    #     # Now we loop over them in parallel and perform the same operation as before
-    #     # but only assigning the first voxel
-    #     logging.info("Refining edges")
-    #     refined_assignments = refine_near_grid_edges(
-    #         assignments=refined_assignments,
-    #         edge_voxel_coords=edge_voxel_coords,
-    #         pointer_voxel_coords=updated_pointer_voxel_coords,
-    #         voxel_indices=voxel_indices,
-    #         delta_rs=delta_rs,
-    #         )
-    #     # readjust refined assignments to correct indices
-    #     refined_assignments -= 1
-    #     self._basin_labels = refined_assignments.copy()
-    #     # self._basin_labels = assignments.copy()
-    #     # get charge and volume for each label
-    #     logging.info("Calculating basin charges and volumes")
-    #     charge_data = self.charge_grid.total
-    #     voxel_volume = self.charge_grid.voxel_volume
-    #     basin_charges, basin_volumes = get_basin_charge_volume_from_label(
-    #         basin_labels=refined_assignments,
-    #         # basin_labels=assignments,
-    #         charge_data=charge_data,
-    #         voxel_volume=voxel_volume,
-    #         maxima_num=len(maxima_frac_coords))
-    #     basin_charges /= self.charge_grid.shape.prod()
-    #     self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
+        logging.info("Calculating gradient")
+        # Calculate the gradient in fractional coords
+        du,dv,dw = 1/grid.shape
+        frac_gradients = []
+        for axis, step in zip((0,1,2), (du,dv,dw)):
+        # for axis in (0,1,2):
+            shifted_up_data = np.roll(data, -1, axis)
+            shifted_down_data = np.roll(data, 1, axis)
+            shift_diff = shifted_up_data-shifted_down_data
+            # zero out where both are lower than the central data
+            shift_diff[(shifted_up_data<data)&(shifted_down_data<data)] = 0
+            frac_gradients.append(shift_diff/(2*step))
+        frac_gradients_stack = np.stack(frac_gradients)
+        # convert to cartesian to remove bias of non-orthogonal lattices
+        lattice_matrix = grid.structure.lattice.matrix
+        M = np.linalg.inv(lattice_matrix)
+        cart_gradients = np.einsum('ia,axyz->ixyz', M, frac_gradients_stack)
+        # convert back to fractional coordinates.
+        dir_gradients = np.einsum('ai,ixyz->axyz', lattice_matrix, cart_gradients)
+        dir_grad_flat = dir_gradients.reshape(3,grid.voxel_num).T
+        # Normalize each row so that the highest value is 1
+        with np.errstate(divide='ignore', invalid='ignore'):
+            max_vals = np.max(np.abs(dir_grad_flat), axis=1)
+            rgrad = dir_grad_flat/max_vals[:, np.newaxis]
+        # replace nan values resulting from divide by 0
+        rgrad[np.isnan(rgrad)] = 0
+        # Now we calculate the rgrid value.
+        rgrid = np.round(rgrad).astype(np.int64)
+        delta_rs = rgrad-rgrid
+        # Calculate expected neighbor to avoid calc in loop. Note we don't wrap the coord
+        # here because we will need to during the loop anyways
+        flat_voxel_coords =  np.indices(data.shape).reshape(3, -1).T
+        pointer_voxel_coords = flat_voxel_coords + rgrid
+        # Calculate the location of 0 shifts
+        zero_grads = np.sum(rgrid, axis=1) == 0
+        # Now we have two steps left. We need to start at a voxel and hill climb using
+        # rgrid, keeping track of the accumulated delta_rs. If the delta r ever goes
+        # above 0.5 on any axis we correct the gradient and subtract the correction from
+        # our delta r. We stop when we reach a maximum or an already labeled voxel. This
+        # allows us to skip if we've hit an existing voxel. Then we need to perform a
+        # single refinement.
+        logging.info("Calculating initial assignments")
+        # get the labels of each voxel. This allows us to point a new voxel to its corresponding
+        # rgrid and delta r
+        flat_voxel_indices = np.arange(np.prod(data.shape))
+        voxel_indices = flat_voxel_indices.reshape(data.shape)
+        neighbors = list(product([-1,0,1], repeat=3))
+        neighbors = np.array([i for i in neighbors if i != (0,0,0)], dtype=np.int64)
+        cart_neighbors = grid.get_cart_coords_from_vox(neighbors)
+        neigh_dists = np.linalg.norm(cart_neighbors, axis=1)
+        assignments, maxima_mask = get_near_grid_assignments(
+            data=data,
+            flat_voxel_coords=flat_voxel_coords,
+            pointer_voxel_coords=pointer_voxel_coords,
+            voxel_indices=voxel_indices,
+            zero_grads=zero_grads,
+            # rgrid=rgrid,
+            delta_rs=delta_rs,
+            neighbors=neighbors,
+            neighbor_dists=neigh_dists,
+            )
+        # assign maxima fractional coords
+        flat_maxima_mask = maxima_mask.ravel()
+        maxima_vox_coords = flat_voxel_coords[flat_maxima_mask]
+        maxima_frac_coords = grid.get_frac_coords_from_vox(maxima_vox_coords)
+        self._basin_maxima_frac = maxima_frac_coords
+        # breakpoint()
+        # Now we need to refine the edges. First we find them
+        edge_mask = get_edges(labeled_array=assignments, neighbor_transforms=neighbors)
+        # remove maxima from the mask in case we have any particularly small basins
+        edge_mask = edge_mask & ~maxima_mask
+        flat_edge_mask = edge_mask.ravel()
+        edge_voxel_coords = flat_voxel_coords[flat_edge_mask]
+        # We also need to unlabel any edges so that we don't accidentally assign to
+        # an incorrect edge
+        refined_assignments = assignments.copy()
+        refined_assignments[edge_mask] = 0
+        # Now we loop over them in parallel and perform the same operation as before
+        # but only assigning the first voxel
+        logging.info("Refining edges")
+        # refined_assignments = assignments
+        refined_assignments = refine_near_grid_edges(
+            assignments=refined_assignments,
+            edge_voxel_coords=edge_voxel_coords,
+            pointer_voxel_coords=pointer_voxel_coords,
+            voxel_indices=voxel_indices,
+            delta_rs=delta_rs,
+            )
+        # readjust refined assignments to correct indices
+        refined_assignments -= 1
+        self._basin_labels = refined_assignments.copy()
+        # self._basin_labels = assignments.copy()
+        # get charge and volume for each label
+        logging.info("Calculating basin charges and volumes")
+        charge_data = self.charge_grid.total
+        voxel_volume = self.charge_grid.voxel_volume
+        basin_charges, basin_volumes = get_basin_charge_volume_from_label(
+            basin_labels=refined_assignments,
+            # basin_labels=assignments,
+            charge_data=charge_data,
+            voxel_volume=voxel_volume,
+            maxima_num=len(maxima_frac_coords))
+        basin_charges /= self.charge_grid.shape.prod()
+        self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
 
     def _run_bader_weight(self, hybrid: bool = False):
         """
