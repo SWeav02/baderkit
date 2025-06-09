@@ -5,10 +5,9 @@ Defines a helper class for plotting Grids
 """
 from itertools import product
 from io import StringIO
-import copy
-import time
 
 import numpy as np
+import pandas as pd
 import pyvista as pv
 from pyvista.trame.views import PyVistaLocalView
 from numpy.typing import NDArray
@@ -29,7 +28,9 @@ class StructurePlotter:
         structure: Structure,
         off_screen: bool = False,
     ):
-        # relabel structure
+        # sort and relabel structure for consistency
+        structure = structure.copy()
+        structure.sort()
         structure.relabel_sites()
         # create initial class variables
         self.structure = structure
@@ -152,6 +153,11 @@ class StructurePlotter:
     
     @radii.setter
     def radii(self, radii: list[float]):
+        # fix radii to be a list and make any negative values == 0.01
+        radii = list(radii)
+        for i, val in enumerate(radii):
+            if val <= 0:
+                radii[i] = 0.01
         # check which radii have changed and replace these atoms
         old_radii = self.radii
         # update radii
@@ -186,6 +192,35 @@ class StructurePlotter:
             actor = self.plotter.actors[f"{site.label}"]
             actor.prop.color = new_color
         self._colors = colors
+    
+    @property
+    def atom_df(self):
+        # construct a pandas dataframe for each atom
+        visible = []
+        for i in range(len(self.structure)):
+            if i in self.hidden_atoms:
+                visible.append(False)
+            else:
+                visible.append(True)
+        atom_df = pd.DataFrame({
+            "Label": self.structure.labels,
+            "Visible": visible,
+            "Color": self.colors,
+            "Radius": self.radii,
+            })
+        return atom_df
+    
+    @atom_df.setter
+    def atom_df(self, atom_df: pd.DataFrame):
+        visible = atom_df["Visible"]
+        hidden_atoms = []
+        for i, val in enumerate(visible):
+            if val == False:
+                hidden_atoms.append(i)
+        # set each property from the dataframe
+        self.hidden_atoms = hidden_atoms
+        self.colors = atom_df["Color"]
+        self.radii = atom_df["Radius"]
     
     @property
     def camera_position(self):
@@ -372,9 +407,9 @@ class StructurePlotter:
     def get_view(self):
         return PyVistaLocalView(self.plotter)
 
-    def get_structure_plot_html(self, width: int, height: int):
+    def get_plot_html(self, width: int, height: int):
         plotter = self.plotter
-        # plotter.show(auto_close=False)
+        plotter.show(auto_close=False)
         vtk_pane = panel.pane.VTK(
             plotter.ren_win, 
             width=width, 
@@ -409,8 +444,8 @@ class GridPlotter(StructurePlotter):
         self._colormap = "viridis"
         self._use_solid_surface_color = False
         self._use_solid_cap_color = False
-        self._surface_color = "#FFFFFF"
-        self._cap_color = "#FFFFFF"
+        self._surface_color = "#BA8E23"
+        self._cap_color = "#BA8E23"
 
         # determine default iso if not provided
         self._iso_val = np.mean(grid.total)
@@ -447,8 +482,9 @@ class GridPlotter(StructurePlotter):
     
     @show_surface.setter
     def show_surface(self, show_surface: bool):
-        actor = self.plotter.actors["iso"]
-        actor.visibility = show_surface
+        if "iso" in self.plotter.actors.keys():
+            actor = self.plotter.actors["iso"]
+            actor.visibility = show_surface
         self._show_surface = show_surface
     
     @property
@@ -457,8 +493,9 @@ class GridPlotter(StructurePlotter):
     
     @show_caps.setter
     def show_caps(self, show_caps: bool):
-        actor = self.plotter.actors["cap"]
-        actor.visibility = show_caps
+        if "cap" in self.plotter.actors.keys():
+            actor = self.plotter.actors["cap"]
+            actor.visibility = show_caps
         self._show_caps = show_caps
     
     @property
@@ -467,8 +504,9 @@ class GridPlotter(StructurePlotter):
     
     @surface_opacity.setter
     def surface_opacity(self, surface_opacity: float):
-        actor = self.plotter.actors["iso"]
-        actor.prop.opacity = surface_opacity
+        if "iso" in self.plotter.actors.keys():
+            actor = self.plotter.actors["iso"]
+            actor.prop.opacity = surface_opacity
         self._surface_opacity = surface_opacity
     
     @property
@@ -477,11 +515,11 @@ class GridPlotter(StructurePlotter):
     
     @cap_opacity.setter
     def cap_opacity(self, cap_opacity: float):
-        actor = self.plotter.actors["cap"]
-        actor.prop.opacity = cap_opacity
+        if "cap" in self.plotter.actors.keys():
+            actor = self.plotter.actors["cap"]
+            actor.prop.opacity = cap_opacity
         self._cap_opacity = cap_opacity
     
-    # BUG: Colormapping doesn't seem to work in tram for some reason.
     @property
     def colormap(self):
         return self._colormap
@@ -491,11 +529,9 @@ class GridPlotter(StructurePlotter):
         # update settings
         self._colormap = colormap
         if not self.use_solid_surface_color:
-            # self.plotter.remove_actor("iso")
-            self.plotter.add_mesh(self.iso, **self.get_surface_kwargs())
+            self._add_iso_mesh()
         if not self.use_solid_cap_color:
-            # self.plotter.remove_actor("cap")
-            self.plotter.add_mesh(self.cap, **self.get_cap_kwargs())
+            self._add_cap_mesh()
 
     @property
     def use_solid_surface_color(self):
@@ -507,8 +543,7 @@ class GridPlotter(StructurePlotter):
         #update property
         self._use_solid_surface_color = use_solid_surface_color
         # remove surface and add it back with new color/cmap
-        self.plotter.remove_actor("iso")
-        self.plotter.add_mesh(self.iso, **self.get_surface_kwargs())
+        self._add_iso_mesh()
         
     
     @property
@@ -520,8 +555,7 @@ class GridPlotter(StructurePlotter):
         #update property
         self._use_solid_cap_color = use_solid_cap_color
         # remove cap and add it back with new color/cmap
-        self.plotter.remove_actor("cap")
-        self.plotter.add_mesh(self.cap, **self.get_cap_kwargs())
+        self._add_cap_mesh()
     
     @property
     def surface_color(self):
@@ -531,8 +565,7 @@ class GridPlotter(StructurePlotter):
     def surface_color(self, surface_color: str):
         self._surface_color = surface_color
         if self.use_solid_surface_color:
-            self.plotter.remove_actor("iso")
-            self.plotter.add_mesh(self.surface, **self.get_surface_kwargs())
+            self._add_iso_mesh()
     
     @property
     def cap_color(self):
@@ -542,8 +575,7 @@ class GridPlotter(StructurePlotter):
     def cap_color(self, cap_color: str):
         self._cap_color = cap_color
         if self.use_solid_cap_color:
-            self.plotter.remove_actor("cap")
-            self.plotter.add_mesh(self.cap, **self.get_cap_kwargs())
+            self._add_cap_mesh()
     
     @property
     def iso_val(self):
@@ -552,14 +584,8 @@ class GridPlotter(StructurePlotter):
     @iso_val.setter
     def iso_val(self, iso_val: float):
         self.update_surface_mesh(iso_val)
-        # remove old actors
-        self.plotter.remove_actor("iso")
-        self.plotter.remove_actor("cap")
-        # create actors?
-        # add new ones
-        self.plotter.add_mesh(self.iso, **self.get_surface_kwargs())
-        # Add cap mesh if present
-        self.plotter.add_mesh(self.cap, **self.get_cap_kwargs())
+        self._add_iso_mesh()
+        self._add_cap_mesh()
         
 
     def update_surface_mesh(self, iso_value: float):
@@ -582,6 +608,20 @@ class GridPlotter(StructurePlotter):
             kwargs["clim"] = [self.min_val, self.max_val]
             kwargs["show_scalar_bar"] = False
         return kwargs
+    
+    def _add_iso_mesh(self) -> dict:
+        if self.show_surface:
+            if "iso" in self.plotter.actors.keys():
+                self.plotter.remove_actor("iso")
+            if len(self.iso["values"]) > 0:
+                self.plotter.add_mesh(self.iso, **self.get_surface_kwargs())
+        
+    def _add_cap_mesh(self) -> dict:
+        if self.show_caps:
+            if "cap" in self.plotter.actors.keys():
+                self.plotter.remove_actor("cap")
+            if len(self.iso["values"]) > 0:
+                self.plotter.add_mesh(self.cap, **self.get_cap_kwargs())
 
     def get_surface_kwargs(self) -> dict:
         kwargs = {
@@ -599,29 +639,31 @@ class GridPlotter(StructurePlotter):
             kwargs["show_scalar_bar"] = False
         return kwargs
 
-    def _create_grid_plot(self, off_screen: bool=False) -> pv.Plotter():
+    def _create_grid_plot(self, off_screen) -> pv.Plotter():
         # get initial plotter with structure
-        plotter = self._create_structure_plot(off_screen)
+        plotter = self._create_structure_plot(off_screen=off_screen)
         # generate initial surface meshes
         self.update_surface_mesh(self.iso_val)
         # Add iso mesh
-        plotter.add_mesh(self.iso, **self.get_surface_kwargs())
+        if len(self.iso["values"]) > 0:
+            plotter.add_mesh(self.iso, **self.get_surface_kwargs())
         # Add cap mesh
-        plotter.add_mesh(self.cap, **self.get_cap_kwargs())
+        if len(self.cap["values"]) > 0:
+            plotter.add_mesh(self.cap, **self.get_cap_kwargs())
         return plotter
     
-    def get_grid_plot_html(self, width: int, height: int):
-        plotter = self.get_grid_plot(off_screen=True)
-        # plotter.show(auto_close=False)
-        vtk_pane = panel.pane.VTK(plotter.ren_win, width=width, height=height)
-        # breakpoint()
-        # Create HTML file
-        with StringIO() as model_bytes:
-            vtk_pane.save(
-                model_bytes,
-            )
-            panel_html = model_bytes.getvalue()
-        return panel_html
+    # def get_grid_plot_html(self, width: int, height: int):
+    #     plotter = self.plotter
+    #     # plotter.show(auto_close=False)
+    #     vtk_pane = panel.pane.VTK(plotter.ren_win, width=width, height=height)
+    #     # breakpoint()
+    #     # Create HTML file
+    #     with StringIO() as model_bytes:
+    #         vtk_pane.save(
+    #             model_bytes,
+    #         )
+    #         panel_html = model_bytes.getvalue()
+    #     return panel_html
 
 class BaderPlotter(GridPlotter):
     def __init__(
@@ -649,11 +691,14 @@ class BaderPlotter(GridPlotter):
         # get the initial empty list of hidden atom labels and hidden basin labels
         self._hidden_bader_basins = set()
         self._hidden_atom_basins = set()
+        self.hidden_bader_basins = set([i for i in range(len(bader.basin_atoms))])
+        self.hidden_atom_basins = set([i for i in range(len(self.structure))])
         self._hidden_mask = np.zeros(len(self.flat_bader_basins), dtype=bool)
+        
     
     @property
     def hidden_bader_basins(self):
-        return list(self._hidden_bader_basins)
+        return self._hidden_bader_basins
     
     @hidden_bader_basins.setter
     def hidden_bader_basins(self, hidden_bader_basins: set[int]):
@@ -670,19 +715,19 @@ class BaderPlotter(GridPlotter):
     
     @property
     def hidden_atom_basins(self):
-        return list(self._hidden_atom_basins)
+        return self._hidden_atom_basins
     
     @hidden_atom_basins.setter
     def hidden_atom_basins(self, hidden_atom_basins: set[int]):
         # make sure input is set
         hidden_atom_basins = set(hidden_atom_basins)
         # Get any basins assigned to the hidden atoms
-        bader_basins = np.where(np.isin(self.bader.basin_atoms, hidden_atom_basins))[0]
+        bader_basins = np.where(np.isin(self.bader.basin_atoms, np.array(list(hidden_atom_basins))))[0]
         self._hidden_bader_basins.update(bader_basins)
         # get the atoms that are in the previous mask but not the current one
         new_shown_atoms = self._hidden_atom_basins.difference(hidden_atom_basins)
         # Remove any basins that belonged to these atoms from the hidden set
-        shown_bader_basins = np.where(np.isin(self.bader.basin_atoms, new_shown_atoms))[0]
+        shown_bader_basins = np.where(np.isin(self.bader.basin_atoms, np.array(list(new_shown_atoms))))[0]
         for basin in shown_bader_basins:
             self._hidden_bader_basins.discard(basin)
         # update hidden basins set

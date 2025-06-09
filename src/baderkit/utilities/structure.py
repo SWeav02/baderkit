@@ -15,37 +15,37 @@ class Structure(PymatgenStructure):
         # Get three points that define the plane from miller indices. For indices
         # of zero we can just take one of the other points and add 1 along the
         # lattice direction of interest to make a parallel line
-        try:
-              a1 = np.array([1/h,0,0])
-        except: a1 = None
-        try:
+        if h != 0:
+            a1 = np.array([1/h,0,0])
+        else: a1 = None
+        if k != 0:
               a2 = np.array([0,1/k,0])
-        except: a2 = None
-        try:
+        else: a2 = None
+        if l != 0:
               a3 = np.array([0,0,1/l])
-        except: a3 = None
+        else: a3 = None
         
         if a1 is None:
-              try:
-                    a1 = a2.copy()
-                    a1[0] += 1
-              except:
-                    a1 = a3.copy()
-                    a1[0] += 1
+            if a2 is not None:
+                a1 = a2.copy()
+            else:
+                a1 = a3.copy()
+            a1[0] += 1
+        
         if a2 is None:
-              try:
-                    a2 = a1.copy()
-                    a2[1] += 1
-              except:
-                    a2 = a3.copy()
-                    a2[1] += 1
+            if a1 is not None:
+                a2 = a1.copy()
+            else:
+                a2 = a3.copy()
+            a2[1] += 1
+        
         if a3 is None:
-              try:
-                    a3 = a1.copy()
-                    a3[2] += 1
-              except:
-                    a3 = a2.copy()
-                    a3[2] += 1
+            if a1 is not None:
+                a3 = a1.copy()
+            else:
+                a3 = a2.copy()
+            a3[2] += 1
+
         # get real space coords from fractional coords
         a1_real = lattice.get_cartesian_coords(a1)
         a2_real = lattice.get_cartesian_coords(a2)

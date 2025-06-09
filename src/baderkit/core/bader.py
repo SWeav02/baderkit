@@ -856,7 +856,43 @@ class Bader:
         data = {"total": data_array_copy}
         grid = Grid(self.structure, data)
         grid.write_file(directory / f"{file_prefix}_asum")
-
+    
+    def get_atom_results_dataframe(self):
+        """
+        Collects a summary of results for the atoms
+        """
+        # Get atom results summary
+        atom_frac_coords = self.structure.frac_coords
+        atoms_df = pd.DataFrame(
+            {   
+                "label": self.structure.labels,
+                "x": atom_frac_coords[:, 0],
+                "y": atom_frac_coords[:, 1],
+                "z": atom_frac_coords[:, 2],
+                "charge": self.atom_charges,
+                "volume": self.atom_volumes,
+                "surface_dist": self.atom_surface_distances,
+            }
+        )
+        return atoms_df
+    
+    def get_basin_results_dataframe(self):
+        """
+        Collects a summary of results for the basins
+        """
+        basin_frac_coords = self.basin_maxima_frac
+        basin_df = pd.DataFrame(
+            {   "atoms": self.basin_atoms,
+                "x": basin_frac_coords[:, 0],
+                "y": basin_frac_coords[:, 1],
+                "z": basin_frac_coords[:, 2],
+                "charge": self.basin_charges,
+                "volume": self.basin_volumes,
+                "surface_dist": self.basin_surface_distances,
+            }
+        )
+        return basin_df
+    
     def write_results_summary(
         self,
     ):
@@ -866,31 +902,11 @@ class Bader:
         directory = self.directory
 
         # Get atom results summary
-        atom_frac_coords = self.structure.frac_coords
-        atoms_df = pd.DataFrame(
-            {
-                "x": atom_frac_coords[:, 0],
-                "y": atom_frac_coords[:, 1],
-                "z": atom_frac_coords[:, 2],
-                "charge": self.atom_charges,
-                "volume": self.atom_volumes,
-                "surface_dist": self.atom_surface_distances,
-            }
-        )
+        atoms_df = self.get_atom_results_dataframe()
         formatted_atoms_df = atoms_df.map(lambda x: f"{x:.6f}")
 
         # Get basin results summary
-        basin_frac_coords = self.basin_maxima_frac
-        basin_df = pd.DataFrame(
-            {
-                "x": basin_frac_coords[:, 0],
-                "y": basin_frac_coords[:, 1],
-                "z": basin_frac_coords[:, 2],
-                "charge": self.basin_charges,
-                "volume": self.basin_volumes,
-                "surface_dist": self.basin_surface_distances,
-            }
-        )
+        basin_df = self.get_basin_results_dataframe()
         formatted_basin_df = basin_df.map(lambda x: f"{x:.6f}")
 
         # Determine max width per column including header
