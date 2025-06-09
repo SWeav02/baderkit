@@ -12,7 +12,7 @@ def get_bader_widgets(plotter: BaderPlotter, pane):
     init_bader_results = plotter.bader.get_basin_results_dataframe().copy()
     init_atom_results = plotter.bader.get_atom_results_dataframe().copy()
     # Get dataframe for atoms
-    hidden_atom_basins_df = pn.widgets.Tabulator(
+    visible_atom_basins_df = pn.widgets.Tabulator(
         init_atom_results,
         show_index=False,
         selectable="checkbox",
@@ -21,7 +21,7 @@ def get_bader_widgets(plotter: BaderPlotter, pane):
         hidden_columns = ["x", "y", "z"]
         )
     
-    hidden_bader_basins_df = pn.widgets.Tabulator(
+    visible_bader_basins_df = pn.widgets.Tabulator(
         init_bader_results,
         selectable="checkbox",
         disabled=True,
@@ -30,35 +30,36 @@ def get_bader_widgets(plotter: BaderPlotter, pane):
         )
     
     # Define function for hiding atoms
-    def hidden_atom_basins(*events):
+    def visible_atom_basins(*events):
         for event in events:
             if event.name == "selection":
                 selection = event.new
                 # get atoms not in selection
-                inverse_selection = [i for i in range(len(plotter.structure)) if i not in selection]
-                plotter.hidden_atom_basins = inverse_selection
+                plotter.visible_atom_basins = selection
                 # update basin dataframe
-                hidden_bader_basins_df.selection = [i for i in range(len(plotter.bader.basin_atoms)) if i not in plotter.hidden_bader_basins]
                 pane.synchronize()
+                # plotter.rebuild()
+                # # plotter.camera_position = camera_position
+                # pane.object = plotter.plotter.ren_win
     # Define function for hiding basins
-    def hidden_bader_basins(*events):
+    def visible_bader_basins(*events):
         for event in events:
             if event.name == "selection":
                 selection = event.new
                 # get basins not in selection
-                inverse_selection = [i for i in range(len(plotter.bader.basin_atoms)) if i not in selection]
-                plotter.hidden_bader_basins = inverse_selection
-                # update basin dataframe
-                hidden_atom_basins_df.selection = [i for i in range(len(plotter.structure)) if i not in plotter.hidden_atom_basins]
+                plotter.visible_bader_basins = selection
                 pane.synchronize()
+                # plotter.rebuild()
+                # # plotter.camera_position = camera_position
+                # pane.object = plotter.plotter.ren_win
     # link functions
-    hidden_atom_basins_df.param.watch(hidden_atom_basins, 'selection')
-    hidden_bader_basins_df.param.watch(hidden_bader_basins, 'selection')
+    visible_atom_basins_df.param.watch(visible_atom_basins, 'selection')
+    visible_bader_basins_df.param.watch(visible_bader_basins, 'selection')
     
     # create dict of items that can be automatically updated
-    bader_dict = {}
+    bader_list = []
     bader_column = pn.WidgetBox(
-        hidden_atom_basins_df,
-        hidden_bader_basins_df,
+        visible_atom_basins_df,
+        visible_bader_basins_df,
         )
-    return bader_dict, bader_column
+    return bader_list, bader_column

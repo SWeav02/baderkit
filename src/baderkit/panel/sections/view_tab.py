@@ -11,10 +11,12 @@ def get_view_widgets(plotter: BaderPlotter, pane):
     # Lattice Widgets
     show_lattice = pn.widgets.Checkbox(
         name='Show Lattice',
+        tags=["show_lattice"],
         value=True,
         )
     lattice_thickness = pn.widgets.FloatInput(
         value=plotter.lattice_thickness, 
+        tags=["lattice_thickness"],
         name="Lattice Thickness",
         step=0.01, 
         start=0.00,
@@ -23,6 +25,7 @@ def get_view_widgets(plotter: BaderPlotter, pane):
         )
     background = pn.widgets.ColorPicker(
         name="Background",
+        tags=['background'],
         value=plotter.background,
         )
     # View Widgets
@@ -58,19 +61,20 @@ def get_view_widgets(plotter: BaderPlotter, pane):
         row = view_df.value.iloc[0]
         h,k,l = row["h"], row["k"], row["l"]
         angle = [h,k,l]
-        # I probably need to set the camera using the pane not the plotter.
+        # TODO: This doesn't work despite matching the docs
         plotter.camera_position = angle
         pane.synchronize()
+        
     pn.bind(update_view, apply_view, watch=True)
     view_row = pn.Row(view_df, apply_view)
     
     
     
-    widgets_dict = {
-        "show_lattice": show_lattice,
-        "lattice_thickness": lattice_thickness,
-        "background": background,
-        }
+    widgets_list = [
+        show_lattice,
+        lattice_thickness,
+        background,
+        ]
     # create column to show in the tab
     view_column = pn.WidgetBox(
         show_lattice,
@@ -81,4 +85,4 @@ def get_view_widgets(plotter: BaderPlotter, pane):
         
         sizing_mode='stretch_width',
         )
-    return widgets_dict, view_column
+    return widgets_list, view_column

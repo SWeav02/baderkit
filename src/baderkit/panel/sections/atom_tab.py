@@ -57,6 +57,10 @@ def get_atom_widgets(plotter: BaderPlotter, pane):
         df = pd.DataFrame(data)
         plotter.atom_df = df
         pane.synchronize()
+        # camera_position = plotter.camera_position
+        # plotter.rebuild()
+        # plotter.camera_position = camera_position
+        # pane.object = plotter.plotter.ren_win
     
     # get all of the widgets and sync them to th update
     all_widgets = [w for row in rows[1:] for w in row[1:]]
@@ -75,6 +79,6 @@ def get_atom_widgets(plotter: BaderPlotter, pane):
     #     )
     
     # Create dict of widgets that can be automatically updated
-    atoms_dict = {}
+    atoms_list = []
     
-    return atoms_dict, atoms_column
+    return atoms_list, atoms_column

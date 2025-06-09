@@ -4,6 +4,7 @@ import pyvista as pv
 import panel as pn
 import inspect
 import os
+import time
 
 from baderkit.core import Bader
 from baderkit.plotting import BaderPlotter
@@ -35,12 +36,16 @@ pv.OFF_SCREEN = True
 
 # get initial plotter
 plotter = BaderPlotter(bader, off_screen=True)
-plotter.plotter.suppress_rendering = True
+# plotter.plotter.suppress_rendering = True
 # Update camera angle
 plotter.plotter.camera.tight()
 plotter.camera_position = [1,0,0]
 
-pane = pn.panel(plotter.plotter.ren_win, sizing_mode="stretch_both")
+pane = pn.pane.vtk.vtk.VTKRenderWindowSynchronized(
+    plotter.plotter.ren_win, 
+    sizing_mode="stretch_both",
+    enable_keybindings=True,
+    )
 
 
 # define an update funciton for general options
@@ -48,16 +53,31 @@ plotter_properties = [
     name for name, value in inspect.getmembers(BaderPlotter)
     if isinstance(value, property)
 ]
-def update_plotter(**kwargs):
-    for key, value in kwargs.items():
-        if not key in plotter_properties:
+# IMPORTANT: Use the watch method rather than bind. Returning a new pane
+# caused immense lag, likely due to background storage of previous panes.
+def update_plotter(*events):
+    for event in events:
+        property_name = event.obj.tags[0]
+        print(property_name)
+        if not event.name == 'value':
             continue
+        if property_name not in plotter_properties:
+            continue
+    # for key, value in kwargs.items():
+    #     if not key in plotter_properties:
+    #         continue
         # get current value
-        current_val = getattr(plotter, key)
-        if value != current_val:
-            setattr(plotter, key, value)
-    pane.synchronize()
-    return pane
+        current_val = getattr(plotter, property_name)
+        if event.new != current_val:
+            setattr(plotter, property_name, event.new)
+            # time.sleep(0.01)
+            # plotter.plotter.close()
+            # camera_position = plotter.camera_position
+            # plotter.rebuild()
+            # plotter.camera_position = camera_position
+            pane.object = plotter.plotter.ren_win
+            # pane.synchronize()
+            # return pane
 
 # The get widgets functions return the widgets to bind and the column to
 # add to the tab as a tuple.
@@ -71,11 +91,13 @@ def update_plotter(**kwargs):
     get_grid_widgets(plotter), 
     get_view_widgets(plotter, pane)
     )
-kwargs = {}
-# We don't bind the bader widgets because they are bound separately
-for widget_dict in [atom_widgets, grid_widgets, view_widgets]:
-    kwargs.update(widget_dict)
-bound_plot = pn.bind(update_plotter, **kwargs)
+all_widgets = []
+# # We don't bind the bader widgets because they are bound separately
+for widgets_list in [atom_widgets, grid_widgets, view_widgets]:
+    all_widgets.extend(widgets_list)
+# bound_plot = pn.bind(update_plotter, **kwargs)
+for widget in all_widgets:
+    widget.param.watch(update_plotter, ['value'])
  
 Tabs = pn.Tabs(("Basins", bader_column), ("Atoms", atoms_column), ("Grid", grid_column), ("View", view_column))
 
@@ -83,5 +105,5 @@ pn.template.MaterialTemplate(
     site="BaderKit",
     title="Plotter",
     sidebar=[Tabs],
-    main=[bound_plot],
+    main=[pane],
 ).servable()

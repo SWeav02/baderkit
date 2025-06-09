@@ -35,7 +35,7 @@ class StructurePlotter:
         # create initial class variables
         self.structure = structure
         self._off_screen = off_screen
-        self._hidden_atoms = []
+        self._visible_atoms = [i for i in range(len(self.structure))]
         self._show_lattice = True
         self._wrap_atoms = True
         self._lattice_thickness = 0.1
@@ -50,26 +50,26 @@ class StructurePlotter:
         ]
         # generate initial plotter
         self.plotter = self._create_structure_plot(off_screen)
-    
+        self.camera_position = [1,0,0]
     ###########################################################################
     # Properties and Setters
     ###########################################################################
     @property
-    def hidden_atoms(self) -> list[int]:
-        return self._hidden_atoms
+    def visible_atoms(self) -> list[int]:
+        return self._visible_atoms
     
-    @hidden_atoms.setter
-    def hidden_atoms(self, hidden_atoms: list[int]):
+    @visible_atoms.setter
+    def visible_atoms(self, visible_atoms: list[int]):
         # update visibility of atoms
         for i, site in enumerate(self.structure):
             label = site.label
             actor = self.plotter.actors[f"{label}"]
-            if i in hidden_atoms:
-                actor.visibility = False
-            else:
+            if i in visible_atoms:
                 actor.visibility = True
-        # set hidden atoms
-        self._hidden_atoms = hidden_atoms
+            else:
+                actor.visibility = False
+        # set visible atoms
+        self._visible_atoms = visible_atoms
     
     @property
     def show_lattice(self):
@@ -198,10 +198,10 @@ class StructurePlotter:
         # construct a pandas dataframe for each atom
         visible = []
         for i in range(len(self.structure)):
-            if i in self.hidden_atoms:
-                visible.append(False)
-            else:
+            if i in self.visible_atoms:
                 visible.append(True)
+            else:
+                visible.append(False)
         atom_df = pd.DataFrame({
             "Label": self.structure.labels,
             "Visible": visible,
@@ -213,12 +213,12 @@ class StructurePlotter:
     @atom_df.setter
     def atom_df(self, atom_df: pd.DataFrame):
         visible = atom_df["Visible"]
-        hidden_atoms = []
+        visible_atoms = []
         for i, val in enumerate(visible):
-            if val == False:
-                hidden_atoms.append(i)
+            if val == True:
+                visible_atoms.append(i)
         # set each property from the dataframe
-        self.hidden_atoms = hidden_atoms
+        self.visible_atoms = visible_atoms
         self.colors = atom_df["Color"]
         self.radii = atom_df["Radius"]
     
@@ -334,7 +334,6 @@ class StructurePlotter:
         meshes = [
             self.get_site_mesh(i)
             for i in range(len(self.structure))
-            if i not in self.hidden_atoms
         ]
         return meshes
 
@@ -372,14 +371,17 @@ class StructurePlotter:
         plotter.set_background(self.background)
         # add atoms
         atom_meshes = self.get_all_site_meshes()
-        for site, atom_mesh, color in zip(self.structure, atom_meshes, self.colors):
-            plotter.add_mesh(
+        for i, (site, atom_mesh, color) in enumerate(zip(self.structure, atom_meshes, self.colors)):
+            actor = plotter.add_mesh(
                 atom_mesh,
                 color=color,
                 metallic=self.atom_metallicness,
                 pbr=True,  # enable physical based rendering
-                name=f"{site.label}"
+                name=f"{site.label}",
             )
+            if not i in self.visible_atoms:
+                actor.visibility = False
+            
         # add lattice if desired
         lattice_mesh = self.get_lattice_mesh()
         plotter.add_mesh(
@@ -409,12 +411,10 @@ class StructurePlotter:
 
     def get_plot_html(self, width: int, height: int):
         plotter = self.plotter
-        plotter.show(auto_close=False)
         vtk_pane = panel.pane.VTK(
             plotter.ren_win, 
             width=width, 
             height=height,
-            
             )
         # Create HTML file
         with StringIO() as model_bytes:
@@ -447,8 +447,7 @@ class GridPlotter(StructurePlotter):
         self._surface_color = "#BA8E23"
         self._cap_color = "#BA8E23"
 
-        # determine default iso if not provided
-        self._iso_val = np.mean(grid.total)
+        
         
         # wrap values around to get one extra voxel on the far side of each axis.
         values = np.pad(
@@ -460,6 +459,8 @@ class GridPlotter(StructurePlotter):
         # make min val slightly above 0
         self.min_val += +0.0000001 * self.min_val
         self.max_val = self.values.max()
+        # determine default iso if not provided
+        self._iso_val = self.min_val #np.mean(grid.total)
         # generate the structured grid
         indices = np.indices(self.shape).reshape(3, -1, order="F").T
         self.points = grid.get_cart_coords_from_vox(indices)
@@ -587,13 +588,28 @@ class GridPlotter(StructurePlotter):
         self._add_iso_mesh()
         self._add_cap_mesh()
         
-
     def update_surface_mesh(self, iso_value: float):
         self.iso = self.structured_grid.contour([iso_value])
         self.cap = self.surface.contour_banded(
             2, rng=[iso_value, self.max_val], generate_contour_edges=False
         )
 
+    def get_surface_kwargs(self) -> dict:
+        kwargs = {
+            "opacity": self.surface_opacity, 
+            "pbr": True, 
+            "name": "iso", 
+            }
+        kwargs["color"] = self.surface_color
+        if self.use_solid_surface_color:
+            kwargs["color"] = self.surface_color
+        else:
+            kwargs["colormap"] = self.colormap
+            kwargs["scalars"] = "values"
+            kwargs["clim"] = [self.min_val, self.max_val]
+            kwargs["show_scalar_bar"] = False
+        return kwargs
+        
     def get_cap_kwargs(self) -> dict:
         kwargs = {
             "opacity": self.cap_opacity, 
@@ -623,22 +639,6 @@ class GridPlotter(StructurePlotter):
             if len(self.iso["values"]) > 0:
                 self.plotter.add_mesh(self.cap, **self.get_cap_kwargs())
 
-    def get_surface_kwargs(self) -> dict:
-        kwargs = {
-            "opacity": self.surface_opacity, 
-            "pbr": True, 
-            "name": "iso", 
-            }
-        kwargs["color"] = self.surface_color
-        if self.use_solid_surface_color:
-            kwargs["color"] = self.surface_color
-        else:
-            kwargs["colormap"] = self.colormap
-            kwargs["scalars"] = "values"
-            kwargs["clim"] = [self.min_val, self.max_val]
-            kwargs["show_scalar_bar"] = False
-        return kwargs
-
     def _create_grid_plot(self, off_screen) -> pv.Plotter():
         # get initial plotter with structure
         plotter = self._create_structure_plot(off_screen=off_screen)
@@ -652,18 +652,9 @@ class GridPlotter(StructurePlotter):
             plotter.add_mesh(self.cap, **self.get_cap_kwargs())
         return plotter
     
-    # def get_grid_plot_html(self, width: int, height: int):
-    #     plotter = self.plotter
-    #     # plotter.show(auto_close=False)
-    #     vtk_pane = panel.pane.VTK(plotter.ren_win, width=width, height=height)
-    #     # breakpoint()
-    #     # Create HTML file
-    #     with StringIO() as model_bytes:
-    #         vtk_pane.save(
-    #             model_bytes,
-    #         )
-    #         panel_html = model_bytes.getvalue()
-    #     return panel_html
+    def rebuild(self):
+        self.plotter.close()
+        self.plotter = self._create_grid_plot(self._off_screen)
 
 class BaderPlotter(GridPlotter):
     def __init__(
@@ -688,58 +679,45 @@ class BaderPlotter(GridPlotter):
         self.flat_bader_basins = padded_basins.ravel(order="F")
         self.flat_atom_basins = padded_atoms.ravel(order="F")
         
-        # get the initial empty list of hidden atom labels and hidden basin labels
-        self._hidden_bader_basins = set()
-        self._hidden_atom_basins = set()
-        self.hidden_bader_basins = set([i for i in range(len(bader.basin_atoms))])
-        self.hidden_atom_basins = set([i for i in range(len(self.structure))])
+        # get the initial empty list of visible atom labels and visible basin labels
+        self._visible_bader_basins = set()
+        self._visible_atom_basins = set()
+        self.visible_bader_basins = []
+        self.visible_atom_basins = []
         self._hidden_mask = np.zeros(len(self.flat_bader_basins), dtype=bool)
         
     
     @property
-    def hidden_bader_basins(self):
-        return self._hidden_bader_basins
+    def visible_bader_basins(self):
+        return self._visible_bader_basins
     
-    @hidden_bader_basins.setter
-    def hidden_bader_basins(self, hidden_bader_basins: set[int]):
+    @visible_bader_basins.setter
+    def visible_bader_basins(self, visible_bader_basins: set[int]):
         # make sure input is set
-        hidden_bader_basins = set(hidden_bader_basins)
-        # Get the atom assignments of each basin. Update the hidden atoms to include
-        # any of these
-        atoms = self.bader.basin_atoms[np.array(list(hidden_bader_basins)).astype(int)]
-        self._hidden_atom_basins.update(atoms)
-        # set hidden basins
-        self._hidden_bader_basins = hidden_bader_basins
+        visible_bader_basins = set(visible_bader_basins)
+        # set visible basins
+        self._visible_bader_basins = visible_bader_basins
         # update plotter
         self._update_plotter_mask()
     
     @property
-    def hidden_atom_basins(self):
-        return self._hidden_atom_basins
+    def visible_atom_basins(self):
+        return self._visible_atom_basins
     
-    @hidden_atom_basins.setter
-    def hidden_atom_basins(self, hidden_atom_basins: set[int]):
+    @visible_atom_basins.setter
+    def visible_atom_basins(self, visible_atom_basins: set[int]):
         # make sure input is set
-        hidden_atom_basins = set(hidden_atom_basins)
-        # Get any basins assigned to the hidden atoms
-        bader_basins = np.where(np.isin(self.bader.basin_atoms, np.array(list(hidden_atom_basins))))[0]
-        self._hidden_bader_basins.update(bader_basins)
-        # get the atoms that are in the previous mask but not the current one
-        new_shown_atoms = self._hidden_atom_basins.difference(hidden_atom_basins)
-        # Remove any basins that belonged to these atoms from the hidden set
-        shown_bader_basins = np.where(np.isin(self.bader.basin_atoms, np.array(list(new_shown_atoms))))[0]
-        for basin in shown_bader_basins:
-            self._hidden_bader_basins.discard(basin)
-        # update hidden basins set
-        self._hidden_atom_basins = hidden_atom_basins
+        visible_atom_basins = set(visible_atom_basins)
+        # update visible basins set
+        self._visible_atom_basins = visible_atom_basins
         # update plotter
         self._update_plotter_mask()
     
     
     def _update_plotter_mask(self):
-        hidden_mask = (
-            np.isin(self.flat_bader_basins, list(self._hidden_bader_basins))
-            | np.isin(self.flat_atom_basins, list(self._hidden_atom_basins))
+        hidden_mask = ~(
+            np.isin(self.flat_bader_basins, list(self._visible_bader_basins))
+            | np.isin(self.flat_atom_basins, list(self._visible_atom_basins))
             )
         self._hidden_mask = hidden_mask
         # NOTE: using hide_cells works, but results in some funky artifacting.
@@ -754,6 +732,7 @@ class BaderPlotter(GridPlotter):
         self.surface = self.structured_grid.extract_surface()
         # update plotter
         self.iso_val = self.iso_val
+        
         
         
         

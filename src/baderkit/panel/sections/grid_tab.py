@@ -8,11 +8,10 @@ from baderkit.plotting import BaderPlotter
 from bokeh.models.formatters import PrintfTickFormatter
 
 def get_grid_widgets(plotter: BaderPlotter):
-    
-    # iso value selection
-    # init_iso = plotter.iso_val
+    # General Selection
     iso_val = pn.widgets.EditableFloatSlider(
         name='Iso Value', 
+        tags=['iso_val'],
         start=plotter.min_val, 
         end=plotter.max_val, 
         step=round(plotter.max_val-plotter.min_val)/1000, 
@@ -22,6 +21,7 @@ def get_grid_widgets(plotter: BaderPlotter):
         )
     colormap = pn.widgets.Select(
         name="Colormap", 
+        tags=['colormap'],
         value="viridis",
         options=plt.colormaps()
         )
@@ -29,20 +29,24 @@ def get_grid_widgets(plotter: BaderPlotter):
     # Surface selection
     show_surface = pn.widgets.Checkbox(
         name='Show Surface',
+        tags=['show_surface'],
         value=True,
         )
     use_solid_surface_color = pn.widgets.Checkbox(
         name='Solid Color',
+        tags=['use_solid_surface_color'],
         value=False,
         align="center",
         )
     surface_color = pn.widgets.ColorPicker(
         value=plotter.surface_color,
+        tags=['surface_color'],
         align="center",
         )
     surface_color_row = pn.Row(use_solid_surface_color, surface_color)
     surface_opacity = pn.widgets.EditableFloatSlider(
         name='Surface Opacity', 
+        tags=['surface_opacity'],
         start=0.0, 
         end=1.0, 
         step=0.01, 
@@ -53,20 +57,24 @@ def get_grid_widgets(plotter: BaderPlotter):
     # Cap selection
     show_caps = pn.widgets.Checkbox(
         name='Show Caps',
+        tags=['show_caps'],
         value=True,
         )
     use_solid_cap_color = pn.widgets.Checkbox(
         name='Solid Color',
+        tags=['use_solid_cap_color'],
         value=False,
         align="center",
         )
     cap_color = pn.widgets.ColorPicker(
         value=plotter.cap_color,
+        tags=['cap_color'],
         align="center",
         )
     cap_color_row = pn.Row(use_solid_cap_color, cap_color)
     cap_opacity = pn.widgets.EditableFloatSlider(
         name='Cap Opacity', 
+        tags=['cap_opacity'],
         start=0.0, 
         end=1.0, 
         step=0.01, 
@@ -76,19 +84,18 @@ def get_grid_widgets(plotter: BaderPlotter):
     
     
     # create dict of widgets that can be automatically mapped
-    widgets_dict = {
-        "iso_val": iso_val,
-        "colormap": colormap,
-        "use_solid_surface_color": use_solid_surface_color,
-        "show_surface": show_surface,
-        "surface_opacity": surface_opacity,
-        "surface_color": surface_color,
-        "use_solid_cap_color": use_solid_cap_color,
-        "show_caps": show_caps,
-        "cap_opacity": cap_opacity,
-        "cap_color": cap_color,
-        }
-    # create column to show in the tab
+    widgets_list = [
+        iso_val,
+        colormap,
+        use_solid_surface_color,
+        show_surface,
+        surface_opacity,
+        surface_color,
+        use_solid_cap_color,
+        show_caps,
+        cap_opacity,
+        cap_color,
+        ]    # create column to show in the tab
     grid_column = pn.WidgetBox(
         iso_val,
         colormap,
@@ -103,4 +110,4 @@ def get_grid_widgets(plotter: BaderPlotter):
         sizing_mode='stretch_width',
         )
     
-    return widgets_dict, grid_column
+    return widgets_list, grid_column

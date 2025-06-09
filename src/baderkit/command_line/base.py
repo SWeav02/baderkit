@@ -98,6 +98,12 @@ def webapp(
             help="The method to use for separating bader basins",
             case_sensitive=False,
         ),
+        dev: bool = typer.Option(
+            False,
+            "--dev",
+            "-d",
+            help="Launches panel in development version",
+            )
         ):
     """
     Starts the web interface
@@ -113,31 +119,21 @@ def webapp(
     if reference_file is not None:
         os.environ["REFERENCE_FILE"] = str(reference_file)
     
+    args = [
+        "panel",
+        "serve",
+        str(webapp_path),
+        ]
+    
+    if dev:
+        args.append("--dev")
+    
     subprocess.run(
-        args = [
-            "panel",
-            "serve",
-            str(webapp_path)
-            ],
+        args = args,
         check=True
     )
 
-    # process = subprocess.Popen(
-    #     [
-    #         "panel", 
-    #         "serve", 
-    #         str(webapp_path), 
-    #         "--args", 
-    #         f"charge_file={charge_file}",
-    #         f"reference_file={reference_file}",
-    #         f"method={method}"
-    #         ],
-    #     stdin=subprocess.PIPE,
-    #     stdout=subprocess.PIPE,
-    #     stderr=subprocess.STDOUT,
-    #     text=True,
-    #     bufsize=1
-    # )
+
     
     
     
