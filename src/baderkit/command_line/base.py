@@ -92,7 +92,7 @@ def webapp(
             help="The path to the reference file",
         ),
         method: Method = typer.Option(
-            Method.weight,
+            "weight",
             "--method",
             "-m",
             help="The method to use for separating bader basins",
@@ -106,19 +106,19 @@ def webapp(
     current_file = Path(__file__).resolve()
     # get relative path to streamlit app
     webapp_path = current_file.parent.parent / "panel" / "webapp.py"
-    args = [
-        "panel", 
-        "serve", 
-        str(webapp_path), 
-        "--args", 
-        f"charge_file={charge_file}",
-        f"method={method}"
-    ]
+    # set environmental variables
+    os.environ["CHARGE_FILE"] = str(charge_file)
+    os.environ["BADER_METHOD"] = method
+    
     if reference_file is not None:
-        args.append(f"reference_file={reference_file}")
+        os.environ["REFERENCE_FILE"] = str(reference_file)
     
     subprocess.run(
-        args = args,
+        args = [
+            "panel",
+            "serve",
+            str(webapp_path)
+            ],
         check=True
     )
 

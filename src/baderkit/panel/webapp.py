@@ -3,8 +3,7 @@
 import pyvista as pv
 import panel as pn
 import inspect
-import sys
-import argparse
+import os
 
 from baderkit.core import Bader
 from baderkit.plotting import BaderPlotter
@@ -16,21 +15,16 @@ from baderkit.panel.sections import (
     )
 
 # Get bader results first
-args = sys.argv
-print("Arguments:", args)
-
-parser = argparse.ArgumentParser()
-args = parser.parse_args()
-parser.add_argument('--charge_file', type=str, default='CHGCAR')
-parser.add_argument('--reference_file', type=str, default=None, nargs='?')
-parser.add_argument('--method', type=str, default='weight')
-parsed_args, _ = parser.parse_known_args()
-charge_file = parsed_args.charge_file
-reference_file = parsed_args.reference_file
-method = parsed_args.method
+env = os.environ.copy()
+charge_filename = env["CHARGE_FILE"]
+method = env["BADER_METHOD"]
+if "REFERENCE_FILE" in env.keys():
+    reference_filename = env["REFERENCE_FILE"]
+else:
+    reference_filename = None
 bader = Bader.from_vasp(
-    charge_filename=charge_file,
-    reference_filename=reference_file,
+    charge_filename=charge_filename,
+    reference_filename=reference_filename,
     method=method,
     )
 
