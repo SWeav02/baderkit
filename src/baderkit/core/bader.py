@@ -372,17 +372,20 @@ class Bader:
             pointer_voxel_coords=pointer_voxel_coords,
             voxel_indices=voxel_indices,
             zero_grads=zero_grads,
-            # rgrid=rgrid,
             delta_rs=delta_rs,
             neighbors=neighbors,
             neighbor_dists=neigh_dists,
             )
-        # assign maxima fractional coords
+        # Get the maxima coordinates
         flat_maxima_mask = maxima_mask.ravel()
         maxima_vox_coords = flat_voxel_coords[flat_maxima_mask]
+        # Reorder to be in ascending label order
+        maxima_labels = assignments[maxima_mask]
+        maxima_sorted_indices = np.argsort(maxima_labels)
+        maxima_vox_coords = maxima_vox_coords[maxima_sorted_indices]
+        # get frac coords and assign
         maxima_frac_coords = grid.get_frac_coords_from_vox(maxima_vox_coords)
         self._basin_maxima_frac = maxima_frac_coords
-        # breakpoint()
         # Now we need to refine the edges. First we find them
         edge_mask = get_edges(labeled_array=assignments, neighbor_transforms=neighbors)
         # remove maxima from the mask in case we have any particularly small basins
@@ -398,16 +401,19 @@ class Bader:
         logging.info("Refining edges")
         # refined_assignments = assignments
         refined_assignments = refine_near_grid_edges(
+            data=data,
             assignments=refined_assignments,
             edge_voxel_coords=edge_voxel_coords,
             pointer_voxel_coords=pointer_voxel_coords,
             voxel_indices=voxel_indices,
+            zero_grads=zero_grads,
             delta_rs=delta_rs,
+            neighbors=neighbors,
+            neighbor_dists=neigh_dists,
             )
         # readjust refined assignments to correct indices
         refined_assignments -= 1
         self._basin_labels = refined_assignments.copy()
-        # self._basin_labels = assignments.copy()
         # get charge and volume for each label
         logging.info("Calculating basin charges and volumes")
         charge_data = self.charge_grid.total
