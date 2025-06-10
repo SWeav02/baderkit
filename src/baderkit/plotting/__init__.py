@@ -1,2 +1,2 @@
 # -*- coding: utf-8 -*-
-from .plotter import BaderPlotter, GridPlotter, StructurePlotter
+from .core import BaderPlotter, GridPlotter, StructurePlotter

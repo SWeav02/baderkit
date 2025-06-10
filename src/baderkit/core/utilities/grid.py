@@ -15,7 +15,7 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
-from baderkit.utilities.structure import Structure
+from baderkit.core.utilities.structure import Structure
 
 class Grid(VolumetricData):
     """
@@ -1031,7 +1031,7 @@ class Grid(VolumetricData):
         # instance because we want to keep any useful information such as whether
         # the grid is spin polarized or not.
 
-        return cls(structure=cls.structure.copy(), data=data)
+        return cls(structure=grid1.structure.copy(), data=data)
 
     @staticmethod
     def label(input: NDArray, structure: NDArray = np.ones([3, 3, 3])) -> NDArray[int]:
@@ -1497,6 +1497,48 @@ class Grid(VolumetricData):
         poscar, data, data_aug = cls.parse_file(grid_file)
 
         return cls(structure = poscar.structure, data = data, data_aug=data_aug)
+    
+    @classmethod
+    def from_dynamic(
+            cls, 
+            grid_file: str | Path,
+            format: Literal["vasp", "cube", None] = None,
+            ) -> Self:
+        """
+        Create a grid instance using a VASP or .cube file. If no format is provided
+        the format is guesed by the name of the file.
+
+        Parameters
+        ----------
+        grid_file : str | Path
+            The file the instance should be made from.
+        format : Literal["vasp", "cube", None], optional
+            The format of the provided file. If None, a guess will be made based
+            on the name of the file. The default is None.
+
+        Returns
+        -------
+        Self
+            Grid from the specified file.
+
+        """
+        grid_file = Path(grid_file)
+        if format is None:
+            # guess format from file name
+            if ".cube" in grid_file.name.lower():
+                format = "cube"
+            elif "car" in grid_file.name.lower():
+                format = "vasp"
+            else:
+                raise ValueError(
+                "No format recognized. Cube files should contain '.cube' and vasp should contain 'CAR'."
+                    )
+        if format == "cube":
+            return cls.from_cube(grid_file)
+        elif format == "vasp":
+            return cls.from_vasp(grid_file)
+        else:
+            raise ValueError("Provided format is not recognized. Must be 'vasp' or 'cube'")
 
     @classmethod
     def from_vasp_string(cls, file_string: str) -> Self:
@@ -1605,3 +1647,8 @@ class Grid(VolumetricData):
             data_aug = {"total": all_dataset_aug.get(0)}
 
         return cls(structure=poscar.structure, data=data, data_aug=data_aug)
+    
+    def write_file(self, file_name: Path | str, vasp4_compatible: bool = False,):
+        file_name = Path(file_name)
+        logging.info(f"Writing {file_name.name}")
+        super().write_file(file_name=file_name, vasp4_compatible=vasp4_compatible)

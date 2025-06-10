@@ -14,4 +14,7 @@ from .numba_functions import (
     get_single_weight_voxels,
     get_steepest_pointers,
     refine_near_grid_edges,
+    
+    propagate_edges,
+    unmark_isolated_voxels,
 )

@@ -87,6 +87,54 @@ def get_edges(
                         break
     return edges
 
+@njit(parallel=True, cache=True)
+def propagate_edges(
+    edge_mask: NDArray[np.bool_],
+    neighbor_transforms: NDArray[np.int64],
+        ):
+    new_edge_mask = np.zeros_like(edge_mask, dtype=np.bool_)
+    nx, ny, nz = edge_mask.shape
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if not edge_mask[i, j, k]:
+                    # skip voxels that aren't edges
+                    continue 
+                # set as an edge
+                new_edge_mask[i,j,k] = True
+                for shift in neighbor_transforms:
+                    ii = (i + shift[0]) % nx
+                    jj = (j + shift[1]) % ny
+                    kk = (k + shift[2]) % nz
+                    # mark neighbor as an edge
+                    new_edge_mask[ii,jj,kk] = True
+    return new_edge_mask
+
+@njit(parallel=True, cache=True)
+def unmark_isolated_voxels(
+    edge_mask: NDArray[np.bool_],
+    neighbor_transforms: NDArray[np.int64],
+):
+    nx, ny, nz = edge_mask.shape
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if not edge_mask[i, j, k]:
+                    continue  # Only unmark candidates
+
+                found_edge_neighbor = False
+                for shift in neighbor_transforms:
+                    ii = (i + shift[0]) % nx
+                    jj = (j + shift[1]) % ny
+                    kk = (k + shift[2]) % nz
+                    if edge_mask[ii, jj, kk]:
+                        found_edge_neighbor = True
+                        break
+
+                if not found_edge_neighbor:
+                    edge_mask[i, j, k] = False
+    return edge_mask
+
 
 @njit(parallel=True, cache=True)
 def get_neighbor_diffs(
@@ -579,24 +627,27 @@ def get_near_grid_assignments(
 @njit(fastmath=True, cache=True)
 def refine_near_grid_edges(
     data: NDArray[np.float64],
-    assignments: NDArray[np.int64],
+    current_assignments: NDArray[np.int64],
+    refined_assignments: NDArray[np.int64],
     edge_voxel_coords: NDArray[np.int64],
     pointer_voxel_coords: NDArray[np.int64],
     voxel_indices: NDArray[np.int64],
     zero_grads: NDArray[np.bool_],
-    # rgrid: NDArray[np.int64],
     delta_rs: NDArray[np.float64],
     neighbors: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
 ):
     nx, ny, nz = data.shape
     # create array for assigning
-    new_assignments = assignments.copy()
+    new_assignments = refined_assignments.copy()
     # create scratch array for tracking which points have been visited
     visited_indices = np.empty((nx * ny * nz), dtype=np.int64)
+    # create counter for edges that have been updated
+    changed_labels = 0
     # iterate over all voxels, their pointers, and delta rs
     for initial_coord in edge_voxel_coords:
         current_coord = initial_coord.copy()
+        original_label = current_assignments[current_coord[0],current_coord[1],current_coord[2]]
         # Begin a while loop climbing the gradient and correcting it until we
         # reach either a maximum or an already assigned label
         total_dr = np.zeros(3, dtype=np.float64)
@@ -604,10 +655,13 @@ def refine_near_grid_edges(
         while True:
             i, j, k = current_coord
             # First check if this coord has an assignment
-            current_label = assignments[i, j, k]
+            current_label = refined_assignments[i, j, k]
             if current_label != 0:
                 # We've found the assignment for our original coord and label it
                 new_assignments[initial_coord[0], initial_coord[1], initial_coord[2]]=current_label
+                # update new label counter
+                if current_label != original_label:
+                    changed_labels += 1
                 # and we halt this loop
                 break
 
@@ -707,7 +761,7 @@ def refine_near_grid_edges(
                         break
 
             current_coord = np.array((ni, nj, nk), dtype=np.int64)
-    return new_assignments
+    return new_assignments, changed_labels
 
 # @njit(cache=True)
 # def refine_near_grid_edges(
