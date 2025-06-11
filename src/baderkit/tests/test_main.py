@@ -11,9 +11,6 @@ from baderkit.plotting import BaderPlotter
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"
 
-# TODO:
-    # Test plotter
-    # Test command line
 
 def test_instance_bader_from_grid():
     # try reading the grid with vasp method
@@ -81,3 +78,8 @@ def test_running_bader_methods(tmp_path, method):
     assert atom_results == expected_atom_results
     assert basin_results == expected_basin_results
     
+# TODO:
+    # Test sum files command
+    # Test running bader from CLI. Can probably just do one non-default method with
+    # a single printing method
+    # Test running streamlit app once it exists
