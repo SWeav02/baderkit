@@ -13,8 +13,8 @@ from pyvista.trame.views import PyVistaLocalView
 from numpy.typing import NDArray
 import panel
 
-from baderkit.plotting.defaults import ATOM_COLORS
-from baderkit.utilities import Grid, Structure
+from baderkit.plotting.core.defaults import ATOM_COLORS
+from baderkit.core.utilities import Grid, Structure
 from baderkit.core import Bader
 
 

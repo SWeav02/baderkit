@@ -22,8 +22,6 @@ from baderkit.core.utilities import (
     get_neighbor_flux,
     get_single_weight_voxels,
     get_steepest_pointers,
-    propagate_edges,
-    unmark_isolated_voxels,
 )
 
 
@@ -955,11 +953,13 @@ class Bader:
     
     def write_results_summary(
         self,
+        directory: Path | str | None = None,
     ):
         """
         Writes a summary of atom and basin results to a .csv
         """
-        directory = self.directory
+        if directory is None:
+            directory = self.directory
 
         # Get atom results summary
         atoms_df = self.get_atom_results_dataframe()
