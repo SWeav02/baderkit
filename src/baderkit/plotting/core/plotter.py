@@ -3,15 +3,12 @@
 """
 Defines a helper class for plotting Grids
 """
-import logging
 import os
 import tempfile
-from io import StringIO
 from itertools import product
 
 import numpy as np
 import pandas as pd
-import panel
 import pyvista as pv
 from numpy.typing import NDArray
 from pyvista.trame.views import PyVistaLocalView

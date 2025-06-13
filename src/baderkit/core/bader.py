@@ -4,7 +4,7 @@ import copy
 import logging
 from itertools import product
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 
 import numpy as np
 import pandas as pd
@@ -23,6 +23,9 @@ from baderkit.core.utilities import (
     get_steepest_pointers,
     refine_near_grid_edges,
 )
+
+# This allows for Self typing and is compatible with python 3.10
+Self = TypeVar("Self", bound="Bader")
 
 
 class Bader:

@@ -5,7 +5,7 @@ import logging
 import math
 from functools import cached_property
 from pathlib import Path
-from typing import Literal, Self
+from typing import Literal, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -16,6 +16,9 @@ from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
 from baderkit.core.utilities.structure import Structure
+
+# This allows for Self typing and is compatible with python 3.10
+Self = TypeVar("Self", bound="Grid")
 
 
 class Grid(VolumetricData):
