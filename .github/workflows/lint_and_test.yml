@@ -54,7 +54,7 @@ jobs:
           channel-priority: strict
       # The lines "shell: bash -l {0}" ensure we use the created env below
       
-      - name: Install Simmate
+      - name: Install BaderKit
         shell: bash -l {0}
         run: |
           pip install -e .
@@ -63,7 +63,7 @@ jobs:
       # done in last step, but we repeat this because of a bug:
       #  "maggma 0.57.0 has requirement ruamel.yaml<0.18, but you have ruamel-yaml 0.18.5."
       
-      # Run checks to see that simmate & deps are installed correctly
+      # Run checks to see that baderkit & deps are installed correctly
       - name: Check conda info
         shell: bash -l {0}
         run: |
