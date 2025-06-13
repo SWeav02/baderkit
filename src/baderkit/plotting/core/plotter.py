@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 import pyvista as pv
 from numpy.typing import NDArray
-from pyvista.trame.views import PyVistaLocalView
 
 from baderkit.core import Bader
 from baderkit.core.utilities import Grid, Structure
@@ -440,9 +439,6 @@ class StructurePlotter:
 
     def rebuild(self) -> pv.Plotter():
         return self._create_structure_plot(self._off_screen)
-
-    def get_view(self):
-        return PyVistaLocalView(self.plotter)
 
     def get_plot_html(self):
         html_io = self.plotter.export_html(None)
