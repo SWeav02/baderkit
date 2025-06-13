@@ -37,6 +37,7 @@ class Method(str, Enum):
     weight = "weight"
     hybrid_weight = "hybrid-weight"
     ongrid = "ongrid"
+    neargrid = "neargrid"
 
 class Format(str, Enum):
     vasp = "vasp"

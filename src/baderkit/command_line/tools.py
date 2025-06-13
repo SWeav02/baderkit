@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 
+import subprocess
+import os
+from enum import Enum
 from pathlib import Path
 import logging
 
@@ -46,57 +49,72 @@ def sum(
     else:
         file_pre = "CHGCAR"
     summed_grid.write_file(f"{file_pre}_sum")
+
+class Method(str, Enum):
+    weight = "weight"
+    hybrid_weight = "hybrid-weight"
+    ongrid = "ongrid"
+    neargrid = "neargrid"
     
-# @tools_app.command()
-# def webapp(
-#         charge_file: Path = typer.Argument(
-#             ...,
-#             help="The path to the charge density file",
-#         ),
-#         reference_file: Path = typer.Option(
-#             None,
-#             "--reference_file",
-#             "-ref",
-#             help="The path to the reference file",
-#         ),
-#         method: Method = typer.Option(
-#             "weight",
-#             "--method",
-#             "-m",
-#             help="The method to use for separating bader basins",
-#             case_sensitive=False,
-#         ),
-#         dev: bool = typer.Option(
-#             False,
-#             "--dev",
-#             "-d",
-#             help="Launches panel in development version",
-#             )
-#         ):
-#     """
-#     Starts the web interface
-#     """
-#     # get this files path
-#     current_file = Path(__file__).resolve()
-#     # get relative path to streamlit app
-#     webapp_path = current_file.parent.parent / "panel" / "webapp.py"
-#     # set environmental variables
-#     os.environ["CHARGE_FILE"] = str(charge_file)
-#     os.environ["BADER_METHOD"] = method
+@tools_app.command()
+def webapp(
+        charge_file: Path = typer.Argument(
+            ...,
+            help="The path to the charge density file",
+        ),
+        reference_file: Path = typer.Option(
+            None,
+            "--reference_file",
+            "-ref",
+            help="The path to the reference file",
+        ),
+        method: Method = typer.Option(
+            "weight",
+            "--method",
+            "-m",
+            help="The method to use for separating bader basins",
+            case_sensitive=False,
+        ),
+        # dev: bool = typer.Option(
+        #     False,
+        #     "--dev",
+        #     "-d",
+        #     help="Launches panel in development version",
+        #     )
+        ):
+    """
+    Starts the web interface
+    """
+    # get this files path
+    current_file = Path(__file__).resolve()
+    # get relative path to streamlit app
+    webapp_path = current_file.parent.parent / "plotting" / "web_gui" / "streamlit" / "webapp.py"
+    # set environmental variables
+    os.environ["CHARGE_FILE"] = str(charge_file)
+    os.environ["BADER_METHOD"] = method
     
-#     if reference_file is not None:
-#         os.environ["REFERENCE_FILE"] = str(reference_file)
+    if reference_file is not None:
+        os.environ["REFERENCE_FILE"] = str(reference_file)
     
-#     args = [
-#         "panel",
-#         "serve",
-#         str(webapp_path),
-#         ]
+    args = [
+        "streamlit",
+        "run",
+        str(webapp_path),
+        ]
     
-#     if dev:
-#         args.append("--dev")
-    
-#     subprocess.run(
-#         args = args,
-#         check=True
-#     )
+
+    process = subprocess.Popen(
+        args=args,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
+    )
+    # Look for prompt and send blank input if needed
+    for line in process.stdout:
+        print(line, end="")  # Optional: show Streamlit output
+        if "email" in line:
+            process.stdin.write("\n")
+            process.stdin.flush()
+            break  # After this, Streamlit should proceed normally

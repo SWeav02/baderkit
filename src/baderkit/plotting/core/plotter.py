@@ -5,7 +5,10 @@ Defines a helper class for plotting Grids
 """
 from itertools import product
 from io import StringIO
+import tempfile
+import os
 
+import logging
 import numpy as np
 import pandas as pd
 import pyvista as pv
@@ -41,7 +44,8 @@ class StructurePlotter:
         self._lattice_thickness = 0.1
         self._atom_metallicness = 0.0
         self._background = "#FFFFFF"
-        # self._view_indices = [1,0,0]
+        self._view_indices = [1,0,0]
+        self._up_indices = [0,0,1]
         self._show_axes = True
         self._parallel_projection = True
         self._radii = [s.specie.atomic_radius for s in structure]
@@ -50,7 +54,8 @@ class StructurePlotter:
         ]
         # generate initial plotter
         self.plotter = self._create_structure_plot(off_screen)
-        self.camera_position = [1,0,0]
+        self.view_indices = [1,0,0]
+        self.up_indices = [0,0,1]
     ###########################################################################
     # Properties and Setters
     ###########################################################################
@@ -140,11 +145,10 @@ class StructurePlotter:
     
     @parallel_projection.setter
     def parallel_projection(self, parallel_projection: bool):
-        for renderer in self.plotter.renderers:
-            if parallel_projection:
-                renderer.enable_parallel_projection()
-            else:
-                renderer.disable_parallel_projection()
+        if parallel_projection:
+            self.plotter.renderer.enable_parallel_projection()
+        else:
+            self.plotter.renderer.disable_parallel_projection()
         self._parallel_projection = parallel_projection
     
     @property
@@ -223,6 +227,30 @@ class StructurePlotter:
         self.radii = atom_df["Radius"]
     
     @property
+    def view_indices(self):
+        return self._view_indices
+    
+    @view_indices.setter
+    def view_indices(self, view_indices: NDArray[int]):
+        assert len(view_indices) == 3 and all(type(i)==int for i in view_indices), "View indices must be an array or list of miller indices"
+        h,k,l = view_indices
+        camera_position = self.get_camera_position_from_miller(h, k, l)
+        self.camera_position = camera_position
+        self._view_indices = view_indices
+        
+    @property
+    def up_indices(self):
+        return self._up_indices
+    
+    @up_indices.setter
+    def up_indices(self, up_indices: NDArray[int]):
+        assert len(up_indices) == 3 and all(type(i)==int for i in up_indices), "Up indices must be an array or list of miller indices"
+        self._up_indices = up_indices
+        h,k,l = self.view_indices
+        camera_position = self.get_camera_position_from_miller(h,k,l)
+        self.camera_position = camera_position
+    
+    @property
     def camera_position(self):
         pos = self.plotter.camera_position
         # convert to list for serializability
@@ -293,9 +321,11 @@ class StructurePlotter:
         
         # Use the z-axis as the view up, unless its parallel
         # TODO: Make sure this is rigorous
-        z_axis = np.array([0, 0, 1])
+        u, v, w = self.up_indices
+        z_axis = self.structure.get_cart_from_miller(u,v,w)
         if np.allclose(np.abs(np.dot(view_direction, z_axis)), 1.0):
-            view_up = np.array([0, 1, 0])  # fallback to y-axis if z is parallel
+            # fallback to y-axis if z is parallel
+            view_up = self.structure.get_cart_from_miller(0,1,0)  
         else:
             view_up = z_axis
         # return camera position
@@ -396,7 +426,7 @@ class StructurePlotter:
         
         # set camera perspective type
         if self.parallel_projection:
-            plotter.enable_parallel_projection()
+            plotter.renderer.enable_parallel_projection()
         
         return plotter
     
@@ -406,36 +436,57 @@ class StructurePlotter:
     def update(self):
         self.plotter.update()
     
+    def rebuild(self) -> pv.Plotter():
+        return self._create_structure_plot(self._off_screen)
+    
     def get_view(self):
         return PyVistaLocalView(self.plotter)
 
-    def get_plot_html(self, width: int, height: int):
-        plotter = self.plotter
-        vtk_pane = panel.pane.VTK(
-            plotter.ren_win, 
-            width=width, 
-            height=height,
-            )
-        # Create HTML file
-        with StringIO() as model_bytes:
-            vtk_pane.save(
-                model_bytes,
-            )
-            panel_html = model_bytes.getvalue()
-        return panel_html
+    def get_plot_html(self):
+        html_io = self.plotter.export_html(None)
+        return html_io.getvalue()
+    
+    def get_plot_vtksz(self):
+        # Create temp file path manually
+        with tempfile.NamedTemporaryFile(suffix=".vtkjs", delete=False) as f:
+            temp_path = f.name  # Just get the path, don't use the open file
+        # Now write to it
+        self.plotter.export_vtksz(temp_path)
+        # Read the contents
+        with open(temp_path, "rb") as f:
+            content = f.read()
+        # Clean up
+        os.remove(temp_path)
 
+        return content
+    
+    def get_plot_screenshot(
+            self,
+            **kwargs,
+            ):
+        plotter = self.rebuild()
+        plotter.camera = self.plotter.camera.copy()
+        screenshot = plotter.screenshot(**kwargs)
+        plotter.close()
+        return screenshot
 
 class GridPlotter(StructurePlotter):
     def __init__(
         self,
         grid: Grid,
         off_screen: bool = False,
+        # downscale: int | None = 400,
     ):
         # apply StructurePlotter kwargs
         structure = grid.structure
         super().__init__(structure=structure, off_screen=off_screen)
 
         # Grid specific items
+        # if downscale is not None:
+        #     if grid.voxel_resolution > downscale:
+        #         # downscale the grid for speed
+        #         logging.info("Grid is above desired resolution. Downscaling.")
+        #         grid = grid.regrid(downscale)
         self.grid = grid
         self._show_surface = True
         self._show_caps = True
@@ -584,6 +635,8 @@ class GridPlotter(StructurePlotter):
     
     @iso_val.setter
     def iso_val(self, iso_val: float):
+        # make sure iso value is within range
+        iso_val = max(self.min_val, min(iso_val, self.max_val))
         self.update_surface_mesh(iso_val)
         self._add_iso_mesh()
         self._add_cap_mesh()
@@ -653,8 +706,7 @@ class GridPlotter(StructurePlotter):
         return plotter
     
     def rebuild(self):
-        self.plotter.close()
-        self.plotter = self._create_grid_plot(self._off_screen)
+        return self._create_grid_plot(self._off_screen)
 
 class BaderPlotter(GridPlotter):
     def __init__(
