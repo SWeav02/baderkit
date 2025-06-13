@@ -6,17 +6,11 @@ Defines the base 'baderkit' command that all other commands stem from.
 
 from enum import Enum
 from pathlib import Path
-import sys
-import os
-import subprocess
 
 import typer
-from streamlit import config as _config
-from streamlit.web.bootstrap import run as _run
+from typing_extensions import Annotated
 
-from baderkit.core import Bader
-
-# from baderkit.command_line.run import run_app
+from baderkit.command_line.tools import tools_app
 
 baderkit_app = typer.Typer(rich_markup_mode="markdown")
 
@@ -43,6 +37,21 @@ class Method(str, Enum):
     weight = "weight"
     hybrid_weight = "hybrid-weight"
     ongrid = "ongrid"
+    neargrid = "neargrid"
+
+
+class Format(str, Enum):
+    vasp = "vasp"
+    cube = "cube"
+
+
+class PrintOptions(str, Enum):
+    all_atoms = "all_atoms"
+    sel_atoms = "sel_atoms"
+    sum_atoms = "sum_atoms"
+    all_basins = "all_basins"
+    sel_basins = "sel_basins"
+    sum_basins = "sum_basins"
 
 
 @baderkit_app.command()
@@ -64,80 +73,60 @@ def run(
         help="The method to use for separating bader basins",
         case_sensitive=False,
     ),
+    format: Format = typer.Option(
+        None,
+        "--format",
+        "-f",
+        help="The format of the files",
+        case_sensitive=False,
+    ),
+    print: PrintOptions = typer.Option(
+        None,
+        "--print",
+        "-p",
+        help="Optional printing of atom or bader basins",
+        case_sensitive=False,
+    ),
+    indices: Annotated[
+        list[int],
+        typer.Argument(
+            help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`"
+        ),
+    ] = None,
 ):
     """
     Runs a bader analysis on the provided files. File formats are automatically
-    parsed based on the name. Current accepted files include VASP's CHGCAR/ELFCAR.
+    parsed based on the name. Current accepted files include VASP's CHGCAR/ELFCAR
+    or .cube files.
     """
+    from baderkit.core import Bader
+
     # instance bader
-    bader = Bader.from_vasp(
-        charge_filename=charge_file, reference_filename=reference_file, method=method
+    bader = Bader.from_dynamic(
+        charge_filename=charge_file,
+        reference_filename=reference_file,
+        method=method,
+        format=format,
     )
     # write summary
     bader.write_results_summary()
 
-    # TODO:
-    # Add methods for printing basin and atom volumes
+    # write basins
+    if indices is None:
+        indices = []
+    if print == "all_atoms":
+        bader.write_all_atom_volumes()
+    elif print == "all_basins":
+        bader.write_all_basin_volumes()
+    elif print == "sel_atoms":
+        bader.write_atom_volumes(atom_indices=indices)
+    elif print == "sel_basins":
+        bader.write_basin_volumes(basin_indices=indices)
+    elif print == "sum_atoms":
+        bader.write_atom_volumes_sum(atom_indices=indices)
+    elif print == "sum_basins":
+        bader.write_basin_volumes_sum(basin_indices=indices)
 
-@baderkit_app.command()
-def webapp(
-        charge_file: Path = typer.Argument(
-            ...,
-            help="The path to the charge density file",
-        ),
-        reference_file: Path = typer.Option(
-            None,
-            "--reference_file",
-            "-ref",
-            help="The path to the reference file",
-        ),
-        method: Method = typer.Option(
-            "weight",
-            "--method",
-            "-m",
-            help="The method to use for separating bader basins",
-            case_sensitive=False,
-        ),
-        ):
-    """
-    Starts the web interface
-    """
-    # get this files path
-    current_file = Path(__file__).resolve()
-    # get relative path to streamlit app
-    webapp_path = current_file.parent.parent / "panel" / "webapp.py"
-    # set environmental variables
-    os.environ["CHARGE_FILE"] = str(charge_file)
-    os.environ["BADER_METHOD"] = method
-    
-    if reference_file is not None:
-        os.environ["REFERENCE_FILE"] = str(reference_file)
-    
-    subprocess.run(
-        args = [
-            "panel",
-            "serve",
-            str(webapp_path)
-            ],
-        check=True
-    )
 
-    # process = subprocess.Popen(
-    #     [
-    #         "panel", 
-    #         "serve", 
-    #         str(webapp_path), 
-    #         "--args", 
-    #         f"charge_file={charge_file}",
-    #         f"reference_file={reference_file}",
-    #         f"method={method}"
-    #         ],
-    #     stdin=subprocess.PIPE,
-    #     stdout=subprocess.PIPE,
-    #     stderr=subprocess.STDOUT,
-    #     text=True,
-    #     bufsize=1
-    # )
-    
-    
-    
+# Register other commands
+baderkit_app.add_typer(tools_app, name="tools")

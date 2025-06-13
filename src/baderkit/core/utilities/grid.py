@@ -5,7 +5,7 @@ import logging
 import math
 from functools import cached_property
 from pathlib import Path
-from typing import Literal, Self
+from typing import Literal, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -15,7 +15,11 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
-from baderkit.utilities.structure import Structure
+from baderkit.core.utilities.structure import Structure
+
+# This allows for Self typing and is compatible with python 3.10
+Self = TypeVar("Self", bound="Grid")
+
 
 class Grid(VolumetricData):
     """
@@ -25,11 +29,12 @@ class Grid(VolumetricData):
     NOTE: Many properties are cached to prevent expensive repeat calculations.
     To recalculate properties, make a new Grid instance
     """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # convert structure to baderkit utility version
         self.structure = Structure.from_dict(self.structure.as_dict())
-        
+
     @property
     def total(self) -> NDArray[float]:
         return self.data["total"]
@@ -935,7 +940,7 @@ class Grid(VolumetricData):
         else:
             # get the new data dict and return a new grid
             data = {"total": new_total}
-        
+
         # TODO: Add augment data
         return cls(structure=cls.structure, data=data)
 
@@ -982,15 +987,15 @@ class Grid(VolumetricData):
         # convert to dicts
         spin_up_data = {"total": spin_up_data}
         spin_down_data = {"total": spin_down_data}
-        
+
         # TODO: Add augment data?
         spin_up_grid = cls(
-            structure = cls.structure.copy(),
-            data = spin_up_data,
+            structure=cls.structure.copy(),
+            data=spin_up_data,
         )
         spin_down_grid = cls(
-            structure = cls.structure.copy(),
-            data = spin_down_data,
+            structure=cls.structure.copy(),
+            data=spin_down_data,
         )
 
         return spin_up_grid, spin_down_grid
@@ -1031,7 +1036,7 @@ class Grid(VolumetricData):
         # instance because we want to keep any useful information such as whether
         # the grid is spin polarized or not.
 
-        return cls(structure=cls.structure.copy(), data=data)
+        return cls(structure=grid1.structure.copy(), data=data)
 
     @staticmethod
     def label(input: NDArray, structure: NDArray = np.ones([3, 3, 3])) -> NDArray[int]:
@@ -1496,7 +1501,51 @@ class Grid(VolumetricData):
         # Create string to add structure to.
         poscar, data, data_aug = cls.parse_file(grid_file)
 
-        return cls(structure = poscar.structure, data = data, data_aug=data_aug)
+        return cls(structure=poscar.structure, data=data, data_aug=data_aug)
+
+    @classmethod
+    def from_dynamic(
+        cls,
+        grid_file: str | Path,
+        format: Literal["vasp", "cube", None] = None,
+    ) -> Self:
+        """
+        Create a grid instance using a VASP or .cube file. If no format is provided
+        the format is guesed by the name of the file.
+
+        Parameters
+        ----------
+        grid_file : str | Path
+            The file the instance should be made from.
+        format : Literal["vasp", "cube", None], optional
+            The format of the provided file. If None, a guess will be made based
+            on the name of the file. The default is None.
+
+        Returns
+        -------
+        Self
+            Grid from the specified file.
+
+        """
+        grid_file = Path(grid_file)
+        if format is None:
+            # guess format from file name
+            if ".cube" in grid_file.name.lower():
+                format = "cube"
+            elif "car" in grid_file.name.lower():
+                format = "vasp"
+            else:
+                raise ValueError(
+                    "No format recognized. Cube files should contain '.cube' and vasp should contain 'CAR'."
+                )
+        if format == "cube":
+            return cls.from_cube(grid_file)
+        elif format == "vasp":
+            return cls.from_vasp(grid_file)
+        else:
+            raise ValueError(
+                "Provided format is not recognized. Must be 'vasp' or 'cube'"
+            )
 
     @classmethod
     def from_vasp_string(cls, file_string: str) -> Self:
@@ -1605,3 +1654,12 @@ class Grid(VolumetricData):
             data_aug = {"total": all_dataset_aug.get(0)}
 
         return cls(structure=poscar.structure, data=data, data_aug=data_aug)
+
+    def write_file(
+        self,
+        file_name: Path | str,
+        vasp4_compatible: bool = False,
+    ):
+        file_name = Path(file_name)
+        logging.info(f"Writing {file_name.name}")
+        super().write_file(file_name=file_name, vasp4_compatible=vasp4_compatible)

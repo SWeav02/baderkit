@@ -1,0 +1,15 @@
+﻿name: baderkit_dev
+channels:
+  - default
+  - conda-forge
+dependencies:
+  - python
+  - numpy
+  - pandas
+  - matplotlib
+  - typer
+  - pyvista
+  - streamlit
+  - markdown
+  - rich
+  - pytest

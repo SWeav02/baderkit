@@ -33,10 +33,10 @@ from baderkit.core import Bader
 from pathlib import Path
 
 # instantiate the class
-bader = Bader.from_vasp(
-    charge_filename = "path/to/CHGCAR",
-    reference_filename = "path/to/CHGCAR_sum", # Optional. Defaults to charge_file data if empty
-    method="weight", # Optional. Defaults to weight
+bader = Bader.from_dynamic(
+    charge_filename = "path/to/CHGCARorcube",
+    reference_filename = "path/to/CHGCAR_sumorcube", # Optional. Defaults to charge_file data if empty
+    method="neargrid", # Optional. Defaults to neargrid
     directory = Path("path/to/dir") # Optional. The directory to write to.
     )
 
@@ -46,10 +46,15 @@ results = bader.results_summary
 # Or access results as class properties. For example:
 atom_charges = bader.atom_charges # The total charge assigned to each atom
 labels = bader.atom_labels # An array assigning each point in the charge grid to an atom
-```
-For now, the `Bader` class only has a convenience function for loading VASP files. However, the Bader class can also be created from a Path object and Baderkit's custom Grid class. 
 
-Behind the scenes, the Grid class inherits from Pymatgen's [VolumetricData class](https://pymatgen.org/pymatgen.io.vasp.html#pymatgen.io.vasp.outputs.VolumetricData) allowing for creation from a variety of formats. The `Grid` class has convenience functions for loading from `.cube` and `hdf5` files, but can also be created directly from a Pymatgen Structure and a dictionary of containing Array's representing the Charge Density.
+# The charge density of basins or atoms can also be printed
+bader.write_basin_volumes([0])
+bader.write_atom_volumes_sum([0,1,2])
+
+```
+For now, the `Bader` class only has a convenience function for loading VASP or .cube files. However, the Bader class can also be created from a Path object and Baderkit's custom Grid class. 
+
+Behind the scenes, the Grid class inherits from Pymatgen's [VolumetricData class](https://pymatgen.org/pymatgen.io.vasp.html#pymatgen.io.vasp.outputs.VolumetricData) allowing for creation from a variety of formats. The `Grid` class has convenience functions for loading from `CHGCAR/ELFCAR`, `.cube` and `hdf5` files, but can also be created directly from a Pymatgen Structure and a dictionary of containing Array's representing the Charge Density.
 
 ```python
 from baderkit.core import Bader
@@ -64,7 +69,7 @@ path = Path("path/to/dir")
 bader = Bader(
     charge_grid = charge_grid,
     reference_grid = charge_grid,
-    method="weight", # Optional
+    method="neargrid", # Optional
     directory = path,
     )
 
@@ -72,11 +77,11 @@ bader = Bader(
 results = bader.results_summary
 ```
 
-In addition to the Python interface, BaderKit can be run from the command line. Currently only VASP files are supported.
+In addition to the Python interface, BaderKit can be run from the command line.
 1. Activate your environment with BaderKit installed
 2. Run `baderkit run CHGCAR -ref CHGCAR_sum`
 
-Additional methods can be obtained by running `baderkit run --help`. Eventually, I intend to add replicas of the methods available in the Henkelman group's code. I also plan to add support for .cube files and a helper function for creating CHGCAR_sum reference files.
+Additional arguments and options can be viewed by running `baderkit run --help`.
 
 ## Contributing
 

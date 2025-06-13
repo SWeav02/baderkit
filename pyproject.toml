@@ -56,7 +56,6 @@ dependencies=[
     "numba",
     "pyvista", # for plotting grid
     "streamlit", # for web GUI
-    "panel", # for plot html export
     # Extra (smaller) dependencies & utilities
     "markdown",  # for docs and markdown rendering in html templates
     "rich", # for coloring CLI outputs and progress bars
@@ -64,7 +63,7 @@ dependencies=[
 
 # optional dependencies that are not installed by default
 [project.optional-dependencies]
-# For development and testing
+# For development and testing. Taken straight from simmate
 DEV = [
     "pytest",
     "black",
@@ -72,7 +71,7 @@ DEV = [
     "mkdocs-material",
     "mkdocstrings",
     "mkdocstrings-python",
-    "mkdocs_autorefs"  # BUG-FIX
+    "mkdocs_autorefs",
 ]
 
 EXTRAS = [
@@ -81,9 +80,7 @@ EXTRAS = [
 
 # Link to our homepage. Use github for now.
 [project.urls]
-# homepage = "https://simmate.org/"
 repository = "https://github.com/SWeav02/baderkit"
-# documentation = "https://jacksund.github.io/simmate/home/"
 
 # Register command line interface
 [project.scripts]
@@ -119,8 +116,10 @@ baderkit = [
 # https://setuptools.pypa.io/en/latest/userguide/datafiles.html#exclude-package-data
 
 # -----------------------------------------------------------------------------
-# Section for pytests when I make them
+# Section for pytests
 # -----------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 # -----------------------------------------------------------------------------
 
