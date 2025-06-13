@@ -5,7 +5,8 @@ This file contains a series of tests for the core functionality of baderkit.
 from pathlib import Path
 
 import pytest
-from baderkit.core import Grid, Bader
+
+from baderkit.core import Bader, Grid
 from baderkit.plotting import BaderPlotter
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
@@ -23,6 +24,7 @@ def test_instance_bader_from_grid():
     bader = Bader(charge_grid=grid, reference_grid=grid)
     assert bader.reference_grid.diff is not None
 
+
 def test_read_bader_from_file():
     # test default read ins
     bader = Bader.from_vasp(TEST_CHGCAR)
@@ -31,10 +33,10 @@ def test_read_bader_from_file():
     assert bader.charge_grid.diff is not None
     # test reading in reference file
     bader = Bader.from_dynamic(
-        charge_filename=TEST_CHGCAR,
-        reference_filename=TEST_CHGCAR
-        )
+        charge_filename=TEST_CHGCAR, reference_filename=TEST_CHGCAR
+    )
     assert bader.reference_grid.diff is not None
+
 
 def test_writing_bader(tmp_path):
     # read in bader
@@ -56,12 +58,16 @@ def test_writing_bader(tmp_path):
     assert Path(tmp_path / "CHGCAR_asum").exists()
     assert Path(tmp_path / "CHGCAR_bsum").exists()
 
-@pytest.mark.parametrize("method", [
-    "ongrid",
-    "neargrid",
-    "weight",
-    "hybrid-weight",
-    ])
+
+@pytest.mark.parametrize(
+    "method",
+    [
+        "ongrid",
+        "neargrid",
+        "weight",
+        "hybrid-weight",
+    ],
+)
 def test_running_bader_methods(tmp_path, method):
     bader = Bader.from_dynamic(TEST_CHGCAR, method=method)
     with open(TEST_FOLDER / method / "bader_atom_summary.tsv", "r") as file:
@@ -77,9 +83,10 @@ def test_running_bader_methods(tmp_path, method):
         basin_results = file.read()
     assert atom_results == expected_atom_results
     assert basin_results == expected_basin_results
-    
+
+
 # TODO:
-    # Test sum files command
-    # Test running bader from CLI. Can probably just do one non-default method with
-    # a single printing method
-    # Test running streamlit app once it exists
+# Test sum files command
+# Test running bader from CLI. Can probably just do one non-default method with
+# a single printing method
+# Test running streamlit app once it exists

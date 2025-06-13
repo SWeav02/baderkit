@@ -1,23 +1,25 @@
 # -*- coding: utf-8 -*-
-from PIL import Image
 import os
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
+import streamlit as st
+from PIL import Image
 
 from baderkit.core import Bader, Grid
 from baderkit.plotting import BaderPlotter
 
-import streamlit as st
-
-
-st.markdown("""
+st.markdown(
+    """
     <style>
         .stAppDeployButton {display:none;}
         footer {visibility: hidden;}
         #stDecoration {display:none;}
     </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
+
 
 # load and run bader into plotter
 def load_plotter():
@@ -32,7 +34,7 @@ def load_plotter():
         charge_filename=charge_filename,
         reference_filename=reference_filename,
         method=method,
-        )
+    )
     plotter = BaderPlotter(bader, off_screen=True)
     # set plotter camera
     plotter.view_indices = plotter._view_indices
@@ -41,10 +43,11 @@ def load_plotter():
     st.session_state.plotter = plotter
     st.session_state.html_string = plotter.get_plot_html()
     st.session_state.page_height = 400
-    
+
+
 if any(k not in st.session_state for k in ("plotter", "bader")):
     load_plotter()
-    
+
 # get bader/plotter for this session so we don't have to pull from session state constantly
 bader = st.session_state.bader
 plotter = st.session_state.plotter
@@ -53,102 +56,98 @@ st.components.v1.html(st.session_state.html_string, height=st.session_state.page
 settings = {}
 with st.sidebar:
     with st.container(height=st.session_state.page_height):
-        basins_tab, grid_tab, atoms_tab, view_tab, export_tab  = st.tabs(["Basins", "Grid", "Atoms", "View", "Export"])
+        basins_tab, grid_tab, atoms_tab, view_tab, export_tab = st.tabs(
+            ["Basins", "Grid", "Atoms", "View", "Export"]
+        )
         #######################################################################
         # Basin settings
         #######################################################################
         with basins_tab:
-            st.markdown("Select basins to show on the plot. The display will be union of the selection.")
+            st.markdown(
+                "Select basins to show on the plot. The display will be union of the selection."
+            )
             # get selection
             settings["visible_atom_basins"] = st.segmented_control(
-                "Atom Basins", 
+                "Atom Basins",
                 [i for i in range(len(bader.atom_charges))],
                 selection_mode="multi",
-                )
+            )
             settings["visible_bader_basins"] = st.segmented_control(
-                "Bader Basins", 
+                "Bader Basins",
                 [i for i in range(len(bader.basin_charges))],
-                selection_mode="multi"
-                )
-        
+                selection_mode="multi",
+            )
+
         #######################################################################
         # Surface and Cap settings
         #######################################################################
         with grid_tab:
             # general settings
             settings["iso_val"] = st.number_input(
-                f"Iso Value: {round(plotter.min_val,2)} - {round(plotter.max_val,2)}", 
+                f"Iso Value: {round(plotter.min_val,2)} - {round(plotter.max_val,2)}",
                 value=plotter.iso_val,
-                )
+            )
             settings["colormap"] = st.selectbox(
                 "Colormap",
-                options = plt.colormaps(),
-                index = 3, # this is viridis
-                )
+                options=plt.colormaps(),
+                index=3,  # this is viridis
+            )
             st.divider()
             # Surface settings
-            col1, col2, _ = st.columns([2,1,1], vertical_alignment="center")
+            col1, col2, _ = st.columns([2, 1, 1], vertical_alignment="center")
             col1.markdown("Show Surface")
             settings["show_surface"] = col2.toggle(
-                "Show Surface",
-                value=True,
-                label_visibility="collapsed"
-                )
+                "Show Surface", value=True, label_visibility="collapsed"
+            )
             if settings["show_surface"]:
-                col1, col2, col3 = st.columns([2,1,1], vertical_alignment="center")
+                col1, col2, col3 = st.columns([2, 1, 1], vertical_alignment="center")
                 # use solid color
                 col1.markdown("Solid Color")
                 settings["use_solid_surface_color"] = col2.toggle(
-                    "Solid Color",
-                    key="surface_solid",
-                    label_visibility="collapsed"
-                    )
+                    "Solid Color", key="surface_solid", label_visibility="collapsed"
+                )
                 if settings["use_solid_surface_color"]:
                     settings["surface_color"] = col3.color_picker(
                         "Color",
                         value=plotter.surface_color,
                         label_visibility="collapsed",
-                        key="surface_color"
-                        )
+                        key="surface_color",
+                    )
                 settings["surface_opacity"] = st.number_input(
                     "Opacity",
                     min_value=0.0,
                     max_value=1.0,
                     value=plotter.surface_opacity,
-                    key="surface_opacity"
-                    )
+                    key="surface_opacity",
+                )
             st.divider()
             # Cap settings
-            col1, col2, _ = st.columns([2,1,1], vertical_alignment="center")
+            col1, col2, _ = st.columns([2, 1, 1], vertical_alignment="center")
             col1.markdown("Show Caps")
             settings["show_caps"] = col2.toggle(
-                "Show Caps",
-                value=True,
-                label_visibility="collapsed"
-                )
+                "Show Caps", value=True, label_visibility="collapsed"
+            )
             if settings["show_caps"]:
-                col1, col2, col3 = st.columns([2,1,1], vertical_alignment="center")
+                col1, col2, col3 = st.columns([2, 1, 1], vertical_alignment="center")
                 # use solid color
                 col1.markdown("Solid Color")
                 settings["use_solid_cap_color"] = col2.toggle(
-                    "Solid Color",
-                    key="cap_solid",
-                    label_visibility="collapsed"
-                    )
+                    "Solid Color", key="cap_solid", label_visibility="collapsed"
+                )
                 if settings["use_solid_cap_color"]:
                     settings["cap_color"] = col3.color_picker(
                         "Color",
                         value=plotter.cap_color,
                         label_visibility="collapsed",
-                        key="cap_color"
-                        )
+                        key="cap_color",
+                    )
                 settings["cap_opacity"] = st.number_input(
                     "Opacity",
                     min_value=0.0,
                     max_value=1.0,
                     value=plotter.cap_opacity,
-                    key="cap_opacity"
-                    )
+                    key="cap_opacity",
+                )
         #######################################################################
         # Atom settings
         #######################################################################
@@ -158,22 +157,32 @@ with st.sidebar:
             settings["colors"] = [None for i in range(len(plotter.structure))]
             settings["radii"] = [None for i in range(len(plotter.structure))]
             # create column headers
-            label_col, vis_col, col_col, radii_col = st.columns(4, vertical_alignment="bottom")
+            label_col, vis_col, col_col, radii_col = st.columns(
+                4, vertical_alignment="bottom"
+            )
             label_col.markdown("Species")
             vis_col.markdown("Visible")
             col_col.markdown("Color")
             radii_col.markdown("Radius")
-            
+
             for species in plotter.structure.symbol_set:
                 atom_indices = plotter.structure.indices_from_symbol(species)
                 init_color = plotter.colors[atom_indices[0]]
                 init_radius = plotter.radii[atom_indices[0]]
                 # create widgets
-                label_col, vis_col, col_col, radii_col = st.columns(4, vertical_alignment="center")
+                label_col, vis_col, col_col, radii_col = st.columns(
+                    4, vertical_alignment="center"
+                )
                 label = label_col.markdown(species)
-                vis = vis_col.checkbox(species, value=True, label_visibility="collapsed")
-                color = col_col.color_picker(species, value=init_color, label_visibility="collapsed")
-                radius = radii_col.number_input(species, value=init_radius, label_visibility="collapsed")
+                vis = vis_col.checkbox(
+                    species, value=True, label_visibility="collapsed"
+                )
+                color = col_col.color_picker(
+                    species, value=init_color, label_visibility="collapsed"
+                )
+                radius = radii_col.number_input(
+                    species, value=init_radius, label_visibility="collapsed"
+                )
                 # update settings
                 for i in atom_indices:
                     settings["colors"][i] = color
@@ -182,24 +191,23 @@ with st.sidebar:
                         settings["visible_atoms"].append(i)
             st.divider()
             settings["atom_metallicness"] = st.number_input(
-                "Metallicness",
-                value=0.0,
-                min_value=0.0,
-                max_value=1.0
-                )
+                "Metallicness", value=0.0, min_value=0.0, max_value=1.0
+            )
         #######################################################################
         # View Settings
         #######################################################################
         with view_tab:
-            col1, col2, col3 = st.columns([2,1,2], vertical_alignment="center")
+            col1, col2, col3 = st.columns([2, 1, 2], vertical_alignment="center")
             col1.markdown("Show Lattice")
-            settings["show_lattice"] = col2.toggle("Show Lattice", True, label_visibility="collapsed")
+            settings["show_lattice"] = col2.toggle(
+                "Show Lattice", True, label_visibility="collapsed"
+            )
             settings["lattice_thickness"] = col3.number_input(
-                "Lattice Thickness", 
+                "Lattice Thickness",
                 value=plotter.lattice_thickness,
-                min_value = 0.01,
-                label_visibility="collapsed"
-                )
+                min_value=0.01,
+                label_visibility="collapsed",
+            )
             settings["background"] = st.color_picker("Background Color", "#FFFFFF")
             st.divider()
             # view setting
@@ -209,39 +217,67 @@ with st.sidebar:
             col1.markdown("Projection Vector")
             col2.markdown("Upward Vector")
             for i, j, k, w in zip(
-                    ["h", "k", "l"], 
-                    ["u", "v", "w"], 
-                    plotter.view_indices, 
-                    plotter.up_indices):
-                col1, col2, col3, col4 = st.columns([1,3,1,3])
+                ["h", "k", "l"],
+                ["u", "v", "w"],
+                plotter.view_indices,
+                plotter.up_indices,
+            ):
+                col1, col2, col3, col4 = st.columns([1, 3, 1, 3])
                 col1.markdown(i)
-                settings["view_indices"].append(col2.number_input(i, value=k, label_visibility="collapsed"))
+                settings["view_indices"].append(
+                    col2.number_input(i, value=k, label_visibility="collapsed")
+                )
                 col3.markdown(j)
-                settings["up_indices"].append(col4.number_input(j, value=w, label_visibility="collapsed"))
+                settings["up_indices"].append(
+                    col4.number_input(j, value=w, label_visibility="collapsed")
+                )
             st.session_state.page_height = st.selectbox(
                 "Page Size",
-                options = [100,200,300,400,500,600,800,1000,1200,1600,2000,3000],
+                options=[
+                    100,
+                    200,
+                    300,
+                    400,
+                    500,
+                    600,
+                    800,
+                    1000,
+                    1200,
+                    1600,
+                    2000,
+                    3000,
+                ],
                 index=3,
-                )
+            )
         #######################################################################
         # Export settings
         #######################################################################
         with export_tab:
             st.markdown("### Export Current Basins")
-            st.markdown("All currently selected basins will be exported as VASP type files")
+            st.markdown(
+                "All currently selected basins will be exported as VASP type files"
+            )
             if st.button("Export Basins", icon=":material/download:"):
                 atom_labels = bader.atom_labels
                 basin_labels = bader.basin_labels
-                data_mask = np.isin(atom_labels, plotter.visible_atom_basins) & np.isin(basin_labels, plotter.visible_bader_basins)
+                data_mask = np.isin(atom_labels, plotter.visible_atom_basins) & np.isin(
+                    basin_labels, plotter.visible_bader_basins
+                )
                 total = np.where(data_mask, bader.charge_grid.total, 0)
-                temp_grid = Grid(structure=plotter.structure.copy(), data={"total":total})
+                temp_grid = Grid(
+                    structure=plotter.structure.copy(), data={"total": total}
+                )
                 temp_grid.write_file("CHGCAR_absum")
             # TODO: I can either make this export directly to the users computer
             # wherever they opened this webapp or try and make it a download.
-            
+
             st.markdown("### Export as Image")
-            st.markdown("Rendered image will match the state of the window when you hit apply. It does not take into account any movements you have made since. Parallel perspective and matallicness can be selected for export, but do not show up in the viewer due to limitations in pyvista's html export.")
-            metallic = st.number_input("Atom Metallicness", min_value=0.0, max_value=1.0, value=0.0)
+            st.markdown(
+                "Rendered image will match the state of the window when you hit apply. It does not take into account any movements you have made since. Parallel perspective and matallicness can be selected for export, but do not show up in the viewer due to limitations in pyvista's html export."
+            )
+            metallic = st.number_input(
+                "Atom Metallicness", min_value=0.0, max_value=1.0, value=0.0
+            )
             col1, col2 = st.columns(2)
             parallel = col1.checkbox("Parallel Perspective", True)
             transparent = col2.checkbox("Transparent Background", False)
@@ -254,22 +290,22 @@ with st.sidebar:
                 "File Format",
                 options=[i for i in filetype_options.keys()],
                 index=0,
-                )
-            filename = st.text_input("Filename", value=f"{plotter.structure.reduced_formula}")
+            )
+            filename = st.text_input(
+                "Filename", value=f"{plotter.structure.reduced_formula}"
+            )
             # TODO: Find a better way of caching
             if st.button("Export Image", icon=":material/download:"):
                 plotter.parallel_projection = parallel
                 plotter.atom_metallicness = metallic
                 img_array = plotter.get_plot_screenshot(
                     transparent_background=transparent,
-                    window_size=(width,height),
+                    window_size=(width, height),
                     scale=scale,
-                    )
+                )
                 pil_img = Image.fromarray(img_array)
                 pil_img.save(f"{filename}{filetype}", format=filetype_options[filetype])
 
-            
-                
     if st.button("Apply"):
         # apply settings
         for key, value in settings.items():

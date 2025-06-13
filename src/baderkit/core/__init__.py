@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 
+from .bader import Bader
 from .utilities import (
-    Structure,
     Grid,
+    Structure,
     get_basin_charge_volume_from_label,
     get_edges,
     get_hybrid_basin_weights,
@@ -13,10 +14,7 @@ from .utilities import (
     get_neighbor_flux,
     get_single_weight_voxels,
     get_steepest_pointers,
-    refine_near_grid_edges,
-    
     propagate_edges,
+    refine_near_grid_edges,
     unmark_isolated_voxels,
-    )
-
-from .bader import Bader
+)

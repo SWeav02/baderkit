@@ -39,9 +39,11 @@ class Method(str, Enum):
     ongrid = "ongrid"
     neargrid = "neargrid"
 
+
 class Format(str, Enum):
     vasp = "vasp"
     cube = "cube"
+
 
 class PrintOptions(str, Enum):
     all_atoms = "all_atoms"
@@ -50,6 +52,7 @@ class PrintOptions(str, Enum):
     all_basins = "all_basins"
     sel_basins = "sel_basins"
     sum_basins = "sum_basins"
+
 
 @baderkit_app.command()
 def run(
@@ -76,17 +79,20 @@ def run(
         "-f",
         help="The format of the files",
         case_sensitive=False,
-        ),
+    ),
     print: PrintOptions = typer.Option(
         None,
         "--print",
         "-p",
         help="Optional printing of atom or bader basins",
         case_sensitive=False,
+    ),
+    indices: Annotated[
+        list[int],
+        typer.Argument(
+            help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`"
         ),
-    indices: Annotated[list[int], typer.Argument(
-        help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`")
-        ] =  None
+    ] = None,
 ):
     """
     Runs a bader analysis on the provided files. File formats are automatically
@@ -94,16 +100,17 @@ def run(
     or .cube files.
     """
     from baderkit.core import Bader
+
     # instance bader
     bader = Bader.from_dynamic(
-        charge_filename=charge_file, 
+        charge_filename=charge_file,
         reference_filename=reference_file,
         method=method,
         format=format,
     )
     # write summary
     bader.write_results_summary()
-    
+
     # write basins
     if indices is None:
         indices = []
@@ -120,8 +127,6 @@ def run(
     elif print == "sum_basins":
         bader.write_basin_volumes_sum(basin_indices=indices)
 
+
 # Register other commands
 baderkit_app.add_typer(tools_app, name="tools")
-    
-    
-    

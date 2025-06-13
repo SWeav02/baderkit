@@ -87,11 +87,12 @@ def get_edges(
                         break
     return edges
 
+
 @njit(parallel=True, cache=True)
 def propagate_edges(
     edge_mask: NDArray[np.bool_],
     neighbor_transforms: NDArray[np.int64],
-        ):
+):
     new_edge_mask = np.zeros_like(edge_mask, dtype=np.bool_)
     nx, ny, nz = edge_mask.shape
     for i in prange(nx):
@@ -99,16 +100,17 @@ def propagate_edges(
             for k in range(nz):
                 if not edge_mask[i, j, k]:
                     # skip voxels that aren't edges
-                    continue 
+                    continue
                 # set as an edge
-                new_edge_mask[i,j,k] = True
+                new_edge_mask[i, j, k] = True
                 for shift in neighbor_transforms:
                     ii = (i + shift[0]) % nx
                     jj = (j + shift[1]) % ny
                     kk = (k + shift[2]) % nz
                     # mark neighbor as an edge
-                    new_edge_mask[ii,jj,kk] = True
+                    new_edge_mask[ii, jj, kk] = True
     return new_edge_mask
+
 
 @njit(parallel=True, cache=True)
 def unmark_isolated_voxels(
@@ -297,6 +299,7 @@ def get_neighbor_flux(
 
     return flux_array, neigh_array, maxima_mask
 
+
 @njit(fastmath=True, cache=True)
 def get_single_weight_voxels(
     neigh_indices_array: NDArray[np.int64],
@@ -470,6 +473,7 @@ def get_hybrid_basin_weights(
 
     return weight_array
 
+
 ###############################################################################
 # Functions for near grid method
 ###############################################################################
@@ -623,7 +627,6 @@ def get_near_grid_assignments(
     return assignments, maxima_mask
 
 
-
 @njit(fastmath=True, cache=True)
 def refine_near_grid_edges(
     data: NDArray[np.float64],
@@ -647,7 +650,9 @@ def refine_near_grid_edges(
     # iterate over all voxels, their pointers, and delta rs
     for initial_coord in edge_voxel_coords:
         current_coord = initial_coord.copy()
-        original_label = current_assignments[current_coord[0],current_coord[1],current_coord[2]]
+        original_label = current_assignments[
+            current_coord[0], current_coord[1], current_coord[2]
+        ]
         # Begin a while loop climbing the gradient and correcting it until we
         # reach either a maximum or an already assigned label
         total_dr = np.zeros(3, dtype=np.float64)
@@ -658,7 +663,9 @@ def refine_near_grid_edges(
             current_label = refined_assignments[i, j, k]
             if current_label != 0:
                 # We've found the assignment for our original coord and label it
-                new_assignments[initial_coord[0], initial_coord[1], initial_coord[2]]=current_label
+                new_assignments[
+                    initial_coord[0], initial_coord[1], initial_coord[2]
+                ] = current_label
                 # update new label counter
                 if current_label != original_label:
                     changed_labels += 1
@@ -689,7 +696,7 @@ def refine_near_grid_edges(
                     if diff > best:
                         best = diff
                         best_neighbor = shift_index
-                
+
                 # It should not be possible for this to be a maximum as all maxima
                 # were assigned in the previous step
                 assert best_neighbor != -1
@@ -763,6 +770,7 @@ def refine_near_grid_edges(
             current_coord = np.array((ni, nj, nk), dtype=np.int64)
     return new_assignments, changed_labels
 
+
 # @njit(cache=True)
 # def refine_near_grid_edges(
 #         data: NDArray[np.float64],
@@ -833,7 +841,7 @@ def refine_near_grid_edges(
 #                         # get the pointer to the best neighbor
 #                         pointer = neighbors[best_neighbor]
 #                         # move to next point
-#                         new_coord = current_coord + pointer   
+#                         new_coord = current_coord + pointer
 #                         # TODO: I could update the pointer during the first round
 #                         # of calculations so I don't need to do this here
 #                         # wrap around indices
@@ -846,7 +854,7 @@ def refine_near_grid_edges(
 #                         refined_assignments[initial_coords[0], initial_coords[1], initial_coords[2]] = label
 #                         break
 #                 # Stop the current loop
-#                 break            
+#                 break
 #             # Otherwise, note that we've visited this voxel
 #             visited[visited_num] = voxel_index
 #             visited_num += 1

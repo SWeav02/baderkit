@@ -3,6 +3,7 @@
 Defines the widget and layout for the bader tab
 """
 import panel as pn
+
 from baderkit.plotting import BaderPlotter
 
 
@@ -17,18 +18,18 @@ def get_bader_widgets(plotter: BaderPlotter, pane):
         show_index=False,
         selectable="checkbox",
         disabled=True,
-        theme='modern',
-        hidden_columns = ["x", "y", "z"]
-        )
-    
+        theme="modern",
+        hidden_columns=["x", "y", "z"],
+    )
+
     visible_bader_basins_df = pn.widgets.Tabulator(
         init_bader_results,
         selectable="checkbox",
         disabled=True,
-        theme='modern',
-        hidden_columns = ["x", "y", "z"],
-        )
-    
+        theme="modern",
+        hidden_columns=["x", "y", "z"],
+    )
+
     # Define function for hiding atoms
     def visible_atom_basins(*events):
         for event in events:
@@ -41,6 +42,7 @@ def get_bader_widgets(plotter: BaderPlotter, pane):
                 # plotter.rebuild()
                 # # plotter.camera_position = camera_position
                 # pane.object = plotter.plotter.ren_win
+
     # Define function for hiding basins
     def visible_bader_basins(*events):
         for event in events:
@@ -52,14 +54,15 @@ def get_bader_widgets(plotter: BaderPlotter, pane):
                 # plotter.rebuild()
                 # # plotter.camera_position = camera_position
                 # pane.object = plotter.plotter.ren_win
+
     # link functions
-    visible_atom_basins_df.param.watch(visible_atom_basins, 'selection')
-    visible_bader_basins_df.param.watch(visible_bader_basins, 'selection')
-    
+    visible_atom_basins_df.param.watch(visible_atom_basins, "selection")
+    visible_bader_basins_df.param.watch(visible_bader_basins, "selection")
+
     # create dict of items that can be automatically updated
     bader_list = []
     bader_column = pn.WidgetBox(
         visible_atom_basins_df,
         visible_bader_basins_df,
-        )
+    )
     return bader_list, bader_column

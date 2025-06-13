@@ -12,16 +12,16 @@ from numpy.typing import NDArray
 from pymatgen.core import Structure
 from rich.progress import track
 
-from baderkit.core.utilities import (  
-    get_near_grid_assignments,
-    refine_near_grid_edges,
+from baderkit.core.utilities import (
     Grid,
     get_basin_charge_volume_from_label,
     get_edges,
     get_multi_weight_voxels,
+    get_near_grid_assignments,
     get_neighbor_flux,
     get_single_weight_voxels,
     get_steepest_pointers,
+    refine_near_grid_edges,
 )
 
 
@@ -319,34 +319,34 @@ class Bader:
 
         logging.info("Calculating gradient")
         # Calculate the gradient in fractional coords
-        du,dv,dw = 1/grid.shape
+        du, dv, dw = 1 / grid.shape
         frac_gradients = []
-        for axis, step in zip((0,1,2), (du,dv,dw)):
+        for axis, step in zip((0, 1, 2), (du, dv, dw)):
             shifted_up_data = np.roll(data, -1, axis)
             shifted_down_data = np.roll(data, 1, axis)
-            shift_diff = shifted_up_data-shifted_down_data
+            shift_diff = shifted_up_data - shifted_down_data
             # zero out where both are lower than the central data
-            shift_diff[(shifted_up_data<data)&(shifted_down_data<data)] = 0
-            frac_gradients.append(shift_diff/(2*step))
+            shift_diff[(shifted_up_data < data) & (shifted_down_data < data)] = 0
+            frac_gradients.append(shift_diff / (2 * step))
         frac_gradients_stack = np.stack(frac_gradients)
         # convert to cartesian to remove bias of non-orthogonal lattices
         lattice_matrix = grid.structure.lattice.matrix
         M = np.linalg.inv(lattice_matrix)
-        cart_gradients = np.einsum('ia,axyz->ixyz', M, frac_gradients_stack)
+        cart_gradients = np.einsum("ia,axyz->ixyz", M, frac_gradients_stack)
         # convert back to fractional coordinates.
-        dir_gradients = np.einsum('ai,ixyz->axyz', lattice_matrix, cart_gradients)
-        dir_grad_flat = dir_gradients.reshape(3,grid.voxel_num).T
+        dir_gradients = np.einsum("ai,ixyz->axyz", lattice_matrix, cart_gradients)
+        dir_grad_flat = dir_gradients.reshape(3, grid.voxel_num).T
         # Normalize each row so that the highest value is 1
         max_vals = np.max(np.abs(dir_grad_flat), axis=1)
         # replace 0s with 1s to avoid divide by 0
-        max_vals[max_vals<=1e-14] = 1
-        rgrad = dir_grad_flat/max_vals[:, np.newaxis]
+        max_vals[max_vals <= 1e-14] = 1
+        rgrad = dir_grad_flat / max_vals[:, np.newaxis]
         # Now we calculate the rgrid value.
         rgrid = np.round(rgrad).astype(np.int64)
-        delta_rs = rgrad-rgrid
+        delta_rs = rgrad - rgrid
         # Calculate expected neighbor to avoid calc in loop. Note we don't wrap the coord
         # here because we will need to during the loop anyways
-        flat_voxel_coords =  np.indices(data.shape).reshape(3, -1).T
+        flat_voxel_coords = np.indices(data.shape).reshape(3, -1).T
         pointer_voxel_coords = flat_voxel_coords + rgrid
         # Calculate the location of 0 shifts
         zero_grads = np.sum(rgrid, axis=1) <= 1e-14
@@ -361,8 +361,8 @@ class Bader:
         # rgrid and delta r
         flat_voxel_indices = np.arange(np.prod(data.shape))
         voxel_indices = flat_voxel_indices.reshape(data.shape)
-        neighbors = list(product([-1,0,1], repeat=3))
-        neighbors = np.array([i for i in neighbors if i != (0,0,0)], dtype=np.int64)
+        neighbors = list(product([-1, 0, 1], repeat=3))
+        neighbors = np.array([i for i in neighbors if i != (0, 0, 0)], dtype=np.int64)
         cart_neighbors = grid.get_cart_coords_from_vox(neighbors)
         neigh_dists = np.linalg.norm(cart_neighbors, axis=1)
         assignments, maxima_mask = get_near_grid_assignments(
@@ -374,7 +374,7 @@ class Bader:
             delta_rs=delta_rs,
             neighbors=neighbors,
             neighbor_dists=neigh_dists,
-            )
+        )
         # Get the maxima coordinates
         flat_maxima_mask = maxima_mask.ravel()
         maxima_vox_coords = flat_voxel_coords[flat_maxima_mask]
@@ -391,8 +391,8 @@ class Bader:
         new_assignments = assignments.copy()
         # Now we need to refine the edges
         edge_mask = get_edges(
-            labeled_array=new_assignments, 
-            neighbor_transforms=neighbors)        
+            labeled_array=new_assignments, neighbor_transforms=neighbors
+        )
         # remove maxima from the mask in case we have any particularly small basins
         edge_mask = edge_mask & ~maxima_mask
         # unmark any edges that are isolated
@@ -407,7 +407,7 @@ class Bader:
         new_assignments[edge_mask] = 0
         # Now we loop over them in parallel and perform the same operation as before
         # but only assigning the first voxel
-        
+
         # refined_assignments = assignments
         current_assignments, changed_labels = refine_near_grid_edges(
             data=data,
@@ -420,10 +420,10 @@ class Bader:
             delta_rs=delta_rs,
             neighbors=neighbors,
             neighbor_dists=neigh_dists,
-            )
+        )
         logging.info(f"{changed_labels} assignments updated")
-            # if changed_labels == 0:
-            #     break
+        # if changed_labels == 0:
+        #     break
         refined_assignments = current_assignments
         # readjust refined assignments to correct indices
         refined_assignments -= 1
@@ -436,7 +436,8 @@ class Bader:
             basin_labels=refined_assignments,
             charge_data=charge_data,
             voxel_volume=voxel_volume,
-            maxima_num=len(maxima_frac_coords))
+            maxima_num=len(maxima_frac_coords),
+        )
         basin_charges /= self.charge_grid.shape.prod()
         self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
 
@@ -722,7 +723,7 @@ class Bader:
         else:
             reference_grid = Grid.from_vasp(reference_filename)
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
-    
+
     @classmethod
     def from_cube(
         cls,
@@ -739,7 +740,7 @@ class Bader:
         else:
             reference_grid = Grid.from_cube(reference_filename)
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
-    
+
     @classmethod
     def from_dynamic(
         cls,
@@ -760,7 +761,7 @@ class Bader:
         else:
             reference_grid = Grid.from_dynamic(reference_filename, format=format)
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
-    
+
     def copy(self):
         """
         Returns a deep copy of this Bader object.
@@ -914,7 +915,7 @@ class Bader:
         data = {"total": data_array_copy}
         grid = Grid(structure=self.structure, data=data)
         grid.write_file(directory / f"{file_prefix}_asum")
-    
+
     def get_atom_results_dataframe(self):
         """
         Collects a summary of results for the atoms
@@ -922,7 +923,7 @@ class Bader:
         # Get atom results summary
         atom_frac_coords = self.structure.frac_coords
         atoms_df = pd.DataFrame(
-            {   
+            {
                 "label": self.structure.labels,
                 "x": atom_frac_coords[:, 0],
                 "y": atom_frac_coords[:, 1],
@@ -933,14 +934,15 @@ class Bader:
             }
         )
         return atoms_df
-    
+
     def get_basin_results_dataframe(self):
         """
         Collects a summary of results for the basins
         """
         basin_frac_coords = self.basin_maxima_frac
         basin_df = pd.DataFrame(
-            {   "atoms": self.basin_atoms,
+            {
+                "atoms": self.basin_atoms,
                 "x": basin_frac_coords[:, 0],
                 "y": basin_frac_coords[:, 1],
                 "z": basin_frac_coords[:, 2],
@@ -950,7 +952,7 @@ class Bader:
             }
         )
         return basin_df
-    
+
     def write_results_summary(
         self,
         directory: Path | str | None = None,
@@ -964,14 +966,18 @@ class Bader:
         # Get atom results summary
         atoms_df = self.get_atom_results_dataframe()
         formatted_atoms_df = atoms_df.copy()
-        numeric_cols = formatted_atoms_df.select_dtypes(include='number').columns
-        formatted_atoms_df[numeric_cols] = formatted_atoms_df[numeric_cols].map(lambda x: f"{x:.6f}")
+        numeric_cols = formatted_atoms_df.select_dtypes(include="number").columns
+        formatted_atoms_df[numeric_cols] = formatted_atoms_df[numeric_cols].map(
+            lambda x: f"{x:.6f}"
+        )
 
         # Get basin results summary
         basin_df = self.get_basin_results_dataframe()
         formatted_basin_df = basin_df.copy()
-        numeric_cols = formatted_basin_df.select_dtypes(include='number').columns
-        formatted_basin_df[numeric_cols] = formatted_basin_df[numeric_cols].map(lambda x: f"{x:.6f}")
+        numeric_cols = formatted_basin_df.select_dtypes(include="number").columns
+        formatted_basin_df[numeric_cols] = formatted_basin_df[numeric_cols].map(
+            lambda x: f"{x:.6f}"
+        )
 
         # Determine max width per column including header
         atom_col_widths = {

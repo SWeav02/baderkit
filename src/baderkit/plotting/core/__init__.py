@@ -1,3 +1,3 @@
 # -*- coding: utf-8 -*-
 
-from .plotter import StructurePlotter, GridPlotter, BaderPlotter
+from .plotter import BaderPlotter, GridPlotter, StructurePlotter
