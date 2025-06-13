@@ -35,7 +35,11 @@ jobs:
 
       - name: Check code format with Black
         uses: psf/black@stable
-
+        
+      - name: Check for null bytes
+        run: |
+          echo "Searching for null bytes in all project files..."
+          grep -rl $'\x00' . || echo "No null bytes found"
       # This action seems poorly-maintained -- as it fails on MacOS and also
       # directly installs isort (unlike the action used for Black). I therefore
       # disable this for now.
