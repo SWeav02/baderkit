@@ -36,11 +36,6 @@ jobs:
       - name: Check code format with Black
         uses: psf/black@stable
     
-      - name: Debug file contents
-        shell: bash -l {0}
-        run: |
-          find . -type f -exec grep -lI $'\0' {} +
-
       # This action seems poorly-maintained -- as it fails on MacOS and also
       # directly installs isort (unlike the action used for Black). I therefore
       # disable this for now.
