@@ -1,5 +1,5 @@
-# Checks black/isort then runs test on ubuntu, windows and mac. this
-# is largely taken from the Simmate repo: https://github.com/jacksund/simmate/tree/main
+# This workflow will check for Black formating, install Python dependencies using Anaconda, and then run tests with a single version of Python.
+# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
 #
 # We also use a third-party action(s) for setting up our conda environment. See:
 #   conda: https://github.com/marketplace/actions/setup-miniconda
@@ -35,7 +35,7 @@ jobs:
 
       - name: Check code format with Black
         uses: psf/black@stable
-    
+
       # This action seems poorly-maintained -- as it fails on MacOS and also
       # directly installs isort (unlike the action used for Black). I therefore
       # disable this for now.
@@ -54,7 +54,7 @@ jobs:
           channel-priority: strict
       # The lines "shell: bash -l {0}" ensure we use the created env below
       
-      - name: Install BaderKit
+      - name: Install Simmate
         shell: bash -l {0}
         run: |
           pip install -e .
@@ -82,4 +82,3 @@ jobs:
     # "-vv" makes the pytest output verbose so errors are more useful
     # and "duration=0" has pytest print how long every test took. We ask for
     # the 15 slowest ones.
-
