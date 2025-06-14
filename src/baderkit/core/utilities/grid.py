@@ -37,14 +37,33 @@ class Grid(VolumetricData):
 
     @property
     def total(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            For charge densities, returns the total charge (spin-up + spin-down).
+            For ELF returns the spin-up or single spin ELF.
+
+        """
         return self.data["total"]
 
     @total.setter
-    def total(self, new_total):
+    def total(self, new_total: NDArray[float]):
         self.data["total"] = new_total
 
     @property
-    def diff(self) -> NDArray[float]:
+    def diff(self) -> NDArray[float] | None:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            For charge densities, returns the magnetized charge (spin-up - spin-down).
+            For ELF returns the spin-down ELF. If the file was not from a spin
+            polarized calculation, this will be None.
+
+        """
         return self.data.get("diff")
 
     @diff.setter
@@ -53,54 +72,97 @@ class Grid(VolumetricData):
 
     @property
     def shape(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The number of points along each axis of the grid.
+
+        """
         return np.array(self.total.shape)
 
     @property
     def matrix(self) -> NDArray[float]:
         """
-        A 3x3 matrix defining the a, b, and c sides of the unit cell
+
+        Returns
+        -------
+        NDArray[float]
+            A 3x3 matrix defining the a, b, and c sides of the unit cell
+
         """
         return self.structure.lattice.matrix
 
     @property
     def a(self) -> float:
         """
-        The cartesian coordinates for the lattice vector "a"
+
+        Returns
+        -------
+        float
+            The cartesian coordinates for the lattice vector "a"
+
         """
         return self.matrix[0]
 
     @property
     def b(self) -> float:
         """
-        The cartesian coordinates for the lattice vector "b"
+
+        Returns
+        -------
+        float
+            The cartesian coordinates for the lattice vector "b"
+
         """
         return self.matrix[1]
 
     @property
     def c(self) -> float:
         """
-        The cartesian coordinates for the lattice vector "c"
+
+        Returns
+        -------
+        float
+            The cartesian coordinates for the lattice vector "c"
+
         """
         return self.matrix[2]
 
     @property
     def frac_coords(self) -> NDArray[float]:
         """
-        Array of fractional coordinates for each atom.
+
+        Returns
+        -------
+        NDArray[float]
+            Array of fractional coordinates for each atom.
+
         """
         return self.structure.frac_coords
 
     @property
     def all_voxel_coords(self) -> NDArray[int]:
         """
-        The coordinates for all voxels in the grid in voxel indices.
+
+        Returns
+        -------
+        NDArray[int]
+            The coordinates for all voxels in the grid in voxel indices.
+
         """
         return np.indices(self.shape).reshape(3, -1).T
 
     @cached_property
     def all_voxel_frac_coords(self) -> NDArray[float]:
         """
-        The fractional coordinates for all of the voxels in the grid
+
+        Returns
+        -------
+        NDArray[float]
+            The fractional coordinates for all of the voxels in the grid.
+
         """
         voxel_indices = self.all_voxel_coords
         return self.get_frac_coords_from_vox(voxel_indices)
@@ -108,7 +170,12 @@ class Grid(VolumetricData):
     @cached_property
     def all_voxel_cart_coords(self) -> NDArray[float]:
         """
-        The cartesian coordinates for all of the voxel in the grid
+
+        Returns
+        -------
+        NDArray[float]
+            The cartesian coordinates for all of the voxel in the grid.
+
         """
         frac_coords = self.all_voxel_frac_coords
         return self.get_cart_coords_from_frac(frac_coords)
@@ -116,7 +183,12 @@ class Grid(VolumetricData):
     @cached_property
     def voxel_dist_to_origin(self) -> NDArray[float]:
         """
-        The distance from each voxel to the origin in cartesian coordinates
+
+        Returns
+        -------
+        NDArray[float]
+            The distance from each voxel to the origin in cartesian coordinates.
+
         """
         cart_coords = self.all_voxel_cart_coords
         corners = [
@@ -140,7 +212,12 @@ class Grid(VolumetricData):
     @property
     def voxel_volume(self) -> float:
         """
-        The volume of each voxel in the grid
+
+        Returns
+        -------
+        float
+            The volume of a single voxel in the grid.
+
         """
         volume = self.structure.volume
         voxel_num = np.prod(self.shape)
@@ -149,15 +226,25 @@ class Grid(VolumetricData):
     @property
     def voxel_num(self) -> int:
         """
-        The number of voxels in the grid
+
+        Returns
+        -------
+        int
+            The number of voxels in the grid.
+
         """
         return self.shape.prod()
 
     @cached_property
     def max_voxel_dist(self) -> float:
         """
-        The maximum distance from the center of a voxel to one of its corners. This
-        assumes the voxel is the same shape as the lattice.
+
+        Returns
+        -------
+        float
+            The maximum distance from the center of a voxel to one of its corners. This
+            assumes the voxel is the same shape as the lattice.
+
         """
         # We need to find the coordinates that make up a single voxel. This
         # is just the cartesian coordinates of the unit cell divided by
@@ -203,8 +290,14 @@ class Grid(VolumetricData):
     @cached_property
     def voxel_voronoi_facets(self) -> tuple[NDArray, NDArray, NDArray, NDArray]:
         """
-        The transformations, neighbor distances, areas, and vertices of the voronoi surface
-        between any voxel and its neighbors in the grid
+
+        Returns
+        -------
+        tuple[NDArray, NDArray, NDArray, NDArray]
+            The transformations, neighbor distances, areas, and vertices of the
+            voronoi surface between any voxel and its neighbors in the grid.
+            This is used in the 'weight' method for Bader analysis.
+
         """
         # I go out to 2 voxels away here. I think 1 would probably be fine, but
         # this doesn't take much more time and I'm certain this will capture the
@@ -282,8 +375,11 @@ class Grid(VolumetricData):
         cells. This is necessary for the many voxels that will not be directly
         within an atoms partitioning.
 
-        Returns:
+        Returns
+        -------
+        list
             A list of voxel permutations unique to the grid dimensions.
+
         """
         a, b, c = self.shape
         permutations = [
@@ -309,7 +405,12 @@ class Grid(VolumetricData):
     @property
     def voxel_resolution(self) -> float:
         """
-        The number of voxels per unit volume.
+
+        Returns
+        -------
+        float
+            The number of voxels per unit volume.
+
         """
         volume = self.structure.volume
         number_of_voxels = self.shape.prod()
@@ -318,14 +419,24 @@ class Grid(VolumetricData):
     @cached_property
     def symmetry_data(self):
         """
-        The pymatgen symmetry dataset for the Grid's Structure object
+
+        Returns
+        -------
+        TYPE
+            The pymatgen symmetry dataset for the Grid's Structure object
+
         """
         return SpacegroupAnalyzer(self.structure).get_symmetry_dataset()
 
     @property
     def equivalent_atoms(self) -> NDArray[int]:
         """
-        The equivalent atoms in the Structure.
+
+        Returns
+        -------
+        NDArray[int]
+            The equivalent atoms in the Structure.
+
         """
         return self.symmetry_data.equivalent_atoms
 
@@ -908,9 +1019,6 @@ class Grid(VolumetricData):
         # Get data
         total = cls.total
         diff = cls.diff
-
-        # # Get the lattice unit vectors as a 3x3 array
-        # lattice_array = self.matrix
 
         # get the original grid size and lattice volume.
         shape = cls.shape
@@ -1552,6 +1660,17 @@ class Grid(VolumetricData):
         """
         Returns a Grid object from the string contents of a VASP file. This method
         is a reimplementation of Pymatgen's [Parser](https://github.com/materialsproject/pymatgen/blob/v2025.5.28/src/pymatgen/io/vasp/outputs.py#L3704-L3813)
+
+        Parameters
+        ----------
+        file_string : str
+            The contents of a CHGCAR-like file.
+
+        Returns
+        -------
+        Self
+            A Grid class instance.
+
         """
         poscar_read = False
         poscar_string: list[str] = []
@@ -1660,6 +1779,21 @@ class Grid(VolumetricData):
         file_name: Path | str,
         vasp4_compatible: bool = False,
     ):
+        """
+        Writes the Grid to a VASP-like file at the provided path.
+
+        Parameters
+        ----------
+        file_name : Path | str
+            The name of the file to write to.
+        vasp4_compatible : bool, optional
+            Whether or not to make the grid vasp 4 compatible. The default is False.
+
+        Returns
+        -------
+        None.
+
+        """
         file_name = Path(file_name)
         logging.info(f"Writing {file_name.name}")
         super().write_file(file_name=file_name, vasp4_compatible=vasp4_compatible)

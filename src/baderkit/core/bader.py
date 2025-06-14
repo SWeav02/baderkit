@@ -66,110 +66,163 @@ class Bader:
         self._structure = None
 
     @property
-    def basin_labels(self) -> NDArray[np.int64]:
+    def basin_labels(self) -> NDArray[float]:
         """
-        A 3D array of the same shape as the reference grid with entries
-        representing the basin the voxel belongs to. Note that for some
-        methods (e.g. weight) the voxels have weights for each basin.
-        These will be stored in the basin_weights property.
+
+        Returns
+        -------
+        NDArray[float]
+            A 3D array of the same shape as the reference grid with entries
+            representing the basin the voxel belongs to. Note that for some
+            methods (e.g. weight) the voxels have weights for each basin.
+            These will be stored in the basin_weights property.
+
         """
         if self._basin_labels is None:
             self.run_bader()
         return self._basin_labels
 
     @property
-    def basin_maxima_frac(self) -> NDArray[np.float64]:
+    def basin_maxima_frac(self) -> NDArray[float]:
         """
-        The fractional coordinates of each attractor
+
+        Returns
+        -------
+        NDArray[float]
+            The fractional coordinates of each attractor.
+
         """
         if self._basin_maxima_frac is None:
             self.run_bader()
         return self._basin_maxima_frac
 
     @property
-    def basin_charges(self) -> NDArray[np.float64]:
+    def basin_charges(self) -> NDArray[float]:
         """
-        The charges assigned to each basin
+
+        Returns
+        -------
+        NDArray[float]
+            The charges assigned to each attractor.
+
         """
         if self._basin_charges is None:
             self.run_bader()
         return self._basin_charges
 
     @property
-    def basin_volumes(self) -> NDArray[np.float64]:
+    def basin_volumes(self) -> NDArray[float]:
         """
-        The fractional coordinates of each attractor
+
+        Returns
+        -------
+        NDArray[float]
+            The volume assigned to each attractor.
+
         """
         if self._basin_volumes is None:
             self.run_bader()
         return self._basin_volumes
 
     @property
-    def basin_surface_distances(self) -> NDArray[np.float64]:
+    def basin_surface_distances(self) -> NDArray[float]:
         """
-        The distance from each basin maxima to the nearest point on
-        the basins surface
+
+        Returns
+        -------
+        NDArray[float]
+            The distance from each basin maxima to the nearest point on
+            the basins surface
+
         """
         if self._basin_surface_distances is None:
             self._get_basin_surface_distances()
         return self._basin_surface_distances
 
     @property
-    def basin_atoms(self) -> NDArray[np.int64]:
+    def basin_atoms(self) -> NDArray[float]:
         """
-        The index of each atom each basin is assigned to
+
+        Returns
+        -------
+        NDArray[float]
+            The atom index of each basin is assigned to.
+
         """
         if self._basin_atoms is None:
             self.run_atom_assignment()
         return self._basin_atoms
 
     @property
-    def basin_atom_dists(self) -> NDArray[np.float64]:
+    def basin_atom_dists(self) -> NDArray[float]:
         """
-        The distance from each basin to the nearest atom
+
+        Returns
+        -------
+        NDArray[float]
+            The distance from each attractor to the nearest atom
+
         """
         if self._basin_atom_dists is None:
             self.run_atom_assignment()
         return self._basin_atom_dists
 
     @property
-    def atom_labels(self) -> NDArray[np.int64]:
+    def atom_labels(self) -> NDArray[float]:
         """
-        A 3D array of the same shape as the reference grid with entries
-        representing the atoms the voxel belongs to.
 
-        Note that for some methods (e.g. weight) the voxels have weights
-        for each basin and this will not represent exactly how charges
-        were assigned.
-        These weights be stored in the basin_weights property.
+        Returns
+        -------
+        NDArray[float]
+            A 3D array of the same shape as the reference grid with entries
+            representing the atoms the voxel belongs to.
+
+            Note that for some methods (e.g. weight) some voxels have fractional
+            assignments for each basin and this will not represent exactly how
+            charges are assigned.
+
         """
         if self._atom_labels is None:
             self.run_atom_assignment()
         return self._atom_labels
 
     @property
-    def atom_charges(self) -> NDArray[np.float64]:
+    def atom_charges(self) -> NDArray[float]:
         """
-        The charge assigned to each atom
+
+        Returns
+        -------
+        NDArray[float]
+            The charge assigned to each atom
+
         """
         if self._atom_charges is None:
             self.run_atom_assignment()
         return self._atom_charges
 
     @property
-    def atom_volumes(self) -> NDArray[np.float64]:
+    def atom_volumes(self) -> NDArray[float]:
         """
-        The volume assigned to each atom
+
+        Returns
+        -------
+        NDArray[float]
+            The volume assigned to each atom
+
         """
         if self._atom_volumes is None:
             self.run_atom_assignment()
         return self._atom_volumes
 
     @property
-    def atom_surface_distances(self) -> NDArray[np.float64]:
+    def atom_surface_distances(self) -> NDArray[float]:
         """
-        The distance from each basin maxima to the nearest point on
-        the basins surface
+
+        Returns
+        -------
+        NDArray[float]
+            The distance from each atom to the nearest point on the atoms surface.
+
         """
         if self._atom_surface_distances is None:
             self._get_atom_surface_distances()
@@ -178,7 +231,12 @@ class Bader:
     @property
     def structure(self) -> Structure:
         """
-        The structure basins are assigned to
+
+        Returns
+        -------
+        Structure
+            The pymatgen structure basins are assigned to.
+
         """
         if self._structure is None:
             self._structure = self.reference_grid.structure.copy()
@@ -187,12 +245,39 @@ class Bader:
 
     @property
     def basin_edges(self) -> NDArray[np.bool_]:
+        """
+
+        Returns
+        -------
+        NDArray[np.bool_]
+            A mask with the same shape as the input grids that is True at points
+            on basin edges.
+
+        """
         return self.get_basin_edges(self.basin_labels)
 
     @staticmethod
-    def get_basin_edges(basin_labels: NDArray, neighbor_transforms: NDArray = None):
+    def get_basin_edges(
+        basin_labels: NDArray[float], neighbor_transforms: NDArray = None
+    ) -> NDArray[np.bool_]:
         """
-        Gets a mask representing the edges of a bader calculation
+        Gets a mask representing the edges of a labeled array.
+
+        Parameters
+        ----------
+        basin_labels : NDArray[float]
+            A 3D numpy array of integers assigning points to basins.
+        neighbor_transforms : NDArray, optional
+            The transformations from each voxel to its neighbors. Providing None
+            will result in the 26 nearest neighbors being used.
+
+        Returns
+        -------
+        NDArray[np.bool_]
+            A mask with the same shape as the input grid that is True at points
+            on basin edges.
+
+
         """
 
         # If no specific neighbors are provided, we default to all 26 neighbors
@@ -202,9 +287,20 @@ class Bader:
             neighbor_transforms = np.array(neighbor_transforms)
         return get_edges(basin_labels, neighbor_transforms=neighbor_transforms)
 
-    def run_bader(self):
+    def run_bader(self) -> None:
         """
         Runs the entire bader process and saves results to class variables.
+
+        Raises
+        ------
+        ValueError
+            The class method variable must be 'ongrid', 'neargrid', 'weight' or
+            'hybrid-weight'.
+
+        Returns
+        -------
+        None.
+
         """
         if self.method == "ongrid":
             self._run_bader_on_grid()
@@ -231,6 +327,11 @@ class Bader:
             W. Tang, E. Sanville, and G. Henkelman
             A grid-based Bader analysis algorithm without lattice bias,
             J. Phys.: Condens. Matter 21, 084204 (2009).
+
+        Returns
+        -------
+        None.
+
         """
         grid = self.reference_grid
         data = grid.total
@@ -316,6 +417,11 @@ class Bader:
             G. Henkelman, A. Arnaldsson, and H Jonsson.
             A fast and robust algorithm for Bader decomposition of charge density,
             J. Phys.: Condens. Matter 21, 084204 (2009).
+
+        Returns
+        -------
+        None.
+
         """
         grid = self.reference_grid.copy()
         data = grid.total
@@ -451,6 +557,17 @@ class Bader:
             M. Yu and D. R. Trinkle,
             Accurate and efficient algorithm for Bader charge integration,
             J. Chem. Phys. 134, 064111 (2011).
+
+        Parameters
+        ----------
+        hybrid : bool, optional
+            If True, the maxima will be reduced to voxels that have higher values
+            than the 26 neighbors surrounding them. The default is False.
+
+        Returns
+        -------
+        None.
+
         """
         reference_grid = self.reference_grid.copy()
 
@@ -605,7 +722,20 @@ class Bader:
         """
         Assigns bader basins to the atoms in the provided structure. If
         no structure is provided, defaults to the reference grid structure.
-        This is useful for reassigning basins to different structures.
+
+        This method generally shouldn't be run manually, but is useful
+        for reassigning basins when working with dummy atoms (e.g. in electrides)
+
+        Parameters
+        ----------
+        structure : Structure, optional
+            The pymatgen structure to assign basins to. If None, the structure
+            of the reference grid will be used.
+
+        Returns
+        -------
+        None.
+
         """
         if structure is None:
             structure = self.structure
@@ -653,7 +783,14 @@ class Bader:
 
     def _get_atom_surface_distances(self):
         """
-        Calculates the distance from each atom to the nearest surface
+        Calculates the distance from each atom to the nearest surface. This is
+        automatically called during the atom assignment and generally should
+        not be called manually.
+
+        Returns
+        -------
+        None.
+
         """
         atom_labeled_voxels = self.atom_labels
         atom_radii = []
@@ -687,7 +824,14 @@ class Bader:
 
     def _get_basin_surface_distances(self):
         """
-        Calculates the distance from each basin maxima to the nearest surface
+        Calculates the distance from each basin maxima to the nearest surface.
+        This is automatically called during the atom assignment and generally
+        should not be called manually.
+
+        Returns
+        -------
+        None.
+
         """
         basin_labeled_voxels = self.basin_labels
         basin_radii = []
@@ -716,9 +860,26 @@ class Bader:
         charge_filename: Path | str = "CHGCAR",
         reference_filename: Path | None | str = None,
         **kwargs,
-    ):
+    ) -> Self:
         """
-        Creates a Bader class object from VASP files
+        Creates a Bader class object from VASP files.
+
+        Parameters
+        ----------
+        charge_filename : Path | str, optional
+            The path to the CHGCAR like file that will be used for summing charge.
+            The default is "CHGCAR".
+        reference_filename : Path | None | str, optional
+            The path to CHGCAR like file that will be used for partitioning.
+            If None, the charge file will be used for partitioning.
+        **kwargs : dict
+            Keyword arguments to pass to the Bader class.
+
+        Returns
+        -------
+        Self
+            A Bader class object.
+
         """
         charge_grid = Grid.from_vasp(charge_filename)
         if reference_filename is None:
@@ -733,9 +894,25 @@ class Bader:
         charge_filename: Path | str,
         reference_filename: Path | None | str = None,
         **kwargs,
-    ):
+    ) -> Self:
         """
-        Creates a Bader class object from .cube files
+        Creates a Bader class object from .cube files.
+
+        Parameters
+        ----------
+        charge_filename : Path | str, optional
+            The path to the .cube file that will be used for summing charge.
+        reference_filename : Path | None | str, optional
+            The path to .cube file that will be used for partitioning.
+            If None, the charge file will be used for partitioning.
+        **kwargs : dict
+            Keyword arguments to pass to the Bader class.
+
+        Returns
+        -------
+        Self
+            A Bader class object.
+
         """
         charge_grid = Grid.from_cube(charge_filename)
         if reference_filename is None:
@@ -751,11 +928,31 @@ class Bader:
         reference_filename: Path | None | str = None,
         format: Literal["vasp", "cube", None] = None,
         **kwargs,
-    ):
+    ) -> Self:
         """
         Creates a Bader class object from VASP or .cube files. If no format is
         provided the method will automatically try and determine the file type
         from the name
+
+        Parameters
+        ----------
+        charge_filename : Path | str
+            The path to the file containing the charge density that will be
+            integrated.
+        reference_filename : Path | None | str, optional
+            The path to the file that will be used for partitioning.
+            If None, the charge file will be used for partitioning.
+        format : Literal["vasp", "cube", None], optional
+            The format of the grids to read in. If None, the formats will be
+            guessed from the file names.
+        **kwargs : dict
+            Keyword arguments to pass to the Bader class.
+
+        Returns
+        -------
+        Self
+            A Bader class object.
+
         """
 
         charge_grid = Grid.from_dynamic(charge_filename, format=format)
@@ -765,16 +962,26 @@ class Bader:
             reference_grid = Grid.from_dynamic(reference_filename, format=format)
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
 
-    def copy(self):
+    def copy(self) -> Self:
         """
-        Returns a deep copy of this Bader object.
+
+        Returns
+        -------
+        Self
+            A deep copy of this Bader object.
+
         """
         return copy.deepcopy(self)
 
     @property
-    def results_summary(self):
+    def results_summary(self) -> dict:
         """
-        A dictionary summary of all results
+
+        Returns
+        -------
+        results_dict : dict
+            A dictionary summary of all results
+
         """
         results_dict = {
             "method": self.method,
@@ -794,12 +1001,32 @@ class Bader:
     def write_basin_volumes(
         self,
         basin_indices: NDArray,
+        directory: str | Path = None,
         file_prefix: str = "CHGCAR",
         data_type: Literal["charge", "reference"] = "charge",
     ):
         """
-        Writes each basin volume from a list of indices to individual
-        vasp-like files
+        Writes bader basins to vasp-like files. Points belonging to the basin
+        will have values from the charge or reference grid, and all other points
+        will be 0. Filenames are written as {file_prefix}_b{i} where i is the
+        basin index.
+
+        Parameters
+        ----------
+        basin_indices : NDArray
+            The list of basin indices to write
+        directory: str | Path
+            The directory to write the files in. If None, the directory currently
+            assigned to the Bader object will work.
+        file_prefix : str, optional
+            The string to append to each file name. The default is "CHGCAR".
+        data_type : Literal["charge", "reference"], optional
+            Which file to write from. The default is "charge".
+
+        Returns
+        -------
+        None.
+
         """
         if data_type == "charge":
             grid = self.charge_grid.copy()
@@ -807,7 +1034,8 @@ class Bader:
             grid = self.reference_grid.copy()
 
         data_array = grid.total
-        directory = self.directory
+        if directory is None:
+            directory = self.directory
         for basin in basin_indices:
             mask = self.basin_labels == basin
             data_array_copy = data_array.copy()
@@ -818,15 +1046,35 @@ class Bader:
 
     def write_all_basin_volumes(
         self,
+        directory: str | Path = None,
         file_prefix: str = "CHGCAR",
         data_type: Literal["charge", "reference"] = "charge",
     ):
         """
-        Writes all basins to vasp-like files
+        Writes all bader basins to vasp-like files. Points belonging to the basin
+        will have values from the charge or reference grid, and all other points
+        will be 0. Filenames are written as {file_prefix}_b{i} where i is the
+        basin index.
+
+        Parameters
+        ----------
+        directory: str | Path
+            The directory to write the files in. If None, the directory currently
+            assigned to the Bader object will work.
+        file_prefix : str, optional
+            The string to append to each file name. The default is "CHGCAR".
+        data_type : Literal["charge", "reference"], optional
+            Which file to write from. The default is "charge".
+
+        Returns
+        -------
+        None.
+
         """
         basin_indices = np.array(range(len(self.basin_atoms)))
         self.write_basin_volumes(
             basin_indices=basin_indices,
+            directory=directory,
             file_prefix=file_prefix,
             data_type=data_type,
         )
@@ -834,12 +1082,32 @@ class Bader:
     def write_basin_volumes_sum(
         self,
         basin_indices: NDArray,
+        directory: str | Path = None,
         file_prefix: str = "CHGCAR",
         data_type: Literal["charge", "reference"] = "charge",
     ):
         """
-        Writes the volume made up of all basin indices provided to a
-        vasp-like file
+        Writes the union of the provided bader basins to vasp-like files.
+        Points belonging to the basins will have values from the charge or
+        reference grid, and all other points will be 0. Filenames are written
+        as {file_prefix}_bsum.
+
+        Parameters
+        ----------
+        basin_indices : NDArray
+            The list of basin indices to sum and write
+        directory: str | Path
+            The directory to write the files in. If None, the directory currently
+            assigned to the Bader object will work.
+        file_prefix : str, optional
+            The string to append to each file name. The default is "CHGCAR".
+        data_type : Literal["charge", "reference"], optional
+            Which file to write from. The default is "charge".
+
+        Returns
+        -------
+        None.
+
         """
         if data_type == "charge":
             grid = self.charge_grid.copy()
@@ -847,7 +1115,8 @@ class Bader:
             grid = self.reference_grid.copy()
 
         data_array = grid.total
-        directory = self.directory
+        if directory is None:
+            directory = self.directory
         mask = np.isin(self.basin_labels, basin_indices)
         data_array_copy = data_array.copy()
         data_array_copy[~mask] = 0
@@ -858,12 +1127,32 @@ class Bader:
     def write_atom_volumes(
         self,
         atom_indices: NDArray,
+        directory: str | Path = None,
         file_prefix: str = "CHGCAR",
         data_type: Literal["charge", "reference"] = "charge",
     ):
         """
-        Writes each atom volume from a list of indices to individual
-        vasp-like files
+        Writes atomic basins to vasp-like files. Points belonging to the atom
+        will have values from the charge or reference grid, and all other points
+        will be 0. Filenames are written as {file_prefix}_a{i} where i is the
+        atom index.
+
+        Parameters
+        ----------
+        atom_indices : NDArray
+            The list of atom indices to write
+        directory: str | Path
+            The directory to write the files in. If None, the directory currently
+            assigned to the Bader object will work.
+        file_prefix : str, optional
+            The string to append to each file name. The default is "CHGCAR".
+        data_type : Literal["charge", "reference"], optional
+            Which file to write from. The default is "charge".
+
+        Returns
+        -------
+        None.
+
         """
         if data_type == "charge":
             grid = self.charge_grid.copy()
@@ -871,7 +1160,8 @@ class Bader:
             grid = self.reference_grid.copy()
 
         data_array = grid.total
-        directory = self.directory
+        if directory is None:
+            directory = self.directory
         for atom_index in atom_indices:
             mask = self.atom_labels == atom_index
             data_array_copy = data_array.copy()
@@ -882,15 +1172,37 @@ class Bader:
 
     def write_all_atom_volumes(
         self,
+        directory: str | Path = None,
         file_prefix: str = "CHGCAR",
         data_type: Literal["charge", "reference"] = "charge",
     ):
         """
-        Writes all atoms to vasp-like files
+        Writes all atomic basins to vasp-like files. Points belonging to the atom
+        will have values from the charge or reference grid, and all other points
+        will be 0. Filenames are written as {file_prefix}_a{i} where i is the
+        atom index.
+
+        Parameters
+        ----------
+        atom_indices : NDArray
+            The list of atom indices to write
+        directory: str | Path
+            The directory to write the files in. If None, the directory currently
+            assigned to the Bader object will work.
+        file_prefix : str, optional
+            The string to append to each file name. The default is "CHGCAR".
+        data_type : Literal["charge", "reference"], optional
+            Which file to write from. The default is "charge".
+
+        Returns
+        -------
+        None.
+
         """
         atom_indices = np.array(range(len(self.structure)))
         self.write_atom_volumes(
             atom_indices=atom_indices,
+            directory=directory,
             file_prefix=file_prefix,
             data_type=data_type,
         )
@@ -898,12 +1210,32 @@ class Bader:
     def write_atom_volumes_sum(
         self,
         atom_indices: NDArray,
+        directory: str | Path = None,
         file_prefix: str = "CHGCAR",
         data_type: Literal["charge", "reference"] = "charge",
     ):
         """
-        Writes the volume made up of all atom indices provided to a
-        vasp-like file
+        Writes the union of the provided atom basins to vasp-like files.
+        Points belonging to the atoms will have values from the charge or
+        reference grid, and all other points will be 0. Filenames are written
+        as {file_prefix}_asum.
+
+        Parameters
+        ----------
+        atom_indices : NDArray
+            The list of atom indices to sum and write
+        directory: str | Path
+            The directory to write the files in. If None, the directory currently
+            assigned to the Bader object will work.
+        file_prefix : str, optional
+            The string to append to each file name. The default is "CHGCAR".
+        data_type : Literal["charge", "reference"], optional
+            Which file to write from. The default is "charge".
+
+        Returns
+        -------
+        None.
+
         """
         if data_type == "charge":
             grid = self.charge_grid.copy()
@@ -911,7 +1243,8 @@ class Bader:
             grid = self.reference_grid.copy()
 
         data_array = grid.total
-        directory = self.directory
+        if directory is None:
+            directory = self.directory
         mask = np.isin(self.atom_labels, atom_indices)
         data_array_copy = data_array.copy()
         data_array_copy[~mask] = 0
@@ -919,9 +1252,15 @@ class Bader:
         grid = Grid(structure=self.structure, data=data)
         grid.write_file(directory / f"{file_prefix}_asum")
 
-    def get_atom_results_dataframe(self):
+    def get_atom_results_dataframe(self) -> pd.DataFrame:
         """
-        Collects a summary of results for the atoms
+        Collects a summary of results for the atoms in a pandas DataFrame.
+
+        Returns
+        -------
+        atoms_df : pd.DataFrame
+            A table summarizing the atomic basins.
+
         """
         # Get atom results summary
         atom_frac_coords = self.structure.frac_coords
@@ -940,7 +1279,13 @@ class Bader:
 
     def get_basin_results_dataframe(self):
         """
-        Collects a summary of results for the basins
+        Collects a summary of results for the basins in a pandas DataFrame.
+
+        Returns
+        -------
+        basin_df : pd.DataFrame
+            A table summarizing the basins.
+
         """
         basin_frac_coords = self.basin_maxima_frac
         basin_df = pd.DataFrame(
@@ -961,7 +1306,18 @@ class Bader:
         directory: Path | str | None = None,
     ):
         """
-        Writes a summary of atom and basin results to a .csv
+        Writes a summary of atom and basin results to .tsv files.
+
+        Parameters
+        ----------
+        directory : Path | str | None, optional
+            The directory to write to. If None, the current directory assigned
+            to the bader class will be used.
+
+        Returns
+        -------
+        None.
+
         """
         if directory is None:
             directory = self.directory
