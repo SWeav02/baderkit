@@ -55,7 +55,7 @@ class StructurePlotter:
         self._atom_metallicness = 0.0
         self._background = "#FFFFFF"
         self._view_indices = [1, 0, 0]
-        self._up_indices = [0, 0, 1]
+        self._camera_rotation = (0.0,)
         self._show_axes = True
         self._parallel_projection = True
         self._radii = [s.specie.atomic_radius for s in structure]
@@ -340,34 +340,36 @@ class StructurePlotter:
             type(i) == int for i in view_indices
         ), "View indices must be an array or list of miller indices"
         h, k, l = view_indices
-        camera_position = self.get_camera_position_from_miller(h, k, l)
+        camera_position = self.get_camera_position_from_miller(
+            h, k, l, self.camera_rotation
+        )
         self.camera_position = camera_position
+        # reset the camera zoom so that it fits the screen
+        self.plotter.reset_camera()
         self._view_indices = view_indices
 
     @property
-    def up_indices(self) -> NDArray[int]:
+    def camera_rotation(self) -> float:
         """
 
         Returns
         -------
-        NDArray[int]
-            The vector pointing to the upward direction on the screen.
+        float
+            The rotation of the camera from the default. The default is to set
+            the camera so that the upwards view is as close to the z axis as
+            possible, or the y axis if the view indices are perpendicular to z.
 
         """
-        return self._up_indices
+        return self._camera_rotation
 
-    @up_indices.setter
-    def up_indices(self, up_indices: NDArray[int]):
-        # TODO: The up indices should be perpendicular to the view direction. I
-        # need to manually calculate the set of vectors that are perpendicular and
-        # find the closest to the desired up vector.
-        assert len(up_indices) == 3 and all(
-            type(i) == int for i in up_indices
-        ), "Up indices must be an array or list of miller indices"
-        self._up_indices = up_indices
+    @camera_rotation.setter
+    def camera_rotation(self, camera_rotation: float):
         h, k, l = self.view_indices
-        camera_position = self.get_camera_position_from_miller(h, k, l)
+        camera_position = self.get_camera_position_from_miller(h, k, l, camera_rotation)
         self.camera_position = camera_position
+        # reset the camera zoom so that it fits the screen
+        self.plotter.reset_camera()
+        self._camera_rotation = camera_rotation
 
     @property
     def camera_position(self) -> list[tuple, tuple, tuple]:
@@ -429,10 +431,14 @@ class StructurePlotter:
         return [np.array(frac_coord) + np.array(shift) for shift in shifts]
 
     def get_camera_position_from_miller(
-        self, h: int, k: int, l: int
+        self,
+        h: int,
+        k: int,
+        l: int,
+        rotation: float = 0,
     ) -> list[tuple, tuple, tuple]:
         """
-        Creates a camera position list from a list of miller indices
+        Creates a camera position list from a list of miller indices.
 
         Parameters
         ----------
@@ -442,6 +448,10 @@ class StructurePlotter:
             Second miller index.
         l : int
             Third miller index.
+        rotation: float
+            The rotation in degrees of the camera. The default of 0 will arrange
+            the camera as close to Z=1 as possible, or in the case that it this
+            is parallel, it will default to close to Y=1.
 
         Returns
         -------
@@ -453,34 +463,45 @@ class StructurePlotter:
         # check for all 0s and adjust
         if all([x == 0 for x in [h, k, l]]):
             h, k, l = 1, 0, 0
-        # convert to cart coords
+        # convert to vector perpendicular to the miller plane
         view_direction = self.structure.get_cart_from_miller(h, k, l)
-        # construct camera position
-        # Define camera distance from the origin
-        # TODO: Calculate this somehow
-        camera_distance = 30.0
+        # Calculate a distance to the camera that doesn't clip any bodies. It's
+        # fine if this is very large as methods using this function should reset
+        # the camera after. We use half the sum of all lattice sides plus the largest
+        # atom radius as this should always be well outside the camera's range
+        camera_distance = sum(self.structure.lattice.lengths) + max(self.radii)
 
         # Set focal point as center of lattice
         matrix = self.structure.lattice.matrix
         far_corner = np.sum(matrix, axis=0)
         focal_point = far_corner / 2
+        # set the cameras position by adding the view direction to the focal point.
+        # The position is scaled by multiplying by the desired distance
+        camera_position = focal_point + view_direction * camera_distance
 
-        camera_position = focal_point + camera_distance * view_direction
+        # Find an orthogonal vector that has the maximum z value. This is done
+        # using Gram-Schmidt orthogonalization.
+        z_axis = np.array([0, 0, 1])
+        view_up = z_axis - np.dot(z_axis, view_direction) * view_direction
+        norm_proj_z = np.linalg.norm(view_up)
+        if norm_proj_z < 1e-14:
+            # fallback to y-axis if view direction is exactly perpendicular to
+            # the z direction
+            y_axis = np.array([0, 1, 0])
+            view_up = y_axis - np.dot(y_axis, view_direction) * view_direction
 
-        # Use the z-axis as the view up, unless its parallel
-        # TODO: Make sure this is rigorous
-        u, v, w = self.up_indices
-        z_axis = self.structure.get_cart_from_miller(u, v, w)
-        if np.allclose(np.abs(np.dot(view_direction, z_axis)), 1.0):
-            # fallback to y-axis if z is parallel
-            view_up = self.structure.get_cart_from_miller(0, 1, 0)
-        else:
-            view_up = z_axis
+        # Now we rotate the camera. We intentionally rotate counter clockwise to
+        # make the structure appear to rotate clockwise.
+        # convert degrees to radians
+        angle_rad = np.deg2rad(rotation)
+        view_up_rot = view_up * np.cos(angle_rad) + np.cross(
+            view_direction, view_up
+        ) * np.sin(angle_rad)
         # return camera position
         return [
             tuple(camera_position),  # where the camera is
             tuple(focal_point),  # where it's looking
-            tuple(view_up),  # which direction is up
+            tuple(view_up_rot),  # which direction is up
         ]
 
     def get_site_mesh(self, site_idx: int) -> pv.PolyData:
