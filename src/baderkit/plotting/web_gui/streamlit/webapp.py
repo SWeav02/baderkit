@@ -38,7 +38,6 @@ def load_plotter():
     plotter = BaderPlotter(bader, off_screen=True)
     # set plotter camera
     plotter.view_indices = plotter._view_indices
-    plotter._up_indices = plotter._up_indices
     st.session_state.bader = bader
     st.session_state.plotter = plotter
     st.session_state.html_string = plotter.get_plot_html()
@@ -52,7 +51,6 @@ if any(k not in st.session_state for k in ("plotter", "bader")):
 bader = st.session_state.bader
 plotter = st.session_state.plotter
 
-st.components.v1.html(st.session_state.html_string, height=st.session_state.page_height)
 settings = {}
 with st.sidebar:
     with st.container(height=st.session_state.page_height):
@@ -189,10 +187,6 @@ with st.sidebar:
                     settings["radii"][i] = radius
                     if vis:
                         settings["visible_atoms"].append(i)
-            st.divider()
-            settings["atom_metallicness"] = st.number_input(
-                "Metallicness", value=0.0, min_value=0.0, max_value=1.0
-            )
         #######################################################################
         # View Settings
         #######################################################################
@@ -212,25 +206,30 @@ with st.sidebar:
             st.divider()
             # view setting
             settings["view_indices"] = []
-            settings["up_indices"] = []
             col1, col2 = st.columns(2)
-            col1.markdown("Projection Vector")
-            col2.markdown("Upward Vector")
-            for i, j, k, w in zip(
-                ["h", "k", "l"],
-                ["u", "v", "w"],
-                plotter.view_indices,
-                plotter.up_indices,
-            ):
-                col1, col2, col3, col4 = st.columns([1, 3, 1, 3])
-                col1.markdown(i)
+            st.markdown(
+                "The view direction will be the vector perpendicular to the family of lattice planes defined by the miller indices."
+            )
+            col1, col2, col3, col4 = st.columns(4)
+            col1.markdown("h")
+            col2.markdown("k")
+            col3.markdown("l")
+            col4.markdown("rot")
+            for i, (x, col) in enumerate(zip(["h", "k", "l"], [col1, col2, col3])):
                 settings["view_indices"].append(
-                    col2.number_input(i, value=k, label_visibility="collapsed")
+                    col.number_input(
+                        label=x,
+                        value=plotter.view_indices[i],
+                        step=1,
+                        label_visibility="collapsed",
+                    )
                 )
-                col3.markdown(j)
-                settings["up_indices"].append(
-                    col4.number_input(j, value=w, label_visibility="collapsed")
-                )
+            settings["camera_rotation"] = col4.number_input(
+                label="rot",
+                value=0.0,
+                label_visibility="collapsed",
+            )
+
             st.session_state.page_height = st.selectbox(
                 "Page Size",
                 options=[
@@ -307,9 +306,24 @@ with st.sidebar:
                 pil_img.save(f"{filename}{filetype}", format=filetype_options[filetype])
 
     if st.button("Apply"):
+        st.session_state.apply_clicked = True
+
+    # Apply update after clicking apply
+    if st.session_state.get("apply_clicked", False):
         # apply settings
         for key, value in settings.items():
             setattr(plotter, key, value)
         # save html and rerun
         st.session_state.html_string = plotter.get_plot_html()
-        st.rerun()
+        st.session_state.apply_clicked = False
+
+# Display plot
+st.components.v1.html(st.session_state.html_string, height=st.session_state.page_height)
+
+# if st.button("Apply"):
+#     # apply settings
+#     for key, value in settings.items():
+#         setattr(plotter, key, value)
+#     # save html and rerun
+#     st.session_state.html_string = plotter.get_plot_html()
+#     st.rerun()

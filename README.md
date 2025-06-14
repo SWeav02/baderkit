@@ -20,7 +20,7 @@ Once all methods are successfully implemented I will make the package available 
  1. Create a new Conda env and activate it
  2. Clone this repo to a local folder
  3. Navigate to the folder
- 4. Run `conda env --file dev_environment.yml`
+ 4. Run `conda env create -f environment.yml`
  5. Run `pip install -e .`
 
 You can also install the package with other python environment managers simply using the final command, though be warry that I haven't setup proper dependencies yet.
@@ -79,9 +79,24 @@ results = bader.results_summary
 
 In addition to the Python interface, BaderKit can be run from the command line.
 1. Activate your environment with BaderKit installed
-2. Run `baderkit run CHGCAR -ref CHGCAR_sum`
+2. Navigate to the directory with your charge density and reference file
+3. Run `baderkit run CHGCAR -ref CHGCAR_sum`
 
-Additional arguments and options can be viewed by running `baderkit run --help`.
+Additional arguments and options can be viewed by running `baderkit run --help`. The command will automatically try and detect vasp and .cube formats based on the file names.
+
+## Plotting and Web GUI
+
+Writing bader basins to file without knowing what they are can be annoying. To help with this, I have implemented a `BaderPlotter` class that uses [pyvista](https://pyvista.org/) under the hood. This can be interacted with in python directly, or through a relatively basic web app I created using [Streamlit](https://streamlit.io/). The app can be started from the command line with:
+1. Activate your environment with BaderKit installed
+2. Navigate to the directory with your charge density and reference file
+3. Run `baderkit tools webapp CHGCAR -ref CHGCAR_sum`
+
+This will open a window in your browser similar to this:
+![streamlit_app](docs/streamlit_screenshot.png)
+
+The basins can then be selected using the `Bader` tab on the left. Simple settings for the isosurface and atoms are available under the `Grid` and `Atoms` tab. Some settings for the viewport are available under the `view` tab. The selected basins can be exported to vasp-like files in the folder you started the webapp from under the `Export` tab. The viewport can also be exported to a variety of image formats.
+
+> **ℹ️ Note:** Currently the viewport is made by exporting the pyvista Plotter object to html and embedding it directly. Changes made by interacting with the view port directly (rotation) will not show up in exported images.
 
 ## Contributing
 
