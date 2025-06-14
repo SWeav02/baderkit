@@ -9,11 +9,10 @@ from typing import Literal, TypeVar
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
-from pymatgen.core import Structure
 from rich.progress import track
 
-from baderkit.core.utilities import (
-    Grid,
+from baderkit.core.grid import Grid
+from baderkit.core.numba_functions import (
     get_basin_charge_volume_from_label,
     get_edges,
     get_multi_weight_voxels,
@@ -23,6 +22,7 @@ from baderkit.core.utilities import (
     get_steepest_pointers,
     refine_near_grid_edges,
 )
+from baderkit.core.structure import Structure
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
