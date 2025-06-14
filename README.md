@@ -20,7 +20,7 @@ Once all methods are successfully implemented I will make the package available 
  1. Create a new Conda env and activate it
  2. Clone this repo to a local folder
  3. Navigate to the folder
- 4. Run `conda env --file dev_environment.yml`
+ 4. Run `conda env create -f environment.yml`
  5. Run `pip install -e .`
 
 You can also install the package with other python environment managers simply using the final command, though be warry that I haven't setup proper dependencies yet.
@@ -94,7 +94,7 @@ Writing bader basins to file without knowing what they are can be annoying. To h
 This will open a window in your browser similar to this:
 ![streamlit_app](docs/streamlit_screenshot.png)
 
-The basins can then be selected using the `Bader` tab on the left. Simple settings for the isosurface and aotms are available under the `Grid` and `Atoms` tab. Some settings for the viewport are available under the `view` tab. The selected basins can be exported to vasp-like files in the folder you started the webapp from under the `Export` tab. The viewport can also be exported to a variety of image formats.
+The basins can then be selected using the `Bader` tab on the left. Simple settings for the isosurface and atoms are available under the `Grid` and `Atoms` tab. Some settings for the viewport are available under the `view` tab. The selected basins can be exported to vasp-like files in the folder you started the webapp from under the `Export` tab. The viewport can also be exported to a variety of image formats.
 
 > **ℹ️ Note:** Currently the viewport is made by exporting the pyvista Plotter object to html and embedding it directly. Changes made by interacting with the view port directly (rotation) will not show up in exported images.
 
