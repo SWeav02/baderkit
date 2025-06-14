@@ -187,10 +187,6 @@ with st.sidebar:
                     settings["radii"][i] = radius
                     if vis:
                         settings["visible_atoms"].append(i)
-            st.divider()
-            settings["atom_metallicness"] = st.number_input(
-                "Metallicness", value=0.0, min_value=0.0, max_value=1.0
-            )
         #######################################################################
         # View Settings
         #######################################################################
@@ -321,6 +317,7 @@ with st.sidebar:
         st.session_state.html_string = plotter.get_plot_html()
         st.session_state.apply_clicked = False
 
+# Display plot
 st.components.v1.html(st.session_state.html_string, height=st.session_state.page_height)
 
 # if st.button("Apply"):
