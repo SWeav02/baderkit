@@ -2,10 +2,9 @@
 
 from .bader import Bader
 from .grid import Grid
-from .numba_functions import (
+from .numba_functions import (  # get_hybrid_basin_weights,
     get_basin_charge_volume_from_label,
     get_edges,
-    get_hybrid_basin_weights,
     get_maxima,
     get_multi_weight_voxels,
     get_near_grid_assignments,

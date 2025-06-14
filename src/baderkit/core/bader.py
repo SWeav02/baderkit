@@ -401,6 +401,7 @@ class Bader:
         logging.info("Calculating basin charges and volumes")
         charge_data = self.charge_grid.total
         voxel_volume = self.charge_grid.voxel_volume
+        # TODO: Is this faster than just using numpy?
         basin_charges, basin_volumes = get_basin_charge_volume_from_label(
             basin_labels=labels,
             charge_data=charge_data,

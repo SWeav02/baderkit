@@ -438,9 +438,9 @@ class StructurePlotter:
         ----------
         h : int
             First miller index.
-        k : TYPE
+        k : int
             Second miller index.
-        l : TYPE
+        l : int
             Third miller index.
 
         Returns

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
+from numpy.typing import NDArray
 from pymatgen.core import Structure as PymatgenStructure
 
 
@@ -10,7 +11,28 @@ class Structure(PymatgenStructure):
     properties and methods.
     """
 
-    def get_cart_from_miller(self, h, k, l):
+    def get_cart_from_miller(self, h: int, k: int, l: int) -> NDArray[float]:
+        """
+        Gets the cartesian coordinates of the vector perpendicular to the provided
+        miller indices
+
+        Parameters
+        ----------
+        h : int
+            First miller index.
+        k : int
+            Second miller index.
+        l : int
+            Third miller index.
+
+
+        Returns
+        -------
+        NDArray[float]
+            The cartesian coordinates of the vector perpendicular to the plane
+            defined by the provided miller indices.
+
+        """
         lattice = self.lattice
         # Get three points that define the plane from miller indices. For indices
         # of zero we can just take one of the other points and add 1 along the

@@ -63,6 +63,20 @@ def get_edges(
     """
     In a 3D array of labeled voxels, finds the voxels that neighbor at
     least one voxel with a different label.
+
+    Parameters
+    ----------
+    labeled_array : NDArray[np.int64]
+        A 3D array where each entry represents the basin assignment of the point.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+
+    Returns
+    -------
+    edges : NDArray[np.bool_]
+        A mask with the same shape as the input grid that is True at points
+        on basin edges.
+
     """
     nx, ny, nz = labeled_array.shape
     # create 3D array to store edges
@@ -93,6 +107,22 @@ def propagate_edges(
     edge_mask: NDArray[np.bool_],
     neighbor_transforms: NDArray[np.int64],
 ):
+    """
+    Expand the True values of a grid to their neighbors.
+
+    Parameters
+    ----------
+    edge_mask : NDArray[np.bool_]
+        A 3D array of bools.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+
+    Returns
+    -------
+    new_edge_mask : NDArray[np.bool_]
+        A 3D array of bools.
+
+    """
     new_edge_mask = np.zeros_like(edge_mask, dtype=np.bool_)
     nx, ny, nz = edge_mask.shape
     for i in prange(nx):
@@ -117,6 +147,23 @@ def unmark_isolated_voxels(
     edge_mask: NDArray[np.bool_],
     neighbor_transforms: NDArray[np.int64],
 ):
+    """
+    Switch any True entries in a bool mask to False if none of their neighbors
+    are also True.
+
+    Parameters
+    ----------
+    edge_mask : NDArray[np.bool_]
+        A 3D array of bools.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+
+    Returns
+    -------
+    edge_mask : NDArray[np.bool_]
+        A 3D array of bools
+
+    """
     nx, ny, nz = edge_mask.shape
     for i in prange(nx):
         for j in range(ny):
@@ -147,6 +194,22 @@ def get_neighbor_diffs(
     """
     Gets the difference in value between each voxel and its neighbors.
     Does not weight by distance.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        The data for each voxel.
+    initial_labels : NDArray[np.int64]
+        A 3D grid representing the flat indices for each voxel.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+
+    Returns
+    -------
+    diffs : NDArray[float]
+        A 2D array of shape x*y*x by len(neighbor_transforms) where each entry
+        i, j correspondin to the voxel index and transformation index respectively
+
     """
     nx, ny, nz = data.shape
     # create empty array for diffs. This is a 2D array with with entries i, j
@@ -179,6 +242,28 @@ def get_basin_charge_volume_from_label(
     voxel_volume: np.float64,
     maxima_num: types.int64,
 ):
+    """
+    Calculates the charge and volume
+
+    Parameters
+    ----------
+    basin_labels : NDArray[np.int64]
+        A 3D array where each entry represents the basin assignment of the point.
+    charge_data : NDArray[np.float64]
+        The charge density at each voxel.
+    voxel_volume : np.float64
+        The volume of each voxel
+    maxima_num : types.int64
+        The number of maxima in the grid
+
+    Returns
+    -------
+    charge_array : NDArray[float]
+        The total charge for each basin
+    volume_array : NDArray[float]
+        The total volume for each basin
+
+    """
     charge_array = np.zeros(maxima_num, dtype=types.float64)
     volume_array = np.zeros(maxima_num, dtype=types.float64)
     for basin_index in prange(maxima_num):
@@ -201,8 +286,26 @@ def get_steepest_pointers(
     neighbor_dists: NDArray[np.int64],
 ):
     """
-    For each voxel in 3D grid of data, finds the neighboring voxel with
+    For each voxel in a 3D grid of data, finds the index of the neighboring voxel with
     the highest value, weighted by distance.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    initial_labels : NDArray[np.int64]
+        A 3D array where each entry represents the basin assignment of the point.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.int64]
+        The distance to each neighboring voxel
+
+    Returns
+    -------
+    best_label : NDArray[np.int64]
+        A 3D array where each entry is the index of the neighbor that had the
+        greatest increase in value.
+
     """
     nx, ny, nz = data.shape
     # create array to store the label of the neighboring voxel with the greatest
@@ -252,6 +355,38 @@ def get_neighbor_flux(
     For a 3D array of data set in real space, calculates the flux accross
     voronoi facets for each voxel to its neighbors, corresponding to the
     fraction of volume flowing to the neighbor.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    sorted_voxel_coords : NDArray[np.int64]
+        A Nx3 array where each entry represents the voxel coordinates of the
+        point. This must be sorted from highest value to lowest.
+    voxel_indices : NDArray[np.int64]
+        A 3D array where each entry is the flat voxel index of each
+        point.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.float64]
+        The distance to each neighboring voxel
+    facet_areas : NDArray[np.float64]
+        The area of the voronoi facet between the voxel and each neighbor
+
+    Returns
+    -------
+    flux_array : NDArray[float]
+        A 2D array of shape x*y*x by len(neighbor_transforms) where each entry
+        f(i, j) is the flux flowing from the voxel at index i to its neighbor
+        at transform neighbor_transforms[j]
+    neigh_array : NDArray[float]
+        A 2D array of shape x*y*x by len(neighbor_transforms) where each entry
+        f(i, j) is the index of the neighbor from the voxel at index i to the
+        neighbor at transform neighbor_transforms[j]
+    maxima_mask : NDArray[bool]
+        A 1D array of length N that is True where the sorted voxel indices are
+        a maximum
+
     """
     nx, ny, nz = data.shape
     # create empty 2D arrays to store the volume flux flowing from each voxel
@@ -313,6 +448,40 @@ def get_single_weight_voxels(
     """
     Loops over voxels to find any that have exaclty one weight. We store
     these in a single array the size of the assignments to reduce space
+
+    Parameters
+    ----------
+    neigh_indices_array : NDArray[np.int64]
+        A 2D array of shape x*y*x by len(neighbor_transforms) where each entry
+        f(i, j) is the index of the neighbor from the voxel at index i to the
+        neighbor at transform neighbor_transforms[j]
+    sorted_voxel_coords : NDArray[np.int64]
+        A Nx3 array where each entry represents the voxel coordinates of the
+        point. This must be sorted from highest value to lowest.
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    maxima_num : np.int64
+        The number of local maxima in the grid
+    sorted_flat_charge_data : NDArray[np.float64]
+        The charge density at each value sorted highest to lowest.
+    voxel_volume : np.float64
+        The volume of a single voxel
+    assignments : NDArray[np.int64], optional
+        A 3D array of preassigned labels.
+
+    Returns
+    -------
+    assignments : NDArray[int]
+        A 3D array where each entry represents the basin the voxel belongs to.
+        If the basin is split to multiple neighbors it is assigned a value of
+        0
+    unassigned_mask : NDArray[bool]
+        A 1D array of bools representing which voxel indices are not assigned
+    charge_array : NDArray[float]
+        The charge on each basin that has been assigned so far
+    volume_array : NDArray[float]
+        The volume on each basin that has been assigned so far
+
     """
     # get the length of our voxel array and create an empty array for storing
     # data as we collect it
@@ -395,6 +564,55 @@ def get_multi_weight_voxels(
     voxel_volume: np.float64,
     maxima_num: np.int64,
 ):
+    """
+    Assigns charge and volume from each voxel that has multiple weights to each
+    of the basins it is split to. The returned assignments represent the basin
+    that has the largest share of each split voxel.
+
+    Parameters
+    ----------
+    flux_array : NDArray[np.float64]
+        A 2D array of shape x*y*x by len(neighbor_transforms) where each entry
+        f(i, j) is the flux flowing from the voxel at index i to its neighbor
+        at transform neighbor_transforms[j]
+    neigh_indices_array : NDArray[np.int64]
+        A 2D array of shape x*y*x by len(neighbor_transforms) where each entry
+        f(i, j) is the index of the neighbor from the voxel at index i to the
+        neighbor at transform neighbor_transforms[j]
+    assignments : NDArray[np.int64]
+        A 3D array where each entry represents the basin the voxel belongs to.
+        If the basin is split to multiple neighbors it is assigned a value of
+        0.
+    unass_to_vox_pointer : NDArray[np.int64]
+        An array pointing each entry in the list of unassigned voxels to their
+        original voxel index
+    vox_to_unass_pointer : NDArray[np.int64]
+        An array pointing each voxel in its original voxel index to its unassigned
+        index if it exists.
+    sorted_voxel_coords : NDArray[np.int64]
+        A Nx3 array where each entry represents the voxel coordinates of the
+        point. This must be sorted from highest value to lowest.
+    charge_array : NDArray[np.float64]
+        The charge on each basin that has been assigned so far
+    volume_array : NDArray[np.float64]
+        The volume on each basin that has been assigned so far
+    sorted_flat_charge_data : NDArray[np.float64]
+        The charge density at each value sorted highest to lowest.
+    voxel_volume : np.float64
+        The volume of a single voxel
+    maxima_num : np.int64
+        The number of local maxima in the grid
+
+    Returns
+    -------
+    new_assignments : NDArray[np.int64]
+        The updated assignments.
+    charge_array : TYPE
+        The final charge on each basin
+    volume_array : TYPE
+        The final volume of each basin
+
+    """
     # create weight array
     weight_array = np.zeros((len(unass_to_vox_pointer), maxima_num), dtype=np.float64)
     # create a new assignments array to store updated assignments
@@ -446,32 +664,32 @@ def get_multi_weight_voxels(
     return new_assignments, charge_array, volume_array
 
 
-@njit(fastmath=True, cache=True)
-def get_hybrid_basin_weights(
-    flux_array: NDArray[np.float64],
-    neigh_indices_array: NDArray[np.int64],
-    weight_array: NDArray[np.float64],
-):
-    # get the length of our voxel array
-    n_voxels = flux_array.shape[0]
-    # iterate over our voxels. We assume voxels are ordered from highest to lowest
-    # data
-    for i in range(n_voxels):
-        neighbors = neigh_indices_array[i]
-        # Our neighbor indices array is -1 where the neighbors are lower. Maxima
-        # correspond to where this is true for all neighbors
-        if np.all(neighbors < 0):
-            # This is a maximum and should already have been labeled. We continue
-            continue
-        # Otherwise we are at either an interior or edge voxel.
-        # Get a mask where there are neighbors in this row (those that are above -1)
-        mask = neigh_indices_array[i, :] >= 0
-        # Get the relavent neighbors and flux flowing into them
-        fluxes = flux_array[i, mask]
-        # Get the sum of each current_flux*neighbor_flux for each basin and
-        weight_array[i] = fluxes @ weight_array[neighbors[mask]]
+# @njit(fastmath=True, cache=True)
+# def get_hybrid_basin_weights(
+#     flux_array: NDArray[np.float64],
+#     neigh_indices_array: NDArray[np.int64],
+#     weight_array: NDArray[np.float64],
+# ):
+#     # get the length of our voxel array
+#     n_voxels = flux_array.shape[0]
+#     # iterate over our voxels. We assume voxels are ordered from highest to lowest
+#     # data
+#     for i in range(n_voxels):
+#         neighbors = neigh_indices_array[i]
+#         # Our neighbor indices array is -1 where the neighbors are lower. Maxima
+#         # correspond to where this is true for all neighbors
+#         if np.all(neighbors < 0):
+#             # This is a maximum and should already have been labeled. We continue
+#             continue
+#         # Otherwise we are at either an interior or edge voxel.
+#         # Get a mask where there are neighbors in this row (those that are above -1)
+#         mask = neigh_indices_array[i, :] >= 0
+#         # Get the relavent neighbors and flux flowing into them
+#         fluxes = flux_array[i, mask]
+#         # Get the sum of each current_flux*neighbor_flux for each basin and
+#         weight_array[i] = fluxes @ weight_array[neighbors[mask]]
 
-    return weight_array
+#     return weight_array
 
 
 ###############################################################################
@@ -491,6 +709,42 @@ def get_near_grid_assignments(
     neighbors: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
 ):
+    """
+    Do an initial assignment of voxels to basins using the neargrid method.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    flat_voxel_coords : NDArray[np.int64]
+        A Nx3 array of voxel coords
+    pointer_voxel_coords : NDArray[np.int64]
+        A 1D array of length N pointing each voxel to the neighboring voxel that
+        is nearest to one step along the gradient at the voxel
+    voxel_indices : NDArray[np.int64]
+        A 3D array where each entry is the flat voxel index of each
+        point
+    zero_grads : NDArray[np.bool_]
+        A 1D array that is True where voxels have zero gradient and are either
+        maxima or need to use an on-grid step
+    delta_rs : NDArray[np.float64]
+        A Nx3 array of differences between the ongrid steps and true gradient
+        steps
+    neighbors : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.float64]
+        The distance to each neighboring voxel
+
+    Returns
+    -------
+    assignments : NDArray[int]
+        A 3D array where each entry represents the basin the voxel belongs to.
+
+    maxima_mask : NDArray[bool]
+        A 1D array of length N that is True where the sorted voxel indices are
+        a maximum
+
+    """
     nx, ny, nz = data.shape
     # create array for assigning
     assignments = np.zeros(data.shape, dtype=np.int64)
@@ -640,6 +894,44 @@ def refine_near_grid_edges(
     neighbors: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
 ):
+    """
+    Refines the assignments at the edges of each basin.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+       A 3D grid of values for each point.
+    current_assignments : NDArray[np.int64]
+        A 3D array where each entry represents the basin the voxel currently belongs to.
+    refined_assignments : NDArray[np.int64]
+        A 3D array with assignments anywhere that isn't an edge and 0 at the edge.
+    edge_voxel_coords : NDArray[np.int64]
+        An Nx3 array of voxel indices
+    pointer_voxel_coords : NDArray[np.int64]
+        A 1D array of length N pointing each voxel to the neighboring voxel that
+        is nearest to one step along the gradient at the voxel
+    voxel_indices : NDArray[np.int64]
+        A 3D array where each entry is the flat voxel index of each
+        point
+    zero_grads : NDArray[np.bool_]
+        A 1D array that is True where voxels have zero gradient and are either
+        maxima or need to use an on-grid step
+    delta_rs : NDArray[np.float64]
+        A Nx3 array of differences between the ongrid steps and true gradient
+        steps
+    neighbors : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.float64]
+        The distance to each neighboring voxel
+
+    Returns
+    -------
+    new_assignments : NDArray[int]
+        The updated assignments from the refinement
+    changed_labels : int
+        The number of labels that changed in the refinement
+
+    """
     nx, ny, nz = data.shape
     # create array for assigning
     new_assignments = refined_assignments.copy()
