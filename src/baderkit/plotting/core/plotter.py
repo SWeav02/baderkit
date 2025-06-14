@@ -3,30 +3,44 @@
 """
 Defines a helper class for plotting Grids
 """
+import io
 import os
 import tempfile
 from itertools import product
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pyvista as pv
 from numpy.typing import NDArray
 
-from baderkit.core import Bader
-from baderkit.core.utilities import Grid, Structure
+from baderkit.core import Bader, Grid, Structure
 from baderkit.plotting.core.defaults import ATOM_COLORS
 
 
 class StructurePlotter:
-    """
-    Plots a Pymatgen Structure object using pyvista
-    """
 
     def __init__(
         self,
         structure: Structure,
         off_screen: bool = False,
     ):
+        """
+        A convenience class for creating plots of crystal structures using
+        pyvista's package for VTK.
+
+        Parameters
+        ----------
+        structure : Structure
+            The pymatgen Structure object to plot.
+        off_screen : bool, optional
+            Whether or not the plotter should be in offline mode. The default is False.
+
+        Returns
+        -------
+        None.
+
+        """
         # sort and relabel structure for consistency
         structure = structure.copy()
         structure.sort()
@@ -56,6 +70,14 @@ class StructurePlotter:
     ###########################################################################
     @property
     def visible_atoms(self) -> list[int]:
+        """
+
+        Returns
+        -------
+        list[int]
+            A list of atom indices to display in the plot.
+
+        """
         return self._visible_atoms
 
     @visible_atoms.setter
@@ -72,7 +94,15 @@ class StructurePlotter:
         self._visible_atoms = visible_atoms
 
     @property
-    def show_lattice(self):
+    def show_lattice(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            Whether or not to display the outline of the unit cell.
+
+        """
         return self._show_lattice
 
     @show_lattice.setter
@@ -91,7 +121,15 @@ class StructurePlotter:
     #     actor = self.plotter.
 
     @property
-    def lattice_thickness(self):
+    def lattice_thickness(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The thickness of the lines outlining the unit cell.
+
+        """
         return self._lattice_thickness
 
     @lattice_thickness.setter
@@ -101,7 +139,15 @@ class StructurePlotter:
         self._lattice_thickness = lattice_thickness
 
     @property
-    def atom_metallicness(self):
+    def atom_metallicness(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The amount of metallic character in the atom display.
+
+        """
         return self._atom_metallicness
 
     @atom_metallicness.setter
@@ -114,7 +160,15 @@ class StructurePlotter:
         self._atom_metallicness = atom_metallicness
 
     @property
-    def background(self):
+    def background(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            The color of the plot background as a hex code.
+
+        """
         return self._background
 
     @background.setter
@@ -123,7 +177,16 @@ class StructurePlotter:
         self._background = background
 
     @property
-    def show_axes(self):
+    def show_axes(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            Whether or not to show the axis widget. Note this currently only
+            displays the cartesian axes.
+
+        """
         return self._show_axes
 
     @show_axes.setter
@@ -135,7 +198,16 @@ class StructurePlotter:
         self._show_axes = show_axes
 
     @property
-    def parallel_projection(self):
+    def parallel_projection(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            If True, a parallel projection scheme will be used rather than
+            perspective.
+
+        """
         return self._parallel_projection
 
     @parallel_projection.setter
@@ -147,7 +219,16 @@ class StructurePlotter:
         self._parallel_projection = parallel_projection
 
     @property
-    def radii(self):
+    def radii(self) -> list[float]:
+        """
+
+        Returns
+        -------
+        list[float]
+            The radius to display for each atom in the structure. The actual
+            displayed radius will be 0.3*radius.
+
+        """
         return self._radii
 
     @radii.setter
@@ -180,7 +261,15 @@ class StructurePlotter:
             )
 
     @property
-    def colors(self):
+    def colors(self) -> list[str]:
+        """
+
+        Returns
+        -------
+        list[str]
+            The colors to use for each atom as hex codes.
+
+        """
         return self._colors
 
     @colors.setter
@@ -195,7 +284,15 @@ class StructurePlotter:
         self._colors = colors
 
     @property
-    def atom_df(self):
+    def atom_df(self) -> pd.DataFrame:
+        """
+
+        Returns
+        -------
+        atom_df : TYPE
+            A dataframe summarizing the properties of the atom meshes.
+
+        """
         # construct a pandas dataframe for each atom
         visible = []
         for i in range(len(self.structure)):
@@ -226,7 +323,15 @@ class StructurePlotter:
         self.radii = atom_df["Radius"]
 
     @property
-    def view_indices(self):
+    def view_indices(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The miller indices of the plane that the camera is perpendicular to.
+
+        """
         return self._view_indices
 
     @view_indices.setter
@@ -240,11 +345,22 @@ class StructurePlotter:
         self._view_indices = view_indices
 
     @property
-    def up_indices(self):
+    def up_indices(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The vector pointing to the upward direction on the screen.
+
+        """
         return self._up_indices
 
     @up_indices.setter
     def up_indices(self, up_indices: NDArray[int]):
+        # TODO: The up indices should be perpendicular to the view direction. I
+        # need to manually calculate the set of vectors that are perpendicular and
+        # find the closest to the desired up vector.
         assert len(up_indices) == 3 and all(
             type(i) == int for i in up_indices
         ), "Up indices must be an array or list of miller indices"
@@ -254,7 +370,16 @@ class StructurePlotter:
         self.camera_position = camera_position
 
     @property
-    def camera_position(self):
+    def camera_position(self) -> list[tuple, tuple, tuple]:
+        """
+
+        Returns
+        -------
+        list[tuple, tuple, tuple]
+            The set of tuples defining the camera position. In order, this is
+            the camera's position, the focal point, and the view up vector.
+
+        """
         pos = self.plotter.camera_position
         # convert to list for serializability
         return [list(pos[0]), list(pos[1]), list(pos[2])]
@@ -303,7 +428,28 @@ class StructurePlotter:
         shifts = set(product(*transforms))
         return [np.array(frac_coord) + np.array(shift) for shift in shifts]
 
-    def get_camera_position_from_miller(self, h, k, l):
+    def get_camera_position_from_miller(
+        self, h: int, k: int, l: int
+    ) -> list[tuple, tuple, tuple]:
+        """
+        Creates a camera position list from a list of miller indices
+
+        Parameters
+        ----------
+        h : int
+            First miller index.
+        k : int
+            Second miller index.
+        l : int
+            Third miller index.
+
+        Returns
+        -------
+        list[tuple, tuple, tuple]
+            The set of tuples defining the camera position. In order, this is
+            the camera's position, the focal point, and the view up vector.
+
+        """
         # check for all 0s and adjust
         if all([x == 0 for x in [h, k, l]]):
             h, k, l = 1, 0, 0
@@ -337,7 +483,21 @@ class StructurePlotter:
             tuple(view_up),  # which direction is up
         ]
 
-    def get_site_mesh(self, site_idx: int):
+    def get_site_mesh(self, site_idx: int) -> pv.PolyData:
+        """
+        Generates a mesh for the provided site index.
+
+        Parameters
+        ----------
+        site_idx : int
+            The index of the atom to create the mesh for.
+
+        Returns
+        -------
+        pv.PolyData
+            A pyvista mesh representing an atom.
+
+        """
         site = self.structure[site_idx]
         radius = self.radii[site_idx]
         frac_coords = site.frac_coords
@@ -362,11 +522,29 @@ class StructurePlotter:
         # merge all meshes
         return pv.merge(spheres)
 
-    def get_all_site_meshes(self):
+    def get_all_site_meshes(self) -> list[pv.PolyData]:
+        """
+        Gets a list of pyvista meshes representing the atoms in the structure
+
+        Returns
+        -------
+        meshes : pv.PolyData
+            A list of pyvista meshes representing each atom.
+
+        """
         meshes = [self.get_site_mesh(i) for i in range(len(self.structure))]
         return meshes
 
-    def get_lattice_mesh(self):
+    def get_lattice_mesh(self) -> pv.PolyData:
+        """
+        Generates the mesh representing the outline of the unit cell.
+
+        Returns
+        -------
+        pv.PolyData
+            A pyvista mesh representing the outline of the unit cell.
+
+        """
         # get the lattice matrix
         a, b, c = self.structure.lattice.matrix
         # get the corners of the matrix
@@ -394,7 +572,23 @@ class StructurePlotter:
         # combine and return
         return pv.merge(lines)
 
-    def _create_structure_plot(self, off_screen: bool):
+    def _create_structure_plot(self, off_screen: bool) -> pv.Plotter:
+        """
+        Generates a pyvista.Plotter object from the current class variables.
+        This is called when the class is first instanced and generally shouldn't
+        be called again.
+
+        Parameters
+        ----------
+        off_screen : bool
+            Whether or not the plotter should run in off_screen mode.
+
+        Returns
+        -------
+        plotter : pv.Plotter
+            A pyvista Plotter object representing the provided Structure object.
+
+        """
         plotter = pv.Plotter(off_screen=off_screen)
         # set background
         plotter.set_background(self.background)
@@ -432,39 +626,123 @@ class StructurePlotter:
         return plotter
 
     def show(self):
+        """
+        Renders the plot to a window. After closing the window, a new instance
+        must be created to plot again. Pressing q pauses the rendering allowing
+        changes to be made without fully exiting.
+
+        Returns
+        -------
+        None.
+
+        """
         self.plotter.show(auto_close=False)
 
     def update(self):
+        """
+        Updates the pyvista plotter object when linked with a render window in
+        Trame. Generally this is not needed outside of Trame applications.
+
+        Returns
+        -------
+        None.
+
+        """
         self.plotter.update()
 
-    def rebuild(self) -> pv.Plotter():
+    def rebuild(self) -> pv.Plotter:
+        """
+        Builds a new pyvista plotter object representing the current state of
+        the Plotter class.
+
+        Returns
+        -------
+        pv.Plotter
+            A pyvista Plotter object representing the current state of the
+            StructurePlotter class.
+
+        """
         return self._create_structure_plot(self._off_screen)
 
-    def get_plot_html(self):
+    def get_plot_html(self) -> str:
+        """
+        Creates an html string representing the current state of the StructurePlotter
+        class.
+
+        Returns
+        -------
+        str
+            The html string representing the current StructurePlotter class.
+
+        """
         html_io = self.plotter.export_html(None)
         return html_io.getvalue()
 
-    def get_plot_vtksz(self):
-        # Create temp file path manually
-        with tempfile.NamedTemporaryFile(suffix=".vtkjs", delete=False) as f:
-            temp_path = f.name  # Just get the path, don't use the open file
-        # Now write to it
-        self.plotter.export_vtksz(temp_path)
-        # Read the contents
-        with open(temp_path, "rb") as f:
-            content = f.read()
-        # Clean up
-        os.remove(temp_path)
+    # def get_plot_vtksz(self):
+    #     # Create temp file path manually
+    #     with tempfile.NamedTemporaryFile(suffix=".vtkjs", delete=False) as f:
+    #         temp_path = f.name  # Just get the path, don't use the open file
+    #     # Now write to it
+    #     self.plotter.export_vtksz(temp_path)
+    #     # Read the contents
+    #     with open(temp_path, "rb") as f:
+    #         content = f.read()
+    #     # Clean up
+    #     os.remove(temp_path)
 
-        return content
+    #     return content
 
     def get_plot_screenshot(
         self,
-        **kwargs,
-    ):
+        filename: str | Path | io.BytesIO = None,
+        transparent_background: bool = None,
+        return_img: bool = True,
+        window_size: tuple[int, int] = None,
+        scale: int = None,
+    ) -> NDArray[float]:
+        """
+        Creates a screenshot of the current state of the StructurePlotter class.
+        This is a wraparound of pyvista's screenshot method
+
+        Parameters
+        ----------
+        filename: str | Path | io.BytesIO
+            Location to write image to. If None, no image is written.
+
+        transparent_background: bool
+            Whether to make the background transparent.
+            The default is looked up on the plotter’s theme.
+
+        return_img: bool
+            If True, a numpy.ndarray of the image will be returned. Defaults to
+            True.
+
+        window_sizesequence: tuple[int, int]
+            Set the plotter’s size to this (width, height) before taking the
+            screenshot.
+
+        scale: int
+            Set the factor to scale the window size to make a higher resolution image. If None this will use the image_scale property on this plotter which defaults to one.
+
+        Returns
+        -------
+        NDArray[float]
+            Array containing pixel RGB and alpha. Sized:
+
+            [Window height x Window width x 3] if transparent_background is set to False.
+
+            [Window height x Window width x 4] if transparent_background is set to True.
+
+        """
         plotter = self.rebuild()
         plotter.camera = self.plotter.camera.copy()
-        screenshot = plotter.screenshot(**kwargs)
+        screenshot = plotter.screenshot(
+            filename=filename,
+            transparent_background=transparent_background,
+            return_img=return_img,
+            window_size=window_size,
+            scale=scale,
+        )
         plotter.close()
         return screenshot
 
@@ -476,6 +754,23 @@ class GridPlotter(StructurePlotter):
         off_screen: bool = False,
         # downscale: int | None = 400,
     ):
+        """
+        A convenience class for creating plots of crystal structures and isosurfaces
+        using pyvista's package for VTK.
+
+        Parameters
+        ----------
+        grid : Grid
+            The Grid object to use for isosurfaces. The structure will be pulled
+            from this grid.
+        off_screen : bool, optional
+            Whether or not the plotter should be in offline mode. The default is False.
+
+        Returns
+        -------
+        None.
+
+        """
         # apply StructurePlotter kwargs
         structure = grid.structure
         super().__init__(structure=structure, off_screen=off_screen)
@@ -516,7 +811,23 @@ class GridPlotter(StructurePlotter):
         # update plotter
         self.plotter = self._create_grid_plot(off_screen)
 
-    def _make_structured_grid(self, values):
+    def _make_structured_grid(self, values: NDArray[float]) -> pv.StructuredGrid:
+        """
+        Creates a pyvista StructuredGrid object for making isosurfaces. This
+        should generally not be called directly.
+
+        Parameters
+        ----------
+        values : NDArray[float]
+            A 3xN array of values representing the data in the structured grid.
+            These should be raveled/reshaped using Fortran's conventions (order='F'')
+
+        Returns
+        -------
+        structured_grid : pv.StructuredGrid
+            A pyvista StructuredGrid with values representing the grid data.
+
+        """
         structured_grid = pv.StructuredGrid()
         structured_grid.points = self.points
         structured_grid.dimensions = self.shape
@@ -524,7 +835,15 @@ class GridPlotter(StructurePlotter):
         return structured_grid
 
     @property
-    def show_surface(self):
+    def show_surface(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            whether or not to display the isosurface.
+
+        """
         return self._show_surface
 
     @show_surface.setter
@@ -535,7 +854,15 @@ class GridPlotter(StructurePlotter):
         self._show_surface = show_surface
 
     @property
-    def show_caps(self):
+    def show_caps(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            Whether or not to display caps on the isosurface.
+
+        """
         return self._show_caps
 
     @show_caps.setter
@@ -546,7 +873,15 @@ class GridPlotter(StructurePlotter):
         self._show_caps = show_caps
 
     @property
-    def surface_opacity(self):
+    def surface_opacity(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            Opacity of the isosurface.
+
+        """
         return self._surface_opacity
 
     @surface_opacity.setter
@@ -557,7 +892,15 @@ class GridPlotter(StructurePlotter):
         self._surface_opacity = surface_opacity
 
     @property
-    def cap_opacity(self):
+    def cap_opacity(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            Opacity of the caps.
+
+        """
         return self._cap_opacity
 
     @cap_opacity.setter
@@ -568,7 +911,17 @@ class GridPlotter(StructurePlotter):
         self._cap_opacity = cap_opacity
 
     @property
-    def colormap(self):
+    def colormap(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            The colormap for the caps and isosurface. This is ignored when the
+            surface or caps are set to use solid colors. Valid options are those
+            available in matplotlib.
+
+        """
         return self._colormap
 
     @colormap.setter
@@ -581,7 +934,14 @@ class GridPlotter(StructurePlotter):
             self._add_cap_mesh()
 
     @property
-    def use_solid_surface_color(self):
+    def use_solid_surface_color(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            whether or not to use a solid color for the isosurface.
+        """
         return self._use_solid_surface_color
 
     # TODO: Figure out a way to set the cmap without remaking the surface?
@@ -593,7 +953,14 @@ class GridPlotter(StructurePlotter):
         self._add_iso_mesh()
 
     @property
-    def use_solid_cap_color(self):
+    def use_solid_cap_color(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            whether or not to use a solid color for the caps.
+        """
         return self._use_solid_cap_color
 
     @use_solid_cap_color.setter
@@ -604,7 +971,16 @@ class GridPlotter(StructurePlotter):
         self._add_cap_mesh()
 
     @property
-    def surface_color(self):
+    def surface_color(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            The color to use for the surface as a hex string. This is ignored if
+            the surface is not set to use solid colors.
+
+        """
         return self._surface_color
 
     @surface_color.setter
@@ -615,6 +991,15 @@ class GridPlotter(StructurePlotter):
 
     @property
     def cap_color(self):
+        """
+
+        Returns
+        -------
+        str
+            The color to use for the caps as a hex string. This is ignored if
+            the caps are not set to use solid colors.
+
+        """
         return self._cap_color
 
     @cap_color.setter
@@ -624,24 +1009,56 @@ class GridPlotter(StructurePlotter):
             self._add_cap_mesh()
 
     @property
-    def iso_val(self):
+    def iso_val(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The value to set the isosurface to.
+
+        """
         return self._iso_val
 
     @iso_val.setter
     def iso_val(self, iso_val: float):
         # make sure iso value is within range
         iso_val = max(self.min_val, min(iso_val, self.max_val))
-        self.update_surface_mesh(iso_val)
+        self._update_surface_mesh(iso_val)
         self._add_iso_mesh()
         self._add_cap_mesh()
 
-    def update_surface_mesh(self, iso_value: float):
+    def _update_surface_mesh(self, iso_value: float):
+        """
+        Updates the surface meshes to the provided iso_value
+
+        Parameters
+        ----------
+        iso_value : float
+            The value to update the surface meshes to
+
+        Returns
+        -------
+        None.
+
+        """
         self.iso = self.structured_grid.contour([iso_value])
         self.cap = self.surface.contour_banded(
             2, rng=[iso_value, self.max_val], generate_contour_edges=False
         )
 
-    def get_surface_kwargs(self) -> dict:
+    def _get_surface_kwargs(self) -> dict:
+        """
+        Generates the keyword arguments to use when adding the surface to
+        the plotter. We need this because setting a solid color vs. a colormap
+        requires different keywords
+
+        Returns
+        -------
+        dict
+            The keyword arguments for setting the surface mesh in the plotter.
+
+        """
         kwargs = {
             "opacity": self.surface_opacity,
             "pbr": True,
@@ -657,7 +1074,18 @@ class GridPlotter(StructurePlotter):
             kwargs["show_scalar_bar"] = False
         return kwargs
 
-    def get_cap_kwargs(self) -> dict:
+    def _get_cap_kwargs(self) -> dict:
+        """
+        Generates the keyword arguments to use when adding the caps to
+        the plotter. We need this because setting a solid color vs. a colormap
+        requires different keywords
+
+        Returns
+        -------
+        dict
+            The keyword arguments for setting the caps mesh in the plotter.
+
+        """
         kwargs = {
             "opacity": self.cap_opacity,
             "pbr": True,
@@ -672,34 +1100,77 @@ class GridPlotter(StructurePlotter):
             kwargs["show_scalar_bar"] = False
         return kwargs
 
-    def _add_iso_mesh(self) -> dict:
+    def _add_iso_mesh(self):
+        """
+        Removes the current isosurface mesh than adds a new one.
+
+        Returns
+        -------
+        None.
+
+        """
         if self.show_surface:
             if "iso" in self.plotter.actors.keys():
                 self.plotter.remove_actor("iso")
             if len(self.iso["values"]) > 0:
-                self.plotter.add_mesh(self.iso, **self.get_surface_kwargs())
+                self.plotter.add_mesh(self.iso, **self._get_surface_kwargs())
 
     def _add_cap_mesh(self) -> dict:
+        """
+        Removes the current cap mesh than adds a new one.
+
+        Returns
+        -------
+        None.
+
+        """
         if self.show_caps:
             if "cap" in self.plotter.actors.keys():
                 self.plotter.remove_actor("cap")
             if len(self.iso["values"]) > 0:
-                self.plotter.add_mesh(self.cap, **self.get_cap_kwargs())
+                self.plotter.add_mesh(self.cap, **self._get_cap_kwargs())
 
     def _create_grid_plot(self, off_screen) -> pv.Plotter():
+        """
+        Generates a pyvista.Plotter object from the current class variables.
+        This is called when the class is first instanced and generally shouldn't
+        be called again.
+
+        Parameters
+        ----------
+        off_screen : bool
+            Whether or not the plotter should run in off_screen mode.
+
+        Returns
+        -------
+        plotter : pv.Plotter
+            A pyvista Plotter object representing the provided Structure object.
+
+        """
         # get initial plotter with structure
         plotter = self._create_structure_plot(off_screen=off_screen)
         # generate initial surface meshes
-        self.update_surface_mesh(self.iso_val)
+        self._update_surface_mesh(self.iso_val)
         # Add iso mesh
         if len(self.iso["values"]) > 0:
-            plotter.add_mesh(self.iso, **self.get_surface_kwargs())
+            plotter.add_mesh(self.iso, **self._get_surface_kwargs())
         # Add cap mesh
         if len(self.cap["values"]) > 0:
-            plotter.add_mesh(self.cap, **self.get_cap_kwargs())
+            plotter.add_mesh(self.cap, **self._get_cap_kwargs())
         return plotter
 
     def rebuild(self):
+        """
+        Builds a new pyvista plotter object representing the current state of
+        the Plotter class.
+
+        Returns
+        -------
+        pv.Plotter
+            A pyvista Plotter object representing the current state of the
+            GridPlotter class.
+
+        """
         return self._create_grid_plot(self._off_screen)
 
 
@@ -709,6 +1180,23 @@ class BaderPlotter(GridPlotter):
         bader: Bader,
         off_screen: bool = False,
     ):
+        """
+        A convenience class for creating plots of individual Bader basins
+        using pyvista's package for VTK.
+
+        Parameters
+        ----------
+        bader : Bader
+            The Bader object to use for isolating basins and creating isosurfaces.
+            The structure will be pulled from the charge grid.
+        off_screen : bool, optional
+            Whether or not the plotter should be in offline mode. The default is False.
+
+        Returns
+        -------
+        None.
+
+        """
         # apply StructurePlotter kwargs
         grid = bader.charge_grid
         super().__init__(grid=grid, off_screen=off_screen)
@@ -734,7 +1222,15 @@ class BaderPlotter(GridPlotter):
         self._hidden_mask = np.zeros(len(self.flat_bader_basins), dtype=bool)
 
     @property
-    def visible_bader_basins(self):
+    def visible_bader_basins(self) -> list[int]:
+        """
+
+        Returns
+        -------
+        list[int]
+            A list of bader basin indices that are currently visible.
+
+        """
         return self._visible_bader_basins
 
     @visible_bader_basins.setter
@@ -747,7 +1243,15 @@ class BaderPlotter(GridPlotter):
         self._update_plotter_mask()
 
     @property
-    def visible_atom_basins(self):
+    def visible_atom_basins(self) -> list[int]:
+        """
+
+        Returns
+        -------
+        list[int]
+            A list of atom indices whose basins are currently visible.
+
+        """
         return self._visible_atom_basins
 
     @visible_atom_basins.setter
@@ -760,6 +1264,15 @@ class BaderPlotter(GridPlotter):
         self._update_plotter_mask()
 
     def _update_plotter_mask(self):
+        """
+        Updates the mask indicating which areas of the grid should not be shown
+        then sets the regions to -1.
+
+        Returns
+        -------
+        None.
+
+        """
         hidden_mask = ~(
             np.isin(self.flat_bader_basins, list(self._visible_bader_basins))
             | np.isin(self.flat_atom_basins, list(self._visible_atom_basins))
