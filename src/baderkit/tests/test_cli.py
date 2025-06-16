@@ -75,4 +75,4 @@ def test_webapp(tmp_path, monkeypatch):
     at = AppTest.from_file(webapp_path, default_timeout=15)
     at.run()
     if at.exception:
-        raise at.exception
+        raise RuntimeError("Streamlit AppTest encountered an error") from at.exception
