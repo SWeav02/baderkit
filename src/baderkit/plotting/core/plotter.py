@@ -4,6 +4,7 @@
 Defines a helper class for plotting Grids
 """
 import io
+import multiprocessing as mp
 from itertools import product
 from multiprocessing import Process, Queue
 from pathlib import Path
@@ -15,6 +16,11 @@ from numpy.typing import NDArray
 
 from baderkit.core import Bader, Grid, Structure
 from baderkit.plotting.core.defaults import ATOM_COLORS
+
+# BUG-FIX We use multiprocessing to export html because on linux/mac an error
+# will throw if this is not done as a main process. We also force fork as our
+# start method to avoid pickling issues.
+mp.set_start_method("fork", force=True)
 
 
 def _export_html(queue: Queue, plotter: pv.Plotter):
