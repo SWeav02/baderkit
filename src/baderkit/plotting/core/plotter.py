@@ -4,9 +4,8 @@
 Defines a helper class for plotting Grids
 """
 import io
-import os
-import tempfile
 from itertools import product
+from multiprocessing import Process, Queue
 from pathlib import Path
 
 import numpy as np
@@ -16,6 +15,10 @@ from numpy.typing import NDArray
 
 from baderkit.core import Bader, Grid, Structure
 from baderkit.plotting.core.defaults import ATOM_COLORS
+
+
+def _export_html(queue: Queue, plotter: pv.Plotter):
+    queue.put(plotter.export_html(filename=None))
 
 
 class StructurePlotter:
@@ -696,8 +699,14 @@ class StructurePlotter:
             The html string representing the current StructurePlotter class.
 
         """
-        html_io = self.plotter.export_html(None)
-        return html_io.getvalue()
+        # BUG-FIX: On Linux and maybe MacOS, pyvista's export_html must be run
+        # as a main process. To do this within our streamlit apps, we use python's
+        # multiprocess to run the process as is done in [stpyvista](https://github.com/edsaac/stpyvista/blob/main/src/stpyvista/trame_backend.py)
+        queue = Queue(maxsize=1)
+        process = Process(target=_export_html, args=(queue, self.plotter))
+        process.start()
+        html_plotter = queue.get().read()
+        return html_plotter
 
     # def get_plot_vtksz(self):
     #     # Create temp file path manually

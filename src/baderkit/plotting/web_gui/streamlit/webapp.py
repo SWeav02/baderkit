@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+
 import os
 
 import numpy as np
@@ -294,7 +295,10 @@ with st.sidebar:
     if st.session_state.get("apply_clicked", False):
         # apply settings
         for key, value in settings.items():
-            setattr(plotter, key, value)
+            # check if the value has changed. If so set it
+            current_value = getattr(plotter, key)
+            if current_value != value:
+                setattr(plotter, key, value)
         # save html and rerun
         st.session_state.html_string = plotter.get_plot_html()
         st.session_state.apply_clicked = False
