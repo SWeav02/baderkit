@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import pytest
+from streamlit.testing.v1 import AppTest
 from typer.testing import CliRunner
 
 from baderkit.command_line.base import baderkit_app
@@ -57,7 +58,7 @@ def test_run():
         assert Path("CHGCAR_a0").exists()
 
 
-def test_webapp(tmp_path):
+def test_webapp(tmp_path, monkeypatch):
     # copy CHGCAR over to temp path
     shutil.copyfile(TEST_CHGCAR, tmp_path / "CHGCAR")
     # get path to streamlit app
@@ -65,40 +66,13 @@ def test_webapp(tmp_path):
     webapp_path = (
         current_file.parent.parent / "plotting" / "web_gui" / "streamlit" / "webapp.py"
     )
-    args = [
-        "streamlit",
-        "run",
-        str(webapp_path),
-        "--server.headless",
-        "true",
-    ]
     # set environment variables
     os.environ["CHARGE_FILE"] = "CHGCAR"
     os.environ["BADER_METHOD"] = "ongrid"
-
-    # Start streamlit
-    proc = subprocess.Popen(
-        args=args,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        cwd=tmp_path,
-        text=True,
-        bufsize=1,  # line-buffered
-    )
-
-    try:
-        # Let streamlit start then check that it's still running
-        time.sleep(15)
-        assert proc.poll() is None
-    finally:
-        # stop the process
-        proc.terminate()
-        try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-    # Get the output
-    stdout, _ = proc.communicate()
-    for word in ["Traceback", "Error", "Exception", "CRITICAL"]:
-        assert word not in stdout, f"Found error keyword '{word}' in output:\n{stdout}"
+    # move into the tmp_directory
+    monkeypatch.chdir(tmp_path)
+    # run webapp
+    at = AppTest.from_file(webapp_path, default_timeout=15)
+    at.run()
+    if at.exception:
+        raise RuntimeError("Streamlit AppTest encountered an error") from at.exception
