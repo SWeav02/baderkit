@@ -5,6 +5,7 @@ Defines a helper class for plotting Grids
 """
 import io
 import multiprocessing as mp
+import sys
 from itertools import product
 from multiprocessing import Process, Queue
 from pathlib import Path
@@ -20,7 +21,8 @@ from baderkit.plotting.core.defaults import ATOM_COLORS
 # BUG-FIX We use multiprocessing to export html because on linux/mac an error
 # will throw if this is not done as a main process. We also force fork as our
 # start method to avoid pickling issues.
-mp.set_start_method("fork", force=True)
+if sys.platform != "win32":
+    mp.set_start_method("fork", force=True)
 
 
 def _export_html(queue: Queue, plotter: pv.Plotter):
@@ -705,6 +707,11 @@ class StructurePlotter:
             The html string representing the current StructurePlotter class.
 
         """
+        if sys.platform == "win32":
+            # We can return the html directly without opening a subprocess. And
+            # we need to because the "fork" start method doesn't work
+            html_plotter = self.plotter.export_html(filename=None)
+            return html_plotter.read()
         # BUG-FIX: On Linux and maybe MacOS, pyvista's export_html must be run
         # as a main process. To do this within our streamlit apps, we use python's
         # multiprocess to run the process as is done in [stpyvista](https://github.com/edsaac/stpyvista/blob/main/src/stpyvista/trame_backend.py)
