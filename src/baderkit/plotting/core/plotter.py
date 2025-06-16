@@ -706,6 +706,7 @@ class StructurePlotter:
         process = Process(target=_export_html, args=(queue, self.plotter))
         process.start()
         html_plotter = queue.get().read()
+        process.join()
         return html_plotter
 
     # def get_plot_vtksz(self):
