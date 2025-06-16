@@ -57,7 +57,7 @@ class PrintOptions(str, Enum):
 @baderkit_app.command()
 def run(
     charge_file: Path = typer.Argument(
-        ...,
+        default=...,
         help="The path to the charge density file",
     ),
     reference_file: Path = typer.Option(
@@ -87,12 +87,16 @@ def run(
         help="Optional printing of atom or bader basins",
         case_sensitive=False,
     ),
-    indices: Annotated[
-        list[int],
-        typer.Argument(
-            help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`"
-        ),
-    ] = None,
+    indices=typer.Argument(
+        default=[],
+        help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`",
+    ),
+    # indices: Annotated[
+    #     list[int],
+    #     typer.Argument(
+    #         help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`"
+    #     ),
+    # ] = None,
 ):
     """
     Runs a bader analysis on the provided files. File formats are automatically

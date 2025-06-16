@@ -48,17 +48,21 @@ requires-python=">=3.10"
 # This field lists other packages that your project depends on to run.
 dependencies=[
     # Core dependencies
-    "numpy",
-    "pandas",
-    "typer",
-    "pymatgen",
-    "scipy",
-    "numba",
-    "pyvista", # for plotting grid
-    "streamlit", # for web GUI
+    "numpy>=1.26.0",
+    "pandas>=2.1.0",
+    "typer>=0.6.1",
+    "pymatgen>=2022.1.9",
+    "scipy>=1.7.2",
+    "numba>=0.59.0",
+    "pyvista>=0.44.0", # for plotting grid
+    "streamlit>=1.40.0", # for web GUI
     # Extra (smaller) dependencies & utilities
-    "markdown",  # for docs and markdown rendering in html templates
-    "rich", # for coloring CLI outputs and progress bars
+    "rich>=11.0", # for coloring CLI outputs and progress bars
+    # For webapp plotter html export. Not used directly in the app.
+    "trame",
+    "trame-vtk",
+    "trame-vuetify",
+    "nest_asyncio",
 ]
 
 # optional dependencies that are not installed by default

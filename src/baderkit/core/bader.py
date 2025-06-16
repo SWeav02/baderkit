@@ -469,7 +469,7 @@ class Bader:
         logging.info("Calculating initial assignments")
         # get the labels of each voxel. This allows us to point a new voxel to its corresponding
         # rgrid and delta r
-        flat_voxel_indices = np.arange(np.prod(data.shape))
+        flat_voxel_indices = np.arange(np.prod(data.shape), dtype=np.int64)
         voxel_indices = flat_voxel_indices.reshape(data.shape)
         neighbors = list(product([-1, 0, 1], repeat=3))
         neighbors = np.array([i for i in neighbors if i != (0, 0, 0)], dtype=np.int64)

@@ -756,7 +756,11 @@ def get_near_grid_assignments(
     maxima_count = 1
     # iterate over all voxels, their pointers, and delta rs
     for initial_coord in flat_voxel_coords:
-        current_coord = initial_coord
+        # We manually set the dtype to int64 because older versions of numba seem
+        # to convert the dtype to int32 somewhere
+        current_coord = np.array(
+            (initial_coord[0], initial_coord[1], initial_coord[2]), dtype=np.int64
+        )
         # Begin a while loop climbing the gradient and correcting it until we
         # reach either a maximum or an already assigned label
         total_dr = np.zeros(3, dtype=np.float64)
@@ -941,7 +945,9 @@ def refine_near_grid_edges(
     changed_labels = 0
     # iterate over all voxels, their pointers, and delta rs
     for initial_coord in edge_voxel_coords:
-        current_coord = initial_coord.copy()
+        current_coord = np.array(
+            (initial_coord[0], initial_coord[1], initial_coord[2]), dtype=np.int64
+        )
         original_label = current_assignments[
             current_coord[0], current_coord[1], current_coord[2]
         ]
@@ -950,7 +956,7 @@ def refine_near_grid_edges(
         total_dr = np.zeros(3, dtype=np.float64)
         path_len = 0
         while True:
-            i, j, k = current_coord
+            i, j, k = current_coord[0], current_coord[1], current_coord[2]
             # First check if this coord has an assignment
             current_label = refined_assignments[i, j, k]
             if current_label != 0:

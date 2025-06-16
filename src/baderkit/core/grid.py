@@ -17,7 +17,7 @@ from scipy.spatial import Voronoi
 
 from baderkit.core.structure import Structure
 
-# This allows for Self typing and is compatible with python 3.10
+# This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Grid")
 
 

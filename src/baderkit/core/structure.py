@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
 
+from collections import defaultdict
+from typing import TypeVar
+
 import numpy as np
 from numpy.typing import NDArray
+from pymatgen.core import Lattice, Species
 from pymatgen.core import Structure as PymatgenStructure
+
+# This allows for Self typing and is compatible with python versions before 3.11
+Self = TypeVar("Self", bound="Structure")
 
 
 class Structure(PymatgenStructure):
@@ -10,6 +17,35 @@ class Structure(PymatgenStructure):
     This class is a wraparound for Pymatgen's Structure class with additional
     properties and methods.
     """
+
+    def __init__(
+        self,
+        lattice: Lattice,
+        species: list[Species],
+        frac_coords: list[NDArray],
+        **kwargs,
+    ):
+        super().__init__(lattice, species, frac_coords, **kwargs)
+        # add labels to sites. This is to add backwards compatability to the
+        # relabel_sites method that doesn't exist in earlier versions of pymatgen
+        for site in self:
+            site.label = site.specie.symbol
+
+    @property
+    def labels(self) -> list[str]:
+        """
+
+        Returns
+        -------
+        list[str]
+            The list of labels for each site
+
+        """
+        return [site.label for site in self]
+
+    @labels.setter
+    def labels(self, labels: list[str]):
+        assert len(labels) == len(self), "Labels must be the same length structure."
 
     def get_cart_from_miller(self, h: int, k: int, l: int) -> NDArray[float]:
         """
@@ -80,3 +116,41 @@ class Structure(PymatgenStructure):
         vector2 = a3_real - a1_real
         normal_vector = np.cross(vector1, vector2)
         return normal_vector / np.linalg.norm(normal_vector)
+
+    def relabel_sites(self, ignore_uniq: bool = False) -> Self:
+        """
+        This method is an exact copy of [Pymatgen's](https://github.com/materialsproject/pymatgen/blob/v2025.5.28/src/pymatgen/core/structure.py).
+        It is not available in some older version of pymatgen so I've added it
+        to increase the dependency range.
+
+        Relabel sites to ensure they are unique.
+
+        Site labels are updated in-place, and relabeled by suffixing _1, _2, ..., _n for duplicates.
+        Call Structure.copy().relabel_sites() to avoid modifying the original structure.
+
+
+        Parameters
+        ----------
+        ignore_uniq : bool, optional
+            If True, do not relabel sites that already have unique labels.
+            The default is False.
+
+        Returns
+        -------
+        Self
+            Structure: self with relabeled sites.
+
+        """
+
+        grouped = defaultdict(list)
+        for site in self:
+            grouped[site.label].append(site)
+
+        for label, sites in grouped.items():
+            if len(sites) == 0 or (len(sites) == 1 and ignore_uniq):
+                continue
+
+            for idx, site in enumerate(sites):
+                site.label = f"{label}_{idx + 1}"
+
+        return self
