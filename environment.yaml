@@ -3,13 +3,23 @@ channels:
   - default
   - conda-forge
 dependencies:
-  - python
-  - numpy
-  - pandas
-  - matplotlib
-  - typer
-  - pyvista
-  - streamlit
-  - markdown
-  - rich
+  - python>=3.10 # Before this there is no importlib.metadata
+  - pymatgen>=2022.1.9 # Same as Simmate's
+  - numpy>=1.26.0 # Could potentially be earlier
+  - pandas>=2.1.0 # Prior to this, they use applymap instead of map
+  - typer>=0.6.1 
+  - pyvista>=0.44.0 # Added support for more up-to-date VTK
+  - streamlit>=1.40.0 # Added st.segmented_control
+  - rich>=11.0 # Same as simmate
+  - numba>=0.59.0
+  - scipy>=1.7.2 # Added python 3.10 support
+
+  # Trame is used by pyvista for exporting plots as html. We let conda figure 
+  # these out since we don't directly rely on them
+  - trame
+  - trame-vtk
+  - trame-vuetify
   - pytest
+  - pip
+  - pip:
+      - nest-asyncio

@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 import os
 
-import matplotlib.pyplot as plt
 import numpy as np
 import streamlit as st
 from PIL import Image
 
 from baderkit.core import Bader, Grid
 from baderkit.plotting import BaderPlotter
+from baderkit.plotting.core.defaults import COLORMAPS
 
 st.markdown(
     """
@@ -87,7 +87,7 @@ with st.sidebar:
             )
             settings["colormap"] = st.selectbox(
                 "Colormap",
-                options=plt.colormaps(),
+                options=COLORMAPS,
                 index=3,  # this is viridis
             )
             st.divider()
@@ -230,24 +230,6 @@ with st.sidebar:
                 label_visibility="collapsed",
             )
 
-            st.session_state.page_height = st.selectbox(
-                "Page Size",
-                options=[
-                    100,
-                    200,
-                    300,
-                    400,
-                    500,
-                    600,
-                    800,
-                    1000,
-                    1200,
-                    1600,
-                    2000,
-                    3000,
-                ],
-                index=3,
-            )
         #######################################################################
         # Export settings
         #######################################################################
@@ -291,7 +273,7 @@ with st.sidebar:
                 index=0,
             )
             filename = st.text_input(
-                "Filename", value=f"{plotter.structure.reduced_formula}"
+                "Filename", value=f"{plotter.structure.composition.reduced_formula}"
             )
             # TODO: Find a better way of caching
             if st.button("Export Image", icon=":material/download:"):
@@ -319,7 +301,27 @@ with st.sidebar:
 
 # Display plot
 st.components.v1.html(st.session_state.html_string, height=st.session_state.page_height)
-
+height = st.selectbox(
+    "Page Height",
+    options=[
+        100,
+        200,
+        300,
+        400,
+        500,
+        600,
+        800,
+        1000,
+        1200,
+        1600,
+        2000,
+        3000,
+    ],
+    index=3,
+)
+if height != st.session_state.page_height:
+    st.session_state.page_height = height
+    st.rerun()
 # if st.button("Apply"):
 #     # apply settings
 #     for key, value in settings.items():
