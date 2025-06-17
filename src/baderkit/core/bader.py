@@ -1185,8 +1185,6 @@ class Bader:
 
         Parameters
         ----------
-        atom_indices : NDArray
-            The list of atom indices to write
         directory: str | Path
             The directory to write the files in. If None, the directory currently
             assigned to the Bader object will work.

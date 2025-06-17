@@ -1,0 +1,92 @@
+site_name: BaderKit Documentation
+site_url: https://sweav02.github.io/baderkit/
+repo_url: https://github.com/SWeav02/baderkit
+
+theme:
+  name: material
+  language: en
+   
+#  logo: images/simmate-icon.svg
+#  favicon: images/simmate-icon.svg
+  icon:
+    repo: fontawesome/brands/github
+  
+  # Coloring for light/dark themes
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+      primary: deep purple
+      accent: deep purple
+    - scheme: slate
+      toggle:
+        icon: material/toggle-switch-off-outline
+        name: Switch to light mode
+      primary: deep purple
+      accent: deep purple
+
+  features:
+      - content.code.annotate
+      - content.code.copy
+
+validation:
+  links:
+    absolute_links: relative_to_docs
+    anchors: warn
+    unrecognized_links: warn
+
+# For emojis, annotations, etc. Stolen straight from [simmate](https://github.com/jacksund/simmate)
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - pymdownx.details
+  - pymdownx.superfences:
+        custom_fences:
+              - name: mermaid
+                class: mermaid
+                format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Basic Usage: usage.md
+#  - Background Theory: background.md # To be added later
+  - API Reference: 
+    - Core:
+      - Bader: api_reference/core/bader.md
+      - Grid: api_reference/core/grid.md
+      - Numba: api_reference/core/numba.md
+    - Plotting:
+      - Structure: api_reference/plotting/structure.md
+      - Grid: api_reference/plotting/grid.md
+      - Bader: api_reference/plotting/bader.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      watch:
+      - src/baderkit
+      handlers:
+        python:
+          options:
+#            show_source: false
+            docstring_style: numpy
+            docstring_section_style: table
+            #parameter_headings: false
+
+extra_css:
+  - css/mkdocstrings.css

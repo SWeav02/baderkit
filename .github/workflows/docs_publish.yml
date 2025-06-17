@@ -1,0 +1,41 @@
+# Documentation for this action is located here...
+#   https://squidfunk.github.io/mkdocs-material/publishing-your-site/
+
+name: publish-docs
+
+# build the documentation whenever there are new commits on main
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy Docs to Github Pages
+
+    steps:
+    - name: Initial setup
+      uses: actions/checkout@v3
+    
+    # --------
+    # NOTE: this section is copied from lint-and-test.yml
+    - name: Create conda env and install deps
+      uses: conda-incubator/setup-miniconda@v2
+      with:
+        environment-file: environment.yaml
+        python-version: ${{ matrix.python-version }}
+        auto-activate-base: false
+        channels: conda-forge
+        activate-environment: baderkit_dev
+    - name: Install Baderkit
+      shell: bash -l {0}
+      run: |
+        pip install -e .
+    # --------
+
+    - name: Make documentation
+      shell: bash -l {0}
+      run: |
+        mkdocs gh-deploy --force

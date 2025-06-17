@@ -761,7 +761,7 @@ class StructurePlotter:
             If True, a numpy.ndarray of the image will be returned. Defaults to
             True.
 
-        window_sizesequence: tuple[int, int]
+        window_size: tuple[int, int]
             Set the plotter’s size to this (width, height) before taking the
             screenshot.
 
