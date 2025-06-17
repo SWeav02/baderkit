@@ -1,0 +1,36 @@
+/* Edit main header to be more bold */
+h1 {
+  font-weight: 600 !important;
+  color: var(--md-typeset-color) !important; 
+}
+
+
+/* Add spacing and line between functions/properties */
+div.doc.doc-object.doc-attribute, div.doc.doc-object.doc-function {
+  margin-top: 1.5em;
+  border-bottom: 2px solid #A9A9A9;
+}
+
+/* make function names bold and have no highlight*/
+code.highlight.language-python {
+  background-color: transparent !important;
+  font-weight: bold;
+}
+
+/* make properties/return not bold*/
+span.doc-section-title {
+  font-weight: normal;
+}
+
+/* alter border for notes */
+.admonition.note {
+  border-color: #785abf !important;
+}
+
+.admonition.note > .admonition-title {
+  background-color: #785abf47 !important;
+}
+
+.admonition.note > .admonition-title::before {
+  background-color: #785abf !important;
+}

@@ -904,7 +904,7 @@ def refine_near_grid_edges(
     Parameters
     ----------
     data : NDArray[np.float64]
-       A 3D grid of values for each point.
+        A 3D grid of values for each point.
     current_assignments : NDArray[np.int64]
         A 3D array where each entry represents the basin the voxel currently belongs to.
     refined_assignments : NDArray[np.int64]

@@ -77,7 +77,16 @@ nav:
 plugins:
   - search
   - mkdocstrings:
-      custom_templates: docs/templates
       default_handler: python
       watch:
       - src/baderkit
+      handlers:
+        python:
+          options:
+#            show_source: false
+            docstring_style: numpy
+            docstring_section_style: table
+            #parameter_headings: false
+
+extra_css:
+  - css/mkdocstrings.css
