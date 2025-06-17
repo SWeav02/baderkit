@@ -1,41 +1,28 @@
-# Documentation for this action is located here...
-#   https://squidfunk.github.io/mkdocs-material/publishing-your-site/
-
 name: publish-docs
-
-# build the documentation whenever there are new commits on main
 on:
   push:
-    branches:
+    branches: 
       - main
-
+permissions:
+  contents: write
 jobs:
-
   deploy:
     runs-on: ubuntu-latest
-    name: Deploy Docs to Github Pages
-
     steps:
-    - name: Initial setup
-      uses: actions/checkout@v3
-    
-    # --------
-    # NOTE: this section is copied from lint-and-test.yml
-    - name: Create conda env and install deps
-      uses: conda-incubator/setup-miniconda@v2
-      with:
-        environment-file: environment.yaml
-        python-version: ${{ matrix.python-version }}
-        auto-activate-base: false
-        channels: conda-forge
-        activate-environment: baderkit_dev
-    - name: Install Baderkit
-      shell: bash -l {0}
-      run: |
-        pip install -e .
-    # --------
-
-    - name: Make documentation
-      shell: bash -l {0}
-      run: |
-        mkdocs gh-deploy --force
+      - uses: actions/checkout@v4
+      - name: Configure Git Credentials
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+      - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV 
+      - uses: actions/cache@v4
+        with:
+          key: mkdocs-material-${{ env.cache_id }}
+          path: .cache 
+          restore-keys: |
+            mkdocs-material-
+      - run: pip install mkdocs-material mkdocstrings mkdocstrings-python
+      - run: mkdocs gh-deploy --force
