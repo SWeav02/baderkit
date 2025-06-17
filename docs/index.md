@@ -1,6 +1,6 @@
 # About
 
-BaderKit aims to reproduce the algorithms available in the [Henkelman group's](https://theory.cm.utexas.edu/henkelman/code/bader/) excellent Fortran code, while utilizing Python's class oriented system to allow for easy extension to other projects. I have reimplemented the code primarily using [Numba](https://numba.pydata.org/numba-doc/dev/index.html) and [NumPy](https://numpy.org/doc/stable/index.html) to maintain speed where I can. [Pymatgen](https://pymatgen.org/) is used under the hood to build out several core classes to improve ease of use.
+BaderKit aims to reproduce the algorithms available in the [Henkelman group's](https://theory.cm.utexas.edu/henkelman/code/bader/) excellent Fortran code, while utilizing Python's class oriented system to allow for easy extension to other projects. The code primarily uses [Numba](https://numba.pydata.org/numba-doc/dev/index.html) and [NumPy](https://numpy.org/doc/stable/index.html) to maintain comparable speed. [Pymatgen](https://pymatgen.org/) is used under the hood to build out several core classes to improve ease of use.
 
 This project is currently an early work in progress. So far, I have implemented a simple Bader class and CLI. I hope to add the following algorithms:
  

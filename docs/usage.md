@@ -23,12 +23,12 @@ bader = Bader.from_dynamic(
     )
 ```
 
-Results are stored as class properties. To get make the algorithm run and get a summary of results, run:
+Results are stored as class properties. To run the algorithm and get results, simply call one of these properties. For example, we can get a complete summary.
 
 ```python
 results = bader.results_summary
 ```
-Individual results can also be obtained directly. For example:
+Individual results can also be obtained directly.
 ```python
 atom_charges = bader.atom_charges # Total atom charges
 atom_labels = bader.atom_labels # Atom assignments for each point in the grid
@@ -36,7 +36,7 @@ basin_volumes = bader.basin_volumes # The volumes of each bader basin
 maxima_coords = bader.basin_maxima_frac # Frac coordinates of each attractor
 ```
 
-Results can also be written to file, similar to the Henkelman code. `write_results_summary` will write the bader basins and atomic basins to two `.tsv` files which are human readable and can be opened with spreadsheet programs like excel. VASP-like files for individual atoms/basins or a sum of them can be written as well. If no directory is provided, these will write to the directory provided when the class was first instanced.
+Results can also be written to file, similar to the Henkelman code.
 ```python
 bader.write_results_summary() # writes results to .tsv files
 bader.write_basin_volumes([0]) # writes each basin in a list
@@ -44,8 +44,10 @@ bader.write_atom_volumes_sum([0,1,2]) # writes the union of atomic basins
 
 ```
 
+---
+
 ### The Grid Class
-The `Bader` class only has convenience functions for loading VASP or .cube files. For other formats, it must be created from BaderKit's custom Grid class. Behind the scenes, the Grid class inherits from Pymatgen's [VolumetricData class](https://pymatgen.org/pymatgen.io.vasp.html#pymatgen.io.vasp.outputs.VolumetricData). The `Grid` class can be created directly from a Pymatgen Structure and a dictionary of Array's representing the Charge Density.
+The `Bader` class only has convenience functions for loading VASP or .cube files. For other formats, it must be created from BaderKit's Grid class. Behind the scenes, the Grid class inherits from Pymatgen's [VolumetricData](https://pymatgen.org/pymatgen.io.vasp.html#pymatgen.io.vasp.outputs.VolumetricData) class. The `Grid` class can be created directly from a Pymatgen Structure and a dictionary of Array's representing the Charge Density.
 
 ```python
 from baderkit.core import Bader, Grid, Structure
@@ -76,7 +78,9 @@ bader = Bader(charge_grid = charge_grid)
     For spin-polarized calculations, the data dictionary should have two entries, `total` and `diff` containing the (spin-up + spin-down) data and (spin-up - spin-down) data respectively.
 
 ### For VASP Users (And other pseudopotential codes)
-VASP's CHGCAR contains only the valence electrons designated in the pseudopotential (PP) used for the calculation. It is generally recommended to recombine the valence charge density with the core density to use as the reference file. To do this, add the tag `LAECHG=.TRUE.` to the `INCAR` file. This will write the core charge density to an `AEECAR0` file and the valence to `AECCAR2`. These can be summed together using the `Grid` class and then used as the reference file for the analysis.
+VASP's CHGCAR contains only the valence electrons designated in the pseudopotential (PP) used for the calculation. It is generally recommended to recombine the valence charge density with the core density to use as the reference file. To do this, add the tag `LAECHG=.TRUE.` to your `INCAR` file before it runs. 
+
+This will write the core charge density to an `AEECAR0` file and the valence to `AECCAR2` which can be summed together using the `Grid` class and then used as the reference file for the analysis.
 
 ```python
 from baderkit.core import Bader, Grid
@@ -116,14 +120,14 @@ Output files for atoms and bader basins will be written automatically to `bader_
 baderkit run --help
 ```
 
-There is also a convenience command for combining two grid files. This essentially runs the script above.
+There is also a convenience command for combining two grid files into a `CHGCAR_sum` file.
 ```bash
 baderkit tools sum AECCAR0 AECCAR2
 ```
 
 ## Web GUI
 
-Writing bader basins to file without knowing what they are can be annoying. To help with this, we have the `BaderPlotter` class which uses [pyvista](https://pyvista.org/) under the hood. This can be interacted with in python directly, or through a relatively basic web app created with [Streamlit](https://streamlit.io/). The app can be started from the command line with:
+Repeatedly writing basins to file to visualize them can be annoying. To help with this, we have the `BaderPlotter` class which uses [pyvista](https://pyvista.org/) under the hood. This can be interacted with in python directly, or through a [Streamlit](https://streamlit.io/) webapp which can be started from the command line.
 ```bash
 baderkit tools webapp CHGCAR -ref CHGCAR_sum
 ```
@@ -131,7 +135,9 @@ baderkit tools webapp CHGCAR -ref CHGCAR_sum
 This will open a window in your browser similar to this:
 ![streamlit_app](images/streamlit_screenshot.png)
 
-The atom and bader basins can be selected using the `Bader` tab on the left. Simple settings for the isosurface and atoms are available under the `Grid` and `Atoms` tab. Some settings for the viewport are available under the `view` tab. The selected basins can be exported to vasp-like files in the folder you started the webapp from under the `Export` tab. The viewport can also be exported to a variety of image formats.
+The atom and bader basins can be selected using the `Bader` tab on the left. Some basic visualization settings can be found under the `Grid`, `Atoms`, and `view` tabs .
+
+The selected basins can be exported to vasp-like from the `Export` tab. The viewport can also be exported to a variety of image formats.
 
 !!! Warning
     Currently the viewport is made by exporting the pyvista Plotter object to html and embedding it directly. Changes made by interacting with the view port directly (rotation) will not show up in exported images, and the image may flash when the apply button is clicked.

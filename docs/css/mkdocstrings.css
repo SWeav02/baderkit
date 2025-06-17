@@ -4,6 +4,9 @@ h1 {
   color: var(--md-typeset-color) !important; 
 }
 
+h2 {
+  font-weight: 400 !important;
+}
 
 /* Add spacing and line between functions/properties */
 div.doc.doc-object.doc-attribute, div.doc.doc-object.doc-function {
