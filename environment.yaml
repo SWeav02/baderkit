@@ -13,6 +13,10 @@ dependencies:
   - rich>=11.0 # Same as simmate
   - numba>=0.59.0
   - scipy>=1.7.2 # Added python 3.10 support
+  # docs
+  - mkdocs-material >=9.5.44
+  - mkdocstrings >=0.25.2
+  - mkdocstrings-python >=1.10.9
 
   # Trame is used by pyvista for exporting plots as html. We let conda figure 
   # these out since we don't directly rely on them
