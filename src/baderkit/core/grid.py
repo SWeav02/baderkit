@@ -89,7 +89,8 @@ class Grid(VolumetricData):
         Returns
         -------
         NDArray[float]
-            A 3x3 matrix defining the a, b, and c sides of the unit cell
+            A 3x3 matrix defining the a, b, and c sides of the unit cell. Each
+            row is the corresponding lattice vector in cartesian space.
 
         """
         return self.structure.lattice.matrix
