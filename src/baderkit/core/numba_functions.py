@@ -1118,8 +1118,7 @@ def refine_near_grid_edges(
 
             current_coord = np.array((ni, nj, nk), dtype=np.int64)
     return new_assignments, changed_labels
-   
-                
+
 
 @njit(cache=True)
 def ongrid_step(
@@ -1227,13 +1226,75 @@ def neargrid_step(
 
     # check if the new step is already in our path and if so, make an ongrid
     # step instead
-    if assignments[new_coord[0], new_coord[1], new_coord[2]] == max_val:
+    assignment = assignments[new_coord[0], new_coord[1], new_coord[2]]
+    # For the first stage we mark our path with the current max value. For the
+    # refinement we mark them with the negative of their assignment to avoid
+    # rewriting edge assignments
+    if assignment == max_val or assignment < 0:
         new_coord, is_max = ongrid_step(data, voxel_coord, neighbors, neighbor_dists)
         # set dr to 0
         total_delta_r[:] = 0
     # return info
     return new_coord, total_delta_r, False
 
+
+# def max_neargrid(
+#         voxel_index: NDArray[np.float64],
+#         path_scratch: NDArray[np.int64],
+#         total_delta_r: NDArray[np.float64],
+#         data: NDArray[np.float64],
+#         assignments: NDArray[np.int64],
+#         max_val: int,
+#         voxel_coord: NDArray[np.int64],
+#         car2lat: NDArray[np.float64],
+#         neighbors: NDArray[np.int64],
+#         neighbor_dists: NDArray[np.float64],
+#         maxima_num: np.int64,
+#         maxima_mask: NDArray[np.bool_]
+#         ):
+#     i,j,k = voxel_index
+#     # reset total_delta_r
+#     total_delta_r[:] = 0.0
+#     # create a count for the length of the path
+#     pnum = 0
+#     # start climbing
+#     current_coord = np.array([i,j,k]).astype(np.int64)
+#     while True:
+#         ii, jj, kk = current_coord
+#         # check if we've hit another assignment
+#         current_assignment = assignments[ii,jj,kk]
+#         if current_assignment != 0:
+#             # relabel our path and break the loop
+#             for p in range(pnum):
+#                 x, y, z = path_scratch[p]
+#                 assignments[x,y,z] = current_assignment
+#             break
+#         # assign the current point to the current max
+#         assignments[ii,jj,kk] = maxima_num
+#         # add it to our path
+#         path_scratch[pnum] = (ii,jj,kk)
+#         pnum = pnum + 1
+#         # make a neargrid step
+#         new_coord, total_delta_r, is_max = neargrid_step(
+#             data=data,
+#             assignments=assignments,
+#             max_val=maxima_num,
+#             voxel_coord=current_coord,
+#             total_delta_r=total_delta_r,
+#             car2lat=car2lat,
+#             neighbors=neighbors,
+#             neighbor_dists=neighbor_dists,
+#             )
+#         # if we reached a maximum, leave our current path assigned
+#         # as is and move to the next point
+#         if is_max:
+#             maxima_mask[ii,jj,kk] = True
+#             maxima_num += 1
+#             break
+#         # otherwise, continue with our loop
+#         current_coord = new_coord
+
+# !!! A lot of this can probably be parallelized and sped up
 @njit(fastmath=True, cache=True)
 def max_neargrid(
         data: NDArray[np.float64],
@@ -1297,9 +1358,99 @@ def max_neargrid(
                         maxima_mask[ii,jj,kk] = True
                         maxima_num += 1
                         break
-                    # otherwise, conintue with our loop
+                    # otherwise, continue with our loop
                     current_coord = new_coord
     return assignments, maxima_mask
+
+@njit(cache=True)
+def check_for_edge(
+        voxel_coord: NDArray[np.float64],
+        assignments: NDArray[np.int64],
+        neighbors: NDArray[np.int64],
+        ):
+    nx, ny, nz = assignments.shape
+    i,j,k = voxel_coord
+    # get the current assignment
+    assignment = assignments[i,j,k]
+    # check each neighbor
+    for shift in neighbors:
+        # get the new neighbor
+        ii = (i + shift[0]) % nx  # Loop around box
+        jj = (j + shift[1]) % ny
+        kk = (k + shift[2]) % nz
+        new_assignment = assignments[ii, jj, kk]
+        if abs(assignment) != abs(new_assignment):
+            # This is an edge so we return true
+            return True
+    # This is not an edge so we return false
+    return False
+
+@njit(cache=True)
+def refine_neargrid(
+        data: NDArray[np.float64],
+        assignments: NDArray[np.int64],
+        edge_mask: NDArray[np.bool_],
+        car2lat: NDArray[np.float64],
+        neighbors: NDArray[np.int64],
+        neighbor_dists: NDArray[np.float64],
+        ):
+    # create an array for new assignments
+    new_assignments = assignments.copy()
+    # get shape
+    nx, ny, nz = data.shape
+    # create scratch total_delta_r
+    total_delta_r = np.zeros(3, dtype=np.float64)
+    # create scratch path
+    path = np.empty((nx * ny * nz, 3), dtype=np.int64)
+    # now we reassign any voxel in our edge mask
+    reassignments = 0
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # skip points that aren't in our edge mask
+                if not edge_mask[i,j,k]:
+                    continue
+                # get our initial assignment, just for comparison
+                assignment = assignments[i,j,k]
+                # Now we do neargrid steps until we reach a point with an assignment
+                total_delta_r[:] = 0.0
+                # create a count for the length of the path
+                pnum = 0
+                # start climbing
+                current_coord = np.array([i,j,k]).astype(np.int64)
+                while True:
+                    ii, jj, kk = current_coord
+                    # check if we've hit something that isn't an edge
+                    if not edge_mask[ii,jj,kk]:
+                        current_assignment = assignments[ii,jj,kk]
+                        # update changed count if different
+                        if assignment != current_assignment:
+                            reassignments += 1      
+                        # Points along the path are switched to negative. we
+                        # switch them back here
+                        for p in range(pnum):
+                            x, y, z = path[p]
+                            assignments[x,y,z] = -assignments[x,y,z]
+                        # relabel just this voxel then stop the loop
+                        new_assignments[i,j,k] = current_assignment
+                        break
+                    # add this assignment to our path
+                    assignments[ii,jj,kk] = -assignments[ii,jj,kk]
+                    path[pnum] = (ii,jj,kk)
+                    pnum = pnum + 1
+                    # make a neargrid step
+                    current_coord, total_delta_r, is_max = neargrid_step(
+                        data=data,
+                        assignments=assignments,
+                        max_val=0, # should never exist
+                        voxel_coord=current_coord,
+                        total_delta_r=total_delta_r,
+                        car2lat=car2lat,
+                        neighbors=neighbors,
+                        neighbor_dists=neighbor_dists,
+                        )
+                    
+    return new_assignments, reassignments
 
 # !-----------------------------------------------------------------------------------!
 # ! refine_edge: refine the grid points on the edge of the Bader volumes.
@@ -1340,73 +1491,6 @@ def max_neargrid(
 #       WRITE(*,'(2x,A,6x,1I8)') 'EDGE POINTS:',num_edge
 #     END IF
 
-#     IF(opts%refine_edge_itrs==-1 .AND. ref_itrs>1) THEN
-#       num_check=0
-#       DO n1 = 1,chg%npts(1)
-#         DO n2 = 1,chg%npts(2)
-#           DO n3 = 1,chg%npts(3)
-#             p = (/n1,n2,n3/)
-#             ! change for calculating the vacuum volume
-#             IF (bdr%volnum(n1,n2,n3)==bdr%bnum+1) CYCLE
-
-#             IF(bdr%volnum(n1,n2,n3) < 0 .AND. bdr%known(n1,n2,n3) /=-1) THEN
-#               DO d1 = -1,1
-#                DO d2 = -1,1
-#                 DO d3 = -1,1
-#                   pt = p + (/d1,d2,d3/)
-#                   CALL pbc(pt,chg%npts)
-#                   ! change for calculating the vacuum volume
-#                   IF (bdr%volnum(pt(1),pt(2),pt(3)) == bdr%bnum+1) CYCLE
-#                   IF(.NOT.is_max(chg,pt)) THEN 
-#                     IF(bdr%volnum(pt(1),pt(2),pt(3)) > 0) THEN
-#                       bdr%volnum(pt(1),pt(2),pt(3)) = -bdr%volnum(pt(1),pt(2),pt(3))
-#                       bdr%known(pt(1),pt(2),pt(3)) = -1
-#                       num_check=num_check+1
-#                     ELSE IF(bdr%volnum(pt(1),pt(2),pt(3))<0 .AND. bdr%known(pt(1),pt(2),pt(3)) == 0) THEN
-#                       bdr%known(pt(1),pt(2),pt(3)) = -2
-#                       num_check = num_check + 1
-#                     END IF
-#                   END IF
-#                 END DO
-#                END DO
-#               END DO
-#               num_check = num_check - 1
-#               IF (bdr%known(pt(1),pt(2),pt(3)) /= -2) THEN
-#                 bdr%volnum(p(1),p(2),p(3)) = ABS(bdr%volnum(p(1),p(2),p(3)))
-#               END IF
-#               ! end of mark
-#             END IF
-
-#           END DO
-#         END DO
-#       END DO
-#       WRITE(*,'(2x,A,3x,1I8)') 'CHECKED POINTS:', num_check
-
-#       ! make the surrounding points unkown
-#       DO n1 = 1,chg%npts(1)
-#         DO n2 = 1,chg%npts(2)
-#           DO n3 = 1,chg%npts(3)
-#             p = (/n1,n2,n3/)
-#             bvolnum = bdr%volnum(n1,n2,n3)
-
-#             IF (bvolnum < 0) THEN
-#               DO d1 = -1,1
-#                DO d2 = -1,1
-#                 DO d3 = -1,1
-#                   pt = p + (/d1,d2,d3/)
-#                   CALL pbc(pt,chg%npts)
-#                   IF(bdr%known(pt(1),pt(2),pt(3)) == 2) bdr%known(pt(1),pt(2),pt(3)) = 0
-#                 END DO
-#                END DO
-#               END DO
-#             END IF
-
-#           END DO
-#         END DO
-#       END DO
-
-#     END IF
-
 #     num_reassign = 0
 #     DO n1 = 1,chg%npts(1)
 #       DO n2 = 1,chg%npts(2)
@@ -1414,13 +1498,7 @@ def max_neargrid(
 #           p = (/n1,n2,n3/)
 #           bvolnum = bdr%volnum(n1,n2,n3)
 #           IF (bvolnum<0) THEN
-#             IF (opts%bader_opt == opts%bader_offgrid) THEN
-#               CALL max_offgrid(bdr,chg,p)
-#             ELSEIF (opts%bader_opt == opts%bader_ongrid) THEN
-#               CALL max_ongrid(bdr,chg,p)
-#             ELSE
-#               CALL max_neargrid(bdr,chg,opts,p)
-#             END IF
+#             CALL max_neargrid(bdr,chg,opts,p)
 #             path_volnum = bdr%volnum(p(1),p(2),p(3))
 #             IF (path_volnum<0 .OR. path_volnum>bdr%bnum) THEN
 #               WRITE(*,*) 'ERROR: should be no new maxima in edge refinement'

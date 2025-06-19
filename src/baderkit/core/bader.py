@@ -24,6 +24,7 @@ from baderkit.core.numba_functions import (
     ongrid_step,
     neargrid_step,
     max_neargrid,
+    refine_neargrid,
 )
 from baderkit.core.structure import Structure
 
@@ -434,11 +435,34 @@ class Bader:
             neighbors=neighbors,
             neighbor_dists=neigh_dists,
             )
+        # get our edges
         edge_mask = get_edges(
             labeled_array=assignments, neighbor_transforms=neighbors
         )
         print(len(np.where(edge_mask)[0]))
-    
+        breakpoint()
+        # remove maxima from edge mask
+        edge_mask = edge_mask & ~maxima_mask
+        assignments, reassignments = refine_neargrid(
+            data=data,
+            assignments=assignments,
+            edge_mask=edge_mask,
+            car2lat=car2lat,
+            neighbors=neighbors,
+            neighbor_dists=neigh_dists,
+            )
+        
+        # calculate charge
+        maxima_num = len(np.unique(assignments))
+        charge_data = self.charge_grid.total
+        voxel_volume = self.charge_grid.voxel_volume
+        basin_charges, basin_volumes = get_basin_charge_volume_from_label(
+            basin_labels=assignments-1,
+            charge_data=charge_data,
+            voxel_volume=voxel_volume,
+            maxima_num=maxima_num,
+        )
+        basin_charges /= grid.shape.prod()
         breakpoint()
     # def _run_bader_near_grid(self):
     #     """
