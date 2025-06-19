@@ -338,36 +338,45 @@ class Grid(VolumetricData):
         return transforms, transform_dists, np.array(facet_areas), facet_vertices
 
     @cached_property
-    def voxel_26_neighbors(self) -> NDArray[int]:
+    def voxel_26_neighbors(self) -> (NDArray[int], NDArray[float]):
         """
-        The transformations to get the 26 neighbors surrounding each voxel. Note
-        that this will always be the same regardless of system.
 
         Returns
         -------
-        NDArray[int]
-            An Nx3 array of transformations from any voxel to its neighbors.
+        (NDArray[int], NDArray[float])
+            A tuple where the first entry is a 26x3 array of transformations in
+            voxel space from any voxel to its neighbors and the second is the 
+            distance to each of these neighbors in cartesian space.
 
         """
-        neighbors = [
+        neighbors = np.array([
             i for i in itertools.product([-1, 0, 1], repeat=3) if i != (0, 0, 0)
-        ]
+        ]).astype(int)
+        cart_coords = self.get_cart_coords_from_vox(neighbors)
+        dists = np.linalg.norm(cart_coords, axis=1)
 
-        return np.array(neighbors).astype(int)
-
+        return neighbors, dists
+    
     @cached_property
-    def voxel_26_neighbor_dists(self) -> NDArray[float]:
+    def voxel_face_neighbors(self) -> (NDArray[int], NDArray[float]):
         """
-        The distances in cartesians space to each of the 26 neighbors surrounding a voxel
-
+        
         Returns
         -------
-        NDArray[float]
-            A 1D array of distances to each neighboring voxel.
+        (NDArray[int], NDArray[float])
+            A tuple where the first entry is a 6x3 array of transformations in
+            voxel space from any voxel to its face sharing neighbors and the 
+            second is the distance to each of these neighbors in cartesian space.
+
         """
-        cart_coords = self.get_cart_coords_from_vox(self.voxel_26_neighbors)
-        dists = np.linalg.norm(cart_coords, axis=1)
-        return dists
+        all_neighbors, all_dists = self.voxel_26_neighbors
+        faces = []
+        dists = []
+        for i in range(len(all_neighbors)):
+            if np.sum(np.abs(all_neighbors[i])) == 1:
+                faces.append(all_neighbors[i])
+                dists.append(all_dists[i])
+        return np.array(faces).astype(int), np.array(dists)
 
     @cached_property
     def permutations(self) -> list:
@@ -454,7 +463,7 @@ class Grid(VolumetricData):
         # avoid circular import
         from baderkit.core.numba_functions import get_maxima
 
-        return get_maxima(self.total, neighbor_transforms=self.voxel_26_neighbors)
+        return get_maxima(self.total, neighbor_transforms=self.voxel_26_neighbors[0])
 
     @cached_property
     def maxima_indices(self) -> NDArray[int]:
@@ -554,7 +563,7 @@ class Grid(VolumetricData):
         # init_coords = coords + 1
         current_coords = coords.copy()
         # get the distance to each neighbor of a voxel as a small grid
-        dists = self.voxel_26_neighbor_dists
+        _ , dists = self.voxel_26_neighbors
         # Add dist of 1 at center to avoid divide by 0 later
         dists = np.insert(dists, 13, 1)
         # reshape to 3x3x3 grid
