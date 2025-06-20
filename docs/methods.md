@@ -2,8 +2,9 @@
 
 BaderKit is based on the [Henkelman group's](https://theory.cm.utexas.edu/henkelman/code/bader/) excellent Fortran code.
 The same methods available in their code are available here in addition to some
-variants that we find useful. For a more in depth look at the basics of Bader analysis, 
-see our [Background](./background.md) page.
+variants that we find useful.
+
+## Summary
 
 | Method        | Speed   | Accuracy | Single Basin Assignments |
 |---------------|---------|----------|--------------------------|
@@ -12,6 +13,8 @@ see our [Background](./background.md) page.
 |hybrid-neargrid|Medium   |High      |:material-check:          |
 |weight         |Fast     |Very High |:material-close:          |
 |hybrid-weight  |Fast     |Very High |:material-close:          |
+
+## Descriptions
 
 === "ongrid"
     
@@ -43,7 +46,7 @@ see our [Background](./background.md) page.
     This algorithm was developed by Henkelman et. al. several years after the
     ongrid method to fix orientation errors. It is generally less accurate than 
     the weight method, but is useful in situations where it is desirable to have 
-    only one assignment per point.
+    only one basin assignment per point on the grid.
     
     A gradient vector is calculated at each point using the three nearest neighbors. 
     A step is then made to the neighboring point that is closest to this gradient vector. 
@@ -51,7 +54,7 @@ see our [Background](./background.md) page.
     is stored that points from the new point to the original gradient vector.
     
     At each step, the difference between the gradient and the ongrid step is added 
-    to this correction vector. If any component of the vector is ever closer to 
+    to this correction vector. If any component of the correction vector is ever closer to 
     a neighboring point than the current one, a correction is made to keep 
     the path closer to the true gradient.
     
@@ -110,8 +113,7 @@ see our [Background](./background.md) page.
     
     Because we found that iterative edge refinement is required for the neargrid method anyways (see the [Note](http://127.0.0.1:8000/baderkit/methods/#__tabbed_1_2)),
     we created a variation where the faster ongrid method is performed first, 
-    then refined using the neargrid method. To avoid repeat calculations, each 
-    point in the grid will only ever be refined once.
+    then refined using the neargrid method.
     
 === "hybrid-weight"
 
@@ -121,5 +123,5 @@ see our [Background](./background.md) page.
     one of their 26 neighbors. This also tends to result in more basins being
     found.
     
-    This method performs the weight method, but consolidates basins such that
-    their maxima are higher than all 26 neighbors.
+    This method performs the weight method, but merges basins that are not
+    maxima relative to all 26 nearest neighbors into basins that are.
