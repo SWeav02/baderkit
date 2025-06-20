@@ -42,6 +42,7 @@ markdown_extensions:
   - attr_list
   - def_list
   - pymdownx.details
+  - pymdownx.superfences
   - pymdownx.superfences:
         custom_fences:
               - name: mermaid
@@ -62,6 +63,8 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Installation: installation.md
+  - Background: background.md
+  - Methods: methods.md
   - Basic Usage: usage.md
 #  - Background Theory: background.md # To be added later
   - API Reference: 

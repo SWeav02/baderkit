@@ -64,6 +64,7 @@ def test_writing_bader(tmp_path):
     [
         "ongrid",
         "neargrid",
+        "hybrid-neargrid",
         "weight",
         "hybrid-weight",
     ],
@@ -84,9 +85,3 @@ def test_running_bader_methods(tmp_path, method):
     assert atom_results == expected_atom_results
     assert basin_results == expected_basin_results
 
-
-# TODO:
-# Test sum files command
-# Test running bader from CLI. Can probably just do one non-default method with
-# a single printing method
-# Test running streamlit app once it exists

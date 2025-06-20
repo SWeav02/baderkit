@@ -396,9 +396,9 @@ class Bader:
         """
         Assigns voxels to basins and calculates charge using the on-grid
         method:
-            W. Tang, E. Sanville, and G. Henkelman
-            A grid-based Bader analysis algorithm without lattice bias,
-            J. Phys.: Condens. Matter 21, 084204 (2009).
+            G. Henkelman, A. Arnaldsson, and H. Jónsson
+            A fast and robust algorithm for Bader decomposition of charge density,
+            Comput. Mater. Sci. 36, 354-360 (2006)
 
         Returns
         -------
@@ -474,9 +474,9 @@ class Bader:
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
-            G. Henkelman, A. Arnaldsson, and H Jonsson.
-            A fast and robust algorithm for Bader decomposition of charge density,
-            J. Phys.: Condens. Matter 21, 084204 (2009).
+            W. Tang, E. Sanville, and G. Henkelman 
+            A grid-based Bader analysis algorithm without lattice bias 
+            J. Phys.: Condens. Matter 21, 084204 (2009)
             
         Parameters
         ----------
