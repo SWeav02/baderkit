@@ -51,7 +51,7 @@ class Bader:
             A grid object whose values will be used to construct the basins.
         method : Literal["ongrid", "neargrid", "hybrid-neargrid", "weight", "hybrid-weight"], optional
             The algorithm to use for generating bader basins. If None, defaults
-            to hybrid-neargrid.
+            to weight.
         refinement_method : Literal["recursive", "single"], optional
             For methods that refine the basin edges (neargrid), whether to
             refine the edges until none change or to refine a single time. If
@@ -70,7 +70,7 @@ class Bader:
         if method is not None:
             self.method = method
         else:
-            self.method = "hybrid-neargrid"
+            self.method = "weight"
         self.directory = directory
         if refinement_method is not None:
             self.refinement_method = refinement_method
@@ -284,7 +284,20 @@ class Bader:
 
         """
         return self.get_basin_edges(self.basin_labels)
+    
+    @staticmethod
+    def methods() -> list[str]:
+        """
 
+        Returns
+        -------
+        list[str]
+            A list of the available methods.
+
+        """
+        
+        return ["ongrid", "neargrid", "hybrid-neargrid", "weight", "hybrid-weight"]
+    
     @staticmethod
     def get_basin_edges(
         basin_labels: NDArray[float], neighbor_transforms: NDArray = None

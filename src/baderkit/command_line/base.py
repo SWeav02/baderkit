@@ -71,7 +71,7 @@ def run(
         help="The path to the reference file",
     ),
     method: Method = typer.Option(
-        Method.hybrid_neargrid,
+        Method.weight,
         "--method",
         "-m",
         help="The method to use for separating bader basins",
@@ -102,12 +102,6 @@ def run(
         default=[],
         help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`",
     ),
-    # indices: Annotated[
-    #     list[int],
-    #     typer.Argument(
-    #         help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`"
-    #     ),
-    # ] = None,
 ):
     """
     Runs a bader analysis on the provided files. File formats are automatically
