@@ -15,10 +15,10 @@ from baderkit.core.grid import Grid
 from baderkit.core.numba_functions import (
     get_edges,
     get_multi_weight_voxels,
+    get_neargrid_labels,
     get_neighbor_flux,
     get_single_weight_voxels,
     get_steepest_pointers,
-    get_neargrid_labels,
     propagate_edges,
     refine_neargrid,
 )
@@ -575,8 +575,8 @@ class Bader:
         checked_mask = np.zeros(refinement_mask.shape, dtype=np.bool_)
         while reassignments > 0:
             # remove maxima from edge mask
-            for i,j,k in maxima_vox:
-                refinement_mask[i,j,k] = False
+            for i, j, k in maxima_vox:
+                refinement_mask[i, j, k] = False
             # get edge indices
             refinement_indices = np.argwhere(refinement_mask)
             print(f"Refining {len(refinement_indices)} points")

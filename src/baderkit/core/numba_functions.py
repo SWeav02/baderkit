@@ -715,7 +715,7 @@ def neargrid_step(
     voxel_coord : NDArray[np.int64]
         The point to make the step from.
     total_delta_r : NDArray[np.float64]
-        A vector pointing from the current ongrid point to the true gradient. 
+        A vector pointing from the current ongrid point to the true gradient.
     car2lat : NDArray[np.float64]
         A matrix that converts a coordinate in cartesian space to fractional
         space.
@@ -769,7 +769,9 @@ def neargrid_step(
         # we have no gradient so we reset the total delta r
         total_delta_r[:] = 0
         # Check if this is a maximum and if not step ongrid
-        new_coord, is_max = ongrid_step(data, voxel_coord, neighbor_transforms, neighbor_dists)
+        new_coord, is_max = ongrid_step(
+            data, voxel_coord, neighbor_transforms, neighbor_dists
+        )
         if is_max:
             return new_coord, total_delta_r, True
     else:
@@ -797,7 +799,9 @@ def neargrid_step(
     # refinement we mark them with the negative of their label to avoid
     # rewriting edge labels
     if label == max_val or label < 0:
-        new_coord, is_max = ongrid_step(data, voxel_coord, neighbor_transforms, neighbor_dists)
+        new_coord, is_max = ongrid_step(
+            data, voxel_coord, neighbor_transforms, neighbor_dists
+        )
         # set dr to 0
         total_delta_r[:] = 0
     # return info
@@ -896,6 +900,7 @@ def get_neargrid_labels(
                     current_coord = new_coord
     return labels, maxima_mask
 
+
 @njit(cache=True)
 def refine_neargrid(
     data: NDArray[np.float64],
@@ -957,7 +962,7 @@ def refine_neargrid(
     path = np.empty((nx * ny * nz, 3), dtype=np.int64)
     # now we reassign any voxel in our refinement mask
     reassignments = 0
-    for i,j,k in refinement_indices:    
+    for i, j, k in refinement_indices:
         # get our initial label, just for comparison
         label = labels[i, j, k]
         # Now we do neargrid steps until we reach a point with an label
@@ -976,9 +981,9 @@ def refine_neargrid(
                 # add this point to our checked list. We use this to make sure
                 # this point doesn't get re-added to our list later in the
                 # process.
-                checked_mask[i,j,k] = True
+                checked_mask[i, j, k] = True
                 # remove it from the refinement list
-                refinement_mask[i,j,k] = False
+                refinement_mask[i, j, k] = False
                 current_label = labels[ii, jj, kk]
                 # Points along the path are switched to negative. we
                 # switch them back here
@@ -995,8 +1000,8 @@ def refine_neargrid(
                         nj = (j + shift[1]) % ny
                         nk = (k + shift[2]) % nz
                         # If we haven't already checked this point, add it
-                        if not checked_mask[ni,nj,nk]:
-                            refinement_mask[ni,nj,nk] = True
+                        if not checked_mask[ni, nj, nk]:
+                            refinement_mask[ni, nj, nk] = True
                 # relabel just this voxel then stop the loop
                 new_labels[i, j, k] = current_label
                 break
