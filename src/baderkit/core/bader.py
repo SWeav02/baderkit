@@ -18,7 +18,7 @@ from baderkit.core.numba_functions import (
     get_neighbor_flux,
     get_single_weight_voxels,
     get_steepest_pointers,
-    max_neargrid,
+    get_neargrid_labels,
     propagate_edges,
     refine_neargrid,
 )
@@ -336,7 +336,7 @@ class Bader:
     def get_basin_charges_and_volumes(
         basin_labels: NDArray[int],
         grid: Grid,
-    ) -> (NDArray[float], NDArray[float]):
+    ) -> tuple[NDArray[float], NDArray[float]]:
         """
         Calculate the volume and charge for each basin in the input label array
 
@@ -518,10 +518,10 @@ class Bader:
         car2lat = np.linalg.inv(lat2car)
         if not hybrid:
             # we want to make our initial assignments using the neargrid method
-            labels, maxima_mask = max_neargrid(
+            labels, maxima_mask = get_neargrid_labels(
                 data=data,
                 car2lat=car2lat,
-                neighbors=neighbor_transforms,
+                neighbor_transforms=neighbor_transforms,
                 neighbor_dists=neighbor_dists,
             )
         else:
@@ -569,25 +569,27 @@ class Bader:
         reassignments = 1
         maxima_vox = np.argwhere(maxima_mask)
         # get our edges
-        edge_mask = get_edges(
+        refinement_mask = get_edges(
             labeled_array=labels, neighbor_transforms=neighbor_transforms
         )
+        checked_mask = np.zeros(refinement_mask.shape, dtype=np.bool_)
         while reassignments > 0:
             # remove maxima from edge mask
             for i,j,k in maxima_vox:
-                edge_mask[i,j,k] = False
+                refinement_mask[i,j,k] = False
             # get edge indices
-            edge_indices = np.argwhere(edge_mask)
-            print(f"Refining {len(edge_indices)} edges")
+            refinement_indices = np.argwhere(refinement_mask)
+            print(f"Refining {len(refinement_indices)} points")
             # reassign edges
-            labels, reassignments, edge_mask = refine_neargrid(
+            labels, reassignments, refinement_mask, checked_mask = refine_neargrid(
                 data=data,
                 labels=labels,
-                edge_indices=edge_indices,
-                edge_mask=edge_mask,
-                # edge_mask = ~maxima_mask,
+                refinement_indices=refinement_indices,
+                refinement_mask=refinement_mask,
+                checked_mask=checked_mask,
+                maxima_mask=maxima_mask,
                 car2lat=car2lat,
-                neighbors=neighbor_transforms,
+                neighbor_transforms=neighbor_transforms,
                 neighbor_dists=neighbor_dists,
             )
             print(f"{reassignments} values changed")

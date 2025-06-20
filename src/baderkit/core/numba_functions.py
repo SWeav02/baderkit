@@ -633,15 +633,37 @@ def get_multi_weight_voxels(
 def ongrid_step(
     data: NDArray[np.float64],
     voxel_coord: NDArray[np.int64],
-    neighbors: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
-) -> tuple[np.ndarray, np.bool_]:
+) -> tuple[NDArray[np.int64], np.bool_]:
+    """
+    Performs a single ongrid step from the provided voxel coordinate.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    voxel_coord : NDArray[np.int64]
+        The point to make the step from.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.float64]
+        The distance to each neighboring voxel.
+
+    Returns
+    -------
+    NDArray[np.int64]
+        The next voxel to step to.
+    bool
+        Whether or not the next step is a maximum.
+
+    """
     nx, ny, nz = data.shape
     i, j, k = voxel_coord
     best = 0.0
     init_elf = data[i, j, k]
     best_neighbor = -1
-    for shift_index, shift in enumerate(neighbors):
+    for shift_index, shift in enumerate(neighbor_transforms):
         # get the new neighbor
         ii = (i + shift[0]) % nx  # Loop around box
         jj = (j + shift[1]) % ny
@@ -657,7 +679,7 @@ def ongrid_step(
         return voxel_coord, True
     else:
         # get the neighbor, wrap, and return
-        pointer = neighbors[best_neighbor]
+        pointer = neighbor_transforms[best_neighbor]
         # move to next point
         new_coord = voxel_coord + pointer
 
@@ -676,9 +698,43 @@ def neargrid_step(
     voxel_coord: NDArray[np.int64],
     total_delta_r: NDArray[np.float64],
     car2lat: NDArray[np.float64],
-    neighbors: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
-) -> tuple[np.ndarray, np.ndarray, np.bool_]:
+) -> tuple[NDArray[np.int64], NDArray[np.int64], np.bool_]:
+    """
+    Peforms a neargrid step from the provided voxel coordinate.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    labels : NDArray[np.int64]
+        A 3D grid of labels representing current voxel assignments.
+    max_val : int
+        The current maximum used to track the path.
+    voxel_coord : NDArray[np.int64]
+        The point to make the step from.
+    total_delta_r : NDArray[np.float64]
+        A vector pointing from the current ongrid point to the true gradient. 
+    car2lat : NDArray[np.float64]
+        A matrix that converts a coordinate in cartesian space to fractional
+        space.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.float64]
+        The distance to each neighboring voxel.
+
+    Returns
+    -------
+    new_coord : NDArray[np.int64]
+        The next voxel to step to
+    total_delta_r : NDArray[np.int64]
+        The vector pointing from the next step to the true gradient after this
+        current step
+    bool
+        Whether or not the next step is a maximum.
+
+    """
     nx, ny, nz = data.shape
     i, j, k = voxel_coord
     # calculate the gradient at this point in voxel coords
@@ -713,7 +769,7 @@ def neargrid_step(
         # we have no gradient so we reset the total delta r
         total_delta_r[:] = 0
         # Check if this is a maximum and if not step ongrid
-        new_coord, is_max = ongrid_step(data, voxel_coord, neighbors, neighbor_dists)
+        new_coord, is_max = ongrid_step(data, voxel_coord, neighbor_transforms, neighbor_dists)
         if is_max:
             return new_coord, total_delta_r, True
     else:
@@ -741,21 +797,45 @@ def neargrid_step(
     # refinement we mark them with the negative of their label to avoid
     # rewriting edge labels
     if label == max_val or label < 0:
-        new_coord, is_max = ongrid_step(data, voxel_coord, neighbors, neighbor_dists)
+        new_coord, is_max = ongrid_step(data, voxel_coord, neighbor_transforms, neighbor_dists)
         # set dr to 0
         total_delta_r[:] = 0
     # return info
     return new_coord, total_delta_r, False
 
 
-# !!! A lot of this can probably be parallelized and sped up
 @njit(fastmath=True, cache=True)
-def max_neargrid(
+def get_neargrid_labels(
     data: NDArray[np.float64],
     car2lat: NDArray[np.float64],
-    neighbors: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
-):
+) -> tuple[NDArray[np.int64], NDArray[np.bool_]]:
+    """
+    Assigns each point to a basin using the neargrid method.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    car2lat : NDArray[np.float64]
+        DESCRIPTION.
+    car2lat : NDArray[np.float64]
+        A matrix that converts a coordinate in cartesian space to fractional
+        space.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.float64]
+        The distance to each neighboring voxel.
+
+    Returns
+    -------
+    labels : NDArray[np.int64]
+        The assignment for each point on the grid.
+    maxima_mask : NDArray[np.bool_]
+        A mask that is true at points that are maxima
+
+    """
     nx, ny, nz = data.shape
     # define an array to assign to
     labels = np.zeros(data.shape, dtype=np.int64)
@@ -803,7 +883,7 @@ def max_neargrid(
                         voxel_coord=current_coord,
                         total_delta_r=total_delta_r,
                         car2lat=car2lat,
-                        neighbors=neighbors,
+                        neighbor_transforms=neighbor_transforms,
                         neighbor_dists=neighbor_dists,
                     )
                     # if we reached a maximum, leave our current path assigned
@@ -816,41 +896,56 @@ def max_neargrid(
                     current_coord = new_coord
     return labels, maxima_mask
 
-
-@njit(cache=True)
-def check_for_edge(
-    voxel_coord: NDArray[np.float64],
-    labels: NDArray[np.int64],
-    neighbors: NDArray[np.int64],
-):
-    nx, ny, nz = labels.shape
-    i, j, k = voxel_coord
-    # get the current label
-    label = labels[i, j, k]
-    # check each neighbor
-    for shift in neighbors:
-        # get the new neighbor
-        ii = (i + shift[0]) % nx  # Loop around box
-        jj = (j + shift[1]) % ny
-        kk = (k + shift[2]) % nz
-        new_label = labels[ii, jj, kk]
-        if abs(label) != abs(new_label):
-            # This is an edge so we return true
-            return True
-    # This is not an edge so we return false
-    return False
-
-
 @njit(cache=True)
 def refine_neargrid(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
-    edge_indices: NDArray[np.int64],
-    edge_mask: NDArray[np.bool_],
+    refinement_indices: NDArray[np.int64],
+    refinement_mask: NDArray[np.bool_],
+    checked_mask: NDArray[np.bool_],
+    maxima_mask: NDArray[np.bool_],
     car2lat: NDArray[np.float64],
-    neighbors: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
-):
+) -> tuple[NDArray[np.int64], np.int64, NDArray[np.bool_], NDArray[np.bool_]]:
+    """
+    Refines the provided voxels by running the neargrid method until a maximum
+    is found for each.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    labels : NDArray[np.int64]
+        A 3D grid of labels representing current voxel assignments.
+    refinement_indices : NDArray[np.int64]
+        A Nx3 array of voxel indices to perform the refinement on.
+    refinement_mask : NDArray[np.bool_]
+        A 3D mask that is true at the voxel indices to be refined.
+    checked_mask : NDArray[np.bool_]
+        A 3D mask that is true at voxels that have already been refined.
+    maxima_mask : NDArray[np.bool_]
+        A 3D mask that is true at maxima.
+    car2lat : NDArray[np.float64]
+        A matrix that converts a coordinate in cartesian space to fractional
+        space.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.float64]
+        The distance to each neighboring voxel.
+
+    Returns
+    -------
+    new_labels : NDArray[np.int64]
+        The updated assignment for each point on the grid.
+    reassignments : np.int64
+        The number of points that were reassigned.
+    refinement_mask : NDArray[np.bool_]
+        The updated mask of points that need to be refined
+    checked_mask : NDArray[np.bool_]
+        The updated mask of points that have been checked.
+
+    """
     # create an array for new labels
     new_labels = labels.copy()
     # get shape
@@ -860,9 +955,9 @@ def refine_neargrid(
     current_coord = np.empty(3, dtype=np.int64)
     # create scratch path
     path = np.empty((nx * ny * nz, 3), dtype=np.int64)
-    # now we reassign any voxel in our edge mask
+    # now we reassign any voxel in our refinement mask
     reassignments = 0
-    for i,j,k in edge_indices:    
+    for i,j,k in refinement_indices:    
         # get our initial label, just for comparison
         label = labels[i, j, k]
         # Now we do neargrid steps until we reach a point with an label
@@ -876,8 +971,14 @@ def refine_neargrid(
         current_coord[2] = k
         while True:
             ii, jj, kk = current_coord
-            # check if we've hit something that isn't an edge
-            if not edge_mask[ii, jj, kk]:
+            # check if we've hit a maximum
+            if maxima_mask[ii, jj, kk]:
+                # add this point to our checked list. We use this to make sure
+                # this point doesn't get re-added to our list later in the
+                # process.
+                checked_mask[i,j,k] = True
+                # remove it from the refinement list
+                refinement_mask[i,j,k] = False
                 current_label = labels[ii, jj, kk]
                 # Points along the path are switched to negative. we
                 # switch them back here
@@ -887,17 +988,15 @@ def refine_neargrid(
                 # Check if this is a reassignment
                 if label != current_label:
                     reassignments += 1
-                    # add any neighbors to our edge mask for the next iteration
-                    edge_mask[i,j,k] = True
-                    for shift in neighbors:
+                    # add any neighbors to our refinement mask for the next iteration
+                    for shift in neighbor_transforms:
                         # get the new neighbor
                         ni = (i + shift[0]) % nx  # Loop around box
                         nj = (j + shift[1]) % ny
                         nk = (k + shift[2]) % nz
-                        # check label, and if different add to our edge
-                        neigh_label = labels[ni,nj,nk]
-                        if current_label != neigh_label:
-                            edge_mask[ni,nj,nk] = True
+                        # If we haven't already checked this point, add it
+                        if not checked_mask[ni,nj,nk]:
+                            refinement_mask[ni,nj,nk] = True
                 # relabel just this voxel then stop the loop
                 new_labels[i, j, k] = current_label
                 break
@@ -913,27 +1012,8 @@ def refine_neargrid(
                 voxel_coord=current_coord,
                 total_delta_r=total_delta_r,
                 car2lat=car2lat,
-                neighbors=neighbors,
+                neighbor_transforms=neighbor_transforms,
                 neighbor_dists=neighbor_dists,
             )
-    
-    # # We've expanded our edge as we've gone, but some points do not belong to
-    # # the edge and should be removed. We go through and delete these
-    # for edge_index in prange(len(edge_indices)):
-    #     i,j,k = edge_indices[edge_index]
-    #     label = new_labels[i,j,k]
-    #     is_edge = False
-    #     for shift in neighbors:
-    #         # get the new neighbor
-    #         ni = (i + shift[0]) % nx  # Loop around box
-    #         nj = (j + shift[1]) % ny
-    #         nk = (k + shift[2]) % nz
-    #         # check label, and if different add to our edge
-    #         neigh_label = new_labels[ni,nj,nk]
-    #         if label != neigh_label:
-    #             is_edge = True
-    #             break
-    #     if not is_edge:
-    #         edge_mask[i,j,k] = False
 
-    return new_labels, reassignments, edge_mask
+    return new_labels, reassignments, refinement_mask, checked_mask
