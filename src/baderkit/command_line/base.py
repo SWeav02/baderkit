@@ -40,9 +40,11 @@ class Method(str, Enum):
     hybrid_neargrid = "hybrid-neargrid"
     neargrid = "neargrid"
 
+
 class RefinementMethod(str, Enum):
     recursive = "recursive"
     single = "single"
+
 
 class Format(str, Enum):
     vasp = "vasp"
@@ -83,7 +85,7 @@ def run(
         "--rm",
         help="For methods that refine the edges (neargrid, hybrid-neargrid), whether to refine recursively or a single time.",
         case_sensitive=False,
-        ),
+    ),
     format: Format = typer.Option(
         None,
         "--format",

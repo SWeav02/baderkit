@@ -2,6 +2,7 @@
 
 from .bader import Bader
 from .grid import Grid
+
 # from .numba_functions import (
 #     get_edges,
 #     get_maxima,

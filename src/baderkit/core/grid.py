@@ -345,27 +345,27 @@ class Grid(VolumetricData):
         -------
         (NDArray[int], NDArray[float])
             A tuple where the first entry is a 26x3 array of transformations in
-            voxel space from any voxel to its neighbors and the second is the 
+            voxel space from any voxel to its neighbors and the second is the
             distance to each of these neighbors in cartesian space.
 
         """
-        neighbors = np.array([
-            i for i in itertools.product([-1, 0, 1], repeat=3) if i != (0, 0, 0)
-        ]).astype(int)
+        neighbors = np.array(
+            [i for i in itertools.product([-1, 0, 1], repeat=3) if i != (0, 0, 0)]
+        ).astype(int)
         cart_coords = self.get_cart_coords_from_vox(neighbors)
         dists = np.linalg.norm(cart_coords, axis=1)
 
         return neighbors, dists
-    
+
     @cached_property
     def voxel_face_neighbors(self) -> (NDArray[int], NDArray[float]):
         """
-        
+
         Returns
         -------
         (NDArray[int], NDArray[float])
             A tuple where the first entry is a 6x3 array of transformations in
-            voxel space from any voxel to its face sharing neighbors and the 
+            voxel space from any voxel to its face sharing neighbors and the
             second is the distance to each of these neighbors in cartesian space.
 
         """
@@ -563,7 +563,7 @@ class Grid(VolumetricData):
         # init_coords = coords + 1
         current_coords = coords.copy()
         # get the distance to each neighbor of a voxel as a small grid
-        _ , dists = self.voxel_26_neighbors
+        _, dists = self.voxel_26_neighbors
         # Add dist of 1 at center to avoid divide by 0 later
         dists = np.insert(dists, 13, 1)
         # reshape to 3x3x3 grid

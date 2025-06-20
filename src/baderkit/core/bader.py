@@ -19,6 +19,7 @@ from baderkit.core.numba_functions import (
     get_single_weight_voxels,
     get_steepest_pointers,
     max_neargrid,
+    propagate_edges,
     refine_neargrid,
 )
 from baderkit.core.structure import Structure
@@ -37,7 +38,9 @@ class Bader:
         self,
         charge_grid: Grid,
         reference_grid: Grid,
-        method: Literal["ongrid", "neargrid", "hybrid-neargrid", "weight", "hybrid-weight"] = None,
+        method: Literal[
+            "ongrid", "neargrid", "hybrid-neargrid", "weight", "hybrid-weight"
+        ] = None,
         refinement_method: Literal["recursive", "single"] = None,
         directory: Path = Path("."),
     ):
@@ -57,7 +60,7 @@ class Bader:
             refine the edges until none change or to refine a single time. If
             None, defaults to recursive.
         directory : Path, optional
-            The directory that files will be written to by default. 
+            The directory that files will be written to by default.
             The default is Path("."), or the current active directory.
 
         Returns
@@ -284,7 +287,7 @@ class Bader:
 
         """
         return self.get_basin_edges(self.basin_labels)
-    
+
     @staticmethod
     def methods() -> list[str]:
         """
@@ -295,9 +298,9 @@ class Bader:
             A list of the available methods.
 
         """
-        
+
         return ["ongrid", "neargrid", "hybrid-neargrid", "weight", "hybrid-weight"]
-    
+
     @staticmethod
     def get_basin_edges(
         basin_labels: NDArray[float], neighbor_transforms: NDArray = None
@@ -328,12 +331,12 @@ class Bader:
             neighbor_transforms.remove((0, 0, 0))  # Remove the (0, 0, 0) self-shift
             neighbor_transforms = np.array(neighbor_transforms)
         return get_edges(basin_labels, neighbor_transforms=neighbor_transforms)
-    
+
     @staticmethod
     def get_basin_charges_and_volumes(
-            basin_labels: NDArray[int],
-            grid: Grid,
-            ) -> (NDArray[float], NDArray[float]):
+        basin_labels: NDArray[int],
+        grid: Grid,
+    ) -> (NDArray[float], NDArray[float]):
         """
         Calculate the volume and charge for each basin in the input label array
 
@@ -368,7 +371,7 @@ class Bader:
         # adjust charges
         charges /= grid.shape.prod()
         return charges, volumes
-    
+
     def run_bader(self) -> None:
         """
         Runs the entire bader process and saves results to class variables.
@@ -389,7 +392,7 @@ class Bader:
 
         elif self.method == "neargrid":
             self._run_bader_near_grid()
-        
+
         elif self.method == "hybrid-neargrid":
             self._run_bader_near_grid(hybrid=True)
 
@@ -479,18 +482,18 @@ class Bader:
         basin_charges, basin_volumes = self.get_basin_charges_and_volumes(
             basin_labels=labels,
             grid=self.charge_grid,
-            )
-        
+        )
+
         self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
-    
+
     def _run_bader_near_grid(self, hybrid: bool = False):
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
-            W. Tang, E. Sanville, and G. Henkelman 
-            A grid-based Bader analysis algorithm without lattice bias 
+            W. Tang, E. Sanville, and G. Henkelman
+            A grid-based Bader analysis algorithm without lattice bias
             J. Phys.: Condens. Matter 21, 084204 (2009)
-            
+
         Parameters
         ----------
         hybrid : bool, optional
@@ -520,7 +523,7 @@ class Bader:
                 car2lat=car2lat,
                 neighbors=neighbor_transforms,
                 neighbor_dists=neighbor_dists,
-                )
+            )
         else:
             # we want to make our initial assignments using the ongrid method
             # get an array where each entry is that voxels unique label
@@ -562,36 +565,36 @@ class Bader:
             labels = labels_flat.reshape(shape)
             # convert to index 1
             labels += 1
-            
-            
-        reassignments=1
+
+        reassignments = 1
+        maxima_vox = np.argwhere(maxima_mask)
+        # get our edges
+        edge_mask = get_edges(
+            labeled_array=labels, neighbor_transforms=neighbor_transforms
+        )
         while reassignments > 0:
-            # get our edges
-            edge_mask = get_edges(
-                labeled_array=labels, neighbor_transforms=neighbor_transforms
-            )
             # remove maxima from edge mask
-            edge_mask = edge_mask & ~maxima_mask
-            # create a mask to keep track of voxels we've already refined so
-            # we don't do repeat calculations
-            checked_mask = np.zeros(edge_mask.shape, dtype=np.bool_)
-            print(f"Refining {len(np.where(edge_mask)[0])} edges" )
+            for i,j,k in maxima_vox:
+                edge_mask[i,j,k] = False
+            # get edge indices
+            edge_indices = np.argwhere(edge_mask)
+            print(f"Refining {len(edge_indices)} edges")
             # reassign edges
-            labels, reassignments, checked_mask = refine_neargrid(
+            labels, reassignments, edge_mask = refine_neargrid(
                 data=data,
                 labels=labels,
+                edge_indices=edge_indices,
                 edge_mask=edge_mask,
-                checked_mask=checked_mask,
+                # edge_mask = ~maxima_mask,
                 car2lat=car2lat,
                 neighbors=neighbor_transforms,
                 neighbor_dists=neighbor_dists,
-                )
+            )
             print(f"{reassignments} values changed")
             # if our refinement method is single, we cancel the loop here
             if self.refinement_method == "single":
                 break
 
-        maxima_vox = np.argwhere(maxima_mask)
         # get corresponding basin labels
         maxima_labels = labels[maxima_vox[:, 0], maxima_vox[:, 1], maxima_vox[:, 2]]
         # sort from lowest to highest
@@ -607,7 +610,7 @@ class Bader:
         basin_charges, basin_volumes = self.get_basin_charges_and_volumes(
             basin_labels=labels,
             grid=self.charge_grid,
-            )
+        )
         self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
 
     def _run_bader_weight(self, hybrid: bool = False):
@@ -723,9 +726,9 @@ class Bader:
             unique_maxima, labels_flat = np.unique(maxima_labels, return_inverse=True)
             # create an labels array and label maxima
             labels = np.full(data.shape, -1, dtype=np.int64)
-            labels[
-                maxima_coords[:, 0], maxima_coords[:, 1], maxima_coords[:, 2]
-            ] = labels_flat
+            labels[maxima_coords[:, 0], maxima_coords[:, 1], maxima_coords[:, 2]] = (
+                labels_flat
+            )
             # update maxima_num
             maxima_num = len(unique_maxima)
 

@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import time
+
 from baderkit.core import Bader, Grid
 
 methods = Bader.methods()
@@ -19,4 +20,3 @@ for method in methods:
     t1 = time.time()
     times.append(f"{method}: {t1-t0}")
     all_results.append(results)
-    

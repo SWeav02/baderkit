@@ -84,4 +84,3 @@ def test_running_bader_methods(tmp_path, method):
         basin_results = file.read()
     assert atom_results == expected_atom_results
     assert basin_results == expected_basin_results
-

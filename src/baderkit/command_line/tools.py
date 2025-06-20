@@ -59,9 +59,11 @@ class Method(str, Enum):
     ongrid = "ongrid"
     neargrid = "neargrid"
 
+
 class RefinementMethod(str, Enum):
     recursive = "recursive"
     single = "single"
+
 
 @tools_app.command()
 def webapp(
@@ -88,7 +90,7 @@ def webapp(
         "--rm",
         help="For methods that refine the edges (neargrid, hybrid-neargrid), whether to refine recursively or a single time.",
         case_sensitive=False,
-        ),
+    ),
 ):
     """
     Starts the web interface
