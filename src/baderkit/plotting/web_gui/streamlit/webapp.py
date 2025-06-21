@@ -27,6 +27,7 @@ def load_plotter():
     env = os.environ.copy()
     charge_filename = env["CHARGE_FILE"]
     method = env["BADER_METHOD"]
+    refinement_method = env["REFINE_METHOD"]
     if "REFERENCE_FILE" in env.keys():
         reference_filename = env["REFERENCE_FILE"]
     else:
@@ -35,6 +36,7 @@ def load_plotter():
         charge_filename=charge_filename,
         reference_filename=reference_filename,
         method=method,
+        refinement_method=refinement_method,
     )
     plotter = BaderPlotter(bader, off_screen=True)
     # set plotter camera

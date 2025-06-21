@@ -37,7 +37,13 @@ class Method(str, Enum):
     weight = "weight"
     hybrid_weight = "hybrid-weight"
     ongrid = "ongrid"
+    hybrid_neargrid = "hybrid-neargrid"
     neargrid = "neargrid"
+
+
+class RefinementMethod(str, Enum):
+    recursive = "recursive"
+    single = "single"
 
 
 class Format(str, Enum):
@@ -73,6 +79,13 @@ def run(
         help="The method to use for separating bader basins",
         case_sensitive=False,
     ),
+    refinement_method: RefinementMethod = typer.Option(
+        RefinementMethod.recursive,
+        "--refinement-method",
+        "--rm",
+        help="For methods that refine the edges (neargrid, hybrid-neargrid), whether to refine recursively or a single time.",
+        case_sensitive=False,
+    ),
     format: Format = typer.Option(
         None,
         "--format",
@@ -91,12 +104,6 @@ def run(
         default=[],
         help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`",
     ),
-    # indices: Annotated[
-    #     list[int],
-    #     typer.Argument(
-    #         help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`"
-    #     ),
-    # ] = None,
 ):
     """
     Runs a bader analysis on the provided files. File formats are automatically
@@ -110,6 +117,7 @@ def run(
         charge_filename=charge_file,
         reference_filename=reference_file,
         method=method,
+        refinement_method=refinement_method,
         format=format,
     )
     # write summary

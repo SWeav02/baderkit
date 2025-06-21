@@ -50,25 +50,25 @@ dependencies=[
     # Core dependencies
     "numpy>=1.26.0",
     "pandas>=2.1.0",
-    "typer>=0.6.1",
     "pymatgen>=2022.1.9",
     "scipy>=1.7.2",
     "numba>=0.59.0",
-    "pyvista>=0.44.0", # for plotting grid
-    "streamlit>=1.40.0", # for web GUI
+    "typer>=0.6.1", # For CLI
     # Extra (smaller) dependencies & utilities
     "rich>=11.0", # for coloring CLI outputs and progress bars
-    # For webapp plotter html export. Not used directly in the app.
-    "trame",
-    "trame-vtk",
-    "trame-vuetify",
-    "nest_asyncio",
 ]
 
 # optional dependencies that are not installed by default
 [project.optional-dependencies]
+# For using the webapp
+webapp = [
+    "streamlit>=1.40.0", # for web GUI
+    "pyvista[jupyter]>=0.44.0" # for plotting
+]
 # For development and testing. Taken straight from simmate
 DEV = [
+    "streamlit>=1.40.0", # for web GUI
+    "pyvista[jupyter]>=0.44.0",
     "pytest",
     "black",
     "isort",
@@ -76,10 +76,6 @@ DEV = [
     "mkdocs-material",
     "mkdocstrings-python",
 #    "mkdocs_autorefs",
-]
-
-EXTRAS = [
-    "spyder",  # IDE for writing/editting
 ]
 
 # Link to our homepage. Use github for now.
