@@ -29,6 +29,10 @@ version="0.2.1"
 # Maintainer info
 authors = [{name = "Sam M. Weaver", email = "sammweaver@gmail.com"}]
 
+# Info for PyPI
+description="BaderKit is a python reimplementaion of the Henkelman Group's Bader code built on numba, numpy, and pymatgen."
+readme = "README.md"
+
 # General name for our LICENSE file
 license = {text = "BSD 3-Clause License"}
 
