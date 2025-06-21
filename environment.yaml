@@ -19,6 +19,7 @@ dependencies:
   - mkdocstrings-python >=1.10.9
   # packages for plotting
   - streamlit>=1.40.0 # Added st.segmented_control
+  - pytest
   - pip
   - pip:
       - pyvista[jupyter]>=0.44.0
