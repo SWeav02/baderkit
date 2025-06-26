@@ -924,7 +924,6 @@ class Grid(VolumetricData):
         transformations = self.get_voxel_coords_from_frac(transformations)
         # Check each atom to determine how many atoms it surrounds
         surrounded_sites = []
-        breakpoint()
         for i, site in enumerate(self.structure):
             # Get the voxel coords of each atom in their equivalent spots in each
             # quadrant of the supercell
