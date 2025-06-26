@@ -1001,9 +1001,8 @@ class Grid(VolumetricData):
 
         return inf_feature
 
-    @classmethod
     def regrid(
-        cls,
+        self,
         desired_resolution: int = 1200,
         new_shape: np.array = None,
         order: int = 3,
@@ -1027,12 +1026,12 @@ class Grid(VolumetricData):
         """
 
         # Get data
-        total = cls.total
-        diff = cls.diff
+        total = self.total
+        diff = self.diff
 
         # get the original grid size and lattice volume.
-        shape = cls.shape
-        volume = cls.structure.volume
+        shape = self.shape
+        volume = self.structure.volume
 
         if new_shape is None:
             # calculate how much the number of voxels along each unit cell must be
@@ -1060,7 +1059,7 @@ class Grid(VolumetricData):
             data = {"total": new_total}
 
         # TODO: Add augment data
-        return cls(structure=cls.structure, data=data)
+        return self(structure=self.structure, data=data)
 
     @classmethod
     def split_to_spin(
