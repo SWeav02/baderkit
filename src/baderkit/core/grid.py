@@ -1061,9 +1061,8 @@ class Grid(VolumetricData):
         # TODO: Add augment data
         return self(structure=self.structure, data=data)
 
-    @classmethod
     def split_to_spin(
-        cls,
+        self,
         data_type: Literal["elf", "charge"] = "elf",
     ) -> tuple[Self, Self]:
         """
@@ -1084,16 +1083,16 @@ class Grid(VolumetricData):
 
         # first check if the grid has spin parts
         assert (
-            cls.is_spin_polarized
+            self.is_spin_polarized
         ), "Only one set of data detected. The grid cannot be split into spin up and spin down"
 
         # Now we get the separate data parts. If the data is ELF, the parts are
         # stored as total=spin up and diff = spin down
         if data_type == "elf":
-            spin_up_data = cls.total.copy()
-            spin_down_data = cls.diff.copy()
+            spin_up_data = self.total.copy()
+            spin_down_data = self.diff.copy()
         elif data_type == "charge":
-            spin_data = cls.spin_data
+            spin_data = self.spin_data
             # pymatgen uses some custom class as keys here
             for key in spin_data.keys():
                 if key.value == 1:
@@ -1106,12 +1105,12 @@ class Grid(VolumetricData):
         spin_down_data = {"total": spin_down_data}
 
         # TODO: Add augment data?
-        spin_up_grid = cls(
-            structure=cls.structure.copy(),
+        spin_up_grid = self(
+            structure=self.structure.copy(),
             data=spin_up_data,
         )
-        spin_down_grid = cls(
-            structure=cls.structure.copy(),
+        spin_down_grid = self(
+            structure=self.structure.copy(),
             data=spin_down_data,
         )
 
