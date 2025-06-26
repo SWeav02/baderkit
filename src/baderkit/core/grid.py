@@ -603,7 +603,7 @@ class Grid(VolumetricData):
         return new_frac_coords
 
     @staticmethod
-    def get_2x_supercell(self, data: NDArray | None = None) -> NDArray:
+    def get_2x_supercell(data: NDArray | None = None) -> NDArray:
         """
         Duplicates data to make a 2x2x2 supercell
 
@@ -895,6 +895,10 @@ class Grid(VolumetricData):
         structure = np.ones([3, 3, 3])
         dilated_mask = binary_dilation(volume_mask, structure)
         init_atoms = self.get_atoms_in_volume(dilated_mask)
+        # check if we've surrounded all of our atoms. If so, we can return and
+        # skip the rest
+        if len(init_atoms) == len(self.structure):
+            return init_atoms, np.zeros(len(init_atoms))
         # Now we create a supercell of the mask so we can check connections to
         # neighboring cells. This will be used to check if the feature connects
         # to itself in each direction
@@ -920,6 +924,7 @@ class Grid(VolumetricData):
         transformations = self.get_voxel_coords_from_frac(transformations)
         # Check each atom to determine how many atoms it surrounds
         surrounded_sites = []
+        breakpoint()
         for i, site in enumerate(self.structure):
             # Get the voxel coords of each atom in their equivalent spots in each
             # quadrant of the supercell
