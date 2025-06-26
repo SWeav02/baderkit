@@ -88,6 +88,7 @@ class Bader:
         self._basin_charges = None
         self._basin_volumes = None
         self._basin_surface_distances = None
+        self._basin_edges = None
         # Assigned by run_atom_assignment
         self._basin_atoms = None
         self._basin_atom_dists = None
@@ -286,7 +287,9 @@ class Bader:
             on basin edges.
 
         """
-        return self.get_basin_edges(self.basin_labels)
+        if self._basin_edges is None:
+            self._basin_edges = self.get_basin_edges(self.basin_labels)
+        return self._basin_edges
 
     @staticmethod
     def methods() -> list[str]:
