@@ -1059,7 +1059,7 @@ class Grid(VolumetricData):
             data = {"total": new_total}
 
         # TODO: Add augment data
-        return self(structure=self.structure, data=data)
+        return Grid(structure=self.structure, data=data)
 
     def split_to_spin(
         self,
@@ -1105,11 +1105,11 @@ class Grid(VolumetricData):
         spin_down_data = {"total": spin_down_data}
 
         # TODO: Add augment data?
-        spin_up_grid = self(
+        spin_up_grid = Grid(
             structure=self.structure.copy(),
             data=spin_up_data,
         )
-        spin_down_grid = self(
+        spin_down_grid = Grid(
             structure=self.structure.copy(),
             data=spin_down_data,
         )
