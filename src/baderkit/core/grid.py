@@ -603,7 +603,7 @@ class Grid(VolumetricData):
         return new_frac_coords
 
     @staticmethod
-    def get_2x_supercell(self, data: NDArray | None = None) -> NDArray:
+    def get_2x_supercell(data: NDArray | None = None) -> NDArray:
         """
         Duplicates data to make a 2x2x2 supercell
 
@@ -895,6 +895,10 @@ class Grid(VolumetricData):
         structure = np.ones([3, 3, 3])
         dilated_mask = binary_dilation(volume_mask, structure)
         init_atoms = self.get_atoms_in_volume(dilated_mask)
+        # check if we've surrounded all of our atoms. If so, we can return and
+        # skip the rest
+        if len(init_atoms) == len(self.structure):
+            return init_atoms, np.zeros(len(init_atoms))
         # Now we create a supercell of the mask so we can check connections to
         # neighboring cells. This will be used to check if the feature connects
         # to itself in each direction
@@ -1001,9 +1005,8 @@ class Grid(VolumetricData):
 
         return inf_feature
 
-    @classmethod
     def regrid(
-        cls,
+        self,
         desired_resolution: int = 1200,
         new_shape: np.array = None,
         order: int = 3,
@@ -1027,12 +1030,12 @@ class Grid(VolumetricData):
         """
 
         # Get data
-        total = cls.total
-        diff = cls.diff
+        total = self.total
+        diff = self.diff
 
         # get the original grid size and lattice volume.
-        shape = cls.shape
-        volume = cls.structure.volume
+        shape = self.shape
+        volume = self.structure.volume
 
         if new_shape is None:
             # calculate how much the number of voxels along each unit cell must be
@@ -1060,11 +1063,10 @@ class Grid(VolumetricData):
             data = {"total": new_total}
 
         # TODO: Add augment data
-        return cls(structure=cls.structure, data=data)
+        return Grid(structure=self.structure, data=data)
 
-    @classmethod
     def split_to_spin(
-        cls,
+        self,
         data_type: Literal["elf", "charge"] = "elf",
     ) -> tuple[Self, Self]:
         """
@@ -1085,16 +1087,16 @@ class Grid(VolumetricData):
 
         # first check if the grid has spin parts
         assert (
-            cls.is_spin_polarized
+            self.is_spin_polarized
         ), "Only one set of data detected. The grid cannot be split into spin up and spin down"
 
         # Now we get the separate data parts. If the data is ELF, the parts are
         # stored as total=spin up and diff = spin down
         if data_type == "elf":
-            spin_up_data = cls.total.copy()
-            spin_down_data = cls.diff.copy()
+            spin_up_data = self.total.copy()
+            spin_down_data = self.diff.copy()
         elif data_type == "charge":
-            spin_data = cls.spin_data
+            spin_data = self.spin_data
             # pymatgen uses some custom class as keys here
             for key in spin_data.keys():
                 if key.value == 1:
@@ -1107,12 +1109,12 @@ class Grid(VolumetricData):
         spin_down_data = {"total": spin_down_data}
 
         # TODO: Add augment data?
-        spin_up_grid = cls(
-            structure=cls.structure.copy(),
+        spin_up_grid = Grid(
+            structure=self.structure.copy(),
             data=spin_up_data,
         )
-        spin_down_grid = cls(
-            structure=cls.structure.copy(),
+        spin_down_grid = Grid(
+            structure=self.structure.copy(),
             data=spin_down_data,
         )
 

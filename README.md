@@ -6,6 +6,12 @@ BaderKit is a python implementation of Bader's Atomic Theory of Atoms in Molecul
 
 For information on installation and use, see the [docs](https://sweav02.github.io/baderkit/)
 
+## Dependencies
+
+The dependencies for this app are listed in the [pyproject.toml](https://github.com/SWeav02/baderkit/blob/main/pyproject.toml).
+To make sure nothing breaks, the ranges are capped at the most recent versions as of July 2025. We will do our best to keep these up to date as new
+versions of dependencies are released, but if you run into any issues, please create an [Issue](https://github.com/SWeav02/baderkit/issues)
+on our github page.
 
 ## Contributing
 
