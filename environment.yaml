@@ -3,23 +3,32 @@ channels:
   - default
   - conda-forge
 dependencies:
-  - python>=3.10 # Before this there is no importlib.metadata
-  - pymatgen>=2022.1.9 # Same as Simmate's
-  - numpy>=1.26.0 # Could potentially be earlier
-  - pandas>=2.1.0 # Prior to this, they use applymap instead of map
-  - typer>=0.6.1 
-  - rich>=11.0 # Same as simmate
-  - numba>=0.59.0
-  - scipy>=1.7.2 # Added python 3.10 support
-  # prefered IDE
+  - python>=3.10  # Before this there is no importlib.metadata
+
+  # Core dependencies (with version caps)
+  - pymatgen>=2022.1.9,<2025.6.14
+  - numpy>=1.26.0,<2.3.1
+  - pandas>=2.1.0,<2.3.0
+  - scipy>=1.7.2,<1.16.0
+  - numba>=0.59.0,<0.61.2
+  - typer>=0.6.1,<0.16.0
+  - rich>=11.0,<14.0
+
+  # Preferred IDE
   - spyder
-  # docs
-  - mkdocs-material >=9.5.44
-  - mkdocstrings >=0.25.2
-  - mkdocstrings-python >=1.10.9
-  # packages for plotting
-  - streamlit>=1.40.0 # Added st.segmented_control
+
+  # Documentation
+  - mkdocs-material>=9.5.44
+  - mkdocstrings>=0.25.2
+  - mkdocstrings-python>=1.10.9
+
+  # Web UI
+  - streamlit>=1.40.0,<1.46.1
+
+  # Testing and pip
   - pytest
   - pip
+
+  # pip-only dependencies
   - pip:
-      - pyvista[jupyter]>=0.44.0
+      - pyvista[jupyter]>=0.44.0,<0.45.2
