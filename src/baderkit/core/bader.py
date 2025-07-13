@@ -16,10 +16,10 @@ from baderkit.core.numba_functions import (
     get_edges,
     get_multi_weight_voxels,
     get_neargrid_labels,
+    get_reverse_neargrid_labels,
     get_neighbor_flux,
     get_single_weight_voxels,
     get_steepest_pointers,
-    propagate_edges,
     refine_neargrid,
 )
 from baderkit.core.structure import Structure
@@ -382,8 +382,8 @@ class Bader:
         Raises
         ------
         ValueError
-            The class method variable must be 'ongrid', 'neargrid', 'weight' or
-            'hybrid-weight'.
+            The class method variable must be 'ongrid', 'neargrid', 
+            'hybrid-neargrid', 'reverse-neargrid', 'weight' or 'hybrid-weight'.
 
         Returns
         -------
@@ -399,6 +399,9 @@ class Bader:
         elif self.method == "hybrid-neargrid":
             self._run_bader_near_grid(hybrid=True)
 
+        elif self.method == "reverse-neargrid":
+            self._run_bader_reverse_near_grid()
+
         elif self.method == "weight":
             self._run_bader_weight()
 
@@ -408,7 +411,7 @@ class Bader:
         else:
             raise ValueError(
                 f"{self.method} is not a valid algorithm."
-                "Acceptable values are 'ongrid' and 'weight'"
+                "Acceptable values are 'ongrid', 'neargrid', 'hybrid-neargrid', 'reverse-neargrid', 'weight', and 'hybrid-weight'"
             )
 
     def _run_bader_on_grid(self):
@@ -600,6 +603,54 @@ class Bader:
             if self.refinement_method == "single":
                 break
 
+        # get corresponding basin labels
+        maxima_labels = labels[maxima_vox[:, 0], maxima_vox[:, 1], maxima_vox[:, 2]]
+        # sort from lowest to highest
+        maxima_sorted_indices = np.argsort(maxima_labels)
+        maxima_vox = maxima_vox[maxima_sorted_indices]
+        maxima_frac_coords = grid.get_frac_coords_from_vox(maxima_vox)
+        self._basin_maxima_frac = maxima_frac_coords
+        # adjust labels to 0 index convention
+        labels -= 1
+        # assign labels
+        self._basin_labels = labels
+        # get charge and volume for each label
+        basin_charges, basin_volumes = self.get_basin_charges_and_volumes(
+            basin_labels=labels,
+            grid=self.charge_grid,
+        )
+        self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
+    
+    # TODO: Move grad and dr calc to  parallel calc
+    def _run_bader_reverse_near_grid(self):
+        grid = self.reference_grid.copy()
+        # get neigbhor transforms
+        neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
+        matrix = grid.matrix
+        # convert to lattice vectors as columns
+        dir2car = matrix.T
+        # get lattice to cartesian matrix
+        lat2car = dir2car / grid.shape[np.newaxis, :]
+        # get inverse for cartesian to lattice matrix
+        car2lat = np.linalg.inv(lat2car)
+        logging.info("Sorting reference data")
+        shape = grid.shape
+        # flatten data and get initial 1D and 3D voxel indices
+        flat_data = grid.total.ravel()
+        flat_voxel_coords = np.indices(shape).reshape(3, -1).T
+        # sort data from high to low
+        sorted_data_indices = np.flip(np.argsort(flat_data, kind="stable"))
+        sorted_voxel_coords = flat_voxel_coords[sorted_data_indices]
+        logging.info("Assigning labels")
+        # get assignments and maxima mask
+        labels, maxima_mask = get_reverse_neargrid_labels(
+            data=grid.total,
+            ordered_voxel_coords=sorted_voxel_coords,
+            car2lat=car2lat,
+            neighbor_transforms=neighbor_transforms,
+            neighbor_dists=neighbor_dists,
+        )
+        maxima_vox = np.argwhere(maxima_mask)
         # get corresponding basin labels
         maxima_labels = labels[maxima_vox[:, 0], maxima_vox[:, 1], maxima_vox[:, 2]]
         # sort from lowest to highest
