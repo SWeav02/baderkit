@@ -234,6 +234,134 @@ def get_neighbor_diffs(
                     diffs[index, shift_index] = diff
     return diffs
 
+@njit(parallel=True, cache=True)
+def get_basin_charges_and_volumes(
+    data: NDArray[np.float64],
+    labels: NDArray[np.int64],
+    cell_volume: np.float64,
+    maxima_num: np.int64,
+        ):
+    nx, ny, nz = data.shape
+    total_points = nx * ny * nz
+    # create variables to store charges/volumes
+    charges = np.zeros(maxima_num, dtype=np.float64)
+    volumes = np.zeros(maxima_num, dtype=np.float64)
+    vacuum_charge = 0.0
+    vacuum_volume = 0.0
+    # iterate in parallel over each voxel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                charge = data[i,j,k]
+                label = labels[i,j,k]
+                if label < 0:
+                    vacuum_charge += charge
+                    vacuum_volume += 1
+                else:
+                    charges[label] += charge
+                    volumes[label] += 1.0
+    # calculate charge and volume
+    volumes = volumes * cell_volume / total_points
+    charges = charges / total_points
+    vacuum_volume = vacuum_volume * cell_volume / total_points
+    vacuum_charge= vacuum_charge / total_points
+    return charges, volumes, vacuum_charge, vacuum_volume
+
+# @njit(parallel=True, cache=True)
+# def get_atom_assignments(
+#     basin_frac_coords: NDArray[np.float64],
+#     atom_frac_coords: NDArray[np.float64],
+#     lattice_matrix: NDArray[np.float64],
+#         ):
+#     # create arrays to stor atom assignments and distances
+#     basin_atoms = np.empty(len(basin_frac_coords), dtype=np.int64)
+#     basin_atom_dists = np.empty(len(basin_frac_coords), dtype=np.float64)
+#     for i in prange(len(basin_frac_coords)):
+#         # create marker for the current best atom and distance
+#         best_atom = -1
+#         beset_dist = 100
+#         basin_frac_coord = basin_frac_coords[i]
+#         for j in range(len(atom_frac_coords)):
+#             atom_frac_coord = atom_frac_coords[j]
+#             # calculate distance
+            
+
+@njit(cache = True)
+def check_is_vacuum(
+    data: NDArray[np.float64],
+    i: np.int64,
+    j: np.int64,
+    k: np.int64,
+    cell_volume: np.float64,
+    vacuum_threshold: np.float64 = 1.0e-3,
+    normalize_vac: bool = True,
+):
+    """
+    Checks if a given point (i,j,k) is part of the vacuum.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        The data for each voxel.
+    i : np.int64
+        First coordinate
+    j : np.int64
+        Second coordinate
+    k : np.int64
+        Third coordinate
+    cell_volume : np.float64
+        The volume of the unit cell used to normalize the data.
+    vacuum_threshold : np.float64, optional
+        The threshold to consider part of the vacuum. The default is 1.0e-3.
+    normalize_vac : bool, optional
+        Whether or not to convert the data to real space. The default is True.
+
+    Returns
+    -------
+    bool
+        Whether or not this point is part of the vacuum.
+
+    """
+    # get the value at this point
+    value = data[i, j, k]
+    # optionally normalize to get charge density in real space
+    if normalize_vac:
+        abs_density = abs(value) / cell_volume
+    else:
+        abs_density = abs(value)
+    # if value is below the vacuum threshold, return True
+    if abs_density <= vacuum_threshold:
+        return True
+    else:
+        return False
+    
+
+@njit(parallel=True, cache=True)
+def get_vacuum_mask(
+    reference_data: NDArray[np.float64],
+    charge_data: NDArray[np.float64],
+    cell_volume: np.float64,
+    vacuum_threshold: np.float64 = 1.0e-3,
+    normalize_vac: bool = True,
+):
+    nx, ny, nz = reference_data.shape
+    vacuum_mask = np.zeros(reference_data.shape, dtype=np.bool_)
+    vac_chg = 0.0
+    vac_count = 0
+    total_points = nx * ny * nz
+
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if check_is_vacuum(reference_data, i, j, k, cell_volume, vacuum_threshold, normalize_vac):
+                    vacuum_mask[i, j, k] = True
+                    vac_chg += charge_data[i,j,k]  # use raw value (signed charge)
+                    vac_count += 1
+
+    vac_vol = vac_count * cell_volume / total_points
+    vac_chg = vac_chg / total_points
+
+    return vacuum_mask, vac_chg, vac_vol
 
 ###############################################################################
 # Functions for on-grid method
@@ -305,6 +433,9 @@ def get_steepest_pointers(
     initial_labels: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.int64],
+    cell_volume: np.float64,
+    vacuum_threshold: np.float64 = 1.0e-3,
+    normalize_vac: bool = True,
 ):
     """
     For each voxel in a 3D grid of data, finds the index of the neighboring voxel with
@@ -320,23 +451,40 @@ def get_steepest_pointers(
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.int64]
         The distance to each neighboring voxel
+    cell_volume : np.float64
+        The volume of the unit cell used to normalize the data.
+    vacuum_threshold : np.float64, optional
+        The threshold to consider part of the vacuum. The default is 1.0e-3.
+    normalize_vac : bool, optional
+        Whether or not to convert the data to real space. The default is True.
 
     Returns
     -------
     best_label : NDArray[np.int64]
         A 3D array where each entry is the index of the neighbor that had the
-        greatest increase in value.
+        greatest increase in value. A value of -1 indicates a vacuum point.
 
     """
     nx, ny, nz = data.shape
     # create array to store the label of the neighboring voxel with the greatest
     # elf value
-    # best_diff  = np.zeros_like(data)
     best_label = initial_labels.copy()
     # loop over each voxel in parallel
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
+                # check if this is a vacuum point
+                if check_is_vacuum(
+                    data=data,
+                    i=i,
+                    j=j,
+                    k=k,
+                    cell_volume=cell_volume,
+                    vacuum_threshold=vacuum_threshold,
+                    normalize_vac=normalize_vac,
+                ):
+                    best_label[i,j,k] = -1
+                    continue
                 # get the best neighbor
                 best_transform, best_neigh = get_best_neighbor(
                     data=data,

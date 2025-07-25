@@ -1150,7 +1150,7 @@ class Grid(VolumetricData):
             diff = diff1 + diff2
             data = {"total": total, "diff": diff}
         else:
-            data = {"total": total, "diff": None}
+            data = {"total": total}
 
         # Note that we copy the first grid here rather than making a new grid
         # instance because we want to keep any useful information such as whether
