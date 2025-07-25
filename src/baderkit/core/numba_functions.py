@@ -803,11 +803,11 @@ def neargrid_step(
     charge_grad_vox[1] = (charge010 - charge0_10) / 2.0
     charge_grad_vox[2] = (charge001 - charge00_1) / 2.0
 
-    if charge100 < charge000 and charge_100 < charge000:
+    if charge100 <= charge000 and charge_100 <= charge000:
         charge_grad_vox[0] = 0.0
-    if charge010 < charge000 and charge0_10 < charge000:
+    if charge010 <= charge000 and charge0_10 <= charge000:
         charge_grad_vox[1] = 0.0
-    if charge001 < charge000 and charge00_1 < charge000:
+    if charge001 <= charge000 and charge00_1 <= charge000:
         charge_grad_vox[2] = 0.0
 
     # convert to cartesian coordinates
@@ -1122,11 +1122,11 @@ def get_gradient(
     charge_grad_vox[1] = (charge010 - charge0_10) / 2.0
     charge_grad_vox[2] = (charge001 - charge00_1) / 2.0
 
-    if charge100 < charge000 and charge_100 < charge000:
+    if charge100 <= charge000 and charge_100 <= charge000:
         charge_grad_vox[0] = 0.0
-    if charge010 < charge000 and charge0_10 < charge000:
+    if charge010 <= charge000 and charge0_10 <= charge000:
         charge_grad_vox[1] = 0.0
-    if charge001 < charge000 and charge00_1 < charge000:
+    if charge001 <= charge000 and charge00_1 <= charge000:
         charge_grad_vox[2] = 0.0
 
     # convert to cartesian coordinates
@@ -1216,7 +1216,7 @@ def get_pointer_and_delta_r(
     return new_coord, delta_r, False
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_reverse_neargrid_labels(
     data: NDArray[np.float64],
     ordered_voxel_coords: NDArray[np.int64],
@@ -1292,6 +1292,8 @@ def get_reverse_neargrid_labels(
                 neighbor_label = labels[neigh_coord[0], neigh_coord[1], neigh_coord[2]]
                 # set dr to 0
                 delta_r[:] = 0.0
+            if neighbor_label == 0:
+                breakpoint()
             assert neighbor_label != 0
             # set label to the same as neighbor
             labels[i, j, k] = neighbor_label
