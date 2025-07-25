@@ -955,69 +955,49 @@ class Bader:
         self._basin_labels = labels
         self._basin_charges = charges
         self._basin_volumes = volumes
-
+        
     def run_atom_assignment(self, structure: Structure = None):
         """
-        Assigns bader basins to the atoms in the provided structure. If
-        no structure is provided, defaults to the reference grid structure.
-
-        This method generally shouldn't be run manually, but is useful
-        for reassigning basins when working with dummy atoms (e.g. in electrides)
-
-        Parameters
-        ----------
-        structure : Structure, optional
-            The pymatgen structure to assign basins to. If None, the structure
-            of the reference grid will be used.
-
-        Returns
-        -------
-        None.
-
+        Assigns bader basins to the atoms in the provided structure.
         """
-        if structure is None:
-            structure = self.structure
+        # Default structure
+        structure = structure or self.structure
         self._structure = structure
-        # Get the frac coords for each basin and atom. These must be in the
-        # same order as the corresponding basin labels
-        basin_frac_coords = self.basin_maxima_frac
-        atom_frac_coords = structure.frac_coords
+    
+        # Shorthand access
+        basins = self.basin_maxima_frac               # (N_basins, 3)
+        atoms = structure.frac_coords                 # (N_atoms, 3)
+        L = structure.lattice.matrix                  # (3, 3)
+        N_basins, N_atoms = len(basins), len(atoms)
+    
         logging.info("Assigning atom properties")
-        # create arrays for atom properties
-        basin_atoms = np.empty(len(basin_frac_coords), dtype=int)
-        basin_atom_dists = np.empty(len(basin_frac_coords))
-        atom_labels = np.zeros(self.basin_labels.shape, dtype=np.int64)
-        atom_charges = np.zeros(len(atom_frac_coords))
-        atom_volumes = np.zeros(len(atom_frac_coords))
-
-        for i, frac_coord in enumerate(basin_frac_coords):
-            # get the difference between this basin and all of the atoms
-            diffs = atom_frac_coords - frac_coord
-            # wrap anything below -0.5 or above 0.5
-            diffs[diffs < -0.5] += 1
-            diffs[diffs > 0.5] -= 1
-            # convert to cartesian coords and calculate distance
-            cart_diffs = diffs @ structure.lattice.matrix
-            dists = np.linalg.norm(cart_diffs, axis=1)
-            # get the lowest distance and corresponding atom
-            min_dist = dists.min()
-            assignment = np.argwhere(dists == min_dist)[0][0]
-            # assign this atom label to this basin and update properties
-            basin_atoms[i] = assignment
-            basin_atom_dists[i] = min_dist
-            atom_labels[self.basin_labels == i] = assignment
-            try:
-                atom_charges[assignment] += self.basin_charges[i]
-            except:
-                breakpoint()
-            atom_volumes[assignment] += self.basin_volumes[i]
-
-        # update class variables
-        self._basin_atoms = basin_atoms
+    
+        # Vectorized deltas, minimum‑image wrapping
+        diffs = atoms[None, :, :] - basins[:, None, :]
+        diffs += np.where(diffs <= -0.5, 1, 0)
+        diffs -= np.where(diffs >=  0.5, 1, 0)
+    
+        # Cartesian diffs & distances
+        cart = np.einsum("bij,jk->bik", diffs, L)
+        dists = np.linalg.norm(cart, axis=2)
+    
+        # Basin→atom assignment & distances
+        basin_atoms      = np.argmin(dists, axis=1)                   # (N_basins,)
+        basin_atom_dists = dists[np.arange(N_basins), basin_atoms]    # (N_basins,)
+    
+        # Atom labels per grid point
+        atom_labels = basin_atoms[self.basin_labels]
+    
+        # Sum up charges/volumes per atom in one shot
+        atom_charges = np.bincount(basin_atoms, weights=self.basin_charges, minlength=N_atoms)
+        atom_volumes = np.bincount(basin_atoms, weights=self.basin_volumes, minlength=N_atoms)
+    
+        # Store everything
+        self._basin_atoms      = basin_atoms
         self._basin_atom_dists = basin_atom_dists
-        self._atom_labels = atom_labels
-        self._atom_charges = atom_charges
-        self._atom_volumes = atom_volumes
+        self._atom_labels      = atom_labels
+        self._atom_charges     = atom_charges
+        self._atom_volumes     = atom_volumes
 
     def _get_atom_surface_distances(self):
         """
@@ -1077,7 +1057,7 @@ class Bader:
         for basin in track(
             range(len(self.basin_maxima_frac)), description="Calculating feature radii"
         ):
-            # We only want to calculate the edges for significant basins
+            # We only calculate the edges for significant basins
             if not self.significant_basins[basin]:
                 continue
             basin_edge_mask = (basin_labeled_voxels == basin) & edge_mask
@@ -1315,7 +1295,7 @@ class Bader:
         None.
 
         """
-        basin_indices = np.array(range(len(self.basin_atoms)))
+        basin_indices = np.where(self.significant_basins)[0]
         self.write_basin_volumes(
             basin_indices=basin_indices,
             directory=directory,
@@ -1529,15 +1509,16 @@ class Bader:
             A table summarizing the basins.
 
         """
-        basin_frac_coords = self.basin_maxima_frac
+        subset = self.significant_basins
+        basin_frac_coords = self.basin_maxima_frac[subset]
         basin_df = pd.DataFrame(
             {
-                "atoms": self.basin_atoms,
+                "atoms": self.basin_atoms[subset],
                 "x": basin_frac_coords[:, 0],
                 "y": basin_frac_coords[:, 1],
                 "z": basin_frac_coords[:, 2],
-                "charge": self.basin_charges,
-                "volume": self.basin_volumes,
+                "charge": self.basin_charges[subset],
+                "volume": self.basin_volumes[subset],
                 "surface_dist": self.basin_surface_distances,
             }
         )
