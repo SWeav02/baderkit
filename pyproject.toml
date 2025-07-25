@@ -24,7 +24,7 @@ name="baderkit"
 # Versions should comply with PEP 440:
 # https://www.python.org/dev/peps/pep-0440/
 # https://semver.org/
-version="0.2.3"
+version="0.3.0"
 
 # Maintainer info
 authors = [{name = "Sam M. Weaver", email = "sammweaver@gmail.com"}]
@@ -49,16 +49,17 @@ classifiers=[
 # Specify which Python versions are supported.
 requires-python=">=3.10"
 
-# This field lists other packages that your project depends on to run.
+# Cap packages vs. future major releases where possible
 dependencies = [
-    "numpy>=1.26.0,<2.3.1",
-    "pandas>=2.1.0,<2.3.0",
-    "pymatgen>=2022.1.9,<2025.6.14",
-    "scipy>=1.7.2,<1.16.0",
-    "numba>=0.59.0,<0.61.2",
-    "typer>=0.6.1,<0.16.0",
-    "rich>=11.0,<14.0"
+    "numpy>=1.26.0,<3.0",
+    "pandas>=2.1.0,<3.0",
+    "pymatgen>=2022.1.9,<=2025.6.14",
+    "scipy>=1.7.2,<2.0",
+    "numba>=0.59.0,<=0.61.2",
+    "typer>=0.6.1,<=0.16.0",
+    "rich>=11.0,<=14.0"
 ]
+
 
 [project.optional-dependencies]
 webapp = [

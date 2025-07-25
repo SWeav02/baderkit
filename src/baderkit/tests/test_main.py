@@ -65,6 +65,7 @@ def test_writing_bader(tmp_path):
         "ongrid",
         "neargrid",
         "hybrid-neargrid",
+        "reverse-neargrid",
         "weight",
         "hybrid-weight",
     ],

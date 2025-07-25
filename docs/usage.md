@@ -22,7 +22,7 @@ from pathlib import Path
 bader = Bader.from_dynamic(
     charge_filename = "path/to/charge_file",
     reference_filename = "path/to/charge_file", # Optional
-    method = "weight", # Optional. Also ongrid, neargrid, hybrid-neargrid, or hybrid-weight
+    method = "weight", # Optional
     directory = Path("path/to/somewhere") # Optional
     )
 ```
@@ -176,6 +176,6 @@ viewport can also be exported to a variety of image formats.
 
 !!! Warning
     Currently the viewport is made by exporting the pyvista Plotter object to 
-    html. Changes made by interacting with the view 
+    html each time an update is made. Changes made by interacting with the view 
     port directly (e.g. rotation, zoom) will not show up in exported images, and the image 
     may flash when the apply button is clicked.

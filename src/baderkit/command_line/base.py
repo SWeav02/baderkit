@@ -38,6 +38,7 @@ class Method(str, Enum):
     hybrid_weight = "hybrid-weight"
     ongrid = "ongrid"
     hybrid_neargrid = "hybrid-neargrid"
+    reverse_neargrid = "reverse-neargrid"
     neargrid = "neargrid"
 
 
@@ -73,7 +74,7 @@ def run(
         help="The path to the reference file",
     ),
     method: Method = typer.Option(
-        Method.weight,
+        Method.reverse_neargrid,
         "--method",
         "-m",
         help="The method to use for separating bader basins",

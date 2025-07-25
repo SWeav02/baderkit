@@ -1,8 +1,9 @@
 # Methods
 
 BaderKit is based on the [Henkelman group's](https://theory.cm.utexas.edu/henkelman/code/bader/) excellent Fortran code.
-The same methods available in their code are available here in addition to some
-variants that we find useful.
+In addition to the algorithms available in their code, we have created several
+variations. This page provides descriptions and recommendations for when to use
+each method.
 
 ## Summary
 
@@ -10,6 +11,7 @@ variants that we find useful.
 |---------------|---------|----------|--------------------------|
 |ongrid         |Very Fast|Low       |:material-check:          |
 |neargrid       |Medium   |High      |:material-check:          |
+|reverse-neargrid|Fast    |High      |:material-check:          |
 |hybrid-neargrid|Medium   |High      |:material-check:          |
 |weight         |Fast     |Very High |:material-close:          |
 |hybrid-weight  |Fast     |Very High |:material-close:          |
@@ -70,15 +72,16 @@ variants that we find useful.
         on a course grid, the Henkelman groups code assigns asymmetrical charges/volumes to 
         symmetrical basins while our code reaches symmetry after several iterations.
         
-        By default we use iterative refinement, but this can be changed to the
+        By default we use iterative refinement, which results in this method being
+        ~4-10x slower than the other methods. This can be changed to the
         original single refinement by setting `refinement_method="single"` in python or
         `--refinement-method single` in the command-line.
     
     **Reference**
     
     W. Tang, E. Sanville, and G. Henkelman, A grid-based Bader analysis algorithm without lattice bias, [J. Phys.: Condens. Matter 21, 084204 (2009)](https://theory.cm.utexas.edu/henkelman/code/bader/download/tang09_084204.pdf)
-    
-=== "weight (Default)"
+ 
+=== "weight"
 
     This method reduces errors due to orientation by allowing each point to be
     partially assigned to multiple basins. This method tends to provide the most accurate 
@@ -108,13 +111,42 @@ variants that we find useful.
     
     **Reference**
     
-    M. Yu and D. R. Trinkle, Accurate and efficient algorithm for Bader charge integration, [J. Chem. Phys. 134, 064111 (2011)](https://theory.cm.utexas.edu/henkelman/code/bader/download/yu11_064111.pdf)
+    M. Yu and D. R. Trinkle, Accurate and efficient algorithm for Bader charge integration, [J. Chem. Phys. 134, 064111 (2011)](https://theory.cm.utexas.edu/henkelman/code/bader/download/yu11_064111.pdf)   
+
+=== "reverse-neargrid (Default)"
+    
+    This method is our own improvement to the original neargrid method, inspired
+    by the weight method. It is at least as accurate as the neargrid method while
+    avoiding any edge refinements.
+    
+    The method is largely similar to the [original](/baderkit/methods/#__tabbed_1_2). However,
+    instead of following an ascending path, we first sort the grid points from
+    highest to lowest, then descend starting form the highest. At each point, the 
+    gradient is calculated, and used to construct a pointer to the steepest neighbor.
+    A correction vector, the difference between this pointer and the true gradient, 
+    is then calculated and stored.
+    
+    For each point other than the local maxima, the steepest neighbor will have
+    already gone through this process. For these points, the steepest neighbor's
+    correction vector is added to the points own correction vector. This provides
+    some memory of variation from the true gradient as the path is descended.
+    If the correction vector is ever large enough that one of its components is
+    closer to a neighbor than the current point, a correction is made. This moves
+    moves the current points steepest neighbor to the nearest point in the direction
+    of the correction. Whether or not a correction is made, the current point is
+    assigned the same label as its steepest neighbor.
+    
+    In this way, the gradient correction history is preserved without need for
+    iterative refinement of the edges. In our testing we found this method to be 
+    just as or more accurate than the original neargrid method.
+    
 
 === "hybrid-neargrid"
     
-    Because we found that iterative edge refinement is required for the neargrid method (see the [Note](http://127.0.0.1:8000/baderkit/methods/#__tabbed_1_2)),
+    Because we found that iterative edge refinement is required for the neargrid method (see the [Note](/baderkit/methods/#__tabbed_1_2)),
     we've added a variation where the faster ongrid method is performed first, 
-    then refined using the neargrid method.
+    then refined using the neargrid method. This may result in improved speed if
+    the ongrid edges are not far from the final neargrid edges.
     
 === "hybrid-weight"
 
