@@ -16,8 +16,8 @@ from baderkit.core.numba_functions import (
     get_edges,
     get_multi_weight_voxels,
     get_neargrid_labels,
-    get_reverse_neargrid_labels,
     get_neighbor_flux,
+    get_reverse_neargrid_labels,
     get_single_weight_voxels,
     get_steepest_pointers,
     refine_neargrid,
@@ -39,9 +39,14 @@ class Bader:
         charge_grid: Grid,
         reference_grid: Grid,
         method: Literal[
-            "ongrid", "neargrid", "hybrid-neargrid", "weight", "hybrid-weight"
-        ] = None,
-        refinement_method: Literal["recursive", "single"] = None,
+            "ongrid",
+            "neargrid",
+            "hybrid-neargrid",
+            "reverse-neargrid",
+            "weight",
+            "hybrid-weight",
+        ] = "reverse-neargrid",
+        refinement_method: Literal["recursive", "single"] = "recursive",
         directory: Path = Path("."),
     ):
         """
@@ -52,7 +57,7 @@ class Bader:
             A Grid object with the charge density that will be integrated.
         reference_grid : Grid
             A grid object whose values will be used to construct the basins.
-        method : Literal["ongrid", "neargrid", "hybrid-neargrid", "weight", "hybrid-weight"], optional
+        method : Literal["ongrid", "neargrid", "hybrid-neargrid", "reverse-neargrid", "weight", "hybrid-weight"], optional
             The algorithm to use for generating bader basins. If None, defaults
             to weight.
         refinement_method : Literal["recursive", "single"], optional
@@ -70,15 +75,15 @@ class Bader:
         """
         self.charge_grid = charge_grid
         self.reference_grid = reference_grid
-        if method is not None:
-            self.method = method
-        else:
-            self.method = "weight"
+        # if method is not None:
+        self.method = method
+        # else:
+        # self.method = "weight"
         self.directory = directory
-        if refinement_method is not None:
-            self.refinement_method = refinement_method
-        else:
-            self.refinement_method = "recursive"
+        # if refinement_method is not None:
+        self.refinement_method = refinement_method
+        # else:
+        # self.refinement_method = "recursive"
 
         # define hidden class variables. This allows us to cache properties and
         # still be able to recalculate them
@@ -382,7 +387,7 @@ class Bader:
         Raises
         ------
         ValueError
-            The class method variable must be 'ongrid', 'neargrid', 
+            The class method variable must be 'ongrid', 'neargrid',
             'hybrid-neargrid', 'reverse-neargrid', 'weight' or 'hybrid-weight'.
 
         Returns
@@ -620,9 +625,23 @@ class Bader:
             grid=self.charge_grid,
         )
         self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
-    
-    # TODO: Move grad and dr calc to  parallel calc
+
+    # TODO: try moving grad and dr calc to  parallel calc
     def _run_bader_reverse_near_grid(self):
+        """
+        Assigns voxels to basins and calculates charge using a variation of
+        the neargrid method. The reference grid is first sorted from highest to
+        lowest, and the gradient is followed in a descending rather than ascending
+        manor. The core concepts are still based on the original neargrid method:
+            W. Tang, E. Sanville, and G. Henkelman
+            A grid-based Bader analysis algorithm without lattice bias
+            J. Phys.: Condens. Matter 21, 084204 (2009)
+
+        Returns
+        -------
+        None.
+
+        """
         grid = self.reference_grid.copy()
         # get neigbhor transforms
         neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors

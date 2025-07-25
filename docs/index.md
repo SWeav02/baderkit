@@ -8,7 +8,10 @@ and [NumPy](https://numpy.org/doc/stable/index.html) to maintain comparable spee
 [Pymatgen](https://pymatgen.org/) is used under the hood to build out several core 
 classes to improve ease of use.
 
-So far, the following algorithms have been implemented.
+---
+
+We have reimplemented each of the methods available in the Henkelman group's
+Fortran code:
  
 
  - [x] On Grid [Comput. Mater. Sci. 36, 354-360 (2006)](https://www.sciencedirect.com/science/article/abs/pii/S0927025605001849)
