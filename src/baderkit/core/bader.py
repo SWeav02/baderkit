@@ -48,7 +48,7 @@ class Bader:
             "weight",
             "hybrid-weight",
         ] = "reverse-neargrid",
-        refinement_method: Literal["recursive", "single"] = "recursive",
+        refinement_method: Literal["recursive", "single"] = "single",
         directory: Path = Path("."),
         vacuum_tol: float = 1.0e-3,
         normalize_vacuum: bool = True,
@@ -791,7 +791,8 @@ class Bader:
             neighbor_dists=neighbor_dists,
             vacuum_mask=self.vacuum_mask,
         )
-        # adjust labels to 0 index convention
+        # adjust labels to 0 index convention. We don't adjust values below 0 as
+        # these are part of the vacuum
         labels[labels >= 0] -= 1
         # assign labels
         self._basin_labels = labels
@@ -1004,20 +1005,24 @@ class Bader:
         # Basin→atom assignment & distances
         basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
         basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
-
+        
         # Atom labels per grid point
+        # NOTE: append -1 so that vacuum gets assigned to -1 in the atom_labels
+        # array
+        basin_atoms = np.insert(basin_atoms,len(basin_atoms), -1)
         atom_labels = basin_atoms[self.basin_labels]
 
-        # Sum up charges/volumes per atom in one shot
+        # Sum up charges/volumes per atom in one shot. slice with -1 is necessary
+        # to prevent no negative value error
         atom_charges = np.bincount(
-            basin_atoms, weights=self.basin_charges, minlength=N_atoms
+            basin_atoms[:-1], weights=self.basin_charges, minlength=N_atoms
         )
         atom_volumes = np.bincount(
-            basin_atoms, weights=self.basin_volumes, minlength=N_atoms
+            basin_atoms[:-1], weights=self.basin_volumes, minlength=N_atoms
         )
 
         # Store everything
-        self._basin_atoms = basin_atoms
+        self._basin_atoms = basin_atoms[:-1]
         self._basin_atom_dists = basin_atom_dists
         self._atom_labels = atom_labels
         self._atom_charges = atom_charges
