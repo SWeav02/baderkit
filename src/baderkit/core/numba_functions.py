@@ -59,6 +59,7 @@ def get_maxima(
 def get_edges(
     labeled_array: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
 ):
     """
     In a 3D array of labeled voxels, finds the voxels that neighbor at
@@ -70,6 +71,8 @@ def get_edges(
         A 3D array where each entry represents the basin label of the point.
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
+    vacuum_mask: NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
 
     Returns
     -------
@@ -85,6 +88,9 @@ def get_edges(
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
                 # get this voxels label
                 label = labeled_array[i, j, k]
                 # iterate over the neighboring voxels
@@ -96,7 +102,9 @@ def get_edges(
                     neigh_label = labeled_array[ii, jj, kk]
                     # if any label is different, the current voxel is an edge.
                     # Note this in our edge array and break
-                    if neigh_label != label:
+                    # NOTE: we also check that the neighbor is not part of the
+                    # vacuum
+                    if neigh_label != label and not vacuum_mask[ii, jj, kk]:
                         edges[i, j, k] = True
                         break
     return edges
@@ -234,13 +242,14 @@ def get_neighbor_diffs(
                     diffs[index, shift_index] = diff
     return diffs
 
-@njit(parallel=True, cache=True)
+
+@njit(fastmath=True, cache=True)
 def get_basin_charges_and_volumes(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
     cell_volume: np.float64,
     maxima_num: np.int64,
-        ):
+):
     nx, ny, nz = data.shape
     total_points = nx * ny * nz
     # create variables to store charges/volumes
@@ -249,11 +258,11 @@ def get_basin_charges_and_volumes(
     vacuum_charge = 0.0
     vacuum_volume = 0.0
     # iterate in parallel over each voxel
-    for i in prange(nx):
+    for i in range(nx):
         for j in range(ny):
             for k in range(nz):
-                charge = data[i,j,k]
-                label = labels[i,j,k]
+                charge = data[i, j, k]
+                label = labels[i, j, k]
                 if label < 0:
                     vacuum_charge += charge
                     vacuum_volume += 1
@@ -264,29 +273,11 @@ def get_basin_charges_and_volumes(
     volumes = volumes * cell_volume / total_points
     charges = charges / total_points
     vacuum_volume = vacuum_volume * cell_volume / total_points
-    vacuum_charge= vacuum_charge / total_points
+    vacuum_charge = vacuum_charge / total_points
     return charges, volumes, vacuum_charge, vacuum_volume
 
-# @njit(parallel=True, cache=True)
-# def get_atom_assignments(
-#     basin_frac_coords: NDArray[np.float64],
-#     atom_frac_coords: NDArray[np.float64],
-#     lattice_matrix: NDArray[np.float64],
-#         ):
-#     # create arrays to stor atom assignments and distances
-#     basin_atoms = np.empty(len(basin_frac_coords), dtype=np.int64)
-#     basin_atom_dists = np.empty(len(basin_frac_coords), dtype=np.float64)
-#     for i in prange(len(basin_frac_coords)):
-#         # create marker for the current best atom and distance
-#         best_atom = -1
-#         beset_dist = 100
-#         basin_frac_coord = basin_frac_coords[i]
-#         for j in range(len(atom_frac_coords)):
-#             atom_frac_coord = atom_frac_coords[j]
-#             # calculate distance
-            
 
-@njit(cache = True)
+@njit(cache=True)
 def check_is_vacuum(
     data: NDArray[np.float64],
     i: np.int64,
@@ -334,34 +325,28 @@ def check_is_vacuum(
         return True
     else:
         return False
-    
+
 
 @njit(parallel=True, cache=True)
 def get_vacuum_mask(
-    reference_data: NDArray[np.float64],
-    charge_data: NDArray[np.float64],
+    data: NDArray[np.float64],
     cell_volume: np.float64,
     vacuum_threshold: np.float64 = 1.0e-3,
     normalize_vac: bool = True,
 ):
-    nx, ny, nz = reference_data.shape
-    vacuum_mask = np.zeros(reference_data.shape, dtype=np.bool_)
-    vac_chg = 0.0
-    vac_count = 0
-    total_points = nx * ny * nz
+    nx, ny, nz = data.shape
+    vacuum_mask = np.zeros(data.shape, dtype=np.bool_)
 
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                if check_is_vacuum(reference_data, i, j, k, cell_volume, vacuum_threshold, normalize_vac):
+                if check_is_vacuum(
+                    data, i, j, k, cell_volume, vacuum_threshold, normalize_vac
+                ):
                     vacuum_mask[i, j, k] = True
-                    vac_chg += charge_data[i,j,k]  # use raw value (signed charge)
-                    vac_count += 1
 
-    vac_vol = vac_count * cell_volume / total_points
-    vac_chg = vac_chg / total_points
+    return vacuum_mask
 
-    return vacuum_mask, vac_chg, vac_vol
 
 ###############################################################################
 # Functions for on-grid method
@@ -433,9 +418,7 @@ def get_steepest_pointers(
     initial_labels: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.int64],
-    cell_volume: np.float64,
-    vacuum_threshold: np.float64 = 1.0e-3,
-    normalize_vac: bool = True,
+    vacuum_mask: NDArray[np.bool_],
 ):
     """
     For each voxel in a 3D grid of data, finds the index of the neighboring voxel with
@@ -451,12 +434,8 @@ def get_steepest_pointers(
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.int64]
         The distance to each neighboring voxel
-    cell_volume : np.float64
-        The volume of the unit cell used to normalize the data.
-    vacuum_threshold : np.float64, optional
-        The threshold to consider part of the vacuum. The default is 1.0e-3.
-    normalize_vac : bool, optional
-        Whether or not to convert the data to real space. The default is True.
+    vacuum_mask: NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
 
     Returns
     -------
@@ -473,17 +452,10 @@ def get_steepest_pointers(
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                # check if this is a vacuum point
-                if check_is_vacuum(
-                    data=data,
-                    i=i,
-                    j=j,
-                    k=k,
-                    cell_volume=cell_volume,
-                    vacuum_threshold=vacuum_threshold,
-                    normalize_vac=normalize_vac,
-                ):
-                    best_label[i,j,k] = -1
+                # check if this is a vacuum point. If so, we don't even bother
+                # with the label.
+                if vacuum_mask[i, j, k]:
+                    best_label[i, j, k] = -1
                     continue
                 # get the best neighbor
                 best_transform, best_neigh = get_best_neighbor(
@@ -827,6 +799,60 @@ def get_multi_weight_voxels(
 ###############################################################################
 # Functions for near grid method
 ###############################################################################
+@njit(cache=True)
+def get_gradient(
+    data: NDArray[np.float64],
+    voxel_coord: NDArray[np.int64],
+    car2lat: NDArray[np.float64],
+) -> tuple[NDArray[np.int64], NDArray[np.int64], np.bool_]:
+    """
+    Peforms a neargrid step from the provided voxel coordinate.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    voxel_coord : NDArray[np.int64]
+        The point to make the step from.
+    car2lat : NDArray[np.float64]
+        A matrix that converts a coordinate in cartesian space to fractional
+        space.
+
+    Returns
+    -------
+    charge_grad_frac : NDArray[np.float64]
+        The gradient in direct space at this voxel coord
+
+    """
+    nx, ny, nz = data.shape
+    i, j, k = voxel_coord
+    # calculate the gradient at this point in voxel coords
+    charge000 = data[i, j, k]
+    charge001 = data[i, j, (k + 1) % nz]
+    charge010 = data[i, (j + 1) % ny, k]
+    charge100 = data[(i + 1) % nx, j, k]
+    charge00_1 = data[i, j, (k - 1) % nz]
+    charge0_10 = data[i, (j - 1) % ny, k]
+    charge_100 = data[(i - 1) % nx, j, k]
+
+    charge_grad_vox = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+    charge_grad_vox[0] = (charge100 - charge_100) / 2.0
+    charge_grad_vox[1] = (charge010 - charge0_10) / 2.0
+    charge_grad_vox[2] = (charge001 - charge00_1) / 2.0
+
+    if charge100 <= charge000 and charge_100 <= charge000:
+        charge_grad_vox[0] = 0.0
+    if charge010 <= charge000 and charge0_10 <= charge000:
+        charge_grad_vox[1] = 0.0
+    if charge001 <= charge000 and charge00_1 <= charge000:
+        charge_grad_vox[2] = 0.0
+
+    # convert to cartesian coordinates
+    charge_grad_cart = np.dot(charge_grad_vox, car2lat)
+    # express in direct coordinates
+    charge_grad_frac = np.dot(car2lat, charge_grad_cart)
+    # return the gradient
+    return charge_grad_frac
 
 
 @njit(cache=True)
@@ -936,32 +962,12 @@ def neargrid_step(
 
     """
     nx, ny, nz = data.shape
-    i, j, k = voxel_coord
     # calculate the gradient at this point in voxel coords
-    charge000 = data[i, j, k]
-    charge001 = data[i, j, (k + 1) % nz]
-    charge010 = data[i, (j + 1) % ny, k]
-    charge100 = data[(i + 1) % nx, j, k]
-    charge00_1 = data[i, j, (k - 1) % nz]
-    charge0_10 = data[i, (j - 1) % ny, k]
-    charge_100 = data[(i - 1) % nx, j, k]
-
-    charge_grad_vox = np.array([0.0, 0.0, 0.0], dtype=np.float64)
-    charge_grad_vox[0] = (charge100 - charge_100) / 2.0
-    charge_grad_vox[1] = (charge010 - charge0_10) / 2.0
-    charge_grad_vox[2] = (charge001 - charge00_1) / 2.0
-
-    if charge100 <= charge000 and charge_100 <= charge000:
-        charge_grad_vox[0] = 0.0
-    if charge010 <= charge000 and charge0_10 <= charge000:
-        charge_grad_vox[1] = 0.0
-    if charge001 <= charge000 and charge00_1 <= charge000:
-        charge_grad_vox[2] = 0.0
-
-    # convert to cartesian coordinates
-    charge_grad_cart = np.dot(charge_grad_vox, car2lat)
-    # express in direct coordinates
-    charge_grad_frac = np.dot(car2lat, charge_grad_cart)
+    charge_grad_frac = get_gradient(
+        data=data,
+        voxel_coord=voxel_coord,
+        car2lat=car2lat,
+    )
     # calculate max gradient in a single direction
     max_grad = np.max(np.abs(charge_grad_frac))
     # check for 0 gradient
@@ -998,6 +1004,7 @@ def neargrid_step(
     # For the first stage we mark our path with the current max value. For the
     # refinement we mark them with the negative of their label to avoid
     # rewriting edge labels
+    is_max = False
     if label == max_val or label < 0:
         new_coord, is_max = ongrid_step(
             data, voxel_coord, neighbor_transforms, neighbor_dists
@@ -1005,7 +1012,37 @@ def neargrid_step(
         # set dr to 0
         total_delta_r[:] = 0
     # return info
-    return new_coord, total_delta_r, False
+    return new_coord, total_delta_r, is_max
+
+
+@njit(parallel=True, cache=True)
+def fix_vacuum_labels(
+    labels: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+):
+    """
+    Relabels vacuum voxels as 0
+
+    Parameters
+    ----------
+    labels : NDArray[np.int64]
+        The assignment for each point on the grid.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum.
+
+    Returns
+    -------
+    labels : TYPE
+        The updated label array
+
+    """
+    nx, ny, nz = labels.shape
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if vacuum_mask[i, j, k]:
+                    labels[i, j, k] = 0
+    return labels
 
 
 @njit(fastmath=True, cache=True)
@@ -1014,6 +1051,7 @@ def get_neargrid_labels(
     car2lat: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
+    vacuum_mask: NDArray[np.bool_],
 ) -> tuple[NDArray[np.int64], NDArray[np.bool_]]:
     """
     Assigns each point to a basin using the neargrid method.
@@ -1023,14 +1061,14 @@ def get_neargrid_labels(
     data : NDArray[np.float64]
         A 3D grid of values for each point.
     car2lat : NDArray[np.float64]
-        DESCRIPTION.
-    car2lat : NDArray[np.float64]
         A matrix that converts a coordinate in cartesian space to fractional
         space.
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.float64]
         The distance to each neighboring voxel.
+    vacuum_mask: NDArray[np.bool_]
+        A 3D array representing the location of the vacuum.
 
     Returns
     -------
@@ -1055,6 +1093,10 @@ def get_neargrid_labels(
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
+                # check if this point is part of the vacuum. If so, we don't
+                # need to relabel it, so we continue.
+                if vacuum_mask[i, j, k]:
+                    continue
                 # check if we've already assigned this point
                 if labels[i, j, k] != 0:
                     continue
@@ -1072,9 +1114,12 @@ def get_neargrid_labels(
                         # relabel our path and break the loop
                         for p in range(pnum):
                             x, y, z = path[p]
+                            # relabel to the this neighbors value
                             labels[x, y, z] = current_label
                         break
-                    # assign the current point to the current max
+
+                    # Assign this point to the current maximum.
+                    # NOTE: We must relabel this as part of the vacuum later
                     labels[ii, jj, kk] = maxima_num
                     # add it to our path
                     path[pnum] = (ii, jj, kk)
@@ -1090,14 +1135,27 @@ def get_neargrid_labels(
                         neighbor_transforms=neighbor_transforms,
                         neighbor_dists=neighbor_dists,
                     )
+                    # check if this new point is part of the vacuum AND also a
+                    # maximum. If this is the case, we don't want to keep the
+                    # labels
+                    if vacuum_mask[new_coord[0], new_coord[1], new_coord[2]] and is_max:
+                        # return labels to 0 and break
+                        for p in range(pnum):
+                            x, y, z = path[p]
+                            labels[x, y, z] = 0
+                        break
                     # if we reached a maximum, leave our current path assigned
                     # as is and move to the next point
-                    if is_max:
+                    elif is_max:
                         maxima_mask[ii, jj, kk] = True
                         maxima_num += 1
                         break
                     # otherwise, continue with our loop
-                    current_coord = new_coord
+                    else:
+                        current_coord = new_coord
+    # This process may result in some vacuum voxels being labeled as part of a
+    # basin if the path travelled through them. We reset them here
+    labels = fix_vacuum_labels(labels=labels, vacuum_mask=vacuum_mask)
     return labels, maxima_mask
 
 
@@ -1162,18 +1220,17 @@ def refine_neargrid(
     path = np.empty((nx * ny * nz, 3), dtype=np.int64)
     # now we reassign any voxel in our refinement mask
     reassignments = 0
+    test_hit = 0
+    # breakpoint()
     for i, j, k in refinement_indices:
-        # get our initial label, just for comparison
+        # get our initial label for comparison
         label = labels[i, j, k]
         # Now we do neargrid steps until we reach a point with an label
         total_delta_r[:] = 0.0
         # create a count for the length of the path
         pnum = 0
-        # note that we've checked this index
         # start climbing
-        current_coord[0] = i
-        current_coord[1] = j
-        current_coord[2] = k
+        current_coord[:] = (i, j, k)
         while True:
             ii, jj, kk = current_coord
             # check if we've hit a maximum
@@ -1199,13 +1256,14 @@ def refine_neargrid(
                         ni = (i + shift[0]) % nx  # Loop around box
                         nj = (j + shift[1]) % ny
                         nk = (k + shift[2]) % nz
-                        # If we haven't already checked this point, add it
+                        # If we haven't already checked this point, add it.
+                        # NOTE: vacuum points are stored in the mask by default
                         if not checked_mask[ni, nj, nk]:
                             refinement_mask[ni, nj, nk] = True
                 # relabel just this voxel then stop the loop
                 new_labels[i, j, k] = current_label
                 break
-            # add this label to our path
+            # add this label to our path.
             labels[ii, jj, kk] = -labels[ii, jj, kk]
             path[pnum] = (ii, jj, kk)
             pnum = pnum + 1
@@ -1220,69 +1278,34 @@ def refine_neargrid(
                 neighbor_transforms=neighbor_transforms,
                 neighbor_dists=neighbor_dists,
             )
+            # Check if we've hit a new maximum. This shouldn't be possible unless
+            # we hit a vacuum maxima
+            if (
+                is_max
+                and not maxima_mask[
+                    current_coord[0], current_coord[1], current_coord[2]
+                ]
+            ):
+                test_hit += 1
+                # note we've checked this point
+                checked_mask[i, j, k] = True
+                # remove it from the refinement list
+                refinement_mask[i, j, k] = False
+                # Points along the path are switched to negative. we
+                # switch them back here
+                for p in range(pnum):
+                    x, y, z = path[p]
+                    labels[x, y, z] = -labels[x, y, z]
+                # relabel as part of the vacuum?
+                new_labels[i, j, k] = 1
+                break
 
-    return new_labels, reassignments, refinement_mask, checked_mask
+    return new_labels, reassignments, refinement_mask, checked_mask, test_hit
 
 
 #####################################################################################
 # Reverse Near-grid method
 #####################################################################################
-
-
-@njit(cache=True)
-def get_gradient(
-    data: NDArray[np.float64],
-    voxel_coord: NDArray[np.int64],
-    car2lat: NDArray[np.float64],
-) -> tuple[NDArray[np.int64], NDArray[np.int64], np.bool_]:
-    """
-    Peforms a neargrid step from the provided voxel coordinate.
-
-    Parameters
-    ----------
-    data : NDArray[np.float64]
-        A 3D grid of values for each point.
-    voxel_coord : NDArray[np.int64]
-        The point to make the step from.
-    car2lat : NDArray[np.float64]
-        A matrix that converts a coordinate in cartesian space to fractional
-        space.
-
-    Returns
-    -------
-    charge_grad_frac : NDArray[np.float64]
-        The gradient in direct space at this voxel coord
-
-    """
-    nx, ny, nz = data.shape
-    i, j, k = voxel_coord
-    # calculate the gradient at this point in voxel coords
-    charge000 = data[i, j, k]
-    charge001 = data[i, j, (k + 1) % nz]
-    charge010 = data[i, (j + 1) % ny, k]
-    charge100 = data[(i + 1) % nx, j, k]
-    charge00_1 = data[i, j, (k - 1) % nz]
-    charge0_10 = data[i, (j - 1) % ny, k]
-    charge_100 = data[(i - 1) % nx, j, k]
-
-    charge_grad_vox = np.array([0.0, 0.0, 0.0], dtype=np.float64)
-    charge_grad_vox[0] = (charge100 - charge_100) / 2.0
-    charge_grad_vox[1] = (charge010 - charge0_10) / 2.0
-    charge_grad_vox[2] = (charge001 - charge00_1) / 2.0
-
-    if charge100 <= charge000 and charge_100 <= charge000:
-        charge_grad_vox[0] = 0.0
-    if charge010 <= charge000 and charge0_10 <= charge000:
-        charge_grad_vox[1] = 0.0
-    if charge001 <= charge000 and charge00_1 <= charge000:
-        charge_grad_vox[2] = 0.0
-
-    # convert to cartesian coordinates
-    charge_grad_cart = np.dot(charge_grad_vox, car2lat)
-    # express in direct coordinates
-    charge_grad_frac = np.dot(car2lat, charge_grad_cart)
-    # return the gradient
-    return charge_grad_frac
 
 
 @njit(cache=True)
@@ -1364,13 +1387,14 @@ def get_pointer_and_delta_r(
     return new_coord, delta_r, False
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_reverse_neargrid_labels(
     data: NDArray[np.float64],
     ordered_voxel_coords: NDArray[np.int64],
     car2lat: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
+    vacuum_mask: NDArray[np.bool_],
 ) -> tuple[NDArray[np.int64], NDArray[np.bool_]]:
     """
     Calculates the basin labels for each voxel using the revers-neargrid method.
@@ -1388,6 +1412,8 @@ def get_reverse_neargrid_labels(
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.float64]
         The distance to each neighboring voxel.
+    vacuum_mask: NDArray[np.bool_]
+        A 3D array representing the location of the vacuum.
 
     Returns
     -------
@@ -1406,7 +1432,7 @@ def get_reverse_neargrid_labels(
     # Each (i, j, k) index gives the rgrad [x, y, z]
     all_rgrads = np.zeros((nx, ny, nz, 3), dtype=np.float64)
     maxima_mask = np.zeros(data.shape, dtype=np.bool_)
-    # iterate in parallel over each voxel
+    # iterate over each voxel from highest to lowest
     for voxel_coord in ordered_voxel_coords:
         i, j, k = voxel_coord
         # get the coord above this voxel, the combined delta_r, and
@@ -1419,7 +1445,14 @@ def get_reverse_neargrid_labels(
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
         )
-        if is_max:
+        # Check if this coord is part of the vacuum.
+        if vacuum_mask[i, j, k]:
+            # We want to label this as part of the vacuum, but keep the delta r
+            # in case it changes an assignment later on
+            labels[i, j, k] = -1
+            all_rgrads[i, j, k] = delta_r
+
+        elif is_max:
             # note this is a max
             maxima_mask[i, j, k] = True
             # set label
@@ -1428,7 +1461,7 @@ def get_reverse_neargrid_labels(
             maxima_label += 1
             # rgrad is already 0, so we don't need to set it
         else:
-            # get the label of the neigbhor
+            # get the label of the neighbor
             neighbor_label = labels[neigh_coord[0], neigh_coord[1], neigh_coord[2]]
             if neighbor_label == 0:
                 # If the neighbor is 0 , it has a lower value and hasn't been assigned
@@ -1440,8 +1473,6 @@ def get_reverse_neargrid_labels(
                 neighbor_label = labels[neigh_coord[0], neigh_coord[1], neigh_coord[2]]
                 # set dr to 0
                 delta_r[:] = 0.0
-            if neighbor_label == 0:
-                breakpoint()
             assert neighbor_label != 0
             # set label to the same as neighbor
             labels[i, j, k] = neighbor_label

@@ -156,6 +156,19 @@ class Grid(VolumetricData):
         return np.indices(self.shape).reshape(3, -1).T
 
     @cached_property
+    def all_voxel_indices(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            An array of the same shape as the grid where each entry is the index
+            of that voxel if you were to flatten/ravel the grid.
+
+        """
+        return np.arange(np.prod(self.shape)).reshape(self.shape)
+
+    @cached_property
     def all_voxel_frac_coords(self) -> NDArray[float]:
         """
 

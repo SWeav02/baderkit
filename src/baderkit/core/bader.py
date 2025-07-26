@@ -13,6 +13,7 @@ from rich.progress import track
 
 from baderkit.core.grid import Grid
 from baderkit.core.numba_functions import (
+    get_basin_charges_and_volumes,
     get_edges,
     get_multi_weight_voxels,
     get_neargrid_labels,
@@ -20,9 +21,8 @@ from baderkit.core.numba_functions import (
     get_reverse_neargrid_labels,
     get_single_weight_voxels,
     get_steepest_pointers,
+    get_vacuum_mask,
     refine_neargrid,
-    
-    get_basin_charges_and_volumes,
 )
 from baderkit.core.structure import Structure
 
@@ -77,7 +77,7 @@ class Bader:
             The default is 0.001.
         normalize_vacuum: bool, optional
             Whether or not the reference data needs to be converted to real space
-            units for vacuum tolerance comparison. This should be set to True if 
+            units for vacuum tolerance comparison. This should be set to True if
             the data follows VASP's CHGCAR standards, but False if the data should
             be compared as is (e.g. in ELFCARs)
         bader_tol: float, optional
@@ -100,7 +100,8 @@ class Bader:
         self.bader_tol = bader_tol
 
         # define hidden class variables. This allows us to cache properties and
-        # still be able to recalculate them
+        # still be able to recalculate them if needed, though that should only
+        # be done by advanced users
         # Assigned by run_bader
         self._basin_labels = None
         self._basin_maxima_frac = None
@@ -111,6 +112,7 @@ class Bader:
         self._vacuum_charge = None
         self._vacuum_volume = None
         self._significant_basins = None
+        self._vacuum_mask = None
         # Assigned by run_atom_assignment
         self._basin_atoms = None
         self._basin_atom_dists = None
@@ -221,7 +223,7 @@ class Bader:
         if self._basin_atom_dists is None:
             self.run_atom_assignment()
         return self._basin_atom_dists
-    
+
     @property
     def significant_basins(self) -> NDArray[bool]:
         if self._significant_basins is None:
@@ -318,7 +320,7 @@ class Bader:
         if self._basin_edges is None:
             self._basin_edges = self.get_basin_edges(self.basin_labels)
         return self._basin_edges
-    
+
     @property
     def vacuum_charge(self) -> float:
         """
@@ -332,7 +334,7 @@ class Bader:
         if self._vacuum_charge is None:
             self.run_bader()
         return self._vacuum_charge
-    
+
     @property
     def vacuum_volume(self) -> float:
         """
@@ -347,6 +349,27 @@ class Bader:
             self.run_bader()
         return self._vacuum_volume
 
+    @property
+    def vacuum_mask(self) -> NDArray[bool]:
+        """
+
+        Returns
+        -------
+        NDArray[bool]
+            A mask representing the voxels that belong to the vacuum.
+
+        """
+        if self._vacuum_mask is None:
+            logging.info("Finding Vacuum Points")
+            # Find the vacuum voxels
+            self._vacuum_mask = get_vacuum_mask(
+                data=self.reference_grid.total,
+                cell_volume=self.structure.volume,
+                vacuum_threshold=self.vacuum_tol,
+                normalize_vac=self.normalize_vacuum,
+            )
+        return self._vacuum_mask
+
     @staticmethod
     def methods() -> list[str]:
         """
@@ -358,11 +381,20 @@ class Bader:
 
         """
 
-        return ["ongrid", "neargrid", "hybrid-neargrid", "reverse-neargrid", "weight", "hybrid-weight"]
+        return [
+            "ongrid",
+            "neargrid",
+            "hybrid-neargrid",
+            "reverse-neargrid",
+            "weight",
+            "hybrid-weight",
+        ]
 
     @staticmethod
     def get_basin_edges(
-        basin_labels: NDArray[float], neighbor_transforms: NDArray = None
+        basin_labels: NDArray[float],
+        vacuum_mask: NDArray[bool] = None,
+        neighbor_transforms: NDArray = None,
     ) -> NDArray[np.bool_]:
         """
         Gets a mask representing the edges of a labeled array.
@@ -374,6 +406,9 @@ class Bader:
         neighbor_transforms : NDArray, optional
             The transformations from each voxel to its neighbors. Providing None
             will result in the 26 nearest neighbors being used.
+        vacuum_mask: NDArray[np.bool_]
+            A 3D array representing the location of the vacuum. If None, the
+            vacuum will be treated like a basin.
 
         Returns
         -------
@@ -389,7 +424,13 @@ class Bader:
             neighbor_transforms = list(product([-1, 0, 1], repeat=3))
             neighbor_transforms.remove((0, 0, 0))  # Remove the (0, 0, 0) self-shift
             neighbor_transforms = np.array(neighbor_transforms)
-        return get_edges(basin_labels, neighbor_transforms=neighbor_transforms)
+        if vacuum_mask is None:
+            vacuum_mask = np.zeros(basin_labels.shape, dtype=np.bool_)
+        return get_edges(
+            basin_labels,
+            neighbor_transforms=neighbor_transforms,
+            vacuum_mask=vacuum_mask,
+        )
 
     @staticmethod
     def get_basin_charges_and_volumes(
@@ -416,41 +457,15 @@ class Bader:
 
         """
         logging.info("Calculating basin charges and volumes")
+        # NOTE: I used to use numpy directly, but for systems with many basins
+        # it was much slower than doing a loop with numba.
         charges, volumes, vacuum_charge, vacuum_volume = get_basin_charges_and_volumes(
             data=grid.total,
             labels=basin_labels,
             cell_volume=grid.structure.volume,
             maxima_num=maxima_num,
-            )
+        )
         return charges, volumes, vacuum_charge, vacuum_volume
-        # voxel_volume = grid.voxel_volume
-        # charge_array = grid.total
-        # # create list to store charge/volume
-        # charges = []
-        # volumes = []
-        # # create placeholder for vacuum
-        # vacuum_charge = 0.0
-        # vacuum_volume = 0.0
-        # maxima_labels = np.unique(basin_labels)
-        # # maxima_num = len(np.unique(basin_labels))
-        # for label in maxima_labels:
-        #     mask = basin_labels == label
-        #     charge_values = charge_array[mask]
-        #     total_charge = charge_values.sum()
-        #     total_volume = voxel_volume * len(charge_values)
-        #     if label < 0:
-        #         # only vacuum should have a label with a value less than 0
-        #         vacuum_charge += total_charge
-        #         vacuum_volume += total_volume
-        #     else:
-        #         charges.append(total_charge)
-        #         volumes.append(total_volume)
-        # charges = np.array(charges)
-        # volumes = np.array(volumes)
-        # # adjust charges
-        # vacuum_charge /= grid.shape.prod()
-        # charges /= grid.shape.prod()
-        # return charges, volumes, vacuum_charge, vacuum_volume
 
     def run_bader(self) -> None:
         """
@@ -491,43 +506,84 @@ class Bader:
                 "Acceptable values are 'ongrid', 'neargrid', 'hybrid-neargrid', 'reverse-neargrid', 'weight', and 'hybrid-weight'"
             )
 
-    def _run_bader_on_grid(self):
+    def _set_basin_properties_from_labels(
+        self,
+        maxima_vox: NDArray[int],
+    ) -> None:
         """
-        Assigns voxels to basins and calculates charge using the on-grid
-        method:
-            G. Henkelman, A. Arnaldsson, and H. Jónsson
-            A fast and robust algorithm for Bader decomposition of charge density,
-            Comput. Mater. Sci. 36, 354-360 (2006)
+        Calculates various properties from a label array including basin
+        charge/volume, vacuum charge/volume, significant basins, and maxima
+        position
+
+        Parameters
+        ----------
+        maxima_vox : NDArray[bool]
+            An array of voxel coordinates representing the positions of the
+            maxima.
 
         Returns
         -------
-        None.
+        None
+
+        """
+        labels = self.basin_labels
+        # get corresponding basin labels for maxima
+        maxima_labels = labels[maxima_vox[:, 0], maxima_vox[:, 1], maxima_vox[:, 2]]
+        # sort from lowest to highest
+        maxima_sorted_indices = np.argsort(maxima_labels)
+        maxima_vox = maxima_vox[maxima_sorted_indices]
+        # calculate frac coords and save
+        maxima_frac_coords = self.reference_grid.get_frac_coords_from_vox(maxima_vox)
+        self._basin_maxima_frac = maxima_frac_coords
+        # get charge and volume for each label and vacuum
+        (
+            basin_charges,
+            basin_volumes,
+            vacuum_charge,
+            vacuum_volume,
+        ) = self.get_basin_charges_and_volumes(
+            basin_labels=labels,
+            grid=self.charge_grid,
+            maxima_num=len(maxima_labels),
+        )
+        # get significant basins
+        significant_basins = basin_charges > self.bader_tol
+        # save charges/volumes.
+        self._significant_basins = significant_basins
+        self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
+        self._vacuum_charge, self._vacuum_volume = vacuum_charge, vacuum_volume
+        # get maxima coords
+        maxima_frac = self.reference_grid.get_frac_coords_from_vox(maxima_vox)
+        self._basin_maxima_frac = maxima_frac
+
+    def _get_bader_on_grid(self):
+        """
+        Calculates the ongrid labels for each voxel. This does not assign any
+        class properties and should usually be used as part of other functions
+
+        Returns
+        -------
+        labels : NDArray[np.int64]
+            A 3D grid of labels representing current voxel assignments.
+        maxima_mask : NDArray[np.int64]
+            A 3D grid representing the location of maxima
 
         """
         grid = self.reference_grid
         data = grid.total
         shape = data.shape
-
-        # get an array where each entry is that voxels unique label
-        initial_labels = np.arange(np.prod(shape)).reshape(shape)
-
         # get shifts to move from a voxel to the 26 surrounding voxels
         neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
-
         # For each voxel, get the label of the surrounding voxel that has the highest
         # density
         logging.info("Calculating steepest neighbors")
         best_label = get_steepest_pointers(
             data=data,
-            initial_labels=initial_labels,
+            initial_labels=grid.all_voxel_indices,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
-            cell_volume=grid.structure.volume,
-            vacuum_threshold=self.vacuum_tol,
-            normalize_vac=self.normalize_vacuum,
+            vacuum_mask=self.vacuum_mask,
         )
-        # breakpoint()
-
         # ravel the best labels to get a 1D array pointing from each voxel to its steepest
         # neighbor
         pointers = best_label.ravel()
@@ -545,14 +601,14 @@ class Bader:
             # create a copy to avoid modifying in-place before comparison
             new_parents = pointers.copy()
 
-            # for non-vacuum entries, reassign each index to the value at the 
+            # for non-vacuum entries, reassign each index to the value at the
             # index it is pointing to
             new_parents[valid] = pointers[pointers[valid]]
-        
+
             # check if we have the same value as before
             if np.all(new_parents == pointers):
                 break
-        
+
             # update only non-vacuum entries
             pointers[valid] = new_parents[valid]
 
@@ -565,38 +621,30 @@ class Bader:
             labels_flat -= 1
         # reconstruct a 3D array with our labels
         labels = labels_flat.reshape(shape)
+        # find the position of the maxima
+        maxima_mask = best_label == grid.all_voxel_indices
+        return labels, maxima_mask
+
+    def _run_bader_on_grid(self):
+        """
+        Assigns voxels to basins and calculates charge using the on-grid
+        method:
+            G. Henkelman, A. Arnaldsson, and H. Jónsson
+            A fast and robust algorithm for Bader decomposition of charge density,
+            Comput. Mater. Sci. 36, 354-360 (2006)
+
+        Returns
+        -------
+        None.
+
+        """
+        labels, maxima_mask = self._get_bader_on_grid()
+        maxima_vox = np.argwhere(maxima_mask)
         # store our labels
         self._basin_labels = labels
+        # assign charges/volumes, etc.
+        self._set_basin_properties_from_labels(maxima_vox)
 
-        # get significant maxima voxels
-        maxima_mask = best_label == initial_labels
-        maxima_vox = np.argwhere(maxima_mask)
-        # get corresponding basin labels
-        maxima_labels = labels[maxima_vox[:, 0], maxima_vox[:, 1], maxima_vox[:, 2]]
-        # breakpoint()
-        if not np.all(np.equal(maxima_labels, np.sort(maxima_labels))):
-            breakpoint()
-        # get charge and volume for each label and vacuum
-        (basin_charges, 
-         basin_volumes, 
-         vacuum_charge, 
-         vacuum_volume, 
-         ) = self.get_basin_charges_and_volumes(
-            basin_labels=labels,
-            grid=self.charge_grid,
-            maxima_num = len(maxima_labels),
-        )
-        # get significant basins
-        significant_basins = basin_charges > self.bader_tol
-        # save charges/volumes.
-        self._significant_basins = significant_basins
-        self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
-        self._vacuum_charge, self._vacuum_volume = vacuum_charge, vacuum_volume
-        
-        # get maxima coords
-        maxima_frac = grid.get_frac_coords_from_vox(maxima_vox)
-        self._basin_maxima_frac = maxima_frac
-        
     def _run_bader_near_grid(self, hybrid: bool = False):
         """
         Assigns voxels to basins and calculates charge using the near-grid
@@ -618,7 +666,7 @@ class Bader:
         """
         grid = self.reference_grid.copy()
         data = grid.total
-        shape = data.shape
+        # get neighbors
         neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
         matrix = grid.matrix
         # convert to lattice vectors as columns
@@ -628,103 +676,76 @@ class Bader:
         # get inverse for cartesian to lattice matrix
         car2lat = np.linalg.inv(lat2car)
         if not hybrid:
+            logging.info("Assigning initial labels")
             # we want to make our initial assignments using the neargrid method
             labels, maxima_mask = get_neargrid_labels(
                 data=data,
                 car2lat=car2lat,
                 neighbor_transforms=neighbor_transforms,
                 neighbor_dists=neighbor_dists,
+                vacuum_mask=self.vacuum_mask,
             )
-        else:
-            # we want to make our initial assignments using the ongrid method
-            # get an array where each entry is that voxels unique label
-            initial_labels = np.arange(np.prod(shape)).reshape(shape)
-            # get shifts to move from a voxel to the 26 surrounding voxels
-            neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
-            # For each voxel, get the label of the surrounding voxel that has the highest
-            # elf
-            logging.info("Calculating steepest neighbors")
-            best_label = get_steepest_pointers(
-                data=data,
-                initial_labels=initial_labels,
-                neighbor_transforms=neighbor_transforms,
-                neighbor_dists=neighbor_dists,
-            )
-            # create a maxima mask
-            maxima_mask = best_label == initial_labels
-            # ravel the best labels to get a 1D array pointing from each voxel to its steepest
-            # neighbor
-            pointers = best_label.ravel()
-            # Our pointers object is a 1D array pointing each voxel to its parent voxel. We
-            # essentially have a classic forrest of trees problem where each maxima is
-            # a root and we want to point all of our voxels to their respective root.
-            # We being a while loop. In each loop, we remap our pointers to point at
-            # the index that its parent was pointing at.
-            logging.info("Finding roots")
-            while True:
-                # reassign each index to the value at the index it is pointing to
-                new_parents = pointers[pointers]
-                # check if we have the same value as before
-                if np.all(new_parents == pointers):
-                    break
-                # if not, relabel our pointers
-                pointers = new_parents
-            # We now have our roots. Relabel so that they go from 0 to the length of our
-            # roots
-            unique_roots, labels_flat = np.unique(pointers, return_inverse=True)
-            # reconstruct a 3D array with our labels
-            labels = labels_flat.reshape(shape)
-            # convert to index 1
+            # If we have any vacuum voxels, we want to add 1 so that the vacuum
+            # assignments are considered the first "basin"
+            # NOTE: If there are no vacuum voxels, this will make our basins start
+            # at 2
             labels += 1
+        else:
+            # get our initial labels and maxima positions from ongrid
+            labels, maxima_mask = self._get_bader_on_grid()
+            # convert so that our vacuum starts at 1 and real basins start at
+            # 2
+            if np.any(self.vacuum_mask):
+                labels += 1
+            else:
+                labels += 2
 
-        reassignments = 1
+        # get maxima positions
         maxima_vox = np.argwhere(maxima_mask)
-        # get our edges
+        reassignments = 1
+        # get our edges, not including edges on the vacuum.
+        # NOTE: Should the vacuum edges be refined as well in case some voxels
+        # are added to it?
         refinement_mask = get_edges(
-            labeled_array=labels, neighbor_transforms=neighbor_transforms
+            labeled_array=labels,
+            neighbor_transforms=neighbor_transforms,
+            vacuum_mask=self.vacuum_mask,
         )
-        checked_mask = np.zeros(refinement_mask.shape, dtype=np.bool_)
+        # initialize a mask where voxels are already checked to prevent
+        # reassignment. We include vacuum voxels from the start
+        checked_mask = self.vacuum_mask.copy()
         while reassignments > 0:
             # remove maxima from edge mask
             for i, j, k in maxima_vox:
                 refinement_mask[i, j, k] = False
-            # get edge indices
+            # get refinement indices
             refinement_indices = np.argwhere(refinement_mask)
             print(f"Refining {len(refinement_indices)} points")
             # reassign edges
-            labels, reassignments, refinement_mask, checked_mask = refine_neargrid(
-                data=data,
-                labels=labels,
-                refinement_indices=refinement_indices,
-                refinement_mask=refinement_mask,
-                checked_mask=checked_mask,
-                maxima_mask=maxima_mask,
-                car2lat=car2lat,
-                neighbor_transforms=neighbor_transforms,
-                neighbor_dists=neighbor_dists,
+            labels, reassignments, refinement_mask, checked_mask, test_hit = (
+                refine_neargrid(
+                    data=data,
+                    labels=labels,
+                    refinement_indices=refinement_indices,
+                    refinement_mask=refinement_mask,
+                    checked_mask=checked_mask,
+                    maxima_mask=maxima_mask,
+                    car2lat=car2lat,
+                    neighbor_transforms=neighbor_transforms,
+                    neighbor_dists=neighbor_dists,
+                )
             )
             print(f"{reassignments} values changed")
             # if our refinement method is single, we cancel the loop here
             if self.refinement_method == "single":
                 break
-
-        # get corresponding basin labels
-        maxima_labels = labels[maxima_vox[:, 0], maxima_vox[:, 1], maxima_vox[:, 2]]
-        # sort from lowest to highest
-        maxima_sorted_indices = np.argsort(maxima_labels)
-        maxima_vox = maxima_vox[maxima_sorted_indices]
-        maxima_frac_coords = grid.get_frac_coords_from_vox(maxima_vox)
-        self._basin_maxima_frac = maxima_frac_coords
-        # adjust labels to 0 index convention
-        labels -= 1
+        # Our labels currently span 1 and up, with 1 corresponding to vacuum. We
+        # subtract by 2 to return to -1 as vacuum and labels spanning 0 up
+        labels -= 2
         # assign labels
         self._basin_labels = labels
-        # get charge and volume for each label
-        basin_charges, basin_volumes = self.get_basin_charges_and_volumes(
-            basin_labels=labels,
-            grid=self.charge_grid,
-        )
-        self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
+        # assign charges/volumes, etc.
+        self._set_basin_properties_from_labels(maxima_vox)
 
     # TODO: try moving grad and dr calc to  parallel calc
     def _run_bader_reverse_near_grid(self):
@@ -768,25 +789,16 @@ class Bader:
             car2lat=car2lat,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
+            vacuum_mask=self.vacuum_mask,
         )
-        maxima_vox = np.argwhere(maxima_mask)
-        # get corresponding basin labels
-        maxima_labels = labels[maxima_vox[:, 0], maxima_vox[:, 1], maxima_vox[:, 2]]
-        # sort from lowest to highest
-        maxima_sorted_indices = np.argsort(maxima_labels)
-        maxima_vox = maxima_vox[maxima_sorted_indices]
-        maxima_frac_coords = grid.get_frac_coords_from_vox(maxima_vox)
-        self._basin_maxima_frac = maxima_frac_coords
         # adjust labels to 0 index convention
-        labels -= 1
+        labels[labels >= 0] -= 1
         # assign labels
         self._basin_labels = labels
-        # get charge and volume for each label
-        basin_charges, basin_volumes = self.get_basin_charges_and_volumes(
-            basin_labels=labels,
-            grid=self.charge_grid,
-        )
-        self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
+        # get maxima voxels
+        maxima_vox = np.argwhere(maxima_mask)
+        # assign charges/volumes, etc.
+        self._set_basin_properties_from_labels(maxima_vox)
 
     def _run_bader_weight(self, hybrid: bool = False):
         """
@@ -856,6 +868,7 @@ class Bader:
         # their 26 neighbors rather than the reduced voxel ones
         if hybrid:
             logging.info("Reducing maxima")
+            # TODO: Remove most of this with _get_bader_on_grid
             # get an array where each entry is that voxels unique label
             initial_labels = np.arange(np.prod(shape)).reshape(shape)
             # get shifts to move from a voxel to the 26 surrounding voxels
@@ -873,6 +886,9 @@ class Bader:
                 initial_labels=initial_labels,
                 neighbor_transforms=all_neighbor_transforms,
                 neighbor_dists=cartesian_dists,
+                vacuum_mask=np.zeros(
+                    shape, dtype=np.bool_
+                ),  # !!! Update when weight is moved over
             )
             # ravel the best labels to get a 1D array pointing from each voxel to its steepest
             # neighbor
@@ -937,6 +953,7 @@ class Bader:
         vox_to_unass_pointer = np.full(len(flat_charge_data), -1, dtype=np.int64)
         vox_to_unass_pointer[unassigned_mask] = np.arange(unassigned_num)
 
+        # get labels, charges, and volumes
         labels, charges, volumes = get_multi_weight_voxels(
             flux_array=flux_array,
             neigh_indices_array=neigh_indices_array,
@@ -955,7 +972,10 @@ class Bader:
         self._basin_labels = labels
         self._basin_charges = charges
         self._basin_volumes = volumes
-        
+        # get significant basins
+        significant_basins = charges > self.bader_tol
+        self._significant_basins = significant_basins
+
     def run_atom_assignment(self, structure: Structure = None):
         """
         Assigns bader basins to the atoms in the provided structure.
@@ -963,41 +983,45 @@ class Bader:
         # Default structure
         structure = structure or self.structure
         self._structure = structure
-    
+
         # Shorthand access
-        basins = self.basin_maxima_frac               # (N_basins, 3)
-        atoms = structure.frac_coords                 # (N_atoms, 3)
-        L = structure.lattice.matrix                  # (3, 3)
+        basins = self.basin_maxima_frac  # (N_basins, 3)
+        atoms = structure.frac_coords  # (N_atoms, 3)
+        L = structure.lattice.matrix  # (3, 3)
         N_basins, N_atoms = len(basins), len(atoms)
-    
+
         logging.info("Assigning atom properties")
-    
+
         # Vectorized deltas, minimum‑image wrapping
         diffs = atoms[None, :, :] - basins[:, None, :]
         diffs += np.where(diffs <= -0.5, 1, 0)
-        diffs -= np.where(diffs >=  0.5, 1, 0)
-    
+        diffs -= np.where(diffs >= 0.5, 1, 0)
+
         # Cartesian diffs & distances
         cart = np.einsum("bij,jk->bik", diffs, L)
         dists = np.linalg.norm(cart, axis=2)
-    
+
         # Basin→atom assignment & distances
-        basin_atoms      = np.argmin(dists, axis=1)                   # (N_basins,)
-        basin_atom_dists = dists[np.arange(N_basins), basin_atoms]    # (N_basins,)
-    
+        basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
+        basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
+
         # Atom labels per grid point
         atom_labels = basin_atoms[self.basin_labels]
-    
+
         # Sum up charges/volumes per atom in one shot
-        atom_charges = np.bincount(basin_atoms, weights=self.basin_charges, minlength=N_atoms)
-        atom_volumes = np.bincount(basin_atoms, weights=self.basin_volumes, minlength=N_atoms)
-    
+        atom_charges = np.bincount(
+            basin_atoms, weights=self.basin_charges, minlength=N_atoms
+        )
+        atom_volumes = np.bincount(
+            basin_atoms, weights=self.basin_volumes, minlength=N_atoms
+        )
+
         # Store everything
-        self._basin_atoms      = basin_atoms
+        self._basin_atoms = basin_atoms
         self._basin_atom_dists = basin_atom_dists
-        self._atom_labels      = atom_labels
-        self._atom_charges     = atom_charges
-        self._atom_volumes     = atom_volumes
+        self._atom_labels = atom_labels
+        self._atom_charges = atom_charges
+        self._atom_volumes = atom_volumes
 
     def _get_atom_surface_distances(self):
         """
