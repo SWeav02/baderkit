@@ -766,6 +766,13 @@ class Bader:
         lat2car = dir2car / grid.shape[np.newaxis, :]
         # get inverse for cartesian to lattice matrix
         car2lat = np.linalg.inv(lat2car)
+        logging.info("Calculating gradients")
+        best_neighbors, all_drs, maxima_mask = get_ongrid_and_rgrads(
+            data=grid.total,
+            car2lat=car2lat,
+            neighbor_dists=neighbor_dists,
+            neighbor_transforms=neighbor_transforms,
+        )
         logging.info("Sorting reference data")
         shape = grid.shape
         # flatten data and get initial 1D and 3D voxel indices
@@ -776,12 +783,14 @@ class Bader:
         sorted_voxel_coords = flat_voxel_coords[sorted_data_indices]
         logging.info("Assigning labels")
         # get assignments and maxima mask
-        labels, maxima_mask = get_reverse_neargrid_labels(
+        labels = get_reverse_neargrid_labels(
             data=grid.total,
             ordered_voxel_coords=sorted_voxel_coords,
-            car2lat=car2lat,
+            best_neighbors=best_neighbors,
+            all_drs=all_drs,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
+            maxima_mask=maxima_mask,
             vacuum_mask=self.vacuum_mask,
         )
         # adjust labels to 0 index convention. We don't adjust values below 0 as
@@ -790,7 +799,7 @@ class Bader:
         # assign labels
         self._basin_labels = labels
         # get maxima voxels
-        maxima_vox = np.argwhere(maxima_mask)
+        maxima_vox = np.argwhere(maxima_mask & ~self.vacuum_mask)
         # assign charges/volumes, etc.
         self._set_basin_properties_from_labels(maxima_vox)
 
