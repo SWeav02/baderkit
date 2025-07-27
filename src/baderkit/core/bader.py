@@ -113,6 +113,7 @@ class Bader:
         self._vacuum_volume = None
         self._significant_basins = None
         self._vacuum_mask = None
+        self._num_vacuum = None
         # Assigned by run_atom_assignment
         self._basin_atoms = None
         self._basin_atom_dists = None
@@ -369,6 +370,20 @@ class Bader:
                 normalize_vac=self.normalize_vacuum,
             )
         return self._vacuum_mask
+
+    @property
+    def num_vacuum(self) -> int:
+        """
+
+        Returns
+        -------
+        int
+            The number of vacuum points in the array
+
+        """
+        if self._num_vacuum is None:
+            self._num_vacuum = np.count_nonzero(self.vacuum_mask)
+        return self._num_vacuum
 
     @staticmethod
     def methods() -> list[str]:
@@ -676,6 +691,7 @@ class Bader:
             car2lat=car2lat,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
+            vacuum_mask=self.vacuum_mask,
         )
         logging.info("Calculating initial labels")
         # get initial labels
@@ -712,6 +728,9 @@ class Bader:
         while reassignments > 0:
             # get refinement indices
             refinement_indices = np.argwhere(refinement_mask)
+            if len(refinement_indices) == 0:
+                # there's nothing to refine so we break
+                break
             print(f"Refining {len(refinement_indices)} points")
             # reassign edges
             labels, reassignments, refinement_mask, checked_mask = refine_neargrid(
@@ -740,7 +759,6 @@ class Bader:
         # assign charges/volumes, etc.
         self._set_basin_properties_from_labels(maxima_vox)
 
-    # TODO: try moving grad and dr calc to  parallel calc
     def _run_bader_reverse_near_grid(self):
         """
         Assigns voxels to basins and calculates charge using a variation of
@@ -772,6 +790,7 @@ class Bader:
             car2lat=car2lat,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
+            vacuum_mask=self.vacuum_mask,
         )
         logging.info("Sorting reference data")
         shape = grid.shape
@@ -791,7 +810,7 @@ class Bader:
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             maxima_mask=maxima_mask,
-            vacuum_mask=self.vacuum_mask,
+            num_vacuum=self.num_vacuum,
         )
         # adjust labels to 0 index convention. We don't adjust values below 0 as
         # these are part of the vacuum
@@ -831,7 +850,7 @@ class Bader:
         )
         logging.info("Sorting reference data")
         data = reference_grid.total
-        shape = data.shape
+        shape = reference_grid.shape
         # flatten data and get initial 1D and 3D voxel indices
         flat_data = data.ravel()
         flat_voxel_indices = np.arange(np.prod(shape))
@@ -845,6 +864,10 @@ class Bader:
         # Get a 3D grid representing this data and the corresponding 3D indices
         sorted_voxel_indices = flat_sorted_voxel_indices.reshape(shape)
         sorted_voxel_coords = flat_voxel_coords[sorted_data_indices]
+        # remove vacuum points from our list of voxel indices
+        sorted_voxel_coords = sorted_voxel_coords[
+            : len(sorted_voxel_coords) - self.num_vacuum
+        ]
         # Get the flux of volume from each voxel to its neighbor
         logging.info("Calculating voxel flux contributions")
         flux_array, neigh_indices_array, maxima_mask = get_neighbor_flux(
@@ -865,13 +888,16 @@ class Bader:
         charge_data = self.charge_grid.total
         flat_charge_data = charge_data.ravel()
         sorted_flat_charge_data = flat_charge_data[sorted_data_indices]
+        # remove vacuum from charge data
+        sorted_flat_charge_data = sorted_flat_charge_data[: len(sorted_voxel_coords)]
         voxel_volume = reference_grid.voxel_volume
 
         # If we are using the hybrid method, we first assign maxima based on
         # their 26 neighbors rather than the reduced voxel ones
         if hybrid:
             logging.info("Reducing maxima")
-            # TODO: Remove most of this with _get_bader_on_grid
+            # TODO: Don't run full ongrid. Just find important maxima and do
+            # ongrid hillclimb for others
             # get an array where each entry is that voxels unique label
             initial_labels = np.arange(np.prod(shape)).reshape(shape)
             # get shifts to move from a voxel to the 26 surrounding voxels
@@ -943,9 +969,10 @@ class Bader:
             voxel_volume=voxel_volume,
             labels=labels,
         )
+        # breakpoint()
         # Now we have the labels for the voxels that have exactly one weight.
         # We want to get the weights for those that are split. To do this, we
-        # need an array with a N, maxima_num shape, where N is the number of
+        # need an array with a (N, maxima_num) shape, where N is the number of
         # unassigned voxels. Then we also need an array pointing each unassigned
         # voxel to its point in this array
         unass_to_vox_pointer = np.where(unassigned_mask)[0]
@@ -953,7 +980,7 @@ class Bader:
 
         # TODO: Check if the weights array ever actually needs to be the full maxima num wide
         # get unassigned voxel index pointer
-        vox_to_unass_pointer = np.full(len(flat_charge_data), -1, dtype=np.int64)
+        vox_to_unass_pointer = np.full(len(neigh_indices_array), -1, dtype=np.int64)
         vox_to_unass_pointer[unassigned_mask] = np.arange(unassigned_num)
 
         # get labels, charges, and volumes
@@ -971,10 +998,13 @@ class Bader:
             maxima_num=maxima_num,
         )
 
-        charges /= reference_grid.shape.prod()
+        charges /= shape.prod()
         self._basin_labels = labels
         self._basin_charges = charges
         self._basin_volumes = volumes
+        # calculate vacuum charge
+        self._vacuum_charge = (charge_data.sum() / shape.prod()) - charges.sum()
+        self._vacuum_volume = self.structure.volume - volumes.sum()
         # get significant basins
         significant_basins = charges > self.bader_tol
         self._significant_basins = significant_basins
