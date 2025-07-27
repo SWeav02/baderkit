@@ -282,7 +282,10 @@ def get_best_neighbor(
             best_neigh[:] = (ii, jj, kk)
     # We've finished our loop. return the best shift, neighbor, and whether this
     # is a max
-    is_max = best == 0.0
+    # NOTE: Can't do is_max = best == 0.0 for older numba
+    is_max = False
+    if best == 0.0:
+        is_max = True
     return best_transform, best_neigh, is_max
 
 
@@ -745,122 +748,6 @@ def get_multi_weight_voxels(
         weight_lists.append(unique_weights)
         label_lists.append(unique_labels)
     return new_labels, charge_array, volume_array
-
-
-# This is an older method that uses a potentially very sparse array for tracking
-# weights. I'm leaving it here because it may be faster than the new method
-# @njit(fastmath=True, cache=True)
-# def get_multi_weight_voxels(
-#     flux_array: NDArray[np.float64],
-#     neigh_indices_array: NDArray[np.int64],
-#     labels: NDArray[np.int64],
-#     unass_to_vox_pointer: NDArray[np.int64],
-#     vox_to_unass_pointer: NDArray[np.int64],
-#     sorted_voxel_coords: NDArray[np.int64],
-#     charge_array: NDArray[np.float64],
-#     volume_array: NDArray[np.float64],
-#     sorted_flat_charge_data: NDArray[np.float64],
-#     voxel_volume: np.float64,
-#     maxima_num: np.int64,
-# ):
-#     """
-#     Assigns charge and volume from each voxel that has multiple weights to each
-#     of the basins it is split to. The returned labels represent the basin
-#     that has the largest share of each split voxel.
-
-#     Parameters
-#     ----------
-#     flux_array : NDArray[np.float64]
-#         A 2D array of shape x*y*x by len(neighbor_transforms) where each entry
-#         f(i, j) is the flux flowing from the voxel at index i to its neighbor
-#         at transform neighbor_transforms[j]
-#     neigh_indices_array : NDArray[np.int64]
-#         A 2D array of shape x*y*x by len(neighbor_transforms) where each entry
-#         f(i, j) is the index of the neighbor from the voxel at index i to the
-#         neighbor at transform neighbor_transforms[j]
-#     labels : NDArray[np.int64]
-#         A 3D array where each entry represents the basin the voxel belongs to.
-#         If the basin is split to multiple neighbors it is assigned a value of
-#         0.
-#     unass_to_vox_pointer : NDArray[np.int64]
-#         An array pointing each entry in the list of unassigned voxels to their
-#         original voxel index
-#     vox_to_unass_pointer : NDArray[np.int64]
-#         An array pointing each voxel in its original voxel index to its unassigned
-#         index if it exists.
-#     sorted_voxel_coords : NDArray[np.int64]
-#         A Nx3 array where each entry represents the voxel coordinates of the
-#         point. This must be sorted from highest value to lowest.
-#     charge_array : NDArray[np.float64]
-#         The charge on each basin that has been assigned so far
-#     volume_array : NDArray[np.float64]
-#         The volume on each basin that has been assigned so far
-#     sorted_flat_charge_data : NDArray[np.float64]
-#         The charge density at each value sorted highest to lowest.
-#     voxel_volume : np.float64
-#         The volume of a single voxel
-#     maxima_num : np.int64
-#         The number of local maxima in the grid
-
-#     Returns
-#     -------
-#     new_labels : NDArray[np.int64]
-#         The updated labels.
-#     charge_array : NDArray[np.float64]
-#         The final charge on each basin
-#     volume_array : NDArray[np.float64]
-#         The final volume of each basin
-
-#     """
-#     # create weight array
-#     weight_array = np.zeros((len(unass_to_vox_pointer), maxima_num), dtype=np.float64)
-#     # create a new labels array to store updated labels
-#     new_labels = labels.copy()
-#     # create a scratch weight array to store rows in
-#     scratch_weight_array = np.empty(weight_array.shape[1], dtype=np.float64)
-#     for unass_idx, vox_idx in enumerate(unass_to_vox_pointer):
-#         # zero out our weight array
-#         scratch_weight_array[:] = 0.0
-#         # get the important neighbors and their fraction of flow from this vox
-#         neighbors = neigh_indices_array[vox_idx]
-#         fracs = flux_array[vox_idx]
-#         for neighbor, frac in zip(neighbors, fracs):
-#             # skip if no neighbor
-#             if neighbor < 0:
-#                 continue
-#             # otherwise we get the labels and fraction of labels for
-#             # this voxel. First check if it is a single weight label
-#             ni, nj, nk = sorted_voxel_coords[neighbor]
-#             label = labels[ni, nj, nk]
-#             if label != -1:
-#                 # assign the current frac to this basin
-#                 scratch_weight_array[label] += frac
-#                 continue
-#             # otherwise, this is another multi weight label.
-#             neigh_unass_idx = vox_to_unass_pointer[neighbor]
-#             neigh_weights = weight_array[neigh_unass_idx]
-#             for label, weight in enumerate(neigh_weights):
-#                 scratch_weight_array[label] += weight * frac
-#         # assign label, charge, and volume
-#         best_weight = 0.0
-#         best_label = -1
-#         charge = sorted_flat_charge_data[vox_idx]
-#         for label, weight in enumerate(scratch_weight_array):
-#             # skip if there is no weight
-#             if weight == 0.0:
-#                 continue
-#             # update charge and volume
-#             charge_array[label] += weight * charge
-#             volume_array[label] += weight * voxel_volume
-#             if weight >= best_weight:
-#                 best_weight = weight
-#                 best_label = label
-#         # update label
-#         i, j, k = sorted_voxel_coords[vox_idx]
-#         new_labels[i, j, k] = best_label
-#         # assign this weight row
-#         weight_array[unass_idx] = scratch_weight_array
-#     return new_labels, charge_array, volume_array
 
 
 @njit(parallel=True, cache=True)

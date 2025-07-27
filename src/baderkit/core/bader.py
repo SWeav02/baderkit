@@ -858,7 +858,7 @@ class Bader:
         # flatten data and get initial 1D and 3D voxel indices
         flat_data = data.ravel()
         flat_voxel_indices = np.arange(np.prod(shape))
-        flat_voxel_coords = np.indices(shape).reshape(3, -1).T
+        flat_voxel_coords = np.indices(shape, dtype=np.int64).reshape(3, -1).T
         # sort data from high to low
         sorted_data_indices = np.flip(np.argsort(flat_data, kind="stable"))
         # create an array that maps original voxel indices to their range in terms

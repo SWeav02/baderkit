@@ -364,7 +364,7 @@ class Grid(VolumetricData):
         """
         neighbors = np.array(
             [i for i in itertools.product([-1, 0, 1], repeat=3) if i != (0, 0, 0)]
-        ).astype(int)
+        ).astype(np.int64)
         cart_coords = self.get_cart_coords_from_vox(neighbors)
         dists = np.linalg.norm(cart_coords, axis=1)
 
