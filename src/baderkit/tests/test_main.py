@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from baderkit.core import Bader, Grid
-from baderkit.plotting import BaderPlotter
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"
@@ -64,7 +63,6 @@ def test_writing_bader(tmp_path):
     [
         "ongrid",
         "neargrid",
-        "hybrid-neargrid",
         "reverse-neargrid",
         "weight",
         "hybrid-weight",

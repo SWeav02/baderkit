@@ -9,8 +9,8 @@ line is quick and convenient, and the web app allows for easy visualization.
 
 ## Python
 ### The Bader Class
-The original goal of this project was to make the results of Bader analysis more 
-readily available for further analysis in more complex workflows. The core functionality is 
+The original goal of this project was to make the results of Bader analysis easily
+accessible for more complex python codes. The core functionality is 
 found in the `Bader` class, which can be readily created by providing the path 
 to a VASP `CHGCAR`/`ELFCAR` or a `.cube` file.
 
@@ -28,12 +28,14 @@ bader = Bader.from_dynamic(
 ```
 
 Results are stored as class properties. To run the algorithm and get results, 
-simply call one of these properties. For example, we can get a complete summary:
+simply call one of these properties. For example, we can get a complete summary
+dictionary.
 
 ```python
 results = bader.results_summary
 ```
-Or individual properties:
+Or we can grab individual properties. Descriptions of each property can be found
+[here](../api_reference/core/bader/#src.baderkit.core.bader.Bader).
 ```python
 atom_charges = bader.atom_charges # Total atom charges
 atom_labels = bader.atom_labels # Atom assignments for each point in the grid

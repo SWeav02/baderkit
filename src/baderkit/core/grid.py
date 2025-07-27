@@ -156,6 +156,19 @@ class Grid(VolumetricData):
         return np.indices(self.shape).reshape(3, -1).T
 
     @cached_property
+    def all_voxel_indices(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            An array of the same shape as the grid where each entry is the index
+            of that voxel if you were to flatten/ravel the grid.
+
+        """
+        return np.arange(np.prod(self.shape)).reshape(self.shape)
+
+    @cached_property
     def all_voxel_frac_coords(self) -> NDArray[float]:
         """
 
@@ -351,7 +364,7 @@ class Grid(VolumetricData):
         """
         neighbors = np.array(
             [i for i in itertools.product([-1, 0, 1], repeat=3) if i != (0, 0, 0)]
-        ).astype(int)
+        ).astype(np.int64)
         cart_coords = self.get_cart_coords_from_vox(neighbors)
         dists = np.linalg.norm(cart_coords, axis=1)
 
@@ -1150,7 +1163,7 @@ class Grid(VolumetricData):
             diff = diff1 + diff2
             data = {"total": total, "diff": diff}
         else:
-            data = {"total": total, "diff": None}
+            data = {"total": total}
 
         # Note that we copy the first grid here rather than making a new grid
         # instance because we want to keep any useful information such as whether
