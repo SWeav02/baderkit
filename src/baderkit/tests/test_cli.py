@@ -2,11 +2,9 @@
 
 import os
 import shutil
-import subprocess
 import time
 from pathlib import Path
 
-import pytest
 from streamlit.testing.v1 import AppTest
 from typer.testing import CliRunner
 

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import copy
+import inspect
 import logging
 from itertools import product
 from pathlib import Path
@@ -49,7 +50,7 @@ class Bader:
             "weight",
             "hybrid-weight",
         ] = "reverse-neargrid",
-        refinement_method: Literal["recursive", "single"] = "single",
+        refinement_method: Literal["recursive", "single"] = "recursive",
         directory: Path = Path("."),
         vacuum_tol: float = 1.0e-3,
         normalize_vacuum: bool = True,
@@ -113,8 +114,11 @@ class Bader:
         self._vacuum_charge = None
         self._vacuum_volume = None
         self._significant_basins = None
+        # others assigned by calling the property directly, but usually during
+        # run_bader
         self._vacuum_mask = None
         self._num_vacuum = None
+        self._structure = None
         # Assigned by run_atom_assignment
         self._basin_atoms = None
         self._basin_atom_dists = None
@@ -122,7 +126,6 @@ class Bader:
         self._atom_charges = None
         self._atom_volumes = None
         self._atom_surface_distances = None
-        self._structure = None
 
     @property
     def basin_labels(self) -> NDArray[float]:

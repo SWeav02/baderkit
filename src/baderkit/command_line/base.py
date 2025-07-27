@@ -8,9 +8,11 @@ from enum import Enum
 from pathlib import Path
 
 import typer
-# from typing_extensions import Annotated
 
 from baderkit.command_line.tools import tools_app
+
+# from typing_extensions import Annotated
+
 
 baderkit_app = typer.Typer(rich_markup_mode="markdown")
 

@@ -43,7 +43,7 @@ surface.
 
 Through the years, several methods for performing this steepest ascent have been
 developed. We have implemented the same methods that exist in the Henkelman group's
-excellent Fortran code, as well as several slightly altered versions of them. We
-highly select reading about each on our [Methods](./methods.md) page to determine
+excellent Fortran code, as well as several slight variations of them. We
+highly recommend reading about each on our [Methods](./methods.md) page to determine
 which is the best for your use case.
 
