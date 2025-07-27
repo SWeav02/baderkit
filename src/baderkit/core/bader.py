@@ -23,9 +23,8 @@ from baderkit.core.numba_functions import (
     get_single_weight_voxels,
     get_steepest_pointers,
     get_vacuum_mask,
+    reduce_maxima,
     refine_neargrid,
-    
-    reduce_maxima
 )
 from baderkit.core.structure import Structure
 
@@ -897,29 +896,37 @@ class Bader:
         # If we are using the hybrid method, we first assign maxima based on
         # their 26 neighbors rather than the reduced voxel ones
         if hybrid:
-            logging.info("Reducing maxima")           
-            all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
+            logging.info("Reducing maxima")
+            all_neighbor_transforms, all_neighbor_dists = (
+                reference_grid.voxel_26_neighbors
+            )
             maxima_connections = reduce_maxima(
-                maxima_vox_coords, 
-                data, 
-                all_neighbor_transforms, 
+                maxima_vox_coords,
+                data,
+                all_neighbor_transforms,
                 all_neighbor_dists,
-                )
+            )
             # NOTE: The maxima are already sorted from highest to lowest
             # We now have a 1D array pointing each maximum to the index of the
             # actual maximum it connects to. We want to reset these so that they
             # run from 0 upward
-            unique_maxima, labels_flat = np.unique(maxima_connections, return_inverse=True)
-            
+            unique_maxima, labels_flat = np.unique(
+                maxima_connections, return_inverse=True
+            )
+
             # create a labels array and label maxima
             labels = np.full(data.shape, -1, dtype=np.int64)
-            labels[maxima_vox_coords[:, 0], maxima_vox_coords[:, 1], maxima_vox_coords[:, 2]] = (
-                labels_flat
-            )
+            labels[
+                maxima_vox_coords[:, 0],
+                maxima_vox_coords[:, 1],
+                maxima_vox_coords[:, 2],
+            ] = labels_flat
             # update maxima_num
             maxima_num = len(np.unique(maxima_connections))
             # update maxima vox coords
-            maxima_vox_coords = maxima_vox_coords[maxima_connections==np.arange(len(maxima_connections))]
+            maxima_vox_coords = maxima_vox_coords[
+                maxima_connections == np.arange(len(maxima_connections))
+            ]
 
         else:
             labels = None

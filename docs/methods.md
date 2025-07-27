@@ -12,7 +12,6 @@ each method.
 |ongrid         |Very Fast|Low       |:material-check:          |
 |neargrid       |Medium   |High      |:material-check:          |
 |reverse-neargrid|Fast    |High      |:material-check:          |
-|hybrid-neargrid|Medium   |High      |:material-check:          |
 |weight         |Fast     |Very High |:material-close:          |
 |hybrid-weight  |Fast     |Very High |:material-close:          |
 
@@ -139,14 +138,6 @@ each method.
     In this way, the gradient correction history is preserved without need for
     iterative refinement of the edges. In our testing we found this method to be 
     just as or more accurate than the original neargrid method.
-    
-
-=== "hybrid-neargrid"
-    
-    Because we found that iterative edge refinement is required for the neargrid method (see the [Note](/baderkit/methods/#__tabbed_1_2)),
-    we've added a variation where the faster ongrid method is performed first, 
-    then refined using the neargrid method. This may result in improved speed if
-    the ongrid edges are not far from the final neargrid edges.
     
 === "hybrid-weight"
 
