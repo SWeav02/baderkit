@@ -13,16 +13,17 @@ each method.
 |neargrid       |Medium   |High      |:material-check:          |
 |reverse-neargrid|Fast    |High      |:material-check:          |
 |weight         |Fast     |Very High |:material-close:          |
-|hybrid-weight  |Fast     |Very High |:material-close:          |
+|hybrid-weight  |Medium   |Very High |:material-close:          |
 
 ## Descriptions
 
 === "ongrid"
     
+    **Key Takeaways:** Extremely fast, but prone to orientation errors
+    
     This is the original algorithm proposed by Henkelman et. al. It is extremely
     fast, but prone to error. For example, it gives slightly different oxidation 
-    states for different orientations of a molecule or material. We recommend 
-    using it only if speed is a major concern.
+    states for different orientations of a molecule or material.
     
     For each point on the grid, the gradient is calculated for the 26 nearest 
     neighbors, and the neighbor with the steepest gradient is selected as the 
@@ -43,10 +44,13 @@ each method.
     G. Henkelman, A. Arnaldsson, and H. Jónsson, A fast and robust algorithm for Bader decomposition of charge density, [Comput. Mater. Sci. 36, 354-360 (2006)](https://theory.cm.utexas.edu/henkelman/code/bader/download/henkelman06_354.pdf)
     
 === "neargrid"
+
+    **Key Takeaways:** Accurate while providing only one assignment per grid point.
+    Requires edge refinement.
     
     This algorithm was developed by Henkelman et. al. several years after the
     ongrid method to fix orientation errors. It is generally less accurate than 
-    the weight method, but is useful in situations where it is desirable to have 
+    the weight method, but is useful where it is desirable to have 
     only one basin assignment per point on the grid.
     
     A gradient vector is calculated at each point using the three nearest neighbors. 
@@ -66,13 +70,13 @@ each method.
     
     !!! Note
         Although the original paper and code suggests only 
-        one refinement of the edges is needed, we found that several are usually
-        required. In our test case ([a Ag structure](https://next-gen.materialsproject.org/materials/mp-8566?formula=Ag)) 
+        one edge refinement is needed, we found that several are usually
+        required to reach convergence. In our test case ([a Ag structure](https://github.com/SWeav02/baderkit/tree/main/src/baderkit/tests/test_files) 
         on a course grid, the Henkelman groups code assigns asymmetrical charges/volumes to 
         symmetrical basins while our code reaches symmetry after several iterations.
         
-        By default we use iterative refinement, which results in this method being
-        ~4-10x slower than the other methods. This can be changed to the
+        Due to this, we use iterative refinement by default.
+        This can be changed to the
         original single refinement by setting `refinement_method="single"` in python or
         `--refinement-method single` in the command-line.
     
@@ -81,6 +85,10 @@ each method.
     W. Tang, E. Sanville, and G. Henkelman, A grid-based Bader analysis algorithm without lattice bias, [J. Phys.: Condens. Matter 21, 084204 (2009)](https://theory.cm.utexas.edu/henkelman/code/bader/download/tang09_084204.pdf)
  
 === "weight"
+    
+    **Key Takeaways:** Extremely accurate, but not suitable for codes relying
+    on one assignment per grid point. May result in extra basins compared to other
+    methods.
 
     This method reduces errors due to orientation by allowing each point to be
     partially assigned to multiple basins. This method tends to provide the most accurate 
@@ -100,8 +108,11 @@ each method.
     
     In the original implementation, the flux is calculated as the algorithm steps
     down the points in order. In our implementation, the flux is calculated in
-    a separate first step, allowing for parallelization, then the flux is assigned
-    as normal.
+    a separate first step, allowing for parallelization at the cost of memory, 
+    then the flux is assigned as normal.
+    
+    The use of a voronoi cell instead of 26 neighbors usually results in local
+    maxima and basins that do not match other methods.
     
     !!! Note
         The `bader.basin_labels` and `bader.atom_labels` properties 
@@ -113,9 +124,12 @@ each method.
     M. Yu and D. R. Trinkle, Accurate and efficient algorithm for Bader charge integration, [J. Chem. Phys. 134, 064111 (2011)](https://theory.cm.utexas.edu/henkelman/code/bader/download/yu11_064111.pdf)   
 
 === "reverse-neargrid (Default)"
+
+    **Key Takeaways:** Accurate while providing only one assignment per grid point.
+    Does not require edge refinement.
     
-    This method is our own improvement to the original neargrid method, inspired
-    by the weight method. It is at least as accurate as the neargrid method while
+    This method is our own adaptation to the original neargrid method, inspired
+    by the weight method. It is generally as accurate as the neargrid method while
     avoiding any edge refinements.
     
     The method is largely similar to the [original](/baderkit/methods/#__tabbed_1_2). However,
@@ -140,6 +154,10 @@ each method.
     just as or more accurate than the original neargrid method.
     
 === "hybrid-weight"
+    
+    **Key Takeaways:** Same accuracy as the original weight method, but reduces
+    the number of maxima to match other methods. Not suitable for codes relying
+    on one assignment per voxel.
 
     In the original weight method, the use of a voronoi cell restricts neighbors
     to exclusively those that share a voronoi facet. This is different from the

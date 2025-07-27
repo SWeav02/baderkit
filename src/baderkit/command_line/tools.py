@@ -57,7 +57,6 @@ class Method(str, Enum):
     weight = "weight"
     hybrid_weight = "hybrid-weight"
     ongrid = "ongrid"
-    hybrid_neargrid = "hybrid-neargrid"
     reverse_neargrid = "reverse-neargrid"
     neargrid = "neargrid"
 
