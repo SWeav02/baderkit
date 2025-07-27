@@ -24,6 +24,8 @@ from baderkit.core.numba_functions import (
     get_steepest_pointers,
     get_vacuum_mask,
     refine_neargrid,
+    
+    reduce_maxima
 )
 from baderkit.core.structure import Structure
 
@@ -895,62 +897,29 @@ class Bader:
         # If we are using the hybrid method, we first assign maxima based on
         # their 26 neighbors rather than the reduced voxel ones
         if hybrid:
-            logging.info("Reducing maxima")
-            # TODO: Don't run full ongrid. Just find important maxima and do
-            # ongrid hillclimb for others
-            # get an array where each entry is that voxels unique label
-            initial_labels = np.arange(np.prod(shape)).reshape(shape)
-            # get shifts to move from a voxel to the 26 surrounding voxels
-            all_neighbor_transforms = np.array(
-                [s for s in product([-1, 0, 1], repeat=3) if s != (0, 0, 0)]
-            )
-            # get distance from each voxel to its neighbor in cartesian coordinates. This
-            # allows us to normalize the gradients
-            cartesian_shifts = reference_grid.get_cart_coords_from_vox(
-                all_neighbor_transforms
-            )
-            cartesian_dists = np.linalg.norm(cartesian_shifts, axis=1)
-            best_label = get_steepest_pointers(
-                data=data,
-                initial_labels=initial_labels,
-                neighbor_transforms=all_neighbor_transforms,
-                neighbor_dists=cartesian_dists,
-                vacuum_mask=np.zeros(
-                    shape, dtype=np.bool_
-                ),  # !!! Update when weight is moved over
-            )
-            # ravel the best labels to get a 1D array pointing from each voxel to its steepest
-            # neighbor
-            pointers = best_label.ravel()
-            # Our pointers object is a 1D array pointing each voxel to its parent voxel. We
-            # essentially have a classic forrest of trees problem where each maxima is
-            # a root and we want to point all of our voxels to their respective root.
-            # We being a while loop. In each loop, we remap our pointers to point at
-            # the index that its parent was pointing at.
-            while True:
-                # reassign each index to the value at the index it is pointing to
-                new_parents = pointers[pointers]
-                # check if we have the same value as before
-                if np.all(new_parents == pointers):
-                    break
-                # if not, relabel our pointers
-                pointers = new_parents
-            # before reorganizing, update the voxel coords
-            new_maxima_mask = pointers.reshape(data.shape) == initial_labels
-            maxima_vox_coords = np.argwhere(new_maxima_mask)
-            # reorganize by maxima
-            pointers = pointers[sorted_data_indices]
-            maxima_labels = pointers[maxima_mask]
-            maxima_coords = sorted_voxel_coords[maxima_mask]
-            # get the unique maxima and the corresponding label for each
-            unique_maxima, labels_flat = np.unique(maxima_labels, return_inverse=True)
-            # create an labels array and label maxima
+            logging.info("Reducing maxima")           
+            all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
+            maxima_connections = reduce_maxima(
+                maxima_vox_coords, 
+                data, 
+                all_neighbor_transforms, 
+                all_neighbor_dists,
+                )
+            # NOTE: The maxima are already sorted from highest to lowest
+            # We now have a 1D array pointing each maximum to the index of the
+            # actual maximum it connects to. We want to reset these so that they
+            # run from 0 upward
+            unique_maxima, labels_flat = np.unique(maxima_connections, return_inverse=True)
+            
+            # create a labels array and label maxima
             labels = np.full(data.shape, -1, dtype=np.int64)
-            labels[maxima_coords[:, 0], maxima_coords[:, 1], maxima_coords[:, 2]] = (
+            labels[maxima_vox_coords[:, 0], maxima_vox_coords[:, 1], maxima_vox_coords[:, 2]] = (
                 labels_flat
             )
             # update maxima_num
-            maxima_num = len(unique_maxima)
+            maxima_num = len(np.unique(maxima_connections))
+            # update maxima vox coords
+            maxima_vox_coords = maxima_vox_coords[maxima_connections==np.arange(len(maxima_connections))]
 
         else:
             labels = None
@@ -969,7 +938,6 @@ class Bader:
             voxel_volume=voxel_volume,
             labels=labels,
         )
-        # breakpoint()
         # Now we have the labels for the voxels that have exactly one weight.
         # We want to get the weights for those that are split. To do this, we
         # need an array with a (N, maxima_num) shape, where N is the number of
