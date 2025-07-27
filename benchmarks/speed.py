@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Created on Sat Jul 26 13:53:47 2025
-
-@author: sammw
+Tests the average speed of each bader method.
 """
 
 import time
