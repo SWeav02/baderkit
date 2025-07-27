@@ -18,6 +18,7 @@ from baderkit.core.numba_functions import (
     get_multi_weight_voxels,
     get_neargrid_labels,
     get_neighbor_flux,
+    get_ongrid_and_rgrads,
     get_reverse_neargrid_labels,
     get_single_weight_voxels,
     get_steepest_pointers,
@@ -43,7 +44,6 @@ class Bader:
         method: Literal[
             "ongrid",
             "neargrid",
-            "hybrid-neargrid",
             "reverse-neargrid",
             "weight",
             "hybrid-weight",
@@ -62,7 +62,7 @@ class Bader:
             A Grid object with the charge density that will be integrated.
         reference_grid : Grid
             A grid object whose values will be used to construct the basins.
-        method : Literal["ongrid", "neargrid", "hybrid-neargrid", "reverse-neargrid", "weight", "hybrid-weight"], optional
+        method : Literal["ongrid", "neargrid", "reverse-neargrid", "weight", "hybrid-weight"], optional
             The algorithm to use for generating bader basins. If None, defaults
             to weight.
         refinement_method : Literal["recursive", "single"], optional
@@ -360,7 +360,7 @@ class Bader:
 
         """
         if self._vacuum_mask is None:
-            logging.info("Finding Vacuum Points")
+            # logging.info("Finding Vacuum Points")
             # Find the vacuum voxels
             self._vacuum_mask = get_vacuum_mask(
                 data=self.reference_grid.total,
@@ -384,7 +384,6 @@ class Bader:
         return [
             "ongrid",
             "neargrid",
-            "hybrid-neargrid",
             "reverse-neargrid",
             "weight",
             "hybrid-weight",
@@ -475,7 +474,7 @@ class Bader:
         ------
         ValueError
             The class method variable must be 'ongrid', 'neargrid',
-            'hybrid-neargrid', 'reverse-neargrid', 'weight' or 'hybrid-weight'.
+            'reverse-neargrid', 'weight' or 'hybrid-weight'.
 
         Returns
         -------
@@ -483,13 +482,10 @@ class Bader:
 
         """
         if self.method == "ongrid":
-            self._run_bader_on_grid()
+            self._run_bader_ongrid()
 
         elif self.method == "neargrid":
-            self._run_bader_near_grid()
-
-        elif self.method == "hybrid-neargrid":
-            self._run_bader_near_grid(hybrid=True)
+            self._run_bader_neargrid()
 
         elif self.method == "reverse-neargrid":
             self._run_bader_reverse_near_grid()
@@ -503,7 +499,7 @@ class Bader:
         else:
             raise ValueError(
                 f"{self.method} is not a valid algorithm."
-                "Acceptable values are 'ongrid', 'neargrid', 'hybrid-neargrid', 'reverse-neargrid', 'weight', and 'hybrid-weight'"
+                "Acceptable values are 'ongrid', 'neargrid', 'reverse-neargrid', 'weight', and 'hybrid-weight'"
             )
 
     def _set_basin_properties_from_labels(
@@ -625,7 +621,7 @@ class Bader:
         maxima_mask = best_label == grid.all_voxel_indices
         return labels, maxima_mask
 
-    def _run_bader_on_grid(self):
+    def _run_bader_ongrid(self):
         """
         Assigns voxels to basins and calculates charge using the on-grid
         method:
@@ -645,7 +641,7 @@ class Bader:
         # assign charges/volumes, etc.
         self._set_basin_properties_from_labels(maxima_vox)
 
-    def _run_bader_near_grid(self, hybrid: bool = False):
+    def _run_bader_neargrid(self):
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
@@ -665,8 +661,7 @@ class Bader:
 
         """
         grid = self.reference_grid.copy()
-        data = grid.total
-        # get neighbors
+        # get neigbhor transforms
         neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
         matrix = grid.matrix
         # convert to lattice vectors as columns
@@ -675,33 +670,28 @@ class Bader:
         lat2car = dir2car / grid.shape[np.newaxis, :]
         # get inverse for cartesian to lattice matrix
         car2lat = np.linalg.inv(lat2car)
-        if not hybrid:
-            logging.info("Assigning initial labels")
-            # we want to make our initial assignments using the neargrid method
-            labels, maxima_mask = get_neargrid_labels(
-                data=data,
-                car2lat=car2lat,
-                neighbor_transforms=neighbor_transforms,
-                neighbor_dists=neighbor_dists,
-                vacuum_mask=self.vacuum_mask,
-            )
-            # If we have any vacuum voxels, we want to add 1 so that the vacuum
-            # assignments are considered the first "basin"
-            # NOTE: If there are no vacuum voxels, this will make our basins start
-            # at 2
-            labels += 1
-        else:
-            # get our initial labels and maxima positions from ongrid
-            labels, maxima_mask = self._get_bader_on_grid()
-            # convert so that our vacuum starts at 1 and real basins start at
-            # 2
-            if np.any(self.vacuum_mask):
-                labels += 1
-            else:
-                labels += 2
-
-        # get maxima positions
-        maxima_vox = np.argwhere(maxima_mask)
+        logging.info("Calculating gradients")
+        best_neighbors, all_drs, maxima_mask = get_ongrid_and_rgrads(
+            data=grid.total,
+            car2lat=car2lat,
+            neighbor_dists=neighbor_dists,
+            neighbor_transforms=neighbor_transforms,
+        )
+        logging.info("Calculating initial labels")
+        # get initial labels
+        labels = get_neargrid_labels(
+            data=grid.total,
+            best_neighbors=best_neighbors,
+            all_drs=all_drs,
+            maxima_mask=maxima_mask,
+            vacuum_mask=self.vacuum_mask,
+            neighbor_dists=neighbor_dists,
+            neighbor_transforms=neighbor_transforms,
+        )
+        # Increase values by 1 so that vacuum is labeled as 1 not 0
+        labels += 1
+        # get maxima positions, not including vacuum
+        maxima_vox = np.argwhere(maxima_mask & ~self.vacuum_mask)
         reassignments = 1
         # get our edges, not including edges on the vacuum.
         # NOTE: Should the vacuum edges be refined as well in case some voxels
@@ -714,27 +704,30 @@ class Bader:
         # initialize a mask where voxels are already checked to prevent
         # reassignment. We include vacuum voxels from the start
         checked_mask = self.vacuum_mask.copy()
+        # add maxima to mask so they don't get checked
+        for i, j, k in maxima_vox:
+            refinement_mask[i, j, k] = False
+            checked_mask[i, j, k] = True
+
         while reassignments > 0:
-            # remove maxima from edge mask
-            for i, j, k in maxima_vox:
-                refinement_mask[i, j, k] = False
             # get refinement indices
             refinement_indices = np.argwhere(refinement_mask)
             print(f"Refining {len(refinement_indices)} points")
             # reassign edges
-            labels, reassignments, refinement_mask, checked_mask, test_hit = (
-                refine_neargrid(
-                    data=data,
-                    labels=labels,
-                    refinement_indices=refinement_indices,
-                    refinement_mask=refinement_mask,
-                    checked_mask=checked_mask,
-                    maxima_mask=maxima_mask,
-                    car2lat=car2lat,
-                    neighbor_transforms=neighbor_transforms,
-                    neighbor_dists=neighbor_dists,
-                )
+            labels, reassignments, refinement_mask, checked_mask = refine_neargrid(
+                data=grid.total,
+                labels=labels,
+                refinement_indices=refinement_indices,
+                refinement_mask=refinement_mask,
+                checked_mask=checked_mask,
+                maxima_mask=maxima_mask,
+                best_neighbors=best_neighbors,
+                all_drs=all_drs,
+                neighbor_dists=neighbor_dists,
+                neighbor_transforms=neighbor_transforms,
+                vacuum_mask=self.vacuum_mask,
             )
+
             print(f"{reassignments} values changed")
             # if our refinement method is single, we cancel the loop here
             if self.refinement_method == "single":
@@ -1005,11 +998,11 @@ class Bader:
         # Basin→atom assignment & distances
         basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
         basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
-        
+
         # Atom labels per grid point
         # NOTE: append -1 so that vacuum gets assigned to -1 in the atom_labels
         # array
-        basin_atoms = np.insert(basin_atoms,len(basin_atoms), -1)
+        basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
         atom_labels = basin_atoms[self.basin_labels]
 
         # Sum up charges/volumes per atom in one shot. slice with -1 is necessary

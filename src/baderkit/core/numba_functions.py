@@ -41,9 +41,11 @@ def get_maxima(
                 # iterate over the transformations to neighboring voxels
                 is_max = True
                 for shift_index, shift in enumerate(neighbor_transforms):
-                    ii = (i + shift[0]) % nx  # Loop around box
-                    jj = (j + shift[1]) % ny
-                    kk = (k + shift[2]) % nz
+                    ii = i + shift[0]
+                    jj = j + shift[1]
+                    kk = k + shift[2]
+                    # wrap points
+                    ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
                     # get the neighbors value
                     neigh_value = data[ii, jj, kk]
                     # If its larger than the base value this isn't a maximum
@@ -95,9 +97,11 @@ def get_edges(
                 label = labeled_array[i, j, k]
                 # iterate over the neighboring voxels
                 for shift_index, shift in enumerate(neighbor_transforms):
-                    ii = (i + shift[0]) % nx  # Loop around box
-                    jj = (j + shift[1]) % ny
-                    kk = (k + shift[2]) % nz
+                    ii = i + shift[0]
+                    jj = j + shift[1]
+                    kk = k + shift[2]
+                    # wrap points
+                    ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
                     # get neighbors label
                     neigh_label = labeled_array[ii, jj, kk]
                     # if any label is different, the current voxel is an edge.
@@ -142,9 +146,11 @@ def propagate_edges(
                 # set as an edge
                 new_edge_mask[i, j, k] = True
                 for shift in neighbor_transforms:
-                    ii = (i + shift[0]) % nx
-                    jj = (j + shift[1]) % ny
-                    kk = (k + shift[2]) % nz
+                    ii = i + shift[0]
+                    jj = j + shift[1]
+                    kk = k + shift[2]
+                    # wrap points
+                    ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
                     # mark neighbor as an edge
                     new_edge_mask[ii, jj, kk] = True
     return new_edge_mask
@@ -181,9 +187,11 @@ def unmark_isolated_voxels(
 
                 found_edge_neighbor = False
                 for shift in neighbor_transforms:
-                    ii = (i + shift[0]) % nx
-                    jj = (j + shift[1]) % ny
-                    kk = (k + shift[2]) % nz
+                    ii = i + shift[0]
+                    jj = j + shift[1]
+                    kk = k + shift[2]
+                    # wrap points
+                    ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
                     if edge_mask[ii, jj, kk]:
                         found_edge_neighbor = True
                         break
@@ -232,9 +240,11 @@ def get_neighbor_diffs(
                 index = initial_labels[i, j, k]
                 # iterate over the transformations to neighboring voxels
                 for shift_index, shift in enumerate(neighbor_transforms):
-                    ii = (i + shift[0]) % nx  # Loop around box
-                    jj = (j + shift[1]) % ny
-                    kk = (k + shift[2]) % nz
+                    ii = i + shift[0]
+                    jj = j + shift[1]
+                    kk = k + shift[2]
+                    # wrap points
+                    ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
                     # get the neighbors value, the difference, and store in the
                     # diffs array
                     neigh_value = data[ii, jj, kk]
@@ -348,6 +358,51 @@ def get_vacuum_mask(
     return vacuum_mask
 
 
+@njit(cache=True)
+def wrap_point(
+    i: np.int64, j: np.int64, k: np.int64, nx: np.int64, ny: np.int64, nz: np.int64
+) -> tuple[np.int64, np.int64, np.int64]:
+    """
+    Wraps a 3D point (i, j, k) into the periodic bounds defined by the grid dimensions (nx, ny, nz).
+
+    If any of the input coordinates are outside the bounds [0, nx), [0, ny), or [0, nz),
+    they are wrapped around using periodic boundary conditions.
+
+    Parameters
+    ----------
+    i : np.int64
+        x-index of the point.
+    j : np.int64
+        y-index of the point.
+    k : np.int64
+        z-index of the point.
+    nx : np.int64
+        Number of grid points along x-direction.
+    ny : np.int64
+        Number of grid points along y-direction.
+    nz : np.int64
+        Number of grid points along z-direction.
+
+    Returns
+    -------
+    tuple[np.int64, np.int64, np.int64]
+        The wrapped (i, j, k) indices within the bounds.
+    """
+    if i >= nx:
+        i -= nx
+    elif i < 0:
+        i += nx
+    if j >= ny:
+        j -= ny
+    elif j < 0:
+        j += ny
+    if k >= nz:
+        k -= nz
+    elif k < 0:
+        k += nz
+    return i, j, k
+
+
 ###############################################################################
 # Functions for on-grid method
 ###############################################################################
@@ -385,6 +440,8 @@ def get_best_neighbor(
         The transformation to the best neighbor
     best_neigh : NDArray[np.int64]
         The coordinates of the best neigbhor
+    is_max: bool
+        Whether or not this voxel is a local maximum
 
     """
     nx, ny, nz = data.shape
@@ -397,9 +454,11 @@ def get_best_neighbor(
     # For each neighbor get the difference in value and if its better
     # than any previous, replace the current best
     for shift, dist in zip(neighbor_transforms, neighbor_dists):
-        ii = (i + shift[0]) % nx  # Loop around box
-        jj = (j + shift[1]) % ny
-        kk = (k + shift[2]) % nz
+        ii = i + shift[0]
+        jj = j + shift[1]
+        kk = k + shift[2]
+        # loop
+        ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
         # calculate the difference in value taking into account distance
         diff = (data[ii, jj, kk] - base) / dist
         # if better than the current best, note the best and the
@@ -408,8 +467,10 @@ def get_best_neighbor(
             best = diff
             best_transform = shift
             best_neigh[:] = (ii, jj, kk)
-    # We've finished our loop. return the best shift and neighbor
-    return best_transform, best_neigh
+    # We've finished our loop. return the best shift, neighbor, and whether this
+    # is a max
+    is_max = best == 0.0
+    return best_transform, best_neigh, is_max
 
 
 @njit(parallel=True, cache=True)
@@ -458,7 +519,7 @@ def get_steepest_pointers(
                     best_label[i, j, k] = -1
                     continue
                 # get the best neighbor
-                best_transform, best_neigh = get_best_neighbor(
+                best_transform, best_neigh, _ = get_best_neighbor(
                     data=data,
                     i=i,
                     j=j,
@@ -538,9 +599,11 @@ def get_neighbor_flux(
         for shift_index, (shift, area_dist) in enumerate(
             zip(neighbor_transforms, neighbor_area_over_dist)
         ):
-            ii = (i + shift[0]) % nx  # Loop around box
-            jj = (j + shift[1]) % ny
-            kk = (k + shift[2]) % nz
+            ii = i + shift[0]
+            jj = j + shift[1]
+            kk = k + shift[2]
+            # loop
+            ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
             # get the neighbors value
             neigh_value = data[ii, jj, kk]
             # calculate the volume flowing to this voxel
@@ -891,9 +954,11 @@ def ongrid_step(
     best_neighbor = -1
     for shift_index, shift in enumerate(neighbor_transforms):
         # get the new neighbor
-        ii = (i + shift[0]) % nx  # Loop around box
-        jj = (j + shift[1]) % ny
-        kk = (k + shift[2]) % nz
+        ii = i + shift[0]
+        jj = j + shift[1]
+        kk = k + shift[2]
+        # loop
+        ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
         new_elf = data[ii, jj, kk]
         dist = neighbor_dists[shift_index]
         diff = (new_elf - init_elf) / dist
@@ -910,9 +975,11 @@ def ongrid_step(
         new_coord = voxel_coord + pointer
 
         # wrap around indices
-        ni = (new_coord[0]) % nx  # Loop around box
-        nj = (new_coord[1]) % ny
-        nk = (new_coord[2]) % nz
+        ni = new_coord[0]
+        nj = new_coord[1]
+        nk = new_coord[2]
+        # loop
+        ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
         return np.array((ni, nj, nk), dtype=np.int64), False
 
 
@@ -993,10 +1060,8 @@ def neargrid_step(
         new_coord += np.rint(total_delta_r).astype(np.int64)
         total_delta_r -= np.rint(total_delta_r).astype(np.int64)
 
-    # wrap
-    new_coord[0] %= nx
-    new_coord[1] %= ny
-    new_coord[2] %= nz
+    # loop
+    new_coord[:] = wrap_point(new_coord[0], new_coord[1], new_coord[2], nx, ny, nz)
 
     # check if the new step is already in our path and if so, make an ongrid
     # step instead
@@ -1045,16 +1110,15 @@ def fix_vacuum_labels(
     return labels
 
 
-@njit(fastmath=True, cache=True)
-def get_neargrid_labels(
+@njit(cache=True, parallel=True)
+def get_ongrid_and_rgrads(
     data: NDArray[np.float64],
     car2lat: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
-    vacuum_mask: NDArray[np.bool_],
-) -> tuple[NDArray[np.int64], NDArray[np.bool_]]:
+):
     """
-    Assigns each point to a basin using the neargrid method.
+    Calculates the ongrid steps and delta r at each point in the grid
 
     Parameters
     ----------
@@ -1067,28 +1131,119 @@ def get_neargrid_labels(
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.float64]
         The distance to each neighboring voxel.
+
+    Returns
+    -------
+    best_neighbors : NDArray[np.int64]
+        A 4D array where best_neighbors[i,j,k] returns the steepest neighbor at
+        point (i,j,k)
+    all_drs : NDArray[np.float64]
+        A 4D array where all_drs[i,j,k] returns the delta r between the true
+        gradient and ongrid step at point (i,j,k)
+    maxima_mask : NDArray[np.bool_]
+        A 3D array that is True at maxima
+
+    """
+    nx, ny, nz = data.shape
+    # create array for storing maxima
+    maxima_mask = np.zeros(data.shape, dtype=np.bool_)
+    # Create a new array for storing pointers
+    best_neighbors = np.zeros((nx, ny, nz, 3), dtype=np.int64)
+    # Create a new array for storing rgrads
+    # Each (i, j, k) index gives the rgrad [x, y, z]
+    all_drs = np.zeros((nx, ny, nz, 3), dtype=np.float64)
+    # loop over each grid point in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                voxel_coord = np.array([i, j, k], dtype=np.int64)
+                # get gradient
+                gradient = get_gradient(
+                    data=data,
+                    voxel_coord=voxel_coord,
+                    car2lat=car2lat,
+                )
+                max_grad = np.max(np.abs(gradient))
+                if max_grad < 1e-30:
+                    # we have no gradient so we reset the total delta r
+                    # Check if this is a maximum and if not step ongrid
+                    shift, neigh, is_max = get_best_neighbor(
+                        data=data,
+                        i=i,
+                        j=j,
+                        k=k,
+                        neighbor_transforms=neighbor_transforms,
+                        neighbor_dists=neighbor_dists,
+                    )
+                    # set pointer
+                    best_neighbors[i, j, k] = neigh
+                    # set dr to 0 because we used an ongrid step
+                    all_drs[i, j, k] = (0.0, 0.0, 0.0)
+                    if is_max:
+                        maxima_mask[i, j, k] = True
+                    continue
+                # Normalize
+                gradient /= max_grad
+                # get pointer
+                pointer = np.round(gradient)
+                # get dr
+                delta_r = gradient - pointer
+                # get neighbor. Don't bother wrapping because we will do this later
+                neighbor = voxel_coord + pointer
+                # save neighbor and dr
+                best_neighbors[i, j, k] = neighbor
+                all_drs[i, j, k] = delta_r
+    return best_neighbors, all_drs, maxima_mask
+
+
+@njit(fastmath=True, cache=True)
+def get_neargrid_labels(
+    data: NDArray[np.float64],
+    best_neighbors: NDArray[np.int64],
+    all_drs: NDArray[np.float64],
+    maxima_mask: NDArray[np.bool_],
+    vacuum_mask: NDArray[np.bool_],
+    neighbor_transforms: NDArray[np.int64],
+    neighbor_dists: NDArray[np.float64],
+) -> NDArray[np.bool_]:
+    """
+    Assigns each point to a basin using the neargrid method.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    best_neighbors : NDArray[np.int64]
+        A 4D array where best_neighbors[i,j,k] returns the steepest neighbor at
+        point (i,j,k)
+    all_drs : NDArray[np.float64]
+        A 4D array where all_drs[i,j,k] returns the delta r between the true
+        gradient and ongrid step at point (i,j,k)
+    maxima_mask : NDArray[np.bool_]
+        A 3D array that is True at maxima
     vacuum_mask: NDArray[np.bool_]
         A 3D array representing the location of the vacuum.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.float64]
+        The distance to each neighboring voxel.
 
     Returns
     -------
     labels : NDArray[np.int64]
         The assignment for each point on the grid.
-    maxima_mask : NDArray[np.bool_]
-        A mask that is true at points that are maxima
 
     """
     nx, ny, nz = data.shape
     # define an array to assign to
     labels = np.zeros(data.shape, dtype=np.int64)
-    # define an array for noting maxima
-    maxima_mask = np.zeros(data.shape, dtype=np.bool_)
     # create a scratch array for our path
     path = np.empty((nx * ny * nz, 3), dtype=np.int64)
     # create a count of basins
     maxima_num = 1
     # create a scratch value for delta r
     total_delta_r = np.zeros(3, dtype=np.float64)
+    current_coord = np.zeros(3, dtype=np.int64)
     # loop over all voxels
     for i in range(nx):
         for j in range(ny):
@@ -1102,22 +1257,43 @@ def get_neargrid_labels(
                     continue
                 # reset our delta_r
                 total_delta_r[:] = 0.0
-                # create a count for the length of the path
+                # reset count for the length of the path
                 pnum = 0
                 # start climbing
-                current_coord = np.array([i, j, k]).astype(np.int64)
+                current_coord[:] = (i, j, k)
+
                 while True:
                     ii, jj, kk = current_coord
+
+                    # check if we've hit the vacuum. If so, we choose not to
+                    # label any of these values
+                    if vacuum_mask[ii, jj, kk]:
+                        # return labels on path to 0 and break
+                        for p in range(pnum):
+                            x, y, z = path[p]
+                            labels[x, y, z] = 0
+                        break  # move to next voxel
+
                     # check if we've hit another label
                     current_label = labels[ii, jj, kk]
                     if current_label != 0:
-                        # relabel our path and break the loop
+                        # relabel everything in our path and move to the next
+                        # voxel
                         for p in range(pnum):
                             x, y, z = path[p]
                             # relabel to the this neighbors value
                             labels[x, y, z] = current_label
+                        break  # move to next voxel
+                    # check if we've hit a maximum
+                    if maxima_mask[ii, jj, kk]:
+                        # keep the path labeled as is, and update the current
+                        # point to the same label, then increment the maxima count
+                        labels[ii, jj, kk] = maxima_num
+                        maxima_num += 1
                         break
 
+                    # We have an unlabeled, non-max point and need to continue
+                    # our climb
                     # Assign this point to the current maximum.
                     # NOTE: We must relabel this as part of the vacuum later
                     labels[ii, jj, kk] = maxima_num
@@ -1125,38 +1301,35 @@ def get_neargrid_labels(
                     path[pnum] = (ii, jj, kk)
                     pnum = pnum + 1
                     # make a neargrid step
-                    new_coord, total_delta_r, is_max = neargrid_step(
-                        data=data,
-                        labels=labels,
-                        max_val=maxima_num,
-                        voxel_coord=current_coord,
-                        total_delta_r=total_delta_r,
-                        car2lat=car2lat,
-                        neighbor_transforms=neighbor_transforms,
-                        neighbor_dists=neighbor_dists,
+                    # 1. get pointer and delta r
+                    new_coord = best_neighbors[ii, jj, kk].copy()
+                    delta_r = all_drs[ii, jj, kk]
+                    # 2. sum delta r
+                    total_delta_r += delta_r
+                    # 3. update new coord and total delta r
+                    new_coord += np.rint(total_delta_r).astype(np.int64)
+                    total_delta_r -= np.round(total_delta_r)
+                    # 4. wrap coord
+                    new_coord[:] = wrap_point(
+                        new_coord[0], new_coord[1], new_coord[2], nx, ny, nz
                     )
-                    # check if this new point is part of the vacuum AND also a
-                    # maximum. If this is the case, we don't want to keep the
-                    # labels
-                    if vacuum_mask[new_coord[0], new_coord[1], new_coord[2]] and is_max:
-                        # return labels to 0 and break
-                        for p in range(pnum):
-                            x, y, z = path[p]
-                            labels[x, y, z] = 0
-                        break
-                    # if we reached a maximum, leave our current path assigned
-                    # as is and move to the next point
-                    elif is_max:
-                        maxima_mask[ii, jj, kk] = True
-                        maxima_num += 1
-                        break
-                    # otherwise, continue with our loop
-                    else:
-                        current_coord = new_coord
+                    # Check if the new coord is already on the path
+                    if labels[new_coord[0], new_coord[1], new_coord[2]] == maxima_num:
+                        # we need to make an ongrid step to avoid repeating steps
+                        _, new_coord, _ = get_best_neighbor(
+                            data=data,
+                            i=ii,
+                            j=jj,
+                            k=kk,
+                            neighbor_transforms=neighbor_transforms,
+                            neighbor_dists=neighbor_dists,
+                        )
+                    # update the coord
+                    current_coord = new_coord
     # This process may result in some vacuum voxels being labeled as part of a
     # basin if the path travelled through them. We reset them here
     labels = fix_vacuum_labels(labels=labels, vacuum_mask=vacuum_mask)
-    return labels, maxima_mask
+    return labels
 
 
 @njit(cache=True)
@@ -1167,9 +1340,11 @@ def refine_neargrid(
     refinement_mask: NDArray[np.bool_],
     checked_mask: NDArray[np.bool_],
     maxima_mask: NDArray[np.bool_],
-    car2lat: NDArray[np.float64],
+    best_neighbors: NDArray[np.int64],
+    all_drs: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
+    vacuum_mask: NDArray[np.bool_],
 ) -> tuple[NDArray[np.int64], np.int64, NDArray[np.bool_], NDArray[np.bool_]]:
     """
     Refines the provided voxels by running the neargrid method until a maximum
@@ -1189,13 +1364,18 @@ def refine_neargrid(
         A 3D mask that is true at voxels that have already been refined.
     maxima_mask : NDArray[np.bool_]
         A 3D mask that is true at maxima.
-    car2lat : NDArray[np.float64]
-        A matrix that converts a coordinate in cartesian space to fractional
-        space.
+    best_neighbors : NDArray[np.int64]
+        A 4D array where best_neighbors[i,j,k] returns the steepest neighbor at
+        point (i,j,k)
+    all_drs : NDArray[np.float64]
+        A 4D array where all_drs[i,j,k] returns the delta r between the true
+        gradient and ongrid step at point (i,j,k)
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.float64]
         The distance to each neighboring voxel.
+    vacuum_mask: NDArray[np.bool_]
+        A 3D array representing the location of the vacuum.
 
     Returns
     -------
@@ -1220,17 +1400,17 @@ def refine_neargrid(
     path = np.empty((nx * ny * nz, 3), dtype=np.int64)
     # now we reassign any voxel in our refinement mask
     reassignments = 0
-    test_hit = 0
     # breakpoint()
     for i, j, k in refinement_indices:
         # get our initial label for comparison
         label = labels[i, j, k]
-        # Now we do neargrid steps until we reach a point with an label
+        # reset the delta r tracker
         total_delta_r[:] = 0.0
         # create a count for the length of the path
         pnum = 0
-        # start climbing
+        # set the initial coord
         current_coord[:] = (i, j, k)
+        # start climbing
         while True:
             ii, jj, kk = current_coord
             # check if we've hit a maximum
@@ -1241,21 +1421,31 @@ def refine_neargrid(
                 checked_mask[i, j, k] = True
                 # remove it from the refinement list
                 refinement_mask[i, j, k] = False
-                current_label = labels[ii, jj, kk]
-                # Points along the path are switched to negative. we
-                # switch them back here
+                # remove all points from the path
                 for p in range(pnum):
                     x, y, z = path[p]
-                    labels[x, y, z] = -labels[x, y, z]
+                    labels[x, y, z] = abs(labels[x, y, z])
+
+                if vacuum_mask[ii, jj, kk]:
+                    # We've hit a max in the vacuum and we don't want to relabel
+                    # our point.
+                    # relabel as part of the vacuum?
+                    new_labels[i, j, k] = 1
+                    break
+
+                # We've hit a real maximum.
+                current_label = labels[ii, jj, kk]
                 # Check if this is a reassignment
                 if label != current_label:
                     reassignments += 1
-                    # add any neighbors to our refinement mask for the next iteration
+                    # add neighbors to our refinement mask for the next iteration
                     for shift in neighbor_transforms:
                         # get the new neighbor
-                        ni = (i + shift[0]) % nx  # Loop around box
-                        nj = (j + shift[1]) % ny
-                        nk = (k + shift[2]) % nz
+                        ni = i + shift[0]
+                        nj = j + shift[1]
+                        nk = k + shift[2]
+                        # loop
+                        ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
                         # If we haven't already checked this point, add it.
                         # NOTE: vacuum points are stored in the mask by default
                         if not checked_mask[ni, nj, nk]:
@@ -1263,44 +1453,50 @@ def refine_neargrid(
                 # relabel just this voxel then stop the loop
                 new_labels[i, j, k] = current_label
                 break
-            # add this label to our path.
+
+            # Otherwise, we have not reached a maximum and want to continue
+            # climbine
+            # add this label to our path by marking it as negative.
             labels[ii, jj, kk] = -labels[ii, jj, kk]
             path[pnum] = (ii, jj, kk)
             pnum = pnum + 1
             # make a neargrid step
-            current_coord, total_delta_r, is_max = neargrid_step(
-                data=data,
-                labels=labels,
-                max_val=0,  # should never exist
-                voxel_coord=current_coord,
-                total_delta_r=total_delta_r,
-                car2lat=car2lat,
-                neighbor_transforms=neighbor_transforms,
-                neighbor_dists=neighbor_dists,
+            # 1. get pointer and delta r
+            new_coord = best_neighbors[ii, jj, kk].copy()
+            delta_r = all_drs[ii, jj, kk]
+            # 2. sum delta r
+            total_delta_r += delta_r
+            # 3. update new coord and total delta r
+            new_coord += np.rint(total_delta_r).astype(np.int64)
+            total_delta_r -= np.round(total_delta_r)
+            # 4. wrap coord
+            new_coord[:] = wrap_point(
+                new_coord[0], new_coord[1], new_coord[2], nx, ny, nz
             )
-            # Check if we've hit a new maximum. This shouldn't be possible unless
-            # we hit a vacuum maxima
-            if (
-                is_max
-                and not maxima_mask[
-                    current_coord[0], current_coord[1], current_coord[2]
-                ]
-            ):
-                test_hit += 1
-                # note we've checked this point
-                checked_mask[i, j, k] = True
-                # remove it from the refinement list
-                refinement_mask[i, j, k] = False
-                # Points along the path are switched to negative. we
-                # switch them back here
-                for p in range(pnum):
-                    x, y, z = path[p]
-                    labels[x, y, z] = -labels[x, y, z]
-                # relabel as part of the vacuum?
-                new_labels[i, j, k] = 1
-                break
+            # check if the new coord is already in our path
+            if labels[new_coord[0], new_coord[1], new_coord[2]] < 0:
+                # we default back to an ongrid step to avoid repeating steps
+                _, new_coord, _ = get_best_neighbor(
+                    data=data,
+                    i=ii,
+                    j=jj,
+                    k=kk,
+                    neighbor_transforms=neighbor_transforms,
+                    neighbor_dists=neighbor_dists,
+                )
+                # reset delta r to avoid further loops
+                total_delta_r[:] = 0.0
+                # check again if we're still in the same path. If so, cancel
+                # the loop and don't write anything
+                if labels[new_coord[0], new_coord[1], new_coord[2]] < 0:
+                    for p in range(pnum):
+                        x, y, z = path[p]
+                        labels[x, y, z] = abs(labels[x, y, z])
+                        break
+            # update the current coord
+            current_coord = new_coord
 
-    return new_labels, reassignments, refinement_mask, checked_mask, test_hit
+    return new_labels, reassignments, refinement_mask, checked_mask
 
 
 #####################################################################################
@@ -1370,9 +1566,7 @@ def get_pointer_and_delta_r(
     # get on grid step
     new_coord = voxel_coord + np.rint(gradient).astype(np.int64)
     # wrap
-    new_coord[0] %= nx
-    new_coord[1] %= ny
-    new_coord[2] %= nz
+    new_coord[:] = wrap_point(new_coord[0], new_coord[1], new_coord[2], nx, ny, nz)
     # get neighbors dr
     neigh_delta_r = all_rgrads[new_coord[0], new_coord[1], new_coord[2]]
     # adjust dr
@@ -1381,9 +1575,7 @@ def get_pointer_and_delta_r(
     new_coord += np.rint(delta_r).astype(np.int64)
     delta_r -= np.rint(delta_r).astype(np.int64)
     # wrap
-    new_coord[0] %= nx
-    new_coord[1] %= ny
-    new_coord[2] %= nz
+    new_coord[:] = wrap_point(new_coord[0], new_coord[1], new_coord[2], nx, ny, nz)
     return new_coord, delta_r, False
 
 
@@ -1484,58 +1676,6 @@ def get_reverse_neargrid_labels(
 #####################################################################################
 # Trials
 #####################################################################################
-
-# @njit(cache=True, parallel=True)
-# def get_ongrid_and_rgrads(
-#     data: NDArray[np.float64],
-#     car2lat: NDArray[np.float64],
-#     neighbor_transforms: NDArray[np.int64],
-#     neighbor_dists: NDArray[np.float64],
-#         ):
-#     nx, ny, nz = data.shape
-#     # Create a new array for storing pointers
-#     best_neighbors = np.zeros((nx, ny, nz, 3), dtype=np.int64)
-#     # Create a new array for storing rgrads
-#     # Each (i, j, k) index gives the rgrad [x, y, z]
-#     all_drs = np.zeros((nx, ny, nz, 3), dtype=np.float64)
-#     # loop over each grid point in parallel
-#     for i in prange(nx):
-#         for j in range(ny):
-#             for k in range(nz):
-#                 voxel_coord = np.array([i,j,k], dtype=np.int64)
-#                 # get gradient
-#                 gradient = get_gradient(
-#                     data=data,
-#                     voxel_coord=voxel_coord,
-#                     car2lat=car2lat,
-#                     )
-#                 max_grad = np.max(np.abs(gradient))
-#                 if max_grad < 1e-30:
-#                     # we have no gradient so we reset the total delta r
-#                     # Check if this is a maximum and if not step ongrid
-#                     shift, neigh = get_best_neighbor(
-#                         data=data,
-#                         i=i,
-#                         j=j,
-#                         k=k,
-#                         neighbor_transforms=neighbor_transforms,
-#                         neighbor_dists=neighbor_dists,
-#                         )
-#                     # set pointer
-#                     best_neighbors[i,j,k] = neigh
-#                     # set dr to 0 because we used an ongrid step
-#                     all_drs[i,j,k] = (0.0, 0.0, 0.0)
-#                     continue
-#                 # Normalize
-#                 gradient /= max_grad
-#                 # get pointer
-#                 pointer = np.round(gradient)
-#                 # get dr
-#                 delta_r = gradient - pointer
-#                 # save neighbor and dr
-#                 best_neighbors[i,j,k] = voxel_coord + pointer
-#                 all_drs[i,j,k] = delta_r
-#     return best_neighbors, all_drs
 
 # @njit(cache=True)
 # def get_reverse_neargrid_labels_test(
