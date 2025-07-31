@@ -100,75 +100,75 @@ def get_basin_charges_and_volumes(
     return charges, volumes, vacuum_charge, vacuum_volume
 
 
-@njit(cache=True)
-def check_is_vacuum(
-    data: NDArray[np.float64],
-    i: np.int64,
-    j: np.int64,
-    k: np.int64,
-    cell_volume: np.float64,
-    vacuum_threshold: np.float64 = 1.0e-3,
-    normalize_vac: bool = True,
-):
-    """
-    Checks if a given point (i,j,k) is part of the vacuum.
+# @njit(cache=True)
+# def check_is_vacuum(
+#     data: NDArray[np.float64],
+#     i: np.int64,
+#     j: np.int64,
+#     k: np.int64,
+#     cell_volume: np.float64,
+#     vacuum_threshold: np.float64 = 1.0e-3,
+#     normalize_vac: bool = True,
+# ):
+#     """
+#     Checks if a given point (i,j,k) is part of the vacuum.
 
-    Parameters
-    ----------
-    data : NDArray[np.float64]
-        The data for each voxel.
-    i : np.int64
-        First coordinate
-    j : np.int64
-        Second coordinate
-    k : np.int64
-        Third coordinate
-    cell_volume : np.float64
-        The volume of the unit cell used to normalize the data.
-    vacuum_threshold : np.float64, optional
-        The threshold to consider part of the vacuum. The default is 1.0e-3.
-    normalize_vac : bool, optional
-        Whether or not to convert the data to real space. The default is True.
+#     Parameters
+#     ----------
+#     data : NDArray[np.float64]
+#         The data for each voxel.
+#     i : np.int64
+#         First coordinate
+#     j : np.int64
+#         Second coordinate
+#     k : np.int64
+#         Third coordinate
+#     cell_volume : np.float64
+#         The volume of the unit cell used to normalize the data.
+#     vacuum_threshold : np.float64, optional
+#         The threshold to consider part of the vacuum. The default is 1.0e-3.
+#     normalize_vac : bool, optional
+#         Whether or not to convert the data to real space. The default is True.
 
-    Returns
-    -------
-    bool
-        Whether or not this point is part of the vacuum.
+#     Returns
+#     -------
+#     bool
+#         Whether or not this point is part of the vacuum.
 
-    """
-    # get the value at this point
-    value = data[i, j, k]
-    # optionally normalize to get charge density in real space
-    if normalize_vac:
-        abs_density = value / cell_volume
-    else:
-        abs_density = value
-    # if value is below the vacuum threshold, return True
-    if abs_density <= vacuum_threshold:
-        return True
-    else:
-        return False
+#     """
+#     # get the value at this point
+#     value = data[i, j, k]
+#     # optionally normalize to get charge density in real space
+#     if normalize_vac:
+#         abs_density = value / cell_volume
+#     else:
+#         abs_density = value
+#     # if value is below the vacuum threshold, return True
+#     if abs_density <= vacuum_threshold:
+#         return True
+#     else:
+#         return False
 
 
-@njit(parallel=True, cache=True)
-def get_vacuum_mask(
-    data: NDArray[np.float64],
-    cell_volume: np.float64,
-    vacuum_threshold: np.float64 = 1.0e-3,
-    normalize_vac: bool = True,
-):
-    nx, ny, nz = data.shape
-    vacuum_mask = np.zeros(data.shape, dtype=np.bool_)
+# @njit(parallel=True, cache=True)
+# def get_vacuum_mask(
+#     data: NDArray[np.float64],
+#     cell_volume: np.float64,
+#     vacuum_threshold: np.float64 = 1.0e-3,
+#     normalize_vac: bool = True,
+# ):
+#     nx, ny, nz = data.shape
+#     vacuum_mask = np.zeros(data.shape, dtype=np.bool_)
 
-    for i in prange(nx):
-        for j in range(ny):
-            for k in range(nz):
-                if check_is_vacuum(
-                    data, i, j, k, cell_volume, vacuum_threshold, normalize_vac
-                ):
-                    vacuum_mask[i, j, k] = True
+#     for i in prange(nx):
+#         for j in range(ny):
+#             for k in range(nz):
+#                 if check_is_vacuum(
+#                     data, i, j, k, cell_volume, vacuum_threshold, normalize_vac
+#                 ):
+#                     vacuum_mask[i, j, k] = True
 
-    return vacuum_mask
+#     return vacuum_mask
 
 
 @njit(cache=True)
@@ -751,7 +751,7 @@ def get_multi_weight_voxels(
 
 
 @njit(parallel=True, cache=True)
-def reduce_maxima(
+def reduce_weight_maxima(
     maxima_vox_coords: NDArray[np.int64],
     data: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
@@ -852,8 +852,8 @@ def get_ongrid_and_rgrads(
 
     Returns
     -------
-    best_neighbors : NDArray[np.int64]
-        A 4D array where best_neighbors[i,j,k] returns the steepest neighbor at
+    highest_neighbors : NDArray[np.int64]
+        A 4D array where highest_neighbors[i,j,k] returns the steepest neighbor at
         point (i,j,k)
     all_drs : NDArray[np.float64]
         A 4D array where all_drs[i,j,k] returns the delta r between the true
@@ -866,7 +866,7 @@ def get_ongrid_and_rgrads(
     # create array for storing maxima
     maxima_mask = np.zeros(data.shape, dtype=np.bool_)
     # Create a new array for storing pointers
-    best_neighbors = np.zeros((nx, ny, nz, 3), dtype=np.int64)
+    highest_neighbors = np.zeros((nx, ny, nz, 3), dtype=np.int64)
     # Create a new array for storing rgrads
     # Each (i, j, k) index gives the rgrad [x, y, z]
     all_drs = np.zeros((nx, ny, nz, 3), dtype=np.float64)
@@ -898,7 +898,7 @@ def get_ongrid_and_rgrads(
                         neighbor_dists=neighbor_dists,
                     )
                     # set pointer
-                    best_neighbors[i, j, k] = neigh
+                    highest_neighbors[i, j, k] = neigh
                     # set dr to 0 because we used an ongrid step
                     all_drs[i, j, k] = (0.0, 0.0, 0.0)
                     if is_max:
@@ -913,15 +913,15 @@ def get_ongrid_and_rgrads(
                 # get neighbor. Don't bother wrapping because we will do this later
                 neighbor = voxel_coord + pointer
                 # save neighbor and dr
-                best_neighbors[i, j, k] = neighbor
+                highest_neighbors[i, j, k] = neighbor
                 all_drs[i, j, k] = delta_r
-    return best_neighbors, all_drs, maxima_mask
+    return highest_neighbors, all_drs, maxima_mask
 
 
 @njit(fastmath=True, cache=True)
 def get_neargrid_labels(
     data: NDArray[np.float64],
-    best_neighbors: NDArray[np.int64],
+    highest_neighbors: NDArray[np.int64],
     all_drs: NDArray[np.float64],
     maxima_mask: NDArray[np.bool_],
     vacuum_mask: NDArray[np.bool_],
@@ -935,8 +935,8 @@ def get_neargrid_labels(
     ----------
     data : NDArray[np.float64]
         A 3D grid of values for each point.
-    best_neighbors : NDArray[np.int64]
-        A 4D array where best_neighbors[i,j,k] returns the steepest neighbor at
+    highest_neighbors : NDArray[np.int64]
+        A 4D array where highest_neighbors[i,j,k] returns the steepest neighbor at
         point (i,j,k)
     all_drs : NDArray[np.float64]
         A 4D array where all_drs[i,j,k] returns the delta r between the true
@@ -1018,7 +1018,7 @@ def get_neargrid_labels(
                     pnum = pnum + 1
                     # make a neargrid step
                     # 1. get pointer and delta r
-                    new_coord = best_neighbors[ii, jj, kk].copy()
+                    new_coord = highest_neighbors[ii, jj, kk].copy()
                     delta_r = all_drs[ii, jj, kk]
                     # 2. sum delta r
                     total_delta_r += delta_r
@@ -1056,7 +1056,7 @@ def refine_neargrid(
     refinement_mask: NDArray[np.bool_],
     checked_mask: NDArray[np.bool_],
     maxima_mask: NDArray[np.bool_],
-    best_neighbors: NDArray[np.int64],
+    highest_neighbors: NDArray[np.int64],
     all_drs: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
@@ -1080,8 +1080,8 @@ def refine_neargrid(
         A 3D mask that is true at voxels that have already been refined.
     maxima_mask : NDArray[np.bool_]
         A 3D mask that is true at maxima.
-    best_neighbors : NDArray[np.int64]
-        A 4D array where best_neighbors[i,j,k] returns the steepest neighbor at
+    highest_neighbors : NDArray[np.int64]
+        A 4D array where highest_neighbors[i,j,k] returns the steepest neighbor at
         point (i,j,k)
     all_drs : NDArray[np.float64]
         A 4D array where all_drs[i,j,k] returns the delta r between the true
@@ -1169,7 +1169,7 @@ def refine_neargrid(
             pnum = pnum + 1
             # make a neargrid step
             # 1. get pointer and delta r
-            new_coord = best_neighbors[ii, jj, kk].copy()
+            new_coord = highest_neighbors[ii, jj, kk].copy()
             delta_r = all_drs[ii, jj, kk]
             # 2. sum delta r
             total_delta_r += delta_r
@@ -1210,6 +1210,326 @@ def refine_neargrid(
 
 
 #####################################################################################
+# Sorted Near-grid method
+#####################################################################################
+
+
+@njit(cache=True, parallel=True)
+def get_lowgrid_and_rgrads(
+    data: NDArray[np.float64],
+    car2lat: NDArray[np.float64],
+    neighbor_transforms: NDArray[np.int64],
+    neighbor_dists: NDArray[np.float64],
+    vacuum_mask: NDArray[np.bool_],
+):
+
+    nx, ny, nz = data.shape
+    # create array for storing labels. We will mark any local minima with a -1
+    # and local maxima with a -2
+    labels = np.zeros(data.shape, dtype=np.int64)
+    # Create a new array for each voxel's ongrid step
+    highest_ongrid = np.zeros((nx, ny, nz, 3), dtype=np.int64)
+    # Create a new array for storing rgrads
+    # Each (i, j, k) index gives the delta r [x, y, z]
+    all_drs = np.zeros((nx, ny, nz, 3), dtype=np.float64)
+    # loop over each grid point in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # first check if this is part of the vacuum. If so, label it with
+                # -3
+                if vacuum_mask[i, j, k]:
+                    labels[i, j, k] = -3
+                    continue
+                voxel_coord = np.array([i, j, k], dtype=np.int64)
+                # get gradient
+                gradient = get_gradient(
+                    data=data,
+                    voxel_coord=voxel_coord,
+                    car2lat=car2lat,
+                )
+                max_grad = np.max(np.abs(gradient))
+                if max_grad < 1e-30:
+                    # we have no gradient so we reset the total delta r
+                    # Check if this is a maximum and if not step ongrid
+                    shift, neigh, is_max = get_best_neighbor(
+                        data=data,
+                        i=i,
+                        j=j,
+                        k=k,
+                        neighbor_transforms=neighbor_transforms,
+                        neighbor_dists=neighbor_dists,
+                    )
+                    # set pointer
+                    highest_ongrid[i, j, k] = shift
+                    # set dr to 0 because we used an ongrid step
+                    all_drs[i, j, k] = (0.0, 0.0, 0.0)
+                    if is_max:
+                        labels[i, j, k] = -1
+                    else:
+                        labels[i, j, k] = -2
+                    continue
+                # Normalize
+                gradient /= max_grad
+                # get pointer
+                pointer = np.round(gradient)
+                # get dr
+                delta_r = gradient - pointer
+                # save pointer and dr
+                highest_ongrid[i, j, k] = pointer
+                all_drs[i, j, k] = delta_r
+                # set label to be unassigned (-4)
+                labels[i, j, k] = -4
+    return labels, highest_ongrid, all_drs
+
+
+@njit(cache=True)
+def get_path_parent(
+    flat_labels,
+    initial_label,
+    neighbor_label,
+):
+    current_label = neighbor_label
+    while True:
+        new_label = flat_labels[current_label]
+        if new_label == current_label or new_label == initial_label or new_label == -1:
+            break
+        current_label = new_label
+    return new_label
+
+
+@njit(cache=True, fastmath=True)
+def get_neargrid_pointers(
+    data,
+    maxima_mask,
+    vacuum_mask,
+    highest_neighbors,
+    all_drs,
+    initial_labels,
+    sorted_voxel_coords,
+    neighbor_dists,
+    neighbor_transforms,
+):
+    nx, ny, nz = data.shape
+    # create array to store labels
+    # labels = np.full(data.shape, -1, dtype=np.int64)
+    # create a flat list of labels
+    flat_labels = np.full(nx * ny * nz, -1, dtype=np.int64)
+    for i, j, k in sorted_voxel_coords:
+        # get the index of this voxel
+        initial_label = initial_labels[i, j, k]
+        # We don't need to check for vacuum here because the sorted_voxel_coords
+        # don't include the vacuum points.
+        # check for a maxima
+        if maxima_mask[i, j, k]:
+            # assign to it's own label
+            flat_labels[initial_label] = initial_labels[i, j, k]
+            continue
+        # otherwise get the accumulated delta r for this point
+        ri, rj, rk = all_drs[i, j, k]
+        ni, nj, nk = highest_neighbors[i, j, k]
+        # update the highest neighbor
+        nni = ni + round(ri)
+        nnj = nj + round(rj)
+        nnk = nk + round(rk)
+        # wrap neighbor
+        nni, nnj, nnk = wrap_point(nni, nnj, nnk, nx, ny, nz)
+        # At this point, several things could go wrong.
+        # 1. We hit a vacuum point
+        # 2. We connect to a path that loops back to the current point
+        # Either of these will result in small unrealistic basins. We correct by
+        # making an ongrid step
+        neighbor_index = initial_labels[nni, nnj, nnk]
+        neighbor_label = flat_labels[neighbor_index]  # current neigh assignment
+        is_self = (
+            neighbor_index == initial_label
+        )  # if the neighbor is the current point
+        is_vacuum = vacuum_mask[nni, nnj, nnk]  # if the neighbor is in the vacuum
+        if neighbor_label != -1:  # if the neighbor has an assignment already
+            # we need to check that this point doesn't loop to itself
+            parent_label = get_path_parent(flat_labels, initial_label, neighbor_index)
+            is_self = parent_label == initial_label
+        if is_self or is_vacuum:
+            shift, neigh, is_max = get_best_neighbor(
+                data=data,
+                i=i,
+                j=j,
+                k=k,
+                neighbor_transforms=neighbor_transforms,
+                neighbor_dists=neighbor_dists,
+            )
+            # assign to the neighbor's label
+            flat_labels[initial_label] = initial_labels[neigh[0], neigh[1], neigh[2]]
+            # don't adjust and drs because we used an ongrid step
+            continue
+        # otherwise we have a valid step.
+        # adjust the dr for this step in case a shift was made
+        ri -= round(ri)
+        rj -= round(rj)
+        rk -= round(rk)
+        # assign this point to the highest neighbor
+        flat_labels[initial_label] = neighbor_index
+        # add the accumulated dr to the highest neighbor
+        all_drs[nni, nnj, nnk][0] += ri
+        all_drs[nni, nnj, nnk][1] += rj
+        all_drs[nni, nnj, nnk][2] += rk
+    return flat_labels
+
+
+# @njit(cache=True, fastmath=True)
+# def get_neargrid_pointers(
+#         data,
+#         labels,
+#         highest_ongrid,
+#         all_drs,
+#         initial_labels,
+#         sorted_voxel_coords,
+#         neighbor_transforms,
+#         neighbor_dists,
+#         ):
+#     nx, ny, nz = labels.shape
+#     for i, j, k in sorted_voxel_coords:
+#         # get our label
+#         label = labels[i,j,k]
+#         # check if we have a maximum
+#         if label == -1:
+#             # assign to its own label
+#             labels[i,j,k] = initial_labels[i,j,k]
+#             continue
+#         # NOTE: We don't need to check for vacuum because these are excluded from
+#         # the sorted voxels
+#         # get pointer to highest neighbor
+#         ii, jj, kk = highest_ongrid[i,j,k]
+#         # get the coords of the highest neighbor
+#         ni, nj, nk = wrap_point(i+ii, j+jj, k+kk, nx, ny, nz)
+#         # check if this is a minimum
+#         if label == -2:
+#             # assign directly to the highest neighbor
+#             labels[i,j,k] = initial_labels[ni, nj, nk]
+#             continue
+#         # otherwise, we need the delta r of this point and its lowest neighbor
+#         ri, rj, rk = all_drs[i, j, k]# delta r of current point
+#         li, lj, lk = wrap_point(i-ii, j-jj, k-kk, nx, ny, nz) # lowest neighbor
+#         # check if the lowest neighbor has an assignment. If not, we don't apply
+#         # its delta r at all
+#         if labels[li, lj, lk] < 0:
+#             lri, lrj, lrk = (0.0, 0.0, 0.0)
+#         else:
+#             lri, lrj, lrk = all_drs[li, lj, lk] # delta r of lowest neighbor
+#         # accumulate the delta r
+#         ri += lri
+#         rj += lrj
+#         rk += lrk
+#         # update the highest neighbor
+#         nni = ni + round(ri)
+#         nnj = nj + round(rj)
+#         nnk = nk + round(rk)
+#         # wrap neighbor
+#         nni, nnj, nnk = wrap_point(nni, nnj, nnk, nx, ny, nz)
+#         # At this point, several things could go wrong.
+#         # 1. The dr accumulates to cancel out the step, pointing back to this point
+#         # 2. The dr accumulates to point to a neighbor pointing back at this point
+#         # 3. The point is assigned to a vacuum point
+#         # Any of these will result in small unrealistic basins. We correct by
+#         # making an ongrid step
+#         if (
+#             (i == nni and j == nnj and k == nnk) # same point
+#             or labels[nni, nnj, nnk] == initial_labels[i, j, k] # neighbor point
+#             or labels[nni, nnj, nnk] == -3 # vacuum
+#         ):
+#             shift, neigh, is_max = get_best_neighbor(
+#                 data=data,
+#                 i=i,
+#                 j=j,
+#                 k=k,
+#                 neighbor_transforms=neighbor_transforms,
+#                 neighbor_dists=neighbor_dists,
+#             )
+#             # assign to the neighbor's label
+#             labels[i,j,k] = initial_labels[neigh[0],neigh[1],neigh[2]]
+#             # set dr to 0 for this point
+#             all_drs[i,j,k] = (0.0, 0.0, 0.0)
+#             continue
+#         # otherwise, we have a valid step
+#         # adjust delta r
+#         ri -= round(ri)
+#         rj -= round(rj)
+#         rk -= round(rk)
+#         # assign neighbor label
+#         labels[i,j,k] = initial_labels[nni, nnj, nnk]
+#         # update dr for this point
+#         all_drs[i,j,k] = (ri, rj, rk)
+#     return labels
+
+# @njit(parallel=True, cache=True)
+# def reduce_neargrid_maxima(
+#     maxima_vox_coords: NDArray[np.int64],
+#     data: NDArray[np.float64],
+#     labels: NDArray[np.int64],
+#     neighbor_transforms: NDArray[np.int64],
+#     neighbor_dists: NDArray[np.float64],
+# ):
+#     """
+#     Determines whether each maximum found by the sort-neargrid method is a true
+#     maximum or the result of a closed loop
+
+#     Parameters
+#     ----------
+#     maxima_vox_coords : NDArray[np.int64]
+#         The voxel coordinates of maxima determined from the weight method
+#     data : NDArray[np.float64]
+#         A 3D grid of values for each point.
+#     labels: NDArray[np.float64]
+#         A 3D grid of labels representing current voxel assignments.
+#     neighbor_transforms : NDArray[np.int64]
+#         The transformations from each voxel to its neighbors.
+#     neighbor_dists : NDArray[np.float64]
+#         The distance to each neighboring voxel.
+
+#     Returns
+#     -------
+#     maxima_indices : NDArray[np.int64]
+#         A mapping of each weight maximum to its corresponding ongrid maximum
+
+#     """
+#     # create tracker for connecting maxima
+#     maxima_indices = np.zeros(len(maxima_vox_coords), dtype=np.int64)
+#     for max_idx in prange(len(maxima_vox_coords)):
+#         # create scratch current coord
+#         current_coord = maxima_vox_coords[max_idx]
+#         i, j, k = current_coord
+#         # check if this is a maximum
+#         _, _, is_max = get_best_neighbor(
+#             data, i, j, k, neighbor_transforms, neighbor_dists
+#         )
+#         if is_max:
+#             # this is a real maximum
+#             maxima_indices[max_idx] = max_idx
+#             continue
+
+#         # get the label for this point
+#         label = labels[i,j,k]
+#         # Hill climb until a different label or max is found
+#         while True:
+#             ii, jj, kk = current_coord
+#             _, new_coord, is_max = get_best_neighbor(
+#                 data=data,
+#                 i=ii,
+#                 j=jj,
+#                 k=kk,
+#                 neighbor_transforms=neighbor_transforms,
+#                 neighbor_dists=neighbor_dists,
+#             )
+#             new_label = labels[new_coord[0],new_coord[1],new_coord[2]]
+#             # if the label is different or a maximum, assign to the new label
+#             if new_label != label or is_max:
+#                 maxima_indices[max_idx] = new_label
+#                 break
+#             # otherwise, update the coord and continue
+#             current_coord = new_coord
+#     return maxima_indices
+
+#####################################################################################
 # Reverse Near-grid method
 #####################################################################################
 
@@ -1218,7 +1538,7 @@ def refine_neargrid(
 def get_reverse_neargrid_labels(
     data: NDArray[np.float64],
     ordered_voxel_coords: NDArray[np.int64],
-    best_neighbors: NDArray[np.int64],
+    highest_neighbors: NDArray[np.int64],
     all_drs: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
@@ -1234,8 +1554,8 @@ def get_reverse_neargrid_labels(
         A 3D grid of values for each point.
     ordered_voxel_coords : NDArray[np.int64]
         A list of voxels in order from highest value to lowest
-    best_neighbors : NDArray[np.int64]
-        A 4D array where best_neighbors[i,j,k] returns the steepest neighbor at
+    highest_neighbors : NDArray[np.int64]
+        A 4D array where highest_neighbors[i,j,k] returns the steepest neighbor at
         point (i,j,k)
     all_drs : NDArray[np.float64]
         A 4D array where all_drs[i,j,k] returns the delta r between the true
@@ -1269,7 +1589,7 @@ def get_reverse_neargrid_labels(
         i, j, k = ordered_voxel_coords[vox_idx]
         # get the coord above this voxel, the combined delta_r, and
         # whether or not its a maximum
-        neigh_coord = best_neighbors[i, j, k]
+        neigh_coord = highest_neighbors[i, j, k]
         delta_r = all_drs[i, j, k]
         is_max = maxima_mask[i, j, k]
         # wrap neighbor
