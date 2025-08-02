@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import copy
-import inspect
 import logging
 from itertools import product
 from pathlib import Path
@@ -20,11 +19,10 @@ from baderkit.core.numba_functions import (
     get_neargrid_labels,
     get_neighbor_flux,
     get_ongrid_and_rgrads,
-    get_reverse_neargrid_labels,
     get_single_weight_voxels,
     get_steepest_pointers,
-    get_vacuum_mask,
-    reduce_maxima,
+    new_neargrid_test,
+    reduce_weight_maxima,
     refine_neargrid,
 )
 from baderkit.core.structure import Structure
@@ -46,10 +44,10 @@ class Bader:
         method: Literal[
             "ongrid",
             "neargrid",
-            "reverse-neargrid",
+            "sort-neargrid",
             "weight",
             "hybrid-weight",
-        ] = "reverse-neargrid",
+        ] = "neargrid",
         refinement_method: Literal["recursive", "single"] = "recursive",
         directory: Path = Path("."),
         vacuum_tol: float = 1.0e-3,
@@ -64,7 +62,7 @@ class Bader:
             A Grid object with the charge density that will be integrated.
         reference_grid : Grid
             A grid object whose values will be used to construct the basins.
-        method : Literal["ongrid", "neargrid", "reverse-neargrid", "weight", "hybrid-weight"], optional
+        method : Literal["ongrid", "neargrid", "sort-neargrid", "weight", "hybrid-weight"], optional
             The algorithm to use for generating bader basins. If None, defaults
             to weight.
         refinement_method : Literal["recursive", "single"], optional
@@ -365,14 +363,12 @@ class Bader:
 
         """
         if self._vacuum_mask is None:
-            # logging.info("Finding Vacuum Points")
-            # Find the vacuum voxels
-            self._vacuum_mask = get_vacuum_mask(
-                data=self.reference_grid.total,
-                cell_volume=self.structure.volume,
-                vacuum_threshold=self.vacuum_tol,
-                normalize_vac=self.normalize_vacuum,
-            )
+            if self.normalize_vacuum:
+                self._vacuum_mask = self.reference_grid.total < (
+                    self.vacuum_tol / self.structure.volume
+                )
+            else:
+                self._vacuum_mask = self.reference_grid.total < self.vacuum_tol
         return self._vacuum_mask
 
     @property
@@ -403,7 +399,7 @@ class Bader:
         return [
             "ongrid",
             "neargrid",
-            "reverse-neargrid",
+            "sort-neargrid",
             "weight",
             "hybrid-weight",
         ]
@@ -493,7 +489,7 @@ class Bader:
         ------
         ValueError
             The class method variable must be 'ongrid', 'neargrid',
-            'reverse-neargrid', 'weight' or 'hybrid-weight'.
+            'sort-neargrid', 'weight' or 'hybrid-weight'.
 
         Returns
         -------
@@ -506,8 +502,8 @@ class Bader:
         elif self.method == "neargrid":
             self._run_bader_neargrid()
 
-        elif self.method == "reverse-neargrid":
-            self._run_bader_reverse_near_grid()
+        elif self.method == "sort-neargrid":
+            self._run_bader_sort_neargrid()
 
         elif self.method == "weight":
             self._run_bader_weight()
@@ -518,8 +514,82 @@ class Bader:
         else:
             raise ValueError(
                 f"{self.method} is not a valid algorithm."
-                "Acceptable values are 'ongrid', 'neargrid', 'reverse-neargrid', 'weight', and 'hybrid-weight'"
+                "Acceptable values are 'ongrid', 'neargrid', 'sort-neargrid', 'weight', and 'hybrid-weight'"
             )
+
+    @staticmethod
+    def _get_roots(pointers, valid=None):
+        if valid is not None:
+            while True:
+                # create a copy to avoid modifying in-place before comparison
+                new_parents = pointers.copy()
+
+                # for non-vacuum entries, reassign each index to the value at the
+                # index it is pointing to
+                new_parents[valid] = pointers[pointers[valid]]
+
+                # check if we have the same value as before
+                if np.all(new_parents == pointers):
+                    break
+
+                # update only non-vacuum entries
+                pointers[valid] = new_parents[valid]
+        else:
+            while True:
+                # create a copy to avoid modifying in-place before comparison
+                new_parents = pointers.copy()
+
+                # for non-vacuum entries, reassign each index to the value at the
+                # index it is pointing to
+                new_parents = pointers[pointers]
+
+                # check if we have the same value as before
+                if np.all(new_parents == pointers):
+                    break
+
+                pointers = new_parents
+        return pointers
+
+    @staticmethod
+    def _combine_neigh_maxima(
+        grid,
+        maxima_vox,
+    ):
+        # Precompute
+        neighbor_transforms, _ = grid.voxel_26_neighbors
+        maxima_set = {tuple(v) for v in maxima_vox}
+        maxima_map = np.arange(len(maxima_vox))
+
+        # Map from coordinate tuple to index
+        coord_to_index = {tuple(coord): idx for idx, coord in enumerate(maxima_vox)}
+
+        for i, maximum in enumerate(maxima_vox):
+            if maxima_map[i] != i:
+                continue
+            # get neighs and
+            neighs = (neighbor_transforms + maximum) % grid.shape
+            for neigh in neighs:
+                neigh_tuple = tuple(neigh)
+                if neigh_tuple in maxima_set:
+                    j = coord_to_index[neigh_tuple]
+                    maxima_map[j] = i
+
+        # calculate the average frac coord for each max group
+        frac_coords = grid.get_frac_coords_from_vox(maxima_vox)
+        reduced_frac_coords = []
+        for i in np.unique(maxima_map):
+            group = frac_coords[maxima_map == i]
+            if len(group) == 1:
+                reduced_frac_coords.append(group)
+            else:
+                ref = group[0]
+                deltas = group - ref
+                shifts = -np.round(deltas)
+                adjusted = group + shifts
+                reduced_frac_coords.append(np.mean(adjusted, axis=0))
+        # convert to array and wrap
+        reduced_frac_coords = np.array(reduced_frac_coords) % 1
+        return maxima_map, np.array(reduced_frac_coords)
 
     def _set_basin_properties_from_labels(
         self,
@@ -611,22 +681,11 @@ class Bader:
         # ignore these
         logging.info("Finding roots")
         # mask for non-vacuum indices (not -1)
-        valid = pointers != -1
-        while True:
-            # create a copy to avoid modifying in-place before comparison
-            new_parents = pointers.copy()
-
-            # for non-vacuum entries, reassign each index to the value at the
-            # index it is pointing to
-            new_parents[valid] = pointers[pointers[valid]]
-
-            # check if we have the same value as before
-            if np.all(new_parents == pointers):
-                break
-
-            # update only non-vacuum entries
-            pointers[valid] = new_parents[valid]
-
+        if self.num_vacuum:
+            valid = pointers != -1
+        else:
+            valid = None
+        pointers = self._get_roots(pointers, valid)
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
         unique_roots, labels_flat = np.unique(pointers, return_inverse=True)
@@ -690,7 +749,7 @@ class Bader:
         # get inverse for cartesian to lattice matrix
         car2lat = np.linalg.inv(lat2car)
         logging.info("Calculating gradients")
-        best_neighbors, all_drs, maxima_mask = get_ongrid_and_rgrads(
+        highest_neighbors, all_drs, maxima_mask = get_ongrid_and_rgrads(
             data=grid.total,
             car2lat=car2lat,
             neighbor_dists=neighbor_dists,
@@ -701,7 +760,7 @@ class Bader:
         # get initial labels
         labels = get_neargrid_labels(
             data=grid.total,
-            best_neighbors=best_neighbors,
+            highest_neighbors=highest_neighbors,
             all_drs=all_drs,
             maxima_mask=maxima_mask,
             vacuum_mask=self.vacuum_mask,
@@ -744,7 +803,7 @@ class Bader:
                 refinement_mask=refinement_mask,
                 checked_mask=checked_mask,
                 maxima_mask=maxima_mask,
-                best_neighbors=best_neighbors,
+                highest_neighbors=highest_neighbors,
                 all_drs=all_drs,
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
@@ -763,21 +822,7 @@ class Bader:
         # assign charges/volumes, etc.
         self._set_basin_properties_from_labels(maxima_vox)
 
-    def _run_bader_reverse_near_grid(self):
-        """
-        Assigns voxels to basins and calculates charge using a variation of
-        the neargrid method. The reference grid is first sorted from highest to
-        lowest, and the gradient is followed in a descending rather than ascending
-        manor. The core concepts are still based on the original neargrid method:
-            W. Tang, E. Sanville, and G. Henkelman
-            A grid-based Bader analysis algorithm without lattice bias
-            J. Phys.: Condens. Matter 21, 084204 (2009)
-
-        Returns
-        -------
-        None.
-
-        """
+    def _run_bader_sort_neargrid(self):
         grid = self.reference_grid.copy()
         # get neigbhor transforms
         neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
@@ -789,42 +834,60 @@ class Bader:
         # get inverse for cartesian to lattice matrix
         car2lat = np.linalg.inv(lat2car)
         logging.info("Calculating gradients")
-        best_neighbors, all_drs, maxima_mask = get_ongrid_and_rgrads(
-            data=grid.total,
-            car2lat=car2lat,
-            neighbor_dists=neighbor_dists,
-            neighbor_transforms=neighbor_transforms,
-            vacuum_mask=self.vacuum_mask,
-        )
-        logging.info("Sorting reference data")
+        # sort points from lowest to highest
         shape = grid.shape
         # flatten data and get initial 1D and 3D voxel indices
         flat_data = grid.total.ravel()
         flat_voxel_coords = np.indices(shape).reshape(3, -1).T
         # sort data from high to low
-        sorted_data_indices = np.flip(np.argsort(flat_data, kind="stable"))
+        sorted_data_indices = np.argsort(flat_data, kind="stable")
         sorted_voxel_coords = flat_voxel_coords[sorted_data_indices]
-        logging.info("Assigning labels")
-        # get assignments and maxima mask
-        labels = get_reverse_neargrid_labels(
+        # remove vacuum voxels from the sorted voxel coords
+        sorted_voxel_coords = sorted_voxel_coords[self.num_vacuum :]
+        # create a 3D array mapping to voxels 1D indices
+        initial_labels = grid.all_voxel_indices
+        # # get pointers
+        pointers, maxima_mask = new_neargrid_test(
             data=grid.total,
-            ordered_voxel_coords=sorted_voxel_coords,
-            best_neighbors=best_neighbors,
-            all_drs=all_drs,
+            car2lat=car2lat,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
-            maxima_mask=maxima_mask,
-            num_vacuum=self.num_vacuum,
+            sorted_voxel_coords=sorted_voxel_coords,
+            vacuum_mask=self.vacuum_mask,
+            initial_labels=initial_labels,
         )
-        # adjust labels to 0 index convention. We don't adjust values below 0 as
-        # these are part of the vacuum
-        labels[labels >= 0] -= 1
-        # assign labels
+        # Get roots of pointers
+        logging.info("Finding roots")
+        # mask for non-vacuum indices (not -1)
+        if self.num_vacuum:
+            valid = pointers != -1
+        else:
+            valid = None
+        pointers = self._get_roots(pointers, valid)
+        # We now have our roots. Relabel so that they go from 0 to the length of our
+        # roots
+        unique_roots, labels_flat = np.unique(pointers, return_inverse=True)
+        # If we had at least one vacuum point, we need to subtract our labels by
+        # 1 to recover the vacuum label.
+        if -1 in unique_roots:
+            labels_flat -= 1
+        # reconstruct a 3D array with our labels
+        labels = labels_flat.reshape(shape)
+        # find the position of the maxima
+        maxima_vox = np.argwhere(maxima_mask)
+        # store our labels
         self._basin_labels = labels
-        # get maxima voxels
-        maxima_vox = np.argwhere(maxima_mask & ~self.vacuum_mask)
         # assign charges/volumes, etc.
         self._set_basin_properties_from_labels(maxima_vox)
+
+        # TODO:
+        # Combine neighboring maxima into single basins with average frac
+        # position. Do this prior to any refinements
+        # Switch from maxima mask to labelling with negatives
+        # separate methods to individual classes
+        # see if numba functions can be made more modular
+        # add vacuum to CLI and output summary
+        # update tests
 
     def _run_bader_weight(self, hybrid: bool = False):
         """
@@ -846,7 +909,6 @@ class Bader:
 
         """
         reference_grid = self.reference_grid.copy()
-
         # get the voronoi neighbors, their distances, and the area of the corresponding
         # facets. This is used to calculate the volume flux from each voxel
         neighbor_transforms, neighbor_dists, facet_areas, _ = (
@@ -903,7 +965,7 @@ class Bader:
             all_neighbor_transforms, all_neighbor_dists = (
                 reference_grid.voxel_26_neighbors
             )
-            maxima_connections = reduce_maxima(
+            maxima_connections = reduce_weight_maxima(
                 maxima_vox_coords,
                 data,
                 all_neighbor_transforms,
@@ -1030,7 +1092,6 @@ class Bader:
         atom_volumes = np.bincount(
             basin_atoms[:-1], weights=self.basin_volumes, minlength=N_atoms
         )
-
         # Store everything
         self._basin_atoms = basin_atoms[:-1]
         self._basin_atom_dists = basin_atom_dists

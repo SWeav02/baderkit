@@ -166,7 +166,7 @@ class Grid(VolumetricData):
             of that voxel if you were to flatten/ravel the grid.
 
         """
-        return np.arange(np.prod(self.shape)).reshape(self.shape)
+        return np.arange(np.prod(self.shape), dtype=np.int64).reshape(self.shape)
 
     @cached_property
     def all_voxel_frac_coords(self) -> NDArray[float]:
