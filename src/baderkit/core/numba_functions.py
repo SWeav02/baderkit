@@ -99,6 +99,7 @@ def get_basin_charges_and_volumes(
     vacuum_charge = vacuum_charge / total_points
     return charges, volumes, vacuum_charge, vacuum_volume
 
+
 @njit(cache=True)
 def wrap_point(
     i: np.int64, j: np.int64, k: np.int64, nx: np.int64, ny: np.int64, nz: np.int64
@@ -1141,6 +1142,7 @@ def refine_neargrid(
 # Sorted Near-grid method
 #####################################################################################
 
+
 @njit(cache=True)
 def get_path_parent(
     flat_labels,
@@ -1155,53 +1157,109 @@ def get_path_parent(
         current_label = new_label
     return new_label
 
-@njit(cache=True, fastmath=True)
-def get_sort_neargrid_pointers(
-    data,
-    maxima_mask,
-    vacuum_mask,
-    highest_neighbors,
-    all_drs,
-    initial_labels,
+
+###############
+# Test
+###############
+@njit(cache=True, parallel=True)
+def new_neargrid_test(
+    data: NDArray[np.float64],
     sorted_voxel_coords,
-    neighbor_dists,
-    neighbor_transforms,
+    car2lat: NDArray[np.float64],
+    neighbor_transforms: NDArray[np.int64],
+    neighbor_dists: NDArray[np.float64],
+    vacuum_mask: NDArray[np.bool_],
+    initial_labels,
 ):
     nx, ny, nz = data.shape
-    # create array to store labels
-    # labels = np.full(data.shape, -1, dtype=np.int64)
+    # create array for storing maxima
+    maxima_mask = np.zeros(data.shape, dtype=np.bool_)
+    # Create a new array for storing pointers
+    highest_neighbors = np.zeros((nx, ny, nz, 3), dtype=np.int64)
+    # Create a new array for storing rgrads
+    # Each (i, j, k) index gives the rgrad [x, y, z]
+    all_drs = np.zeros((nx, ny, nz, 3), dtype=np.float64)
+    # loop over each grid point in parallel
+    for vox_idx in prange(len(sorted_voxel_coords)):
+        i, j, k = sorted_voxel_coords[vox_idx]
+        # check if this point is part of the vacuum. If it is, we can
+        # ignore this point.
+        if vacuum_mask[i, j, k]:
+            continue
+        voxel_coord = np.array([i, j, k], dtype=np.int64)
+        # get gradient
+        gradient = get_gradient(
+            data=data,
+            voxel_coord=voxel_coord,
+            car2lat=car2lat,
+        )
+        max_grad = np.max(np.abs(gradient))
+        if max_grad < 1e-30:
+            # we have no gradient so we reset the total delta r
+            # Check if this is a maximum and if not step ongrid
+            shift, neigh, is_max = get_best_neighbor(
+                data=data,
+                i=i,
+                j=j,
+                k=k,
+                neighbor_transforms=neighbor_transforms,
+                neighbor_dists=neighbor_dists,
+            )
+            # set pointer
+            highest_neighbors[i, j, k] = neigh
+            # set dr to 0 because we used an ongrid step
+            all_drs[i, j, k] = (0.0, 0.0, 0.0)
+            if is_max:
+                maxima_mask[i, j, k] = True
+            continue
+        # Normalize
+        gradient /= max_grad
+        # get pointer
+        pointer = np.round(gradient)
+        # get dr
+        delta_r = gradient - pointer
+        # get neighbor
+        ni, nj, nk = voxel_coord + pointer
+        ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
+        # save neighbor and dr
+        highest_neighbors[i, j, k] = (ni, nj, nk)
+        all_drs[i, j, k] += delta_r
+        # add drs to total_dr
+        all_drs[int(ni), int(nj), int(nk)] += delta_r
+
+    # do another loop to assign pointers
     # create a flat list of labels
     flat_labels = np.full(nx * ny * nz, -1, dtype=np.int64)
+    # loop over each grid point in parallel
     for i, j, k in sorted_voxel_coords:
-        # get the index of this voxel
         initial_label = initial_labels[i, j, k]
-        # We don't need to check for vacuum here because the sorted_voxel_coords
-        # don't include the vacuum points.
-        # check for a maxima
-        if maxima_mask[i, j, k]:
-            # assign to it's own label
-            flat_labels[initial_label] = initial_labels[i, j, k]
+        # check if this point is part of the vacuum. If it is, we can
+        # ignore this point.
+        if vacuum_mask[i, j, k]:
             continue
-        # otherwise get the accumulated delta r for this point
-        ri, rj, rk = all_drs[i, j, k]
+        # if this is a maximum assign to self
+        if maxima_mask[i, j, k]:
+            flat_labels[initial_label] = initial_label
+            continue
+        # adjust neighbor
         ni, nj, nk = highest_neighbors[i, j, k]
-        # update the highest neighbor
-        nni = ni + round(ri)
-        nnj = nj + round(rj)
-        nnk = nk + round(rk)
-        # wrap neighbor
-        nni, nnj, nnk = wrap_point(nni, nnj, nnk, nx, ny, nz)
+        ri, rj, rk = all_drs[i, j, k]
+        ni += round(ri)
+        nj += round(rj)
+        nk += round(rk)
+        # wrap
+        ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
         # At this point, several things could go wrong.
         # 1. We hit a vacuum point
         # 2. We connect to a path that loops back to the current point
         # Either of these will result in small unrealistic basins. We correct by
         # making an ongrid step
-        neighbor_index = initial_labels[nni, nnj, nnk]
+        neighbor_index = initial_labels[ni, nj, nk]
         neighbor_label = flat_labels[neighbor_index]  # current neigh assignment
         is_self = (
             neighbor_index == initial_label
         )  # if the neighbor is the current point
-        is_vacuum = vacuum_mask[nni, nnj, nnk]  # if the neighbor is in the vacuum
+        is_vacuum = vacuum_mask[ni, nj, nk]  # if the neighbor is in the vacuum
         if neighbor_label != -1:  # if the neighbor has an assignment already
             # we need to check that this point doesn't loop to itself
             parent_label = get_path_parent(flat_labels, initial_label, neighbor_index)
@@ -1219,15 +1277,6 @@ def get_sort_neargrid_pointers(
             flat_labels[initial_label] = initial_labels[neigh[0], neigh[1], neigh[2]]
             # don't adjust and drs because we used an ongrid step
             continue
-        # otherwise we have a valid step.
-        # adjust the dr for this step in case a shift was made
-        ri -= round(ri)
-        rj -= round(rj)
-        rk -= round(rk)
-        # assign this point to the highest neighbor
+        # assign pointer
         flat_labels[initial_label] = neighbor_index
-        # add the accumulated dr to the highest neighbor
-        all_drs[nni, nnj, nnk][0] += ri
-        all_drs[nni, nnj, nnk][1] += rj
-        all_drs[nni, nnj, nnk][2] += rk
-    return flat_labels
+    return flat_labels, maxima_mask

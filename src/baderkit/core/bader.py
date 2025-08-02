@@ -21,9 +21,9 @@ from baderkit.core.numba_functions import (
     get_ongrid_and_rgrads,
     get_single_weight_voxels,
     get_steepest_pointers,
+    new_neargrid_test,
     reduce_weight_maxima,
     refine_neargrid,
-    get_sort_neargrid_pointers,
 )
 from baderkit.core.structure import Structure
 
@@ -363,15 +363,6 @@ class Bader:
 
         """
         if self._vacuum_mask is None:
-            # logging.info("Finding Vacuum Points")
-            # Find the vacuum voxels
-            # self._vacuum_mask = get_vacuum_mask(
-            #     data=self.reference_grid.total,
-            #     cell_volume=self.structure.volume,
-            #     vacuum_threshold=self.vacuum_tol,
-            #     normalize_vac=self.normalize_vacuum,
-            # )
-            # NOTE: this used to be done with numba. This is almost certainly faster
             if self.normalize_vacuum:
                 self._vacuum_mask = self.reference_grid.total < (
                     self.vacuum_tol / self.structure.volume
@@ -525,40 +516,81 @@ class Bader:
                 f"{self.method} is not a valid algorithm."
                 "Acceptable values are 'ongrid', 'neargrid', 'sort-neargrid', 'weight', and 'hybrid-weight'"
             )
-    
+
     @staticmethod
-    def _get_roots(pointers, valid = None):
+    def _get_roots(pointers, valid=None):
         if valid is not None:
             while True:
                 # create a copy to avoid modifying in-place before comparison
                 new_parents = pointers.copy()
-    
+
                 # for non-vacuum entries, reassign each index to the value at the
                 # index it is pointing to
                 new_parents[valid] = pointers[pointers[valid]]
-    
+
                 # check if we have the same value as before
                 if np.all(new_parents == pointers):
                     break
-    
+
                 # update only non-vacuum entries
                 pointers[valid] = new_parents[valid]
         else:
             while True:
                 # create a copy to avoid modifying in-place before comparison
                 new_parents = pointers.copy()
-    
+
                 # for non-vacuum entries, reassign each index to the value at the
                 # index it is pointing to
                 new_parents = pointers[pointers]
-    
+
                 # check if we have the same value as before
                 if np.all(new_parents == pointers):
                     break
 
                 pointers = new_parents
         return pointers
-    
+
+    @staticmethod
+    def _combine_neigh_maxima(
+        grid,
+        maxima_vox,
+    ):
+        # Precompute
+        neighbor_transforms, _ = grid.voxel_26_neighbors
+        maxima_set = {tuple(v) for v in maxima_vox}
+        maxima_map = np.arange(len(maxima_vox))
+
+        # Map from coordinate tuple to index
+        coord_to_index = {tuple(coord): idx for idx, coord in enumerate(maxima_vox)}
+
+        for i, maximum in enumerate(maxima_vox):
+            if maxima_map[i] != i:
+                continue
+            # get neighs and
+            neighs = (neighbor_transforms + maximum) % grid.shape
+            for neigh in neighs:
+                neigh_tuple = tuple(neigh)
+                if neigh_tuple in maxima_set:
+                    j = coord_to_index[neigh_tuple]
+                    maxima_map[j] = i
+
+        # calculate the average frac coord for each max group
+        frac_coords = grid.get_frac_coords_from_vox(maxima_vox)
+        reduced_frac_coords = []
+        for i in np.unique(maxima_map):
+            group = frac_coords[maxima_map == i]
+            if len(group) == 1:
+                reduced_frac_coords.append(group)
+            else:
+                ref = group[0]
+                deltas = group - ref
+                shifts = -np.round(deltas)
+                adjusted = group + shifts
+                reduced_frac_coords.append(np.mean(adjusted, axis=0))
+        # convert to array and wrap
+        reduced_frac_coords = np.array(reduced_frac_coords) % 1
+        return maxima_map, np.array(reduced_frac_coords)
+
     def _set_basin_properties_from_labels(
         self,
         maxima_vox: NDArray[int],
@@ -802,15 +834,6 @@ class Bader:
         # get inverse for cartesian to lattice matrix
         car2lat = np.linalg.inv(lat2car)
         logging.info("Calculating gradients")
-        # We want to make sure no points get assigned to the vacuum, so we need
-        # to provide the vacuum info
-        highest_neighbors, all_drs, maxima_mask = get_ongrid_and_rgrads(
-            data=grid.total,
-            car2lat=car2lat,
-            neighbor_dists=neighbor_dists,
-            neighbor_transforms=neighbor_transforms,
-            vacuum_mask=self.vacuum_mask,
-        )
         # sort points from lowest to highest
         shape = grid.shape
         # flatten data and get initial 1D and 3D voxel indices
@@ -823,25 +846,17 @@ class Bader:
         sorted_voxel_coords = sorted_voxel_coords[self.num_vacuum :]
         # create a 3D array mapping to voxels 1D indices
         initial_labels = grid.all_voxel_indices
-        # get pointers
-        pointers = get_sort_neargrid_pointers(
+        # # get pointers
+        pointers, maxima_mask = new_neargrid_test(
             data=grid.total,
-            maxima_mask=maxima_mask,
-            vacuum_mask=self.vacuum_mask,
-            highest_neighbors=highest_neighbors,
-            all_drs=all_drs,
-            initial_labels=initial_labels,
-            sorted_voxel_coords=sorted_voxel_coords,
-            neighbor_dists=neighbor_dists,
+            car2lat=car2lat,
             neighbor_transforms=neighbor_transforms,
+            neighbor_dists=neighbor_dists,
+            sorted_voxel_coords=sorted_voxel_coords,
+            vacuum_mask=self.vacuum_mask,
+            initial_labels=initial_labels,
         )
-        # Our pointers object is a 1D array pointing each voxel to its parent voxel. We
-        # essentially have a classic forest of trees problem where each maxima is
-        # a root and we want to point all of our voxels to their respective root.
-        # We being a while loop. In each loop, we remap our pointers to point at
-        # the index that its parent was pointing at.
-        # NOTE: Vacuum points are indicated by a value of -1 and we want to
-        # ignore these
+        # Get roots of pointers
         logging.info("Finding roots")
         # mask for non-vacuum indices (not -1)
         if self.num_vacuum:
@@ -1077,7 +1092,6 @@ class Bader:
         atom_volumes = np.bincount(
             basin_atoms[:-1], weights=self.basin_volumes, minlength=N_atoms
         )
-
         # Store everything
         self._basin_atoms = basin_atoms[:-1]
         self._basin_atom_dists = basin_atom_dists
