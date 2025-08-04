@@ -27,6 +27,9 @@ def load_plotter():
     env = os.environ.copy()
     charge_filename = env["CHARGE_FILE"]
     method = env["BADER_METHOD"]
+    vacuum_tol = float(env["VACUUM_TOL"])
+    normalize_vac = bool(env["NORMALIZE_VAC"])
+    basin_tol = float(env["BASIN_TOL"])
     refinement_method = env["REFINE_METHOD"]
     if "REFERENCE_FILE" in env.keys():
         reference_filename = env["REFERENCE_FILE"]
@@ -37,7 +40,17 @@ def load_plotter():
         reference_filename=reference_filename,
         method=method,
         refinement_method=refinement_method,
+        vacuum_tol=vacuum_tol,
+        normalize_vacuum=normalize_vac,
+        basin_tol=basin_tol,
     )
+    # check how many atom basins there are. We can probably only handle up to
+    # 50
+    if len(bader.structure) > 50:
+        st.session_state["too_many_atoms"] = True
+    else:
+        st.session_state["too_many_atoms"] = False
+
     plotter = BaderPlotter(bader, off_screen=True)
     # set plotter camera
     plotter.view_indices = plotter._view_indices
@@ -46,9 +59,18 @@ def load_plotter():
     st.session_state.html_string = plotter.get_plot_html()
     st.session_state.page_height = 400
 
-
 if any(k not in st.session_state for k in ("plotter", "bader")):
     load_plotter()
+
+if st.session_state.too_many_atoms:
+    st.markdown(
+        """
+        Too many atoms in the structure. The BaderKit webapp can currently only
+        handle up to ~50 atoms. If you still need visualization, basins can be written
+        out with the `--print` tag and visualized using tools such as VESTA or OVITO.
+        """
+        )
+    st.stop()
 
 # get bader/plotter for this session so we don't have to pull from session state constantly
 bader = st.session_state.bader
@@ -72,12 +94,20 @@ with st.sidebar:
                 "Atom Basins",
                 [i for i in range(len(bader.atom_charges))],
                 selection_mode="multi",
+                key="vis_atoms",
             )
-            settings["visible_bader_basins"] = st.segmented_control(
-                "Bader Basins",
-                [i for i in range(len(bader.basin_charges))],
-                selection_mode="multi",
-            )
+            # don't display bader selection if there are too many of them.
+            if len(bader.basin_charges) <= 40:
+                settings["visible_bader_basins"] = st.segmented_control(
+                    "Bader Basins",
+                    [i for i in range(len(bader.basin_charges))],
+                    selection_mode="multi",
+                    key="vis_basins",
+                )
+            else:
+                st.markdown(
+                    "Too many basins were found in the structure to display."
+                    )
 
         #######################################################################
         # Surface and Cap settings

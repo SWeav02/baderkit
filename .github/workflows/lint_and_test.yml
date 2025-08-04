@@ -23,6 +23,7 @@ jobs:
     # of these combinations.
     name: Python ${{ matrix.python-version }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    if: github.event.pull_request.draft == false # Condition to halt on draft PRs
     strategy:
       fail-fast: false
       matrix:

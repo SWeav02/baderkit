@@ -52,7 +52,7 @@ class Bader:
         directory: Path = Path("."),
         vacuum_tol: float = 1.0e-3,
         normalize_vacuum: bool = True,
-        bader_tol: float = 1.0e-3,
+        basin_tol: float = 1.0e-3,
     ):
         """
 
@@ -80,7 +80,7 @@ class Bader:
             units for vacuum tolerance comparison. This should be set to True if
             the data follows VASP's CHGCAR standards, but False if the data should
             be compared as is (e.g. in ELFCARs)
-        bader_tol: float, optional
+        basin_tol: float, optional
             The value below which a basin will not be considered significant. This
             is used to avoid writing out data that is likely not valuable.
             The default is 0.001.
@@ -97,7 +97,7 @@ class Bader:
         self.refinement_method = refinement_method
         self.vacuum_tol = vacuum_tol
         self.normalize_vacuum = normalize_vacuum
-        self.bader_tol = bader_tol
+        self.basin_tol = basin_tol
 
         # define hidden class variables. This allows us to cache properties and
         # still be able to recalculate them if needed, though that should only
@@ -611,7 +611,7 @@ class Bader:
             maxima_num=len(self.basin_maxima_frac),
         )
         # get significant basins
-        significant_basins = basin_charges > self.bader_tol
+        significant_basins = basin_charges > self.basin_tol
         # save charges/volumes.
         self._significant_basins = significant_basins
         self._basin_charges, self._basin_volumes = basin_charges, basin_volumes
@@ -1068,7 +1068,7 @@ class Bader:
         self._vacuum_charge = (charge_data.sum() / shape.prod()) - charges.sum()
         self._vacuum_volume = self.structure.volume - volumes.sum()
         # get significant basins
-        significant_basins = charges > self.bader_tol
+        significant_basins = charges > self.basin_tol
         self._significant_basins = significant_basins
 
     def run_atom_assignment(self, structure: Structure = None):
@@ -1181,6 +1181,7 @@ class Bader:
         ):
             # We only calculate the edges for significant basins
             if not self.significant_basins[basin]:
+                basin_radii.append(0.0)
                 continue
             basin_edge_mask = (basin_labeled_voxels == basin) & edge_mask
             edge_vox_coords = np.argwhere(basin_edge_mask)
