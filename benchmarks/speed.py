@@ -9,7 +9,7 @@ from baderkit.core import Bader, Grid
 
 grid = Grid.from_vasp("CHGCAR")
 
-test_num = 100
+test_num = 10
 results = {}
 times = {}
 for method in Bader.methods():
