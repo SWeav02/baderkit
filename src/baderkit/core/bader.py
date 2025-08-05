@@ -21,8 +21,8 @@ from baderkit.core.numba_functions import (
     get_neighbor_flux,
     get_ongrid_and_rgrads,
     get_single_weight_voxels,
+    get_sorted_neargrid_labels,
     get_steepest_pointers,
-    new_neargrid_test,
     reduce_weight_maxima,
     refine_neargrid,
 )
@@ -876,7 +876,7 @@ class Bader:
         # create a 3D array mapping to voxels 1D indices
         initial_labels = grid.all_voxel_indices
         # # get pointers
-        pointers, maxima_mask = new_neargrid_test(
+        pointers, maxima_mask = get_sorted_neargrid_labels(
             data=grid.total,
             car2lat=car2lat,
             neighbor_transforms=neighbor_transforms,
@@ -909,15 +909,6 @@ class Bader:
         )
         # assign charges/volumes, etc.
         self._set_basin_properties_from_labels()
-
-        # TODO:
-        # Combine neighboring maxima into single basins with average frac
-        # position. Do this prior to any refinements
-        # Switch from maxima mask to labelling with negatives
-        # separate methods to individual classes
-        # see if numba functions can be made more modular
-        # add vacuum to CLI and output summary
-        # update tests
 
     def _run_bader_weight(self):
         """

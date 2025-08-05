@@ -59,6 +59,7 @@ def load_plotter():
     st.session_state.html_string = plotter.get_plot_html()
     st.session_state.page_height = 400
 
+
 if any(k not in st.session_state for k in ("plotter", "bader")):
     load_plotter()
 
@@ -69,7 +70,7 @@ if st.session_state.too_many_atoms:
         handle up to ~50 atoms. If you still need visualization, basins can be written
         out with the `--print` tag and visualized using tools such as VESTA or OVITO.
         """
-        )
+    )
     st.stop()
 
 # get bader/plotter for this session so we don't have to pull from session state constantly
@@ -105,9 +106,7 @@ with st.sidebar:
                     key="vis_basins",
                 )
             else:
-                st.markdown(
-                    "Too many basins were found in the structure to display."
-                    )
+                st.markdown("Too many basins were found in the structure to display.")
 
         #######################################################################
         # Surface and Cap settings

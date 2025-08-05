@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from numba import njit, prange, types
+from numba import njit, prange  # , types
 from numpy.typing import NDArray
 
 ###############################################################################
@@ -201,166 +201,136 @@ def get_gradient_simple(
     return charge_grad_frac
 
 
-@njit(cache=True, parallel=True)
-def combine_neigh_maxima(
-    labels,
-    neighbor_transforms,
-    maxima_vox,
-    maxima_frac,
-    maxima_mask,
-):
-    nx, ny, nz = labels.shape
-    initial_labels = np.arange(len(maxima_vox), dtype=np.int64)
-    new_labels = np.zeros(len(maxima_vox), dtype=np.int64)
-
-    # check each neighbor and it its a max with a lower index, update the index
-    for max_idx in range(len(maxima_vox)):
-        i, j, k = maxima_vox[max_idx]
-        best_label = initial_labels[max_idx]
-        for shift in neighbor_transforms:
-            ii = i + shift[0]
-            jj = j + shift[1]
-            kk = k + shift[2]
-            # wrap
-            ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
-            # check if new point is also a maximum
-            if maxima_mask[ii, jj, kk] and labels[ii, jj, kk] < best_label:
-                best_label = labels[ii, jj, kk]
-        new_labels[max_idx] = best_label
-    # TODO:
-    # This may not fully reduce maxima. It may be possible for several voxels
-    # in a row to all be maxima. If we had for example four voxels in a line
-    # that are all maxima, the first two may be relabeld to the first and the
-    # other two may be relabeld to the second or some other configuration. I
-    # need to decide if these are physically reasonable situations where an
-    # average should be taken.
-
-    # Now we want to calculate the new frac coords for each group. We also want
-    # to make sure the labels go from 0, 1, 2, ... so on, while currently they
-    # may skip some (e.g. 0,2,3,5,...)
-    # get unique labels to combine and create an array for storing average frac coords
-    unique_labels = np.unique(new_labels)
-    frac_coords = np.zeros((len(unique_labels), 3), dtype=np.float64)
-    # create array to store the reduce labels
-    reduced_new_labels = np.zeros(len(new_labels), dtype=np.int64)
-    # create a counter to assist in relabeling
-    label_counter = -1
-    for label in unique_labels:
-        # increment our label counter
-        label_counter += 1
-        all_coords = []
-        for max_idx in range(len(new_labels)):
-            new_label = new_labels[max_idx]
-            # skip labels that don't match
-            if new_labels[new_label] != label:
-                continue
-            # update the label and add this coord
-            reduced_new_labels[max_idx] = label_counter
-            all_coords.append(maxima_frac[max_idx])
-
-        # if we have only one maxima, add it to the array and continue
-        if len(all_coords) == 1:
-            frac_coords[label_counter] = all_coords[0]
-            continue
-        # use the first coord as our reference and create an array to serve as
-        # our average
-        ref = all_coords[0]
-        total = np.zeros(3, dtype=np.float64)
-        # loop over each coord, shift it to be close to the original point,
-        # add it to our total, then divide to average
-        for i in range(len(all_coords)):
-            coord = all_coords[i]
-            # unwrap each coord relative to ref
-            unwrapped = coord - np.round(coord - ref)
-            total += unwrapped
-        # average and wrap
-        avg = total / len(all_coords)
-        avg %= 1.0
-        frac_coords[label_counter] = avg
-
-    return reduced_new_labels, frac_coords
-
-
+# This is an alternative method for calculating the gradient that either doesn't
+# work or isn't a valid method.
 # @njit(cache=True, parallel=True)
 # def combine_neigh_maxima(
-#         initial_labels,
-#         neighbor_transforms,
-#         maxima_vox,
-#         ):
-#     nx, ny, nz = initial_labels.shape
-#     # get the flat voxel indices for each maximum
-#     original_maxima_indices = np.zeros(len(maxima_vox),dtype=np.int64)
-#     new_maxima_indices = original_maxima_indices.copy()
+#     labels,
+#     neighbor_transforms,
+#     maxima_vox,
+#     maxima_frac,
+#     maxima_mask,
+# ):
+#     nx, ny, nz = labels.shape
+#     initial_labels = np.arange(len(maxima_vox), dtype=np.int64)
+#     new_labels = np.zeros(len(maxima_vox), dtype=np.int64)
+
+#     # check each neighbor and it its a max with a lower index, update the index
 #     for max_idx in range(len(maxima_vox)):
-#         i,j,k = maxima_vox[max_idx]
-#         original_maxima_indices[max_idx] = initial_labels[i,j,k]
-#     # check each neighbor
-#     for max_idx in prange(len(maxima_vox)):
 #         i, j, k = maxima_vox[max_idx]
-#         best_label = original_maxima_indices[max_idx]
+#         best_label = initial_labels[max_idx]
 #         for shift in neighbor_transforms:
 #             ii = i + shift[0]
 #             jj = j + shift[1]
 #             kk = k + shift[2]
 #             # wrap
 #             ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
-#             # get neighbor label
-#             neigh_label = initial_labels[ii, jj, kk]
-#             if neigh_label in original_maxima_indices:
-#                 if neigh_label < best_label:
-#                     best_label = neigh_label
-#         new_maxima_indices[max_idx] = best_label
-#     # we may end up with some maxima that are relabeled to another maximum that
-#     # was also relabeled. We want to reduce these
-#     for max_idx in range(len(new_maxima_indices)):
+#             # check if new point is also a maximum
+#             if maxima_mask[ii, jj, kk] and labels[ii, jj, kk] < best_label:
+#                 best_label = labels[ii, jj, kk]
+#         new_labels[max_idx] = best_label
+#     # TODO:
+#     # This may not fully reduce maxima. It may be possible for several voxels
+#     # in a row to all be maxima. If we had for example four voxels in a line
+#     # that are all maxima, the first two may be relabeld to the first and the
+#     # other two may be relabeld to the second or some other configuration. I
+#     # need to decide if these are physically reasonable situations where an
+#     # average should be taken.
+
+#     # Now we want to calculate the new frac coords for each group. We also want
+#     # to make sure the labels go from 0, 1, 2, ... so on, while currently they
+#     # may skip some (e.g. 0,2,3,5,...)
+#     # get unique labels to combine and create an array for storing average frac coords
+#     unique_labels = np.unique(new_labels)
+#     frac_coords = np.zeros((len(unique_labels), 3), dtype=np.float64)
+#     # create array to store the reduce labels
+#     reduced_new_labels = np.zeros(len(new_labels), dtype=np.int64)
+#     # create a counter to assist in relabeling
+#     label_counter = -1
+#     for label in unique_labels:
+#         # increment our label counter
+#         label_counter += 1
+#         all_coords = []
+#         for max_idx in range(len(new_labels)):
+#             new_label = new_labels[max_idx]
+#             # skip labels that don't match
+#             if new_labels[new_label] != label:
+#                 continue
+#             # update the label and add this coord
+#             reduced_new_labels[max_idx] = label_counter
+#             all_coords.append(maxima_frac[max_idx])
+
+#         # if we have only one maxima, add it to the array and continue
+#         if len(all_coords) == 1:
+#             frac_coords[label_counter] = all_coords[0]
+#             continue
+#         # use the first coord as our reference and create an array to serve as
+#         # our average
+#         ref = all_coords[0]
+#         total = np.zeros(3, dtype=np.float64)
+#         # loop over each coord, shift it to be close to the original point,
+#         # add it to our total, then divide to average
+#         for i in range(len(all_coords)):
+#             coord = all_coords[i]
+#             # unwrap each coord relative to ref
+#             unwrapped = coord - np.round(coord - ref)
+#             total += unwrapped
+#         # average and wrap
+#         avg = total / len(all_coords)
+#         avg %= 1.0
+#         frac_coords[label_counter] = avg
+
+#     return reduced_new_labels, frac_coords
 
 
-# @njit(cache=True)
-# def get_gradient_overdetermined(
-#     data,
-#     voxel_coord,
-#     vox_transforms,
-#     transform_dists,
-#     norm_cart_transforms,
-#     inv_lattice_matrix,
-# ):
-#     i, j, k = voxel_coord
-#     nx, ny, nz = data.shape
-#     point_value = data[i, j, k]
-#     num_transforms = len(vox_transforms)
+@njit(cache=True)
+def get_gradient_overdetermined(
+    data,
+    i,
+    j,
+    k,
+    vox_transforms,
+    transform_dists,
+    inv_norm_cart_trans,
+    inv_lattice_matrix,
+):
+    nx, ny, nz = data.shape
+    # Value at the central point
+    point_value = data[i, j, k]
+    # Number of neighbor displacements/transforms
+    num_transforms = len(vox_transforms)
 
-#     diffs = np.zeros(num_transforms)
-#     for trans_idx in range(num_transforms):
-#         x, y, z = vox_transforms[trans_idx]
-#         ui, uj, uk = wrap_point(i + x, j + y, k + z, nx, ny, nz)
-#         li, lj, lk = wrap_point(i - x, j - y, k - z, nx, ny, nz)
-#         upper_value = data[ui, uj, uk]
-#         lower_value = data[li, lj, lk]
+    # Array to hold finite‐difference estimates along each transform direction
+    diffs = np.zeros(num_transforms)
+    # Loop over each neighbor transform
+    for trans_idx in range(num_transforms):
+        # Displacement vector in voxel (grid) coordinates
+        x, y, z = vox_transforms[trans_idx]
+        # Compute “upper” neighbor index, wrapped by periodic boundaries
+        ui, uj, uk = wrap_point(i + x, j + y, k + z, nx, ny, nz)
+        # Compute “lower” neighbor index (opposite direction), also wrapped
+        li, lj, lk = wrap_point(i - x, j - y, k - z, nx, ny, nz)
+        # Values at the neighboring points
+        upper_value = data[ui, uj, uk]
+        lower_value = data[li, lj, lk]
 
-#         if lower_value <= point_value and upper_value <= point_value:
-#             diffs[trans_idx] = 0.0
-#         else:
-#             diffs[trans_idx] = (upper_value - lower_value) / (2.0 * transform_dists[trans_idx])
+        # If both neighbors are below or equal to the center, zero out this direction
+        # (prevents spurious negative slopes if data dips on both sides)
+        if lower_value <= point_value and upper_value <= point_value:
+            diffs[trans_idx] = 0.0
+        else:
+            # Standard central‐difference estimate: (f(i+Δ) – f(i–Δ)) / (2Δ)
+            diffs[trans_idx] = (upper_value - lower_value) / (
+                2.0 * transform_dists[trans_idx]
+            )
 
-#     # Solve least squares using normal equations
-#     # A is norm_cart_transforms with shape (N, 3)
-#     A = norm_cart_transforms  # shape (N, 3)
-#     AtA = np.zeros((3, 3))
-#     Atb = np.zeros(3)
-
-#     for n in range(num_transforms):
-#         for row in range(3):
-#             Atb[row] += A[n, row] * diffs[n]
-#             for col in range(3):
-#                 AtA[row, col] += A[n, row] * A[n, col]
-
-#     # Solve AtA * x = Atb
-#     # Use np.linalg.solve if AtA is invertible (should be in well-conditioned cases)
-#     cart_grad = np.linalg.solve(AtA, Atb)
-
-#     # Convert to fractional gradient
-#     frac_grad = cart_grad @ inv_lattice_matrix
-#     return frac_grad
+    # Solve the overdetermined system to get the Cartesian gradient:
+    #   norm_cart_transforms.T @ cart_grad ≈ diffs
+    # Use the pseudoinverse to handle more directions than dimensions
+    cart_grad = inv_norm_cart_trans @ diffs
+    # Convert Cartesian gradient to fractional (lattice) coordinates
+    frac_grad = cart_grad @ inv_lattice_matrix
+    return frac_grad
 
 
 ###############################################################################
@@ -1320,11 +1290,8 @@ def get_path_parent(
     return new_label
 
 
-###############
-# Test
-###############
 @njit(cache=True, parallel=True)
-def new_neargrid_test(
+def get_sorted_neargrid_labels(
     data: NDArray[np.float64],
     sorted_voxel_coords,
     car2lat: NDArray[np.float64],

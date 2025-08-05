@@ -91,20 +91,20 @@ def run(
         1.0e-03,
         "--vacuum-tolerance",
         "-vtol",
-        help="The value below which a point will be considered part of the vacuum. By default the grid points are normalized by the structure's volume to accomodate VASP's charge format. This can be turned of with the --normalize-vacuum tag."
-        ),
+        help="The value below which a point will be considered part of the vacuum. By default the grid points are normalized by the structure's volume to accomodate VASP's charge format. This can be turned of with the --normalize-vacuum tag.",
+    ),
     normalize_vacuum: bool = typer.Option(
         True,
         "--normalize-vacuum",
         "-nvac",
-        help="Whether or not to normalize charge to the structure's volume when finding vacuum points."
-        ),
+        help="Whether or not to normalize charge to the structure's volume when finding vacuum points.",
+    ),
     basin_tolerance: float = typer.Option(
         1.0e-03,
         "--basin-tolerance",
         "-btol",
-        help="The charge below which a basin won't be considered significant. Only significant basins will be written to the output file, but the charges and volumes are still assigned to the atoms."
-        ),
+        help="The charge below which a basin won't be considered significant. Only significant basins will be written to the output file, but the charges and volumes are still assigned to the atoms.",
+    ),
     format: Format = typer.Option(
         None,
         "--format",
@@ -141,7 +141,6 @@ def run(
         vacuum_tol=vacuum_tolerance,
         normalize_vacuum=normalize_vacuum,
         basin_tol=basin_tolerance,
-        
     )
     # write summary
     bader.write_results_summary()
