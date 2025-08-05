@@ -25,7 +25,7 @@ def get_edges(
         A 3D array where each entry represents the basin label of the point.
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
-    vacuum_mask: NDArray[np.bool_]
+    vacuum_mask : NDArray[np.bool_]
         A 3D array representing the location of the vacuum
 
     Returns
@@ -201,136 +201,136 @@ def get_gradient_simple(
     return charge_grad_frac
 
 
+@njit(cache=True, parallel=True)
+def combine_neigh_maxima(
+    labels,
+    neighbor_transforms,
+    maxima_vox,
+    maxima_frac,
+    maxima_mask,
+):
+    nx, ny, nz = labels.shape
+    initial_labels = np.arange(len(maxima_vox), dtype=np.int64)
+    new_labels = np.zeros(len(maxima_vox), dtype=np.int64)
+
+    # check each neighbor and it its a max with a lower index, update the index
+    for max_idx in range(len(maxima_vox)):
+        i, j, k = maxima_vox[max_idx]
+        best_label = initial_labels[max_idx]
+        for shift in neighbor_transforms:
+            ii = i + shift[0]
+            jj = j + shift[1]
+            kk = k + shift[2]
+            # wrap
+            ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
+            # check if new point is also a maximum
+            if maxima_mask[ii, jj, kk] and labels[ii, jj, kk] < best_label:
+                best_label = labels[ii, jj, kk]
+        new_labels[max_idx] = best_label
+    # TODO:
+    # This may not fully reduce maxima. It may be possible for several voxels
+    # in a row to all be maxima. If we had for example four voxels in a line
+    # that are all maxima, the first two may be relabeld to the first and the
+    # other two may be relabeld to the second or some other configuration. I
+    # need to decide if these are physically reasonable situations where an
+    # average should be taken.
+
+    # Now we want to calculate the new frac coords for each group. We also want
+    # to make sure the labels go from 0, 1, 2, ... so on, while currently they
+    # may skip some (e.g. 0,2,3,5,...)
+    # get unique labels to combine and create an array for storing average frac coords
+    unique_labels = np.unique(new_labels)
+    frac_coords = np.zeros((len(unique_labels), 3), dtype=np.float64)
+    # create array to store the reduce labels
+    reduced_new_labels = np.zeros(len(new_labels), dtype=np.int64)
+    # create a counter to assist in relabeling
+    label_counter = -1
+    for label in unique_labels:
+        # increment our label counter
+        label_counter += 1
+        all_coords = []
+        for max_idx in range(len(new_labels)):
+            new_label = new_labels[max_idx]
+            # skip labels that don't match
+            if new_labels[new_label] != label:
+                continue
+            # update the label and add this coord
+            reduced_new_labels[max_idx] = label_counter
+            all_coords.append(maxima_frac[max_idx])
+
+        # if we have only one maxima, add it to the array and continue
+        if len(all_coords) == 1:
+            frac_coords[label_counter] = all_coords[0]
+            continue
+        # use the first coord as our reference and create an array to serve as
+        # our average
+        ref = all_coords[0]
+        total = np.zeros(3, dtype=np.float64)
+        # loop over each coord, shift it to be close to the original point,
+        # add it to our total, then divide to average
+        for i in range(len(all_coords)):
+            coord = all_coords[i]
+            # unwrap each coord relative to ref
+            unwrapped = coord - np.round(coord - ref)
+            total += unwrapped
+        # average and wrap
+        avg = total / len(all_coords)
+        avg %= 1.0
+        frac_coords[label_counter] = avg
+
+    return reduced_new_labels, frac_coords
+
+
 # This is an alternative method for calculating the gradient that either doesn't
 # work or isn't a valid method.
-# @njit(cache=True, parallel=True)
-# def combine_neigh_maxima(
-#     labels,
-#     neighbor_transforms,
-#     maxima_vox,
-#     maxima_frac,
-#     maxima_mask,
+# @njit(cache=True)
+# def get_gradient_overdetermined(
+#     data,
+#     i,
+#     j,
+#     k,
+#     vox_transforms,
+#     transform_dists,
+#     inv_norm_cart_trans,
+#     inv_lattice_matrix,
 # ):
-#     nx, ny, nz = labels.shape
-#     initial_labels = np.arange(len(maxima_vox), dtype=np.int64)
-#     new_labels = np.zeros(len(maxima_vox), dtype=np.int64)
+#     nx, ny, nz = data.shape
+#     # Value at the central point
+#     point_value = data[i, j, k]
+#     # Number of neighbor displacements/transforms
+#     num_transforms = len(vox_transforms)
 
-#     # check each neighbor and it its a max with a lower index, update the index
-#     for max_idx in range(len(maxima_vox)):
-#         i, j, k = maxima_vox[max_idx]
-#         best_label = initial_labels[max_idx]
-#         for shift in neighbor_transforms:
-#             ii = i + shift[0]
-#             jj = j + shift[1]
-#             kk = k + shift[2]
-#             # wrap
-#             ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
-#             # check if new point is also a maximum
-#             if maxima_mask[ii, jj, kk] and labels[ii, jj, kk] < best_label:
-#                 best_label = labels[ii, jj, kk]
-#         new_labels[max_idx] = best_label
-#     # TODO:
-#     # This may not fully reduce maxima. It may be possible for several voxels
-#     # in a row to all be maxima. If we had for example four voxels in a line
-#     # that are all maxima, the first two may be relabeld to the first and the
-#     # other two may be relabeld to the second or some other configuration. I
-#     # need to decide if these are physically reasonable situations where an
-#     # average should be taken.
+#     # Array to hold finite‐difference estimates along each transform direction
+#     diffs = np.zeros(num_transforms)
+#     # Loop over each neighbor transform
+#     for trans_idx in range(num_transforms):
+#         # Displacement vector in voxel (grid) coordinates
+#         x, y, z = vox_transforms[trans_idx]
+#         # Compute “upper” neighbor index, wrapped by periodic boundaries
+#         ui, uj, uk = wrap_point(i + x, j + y, k + z, nx, ny, nz)
+#         # Compute “lower” neighbor index (opposite direction), also wrapped
+#         li, lj, lk = wrap_point(i - x, j - y, k - z, nx, ny, nz)
+#         # Values at the neighboring points
+#         upper_value = data[ui, uj, uk]
+#         lower_value = data[li, lj, lk]
 
-#     # Now we want to calculate the new frac coords for each group. We also want
-#     # to make sure the labels go from 0, 1, 2, ... so on, while currently they
-#     # may skip some (e.g. 0,2,3,5,...)
-#     # get unique labels to combine and create an array for storing average frac coords
-#     unique_labels = np.unique(new_labels)
-#     frac_coords = np.zeros((len(unique_labels), 3), dtype=np.float64)
-#     # create array to store the reduce labels
-#     reduced_new_labels = np.zeros(len(new_labels), dtype=np.int64)
-#     # create a counter to assist in relabeling
-#     label_counter = -1
-#     for label in unique_labels:
-#         # increment our label counter
-#         label_counter += 1
-#         all_coords = []
-#         for max_idx in range(len(new_labels)):
-#             new_label = new_labels[max_idx]
-#             # skip labels that don't match
-#             if new_labels[new_label] != label:
-#                 continue
-#             # update the label and add this coord
-#             reduced_new_labels[max_idx] = label_counter
-#             all_coords.append(maxima_frac[max_idx])
+#         # If both neighbors are below or equal to the center, zero out this direction
+#         # (prevents spurious negative slopes if data dips on both sides)
+#         if lower_value <= point_value and upper_value <= point_value:
+#             diffs[trans_idx] = 0.0
+#         else:
+#             # Standard central‐difference estimate: (f(i+Δ) – f(i–Δ)) / (2Δ)
+#             diffs[trans_idx] = (upper_value - lower_value) / (
+#                 2.0 * transform_dists[trans_idx]
+#             )
 
-#         # if we have only one maxima, add it to the array and continue
-#         if len(all_coords) == 1:
-#             frac_coords[label_counter] = all_coords[0]
-#             continue
-#         # use the first coord as our reference and create an array to serve as
-#         # our average
-#         ref = all_coords[0]
-#         total = np.zeros(3, dtype=np.float64)
-#         # loop over each coord, shift it to be close to the original point,
-#         # add it to our total, then divide to average
-#         for i in range(len(all_coords)):
-#             coord = all_coords[i]
-#             # unwrap each coord relative to ref
-#             unwrapped = coord - np.round(coord - ref)
-#             total += unwrapped
-#         # average and wrap
-#         avg = total / len(all_coords)
-#         avg %= 1.0
-#         frac_coords[label_counter] = avg
-
-#     return reduced_new_labels, frac_coords
-
-
-@njit(cache=True)
-def get_gradient_overdetermined(
-    data,
-    i,
-    j,
-    k,
-    vox_transforms,
-    transform_dists,
-    inv_norm_cart_trans,
-    inv_lattice_matrix,
-):
-    nx, ny, nz = data.shape
-    # Value at the central point
-    point_value = data[i, j, k]
-    # Number of neighbor displacements/transforms
-    num_transforms = len(vox_transforms)
-
-    # Array to hold finite‐difference estimates along each transform direction
-    diffs = np.zeros(num_transforms)
-    # Loop over each neighbor transform
-    for trans_idx in range(num_transforms):
-        # Displacement vector in voxel (grid) coordinates
-        x, y, z = vox_transforms[trans_idx]
-        # Compute “upper” neighbor index, wrapped by periodic boundaries
-        ui, uj, uk = wrap_point(i + x, j + y, k + z, nx, ny, nz)
-        # Compute “lower” neighbor index (opposite direction), also wrapped
-        li, lj, lk = wrap_point(i - x, j - y, k - z, nx, ny, nz)
-        # Values at the neighboring points
-        upper_value = data[ui, uj, uk]
-        lower_value = data[li, lj, lk]
-
-        # If both neighbors are below or equal to the center, zero out this direction
-        # (prevents spurious negative slopes if data dips on both sides)
-        if lower_value <= point_value and upper_value <= point_value:
-            diffs[trans_idx] = 0.0
-        else:
-            # Standard central‐difference estimate: (f(i+Δ) – f(i–Δ)) / (2Δ)
-            diffs[trans_idx] = (upper_value - lower_value) / (
-                2.0 * transform_dists[trans_idx]
-            )
-
-    # Solve the overdetermined system to get the Cartesian gradient:
-    #   norm_cart_transforms.T @ cart_grad ≈ diffs
-    # Use the pseudoinverse to handle more directions than dimensions
-    cart_grad = inv_norm_cart_trans @ diffs
-    # Convert Cartesian gradient to fractional (lattice) coordinates
-    frac_grad = cart_grad @ inv_lattice_matrix
-    return frac_grad
+#     # Solve the overdetermined system to get the Cartesian gradient:
+#     #   norm_cart_transforms.T @ cart_grad ≈ diffs
+#     # Use the pseudoinverse to handle more directions than dimensions
+#     cart_grad = inv_norm_cart_trans @ diffs
+#     # Convert Cartesian gradient to fractional (lattice) coordinates
+#     frac_grad = cart_grad @ inv_lattice_matrix
+#     return frac_grad
 
 
 ###############################################################################
@@ -428,7 +428,7 @@ def get_steepest_pointers(
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.int64]
         The distance to each neighboring voxel
-    vacuum_mask: NDArray[np.bool_]
+    vacuum_mask : NDArray[np.bool_]
         A 3D array representing the location of the vacuum
 
     Returns
@@ -908,7 +908,7 @@ def get_ongrid_and_rgrads(
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.float64]
         The distance to each neighboring voxel.
-    vacuum_mask: NDArray[np.bool_]
+    vacuum_mask : NDArray[np.bool_]
         A 3D array representing the location of the vacuum.
 
     Returns
@@ -1004,7 +1004,7 @@ def get_neargrid_labels(
         gradient and ongrid step at point (i,j,k)
     maxima_mask : NDArray[np.bool_]
         A 3D array that is True at maxima
-    vacuum_mask: NDArray[np.bool_]
+    vacuum_mask : NDArray[np.bool_]
         A 3D array representing the location of the vacuum.
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
@@ -1151,7 +1151,7 @@ def refine_neargrid(
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.float64]
         The distance to each neighboring voxel.
-    vacuum_mask: NDArray[np.bool_]
+    vacuum_mask : NDArray[np.bool_]
         A 3D array representing the location of the vacuum.
 
     Returns
@@ -1276,30 +1276,83 @@ def refine_neargrid(
 
 
 @njit(cache=True)
-def get_path_parent(
-    flat_labels,
-    initial_label,
-    neighbor_label,
-):
+def is_cyclical_path(
+    flat_labels: NDArray[np.int64],
+    initial_label: np.int64,
+    neighbor_label: np.int64,
+) -> np.bool_:
+    """
+    Checks if this path is circular, returning to the initial point or another
+    point on the path.
+
+    Parameters
+    ----------
+    flat_labels : NDArray[np.int64]
+        The current pointer for each grid point, raveled to 1D.
+    initial_label : np.int64
+        The initial grid point index.
+    neighbor_label : np.int64
+        The initial grid point's best neigbhor's index.
+
+    Returns
+    -------
+    np.bool_
+        Whether or not this point is on a cyclical path
+
+    """
     current_label = neighbor_label
     while True:
         new_label = flat_labels[current_label]
-        if new_label == current_label or new_label == initial_label or new_label == -1:
-            break
+        if new_label == current_label or new_label == initial_label:
+            # This path is cyclical
+            return True
+        elif new_label == -1:
+            # This path isn't cyclical
+            return False
+        # otherwise keep going
         current_label = new_label
-    return new_label
 
 
 @njit(cache=True, parallel=True)
-def get_sorted_neargrid_labels(
+def get_pseudo_neargrid_labels(
     data: NDArray[np.float64],
-    sorted_voxel_coords,
+    sorted_voxel_coords: NDArray[np.int64],
     car2lat: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
     vacuum_mask: NDArray[np.bool_],
-    initial_labels,
+    initial_labels: NDArray[np.int64],
 ):
+    """
+    Gets the pointers for the pseudo-neargrid method.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    sorted_voxel_coords : NDArray[np.int64]
+        A Nx3 array where each entry represents the voxel coordinates of the
+        point. This must be sorted from highest value to lowest.
+    car2lat : NDArray[np.float64]
+        A matrix that converts a coordinate in cartesian space to fractional
+        space.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_dists : NDArray[np.float64]
+        The distance to each neighboring voxel.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum.
+    initial_labels : NDArray[np.int64]
+        A 3D array where each entry represents the basin label of the point.
+
+    Returns
+    -------
+    flat_labels : NDArray[np.int64]
+        The pointer for each grid point to its highest neighbors index.
+    maxima_mask : NDArray[np.bool_]
+        A 3D mask that is true at maxima.
+
+    """
     nx, ny, nz = data.shape
     # create array for storing maxima
     maxima_mask = np.zeros(data.shape, dtype=np.bool_)
@@ -1391,8 +1444,12 @@ def get_sorted_neargrid_labels(
         is_vacuum = vacuum_mask[ni, nj, nk]  # if the neighbor is in the vacuum
         if neighbor_label != -1:  # if the neighbor has an assignment already
             # we need to check that this point doesn't loop to itself
-            parent_label = get_path_parent(flat_labels, initial_label, neighbor_index)
-            is_self = parent_label == initial_label
+            if is_cyclical_path(
+                flat_labels,
+                initial_label,
+                neighbor_index,
+            ):
+                is_self = True
         if is_self or is_vacuum:
             shift, neigh, is_max = get_best_neighbor(
                 data=data,

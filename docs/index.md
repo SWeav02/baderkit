@@ -18,10 +18,9 @@ Fortran code:
  - [x] Near Grid [J. Phys.: Condens. Matter 21, 084204 (2009)](https://iopscience.iop.org/article/10.1088/0953-8984/21/8/084204)
  - [x] Weighted [J. Chem. Phys. 134, 064111 (2011)](https://pubs.aip.org/aip/jcp/article-abstract/134/6/064111/645588/Accurate-and-efficient-algorithm-for-Bader-charge?redirectedFrom=fulltext)
 
-We have also added two variations to these methods:
+We have also added one variation to these methods:
 
- - [x] Reverse Near Grid
- - [x] Hybrid-Weighted
+ - [x] Pseudo Near Grid
 
 !!! Note
     Much of this package runs on [Numba](https://numba.pydata.org/) which compiles 

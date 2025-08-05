@@ -12,8 +12,9 @@ each method.
 |ongrid         |Very Fast|Low       |:material-check:          |
 |neargrid       |Medium   |High      |:material-check:          |
 |weight         |Fast     |Very High |:material-close:          |
-|hybrid-weight  |Medium   |Very High |:material-close:          |
-|reverse-neargrid|Fast    |High      |:material-check:          |
+|pseudo-neargrid|Fast     |High      |:material-check:          |
+
+---
 
 ## Descriptions
 
@@ -27,78 +28,53 @@ each method.
     
     For each point on the grid, the gradient is calculated for the 26 nearest 
     neighbors, and the neighbor with the steepest gradient is selected as the 
-    next point in the path.
-    
-    In the original code, this path is followed until a maximum is reached or
-    a previous path is hit. In the former case, all of the points in the path
+    next point in the path. This path is followed until a maximum is reached or
+    a previous point in the path is hit. In the former case, all of the points in the path
     are assigned to the maximum, and in the latter they are assigned to the same
     maximum as the colliding path.
-    
-    In our implementation, the steepest gradient is calculated once at each point
-    to establish a pointer to the best neighbor. The points are then assigned to 
-    maxima using a pointer doubling algorithm. This gives the same results as the 
-    original algorithm, while allowing us to parallelize the operation.
     
     **Reference**
     
     G. Henkelman, A. Arnaldsson, and H. Jónsson, A fast and robust algorithm for Bader decomposition of charge density, [Comput. Mater. Sci. 36, 354-360 (2006)](https://theory.cm.utexas.edu/henkelman/code/bader/download/henkelman06_354.pdf)
     
-=== "neargrid"
+=== "neargrid (default)"
 
     **Key Takeaways:** Accurate while providing only one assignment per grid point.
     Requires edge refinement.
     
-    This algorithm was developed by Henkelman et. al. several years after the
-    ongrid method to fix orientation errors. It is generally less accurate than 
-    the weight method, but is useful where it is desirable to have 
-    only one basin assignment per point on the grid.
+    This algorithm was developed by Henkelman et. al. after the ongrid method
+    to fix orientation errors. It is less accurate than the weight method, but 
+    useful where it is desirable to have only one basin assignment per point on the grid.
     
     A gradient vector is calculated at each point using the three nearest neighbors. 
-    A step is then made to the neighboring point that is closest to this gradient vector. 
-    To preserve information about the true (offgrid) gradient, a correction vector 
-    is stored that points from the new point to the original gradient vector.
+    A step is made to the neighboring point closest to this gradient vector. A
+    correction vector pointing from the new point to the original gradient is
+    calculated to preserve information about the true gradient.
     
-    At each step, the difference between the gradient and the ongrid step is added 
-    to this correction vector. If any component of the correction vector is ever closer to 
-    a neighboring point than the current one, a correction is made to keep 
-    the path closer to the true gradient.
+    At each step, this correction vector is compounded. If any component of the 
+    correction vector is ever closer to a neighboring point than the current one, 
+    a correction is made to keep the path closer to the true gradient.
     
     After all of the points are assigned, a refinement must be made to the 
     points on the edge, as the accumulation of the gradient is technically only
     correct for the first point in the path.
     
-    
-    !!! Note
-        Although the original paper and code suggests only 
-        one edge refinement is needed, we found that several are usually
-        required to reach convergence. In our test case ([a Ag structure](https://github.com/SWeav02/baderkit/tree/main/src/baderkit/tests/test_files) 
-        on a course grid, the Henkelman groups code assigns asymmetrical charges/volumes to 
-        symmetrical basins while our code reaches symmetry after several iterations.
-        
-        Due to this, we use iterative refinement by default.
-        This can be changed to the
-        original single refinement by setting `refinement_method="single"` in python or
-        `--refinement-method single` in the command-line.
-    
     **Reference**
     
     W. Tang, E. Sanville, and G. Henkelman, A grid-based Bader analysis algorithm without lattice bias, [J. Phys.: Condens. Matter 21, 084204 (2009)](https://theory.cm.utexas.edu/henkelman/code/bader/download/tang09_084204.pdf)
- 
+    
+
 === "weight"
     
     **Key Takeaways:** Extremely accurate, but not suitable for codes relying
-    on one assignment per grid point. May result in extra basins compared to other
-    methods.
+    on one assignment per grid point.
 
     This method reduces errors due to orientation by allowing each point to be
-    partially assigned to multiple basins. This method tends to provide the most accurate 
-    charges, but may not be the best for workflows that rely on each point being
-    assigned to a single basin.
-    
+    partially assigned to multiple basins, resulting in high accuracy.
     A voronoi cell is generated at each point on the grid. A "flux" is calculated 
     from this point to each neighbor sharing a voronoi facet using the difference 
     in charge density modified by the distance to the neighbor and area of the 
-    shared voronoi facet. This flux is then normalized to create "weights" which
+    shared voronoi facet. The total flux is normalized to create "weights" which
     indicate the fraction of the volume that flows to each neighbor.
     
     Moving from highest to lowest, each point is assigned to basins by assigning
@@ -106,70 +82,72 @@ each method.
     The ordering from highest to lowest ensures that the higher neighbors have
     already received their assignment.
     
-    In the original implementation, the flux is calculated as the algorithm steps
-    down the points in order. In our implementation, the flux is calculated in
-    a separate first step, allowing for parallelization at the cost of memory, 
-    then the flux is assigned as normal.
-    
-    The use of a voronoi cell instead of 26 neighbors usually results in local
-    maxima and basins that do not match other methods.
-    
     !!! Note
         The `bader.basin_labels` and `bader.atom_labels` properties 
         for this method are generated by assigning the points to the basin with 
-        the highest weight, or the first basin index in the case of a tie.
+        the highest weight, or the first basin index in the case of a tie. This
+        makes the assignments very unreliable for further analysis.
     
     **Reference**
     
     M. Yu and D. R. Trinkle, Accurate and efficient algorithm for Bader charge integration, [J. Chem. Phys. 134, 064111 (2011)](https://theory.cm.utexas.edu/henkelman/code/bader/download/yu11_064111.pdf)   
 
-=== "hybrid-weight"
+=== "pseudo-neargrid"
+    **Key Takeaways:** Faster than the original neargrid method, but may be less
+    accurate. Avoids edge refinement.
     
-    **Key Takeaways:** Same accuracy as the original weight method, but reduces
-    the number of maxima to match other methods. Not suitable for codes relying
-    on one assignment per voxel.
+    This method is our own adaptation to the original neargrid method, attempting
+    to avoid the need for edge refinement. **It is a work in progress and has not been tested thoroughly.**
+    
+    Similar to the original neargrid method, this method uses a correction
+    vector to reduce orientation errors. The gradient and correction vectors are
+    calculated upfront and used to determine the highest neighbor for each point. 
+    The correction vector at each point is added to it's highest neighbor's correction
+    vector once, without comounding to later points. Adjustments are then made where
+    required.
 
-    In the original weight method, the use of a voronoi cell restricts neighbors
-    to exclusively those that share a voronoi facet. This is different from the
-    other methods and can results in "local maxima" that have lower values than
-    one of their 26 neighbors. This also tends to result in more basins being
-    found.
+    This method avoids the need to follow a gradient path, allowing the calculations
+    to be done in parallel and removing the dependency on which points are selected
+    as the start of the path.
+    The downside is that the correction vectors are not compounded past the nearest
+    neighbors, potentially reducing accuracy.
     
-    This method performs the weight method, but merges basins that are not
-    maxima relative to all 26 nearest neighbors into basins that are.
-    
-    !!! Note
-        The `bader.basin_labels` and `bader.atom_labels` properties 
-        for this method are generated by assigning the points to the basin with 
-        the highest weight, or the first basin index in the case of a tie.
+---
 
-=== "reverse-neargrid (Default)"
+## Key Implementation Differences
+Beyond the basic differences between Python and Fortran, we have made several
+decisions in our implementation of these methods that may cause differences in 
+results compared with the original Henkelman code. Here we provide a summary of
+these differences.
 
-    **Key Takeaways:** Accurate while providing only one assignment per grid point.
-    Does not require edge refinement.
-    
-    This method is our own adaptation to the original neargrid method, inspired
-    by the weight method. It is generally as accurate as the neargrid method while
-    avoiding any edge refinements.
-    
-    The method is largely similar to the [original](/baderkit/methods/#__tabbed_1_2). However,
-    instead of following an ascending path, we first sort the grid points from
-    highest to lowest, then descend starting form the highest. At each point, the 
-    gradient is calculated, and used to construct a pointer to the steepest neighbor.
-    A correction vector, the difference between this pointer and the true gradient, 
-    is then calculated and stored.
-    
-    For each point other than at local maxima, the steepest neighbor will have
-    already gone through this process. For these points, the steepest neighbor's
-    correction vector is added to the points own correction vector. This provides
-    some memory of variation from the true gradient as the path is descended.
-    If the correction vector is ever large enough that one of its components is
-    closer to a neighbor than the current point, a correction is made. This moves
-    the current points steepest neighbor to the nearest point in the direction
-    of the correction. Whether or not a correction is made, the current point is
-    assigned the same label as its steepest neighbor.
-    
-    In this way, the gradient correction history is preserved without need for
-    iterative refinement of the edges. In our testing we found this method to be 
-    just as accurate as the original neargrid method.
-    
+- **General Basin Reduction:** In highly symmetric systems it is common for
+local maxima to be positioned exactly between two or more grid points. This
+results in adjacent grid points with the same value. The Henkelman group's code
+treats these as individual maxima/basins, while we combine them to a single maximum/basin.
+This can have major implications for codes utilizing basins rather than atoms.
+
+- **Weight Basin Reduction:** The weight method uses a voronoi cell to determin neighbors
+and reduce orientation errors. This often results in points being labeled as maxima
+when they have a lower value than one of their 26 nearest neighbors. This can
+result in many unrealistic basins and significantly slow down the calculation.
+We remove these maxima by assigning them to true maxima using the ongrid method.
+
+- **Parallelization:** Where possible, we perform calculations across the full grid
+in parallel or with vectorized operations. We also often store the results in 
+memory to avoid repeat calculations (e.g. neargrid gradients, weight fluxes). 
+This is faster, but more memory intensive.
+This may be prohibitive for large grids. If there is interest, we may add methods
+that utilize minimal memory at the cost of speed.
+
+- **Vacuum:** By default we remove grid points below a given tolerance, including
+all negative values. The Henkelman group's code instead removes points with an
+absolute value below this tolerance.
+
+- **Iterative Edge Refinement:** The original `neargrid` paper suggests
+only one edge refinement is needed. We found this is sometimes not the case, and
+several refinements may be needed to reach convergence. In our [test case](https://github.com/SWeav02/baderkit/tree/main/src/baderkit/tests/test_files)
+on a course grid, the Henkelman groups code assigns asymmetrical charges/volumes to 
+symmetrical basins while iterative refinement reaches symmetry after several iterations.
+Due to this, we use iterative refinement by default.
+This can be changed to the original single refinement by setting `refinement_method="single"` 
+in python or `--refinement-method single` in the command-line.

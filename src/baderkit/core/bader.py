@@ -20,8 +20,8 @@ from baderkit.core.numba_functions import (
     get_neargrid_labels,
     get_neighbor_flux,
     get_ongrid_and_rgrads,
+    get_pseudo_neargrid_labels,
     get_single_weight_voxels,
-    get_sorted_neargrid_labels,
     get_steepest_pointers,
     reduce_weight_maxima,
     refine_neargrid,
@@ -45,7 +45,7 @@ class Bader:
         method: Literal[
             "ongrid",
             "neargrid",
-            "sort-neargrid",
+            "pseudo-neargrid",
             "weight",
         ] = "neargrid",
         refinement_method: Literal["recursive", "single"] = "recursive",
@@ -62,7 +62,7 @@ class Bader:
             A Grid object with the charge density that will be integrated.
         reference_grid : Grid
             A grid object whose values will be used to construct the basins.
-        method : Literal["ongrid", "neargrid", "sort-neargrid", "weight"], optional
+        method : Literal["ongrid", "neargrid", "pseudo-neargrid", "weight"], optional
             The algorithm to use for generating bader basins. If None, defaults
             to weight.
         refinement_method : Literal["recursive", "single"], optional
@@ -229,6 +229,15 @@ class Bader:
 
     @property
     def significant_basins(self) -> NDArray[bool]:
+        """
+
+        Returns
+        -------
+        NDArray[bool]
+            A 1D mask with an entry for each basin that is True where basins
+            are significant.
+
+        """
         if self._significant_basins is None:
             self.run_bader()
         return self._significant_basins
@@ -399,7 +408,7 @@ class Bader:
         return [
             "ongrid",
             "neargrid",
-            "sort-neargrid",
+            "pseudo-neargrid",
             "weight",
         ]
 
@@ -488,7 +497,7 @@ class Bader:
         ------
         ValueError
             The class method variable must be 'ongrid', 'neargrid',
-            'sort-neargrid', or 'weight'.
+            'pseudo-neargrid', or 'weight'.
 
         Returns
         -------
@@ -501,8 +510,8 @@ class Bader:
         elif self.method == "neargrid":
             self._run_bader_neargrid()
 
-        elif self.method == "sort-neargrid":
-            self._run_bader_sort_neargrid()
+        elif self.method == "pseudo-neargrid":
+            self._run_bader_pseudo_neargrid()
 
         elif self.method == "weight":
             self._run_bader_weight()
@@ -510,12 +519,32 @@ class Bader:
         else:
             raise ValueError(
                 f"{self.method} is not a valid algorithm."
-                "Acceptable values are 'ongrid', 'neargrid', 'sort-neargrid', 'weight'"
+                "Acceptable values are 'ongrid', 'neargrid', 'pseudo-neargrid', 'weight'"
             )
         # TODO: Reorder labels/results
 
     @staticmethod
-    def _get_roots(pointers, valid=None):
+    def _get_roots(
+        pointers: NDArray[int], valid: NDArray[bool] | None = None
+    ) -> NDArray[int]:
+        """
+        Finds the roots of a 1D array of pointers where each index points to its
+        parent.
+
+        Parameters
+        ----------
+        pointers : NDArray[int]
+            A 1D array where each entry points to that entries parent.
+        valid : NDArray[bool] | None, optional
+            A mask the same shape as the pointers array. False values will be
+            ignored. The default is None.
+
+        Returns
+        -------
+        pointers : NDArray[int]
+            A 1D array where each entry points to that entries root parent.
+
+        """
         if valid is not None:
             while True:
                 # create a copy to avoid modifying in-place before comparison
@@ -546,47 +575,6 @@ class Bader:
 
                 pointers = new_parents
         return pointers
-
-    @staticmethod
-    def _combine_neigh_maxima(
-        grid,
-        maxima_vox,
-    ):
-        # Precompute
-        neighbor_transforms, _ = grid.voxel_26_neighbors
-        maxima_set = {tuple(v) for v in maxima_vox}
-        maxima_map = np.arange(len(maxima_vox))
-
-        # Map from coordinate tuple to index
-        coord_to_index = {tuple(coord): idx for idx, coord in enumerate(maxima_vox)}
-
-        for i, maximum in enumerate(maxima_vox):
-            if maxima_map[i] != i:
-                continue
-            # get neighs and
-            neighs = (neighbor_transforms + maximum) % grid.shape
-            for neigh in neighs:
-                neigh_tuple = tuple(neigh)
-                if neigh_tuple in maxima_set:
-                    j = coord_to_index[neigh_tuple]
-                    maxima_map[j] = i
-
-        # calculate the average frac coord for each max group
-        frac_coords = grid.get_frac_coords_from_vox(maxima_vox)
-        reduced_frac_coords = []
-        for i in np.unique(maxima_map):
-            group = frac_coords[maxima_map == i]
-            if len(group) == 1:
-                reduced_frac_coords.append(group[0])
-            else:
-                ref = group[0]
-                deltas = group - ref
-                shifts = -np.round(deltas)
-                adjusted = group + shifts
-                reduced_frac_coords.append(np.mean(adjusted, axis=0))
-        # convert to array and wrap
-        reduced_frac_coords = np.array(reduced_frac_coords) % 1
-        return maxima_map, np.array(reduced_frac_coords)
 
     def _set_basin_properties_from_labels(self) -> None:
         """
@@ -619,9 +607,27 @@ class Bader:
 
     def _reduce_label_maxima(
         self,
-        maxima_mask,
-        labels,
-    ):
+        maxima_mask: NDArray[bool],
+        labels: NDArray[int],
+    ) -> (NDArray[int], NDArray[float]):
+        """
+        Combines maxima/basins that are adjacent to one another.
+
+        Parameters
+        ----------
+        maxima_mask : NDArray[bool]
+            A 3D array that is True at the current maxima.
+        labels : NDArray[int]
+            A 3D array representing current basin assignments.
+
+        Returns
+        -------
+        labels : NDArray[int]
+            A 3D array representing the new basin assignments
+        frac_coords : NDArray[float]
+            The averaged fractional coordinates for each set of adjacent maxima.
+
+        """
         # TODO: stop reassignments if no reduction is needed
         maxima_vox = np.argwhere(maxima_mask)
         # order maxima voxels from lowest to highest labels
@@ -851,7 +857,16 @@ class Bader:
         # assign charges/volumes, etc.
         self._set_basin_properties_from_labels()
 
-    def _run_bader_sort_neargrid(self):
+    def _run_bader_pseudo_neargrid(self):
+        """
+        Assigns voxels to basins and calculates charge using the pseudo-neargrid
+        method.
+
+        Returns
+        -------
+        None.
+
+        """
         grid = self.reference_grid.copy()
         # get neigbhor transforms
         neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
@@ -876,7 +891,7 @@ class Bader:
         # create a 3D array mapping to voxels 1D indices
         initial_labels = grid.all_voxel_indices
         # # get pointers
-        pointers, maxima_mask = get_sorted_neargrid_labels(
+        pointers, maxima_mask = get_pseudo_neargrid_labels(
             data=grid.total,
             car2lat=car2lat,
             neighbor_transforms=neighbor_transforms,
@@ -1627,7 +1642,7 @@ class Bader:
         basin_frac_coords = self.basin_maxima_frac[subset]
         basin_df = pd.DataFrame(
             {
-                "atoms": self.basin_atoms[subset],
+                "atoms": np.array(self.structure.labels)[self.basin_atoms[subset]],
                 "x": basin_frac_coords[:, 0],
                 "y": basin_frac_coords[:, 1],
                 "z": basin_frac_coords[:, 2],
@@ -1685,6 +1700,10 @@ class Bader:
             for col in basin_df.columns
         }
 
+        vacuum_charge = self.vacuum_charge
+        vacuum_volume = self.vacuum_volume
+        number_of_electrons = self.atom_charges.sum() + vacuum_charge
+
         # Write to file with aligned columns using tab as separator
         for df, col_widths, name in zip(
             [formatted_atoms_df, formatted_basin_df],
@@ -1702,3 +1721,9 @@ class Bader:
                         f"{val:<{col_widths[col]}}" for col, val in row.items()
                     )
                     f.write(line + "\n")
+                # write vacuum summary to atom file
+                if name == "bader_atom_summary.tsv":
+                    f.write("\n")
+                    f.write(f"Vacuum Charge:\t\t{vacuum_charge:.6f}\n")
+                    f.write(f"Vacuum Volume:\t\t{vacuum_volume:.6f}\n")
+                    f.write(f"Total Electrons:\t{number_of_electrons:.6f}\n")

@@ -68,6 +68,9 @@ def test_webapp(tmp_path, monkeypatch):
     os.environ["CHARGE_FILE"] = "CHGCAR"
     os.environ["BADER_METHOD"] = "ongrid"
     os.environ["REFINE_METHOD"] = "single"
+    os.environ["VACUUM_TOL"] = "0.001"
+    os.environ["NORMALIZE_VAC"] = "True"
+    os.environ["BASIN_TOL"] = "0.001"
     # move into the tmp_directory
     monkeypatch.chdir(tmp_path)
     # run webapp
