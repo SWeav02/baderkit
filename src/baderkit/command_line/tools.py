@@ -55,9 +55,8 @@ def sum(
 
 class Method(str, Enum):
     weight = "weight"
-    hybrid_weight = "hybrid-weight"
     ongrid = "ongrid"
-    reverse_neargrid = "reverse-neargrid"
+    reverse_neargrid = "sort-neargrid"
     neargrid = "neargrid"
 
 
@@ -74,7 +73,7 @@ def webapp(
     ),
     reference_file: Path = typer.Option(
         None,
-        "--reference_file",
+        "--reference-file",
         "-ref",
         help="The path to the reference file",
     ),
@@ -92,6 +91,24 @@ def webapp(
         help="For methods that refine the edges (neargrid, hybrid-neargrid), whether to refine recursively or a single time.",
         case_sensitive=False,
     ),
+    vacuum_tolerance: float = typer.Option(
+        1.0e-03,
+        "--vacuum-tolerance",
+        "-vtol",
+        help="The value below which a point will be considered part of the vacuum. By default the grid points are normalized by the structure's volume to accomodate VASP's charge format. This can be turned of with the --normalize-vacuum tag.",
+    ),
+    normalize_vacuum: bool = typer.Option(
+        True,
+        "--normalize-vacuum",
+        "-nvac",
+        help="Whether or not to normalize charge to the structure's volume when finding vacuum points.",
+    ),
+    basin_tolerance: float = typer.Option(
+        1.0e-03,
+        "--basin-tolerance",
+        "-btol",
+        help="The charge below which a basin won't be considered significant. Only significant basins will be written to the output file, but the charges and volumes are still assigned to the atoms.",
+    ),
 ):
     """
     Starts the web interface
@@ -106,6 +123,9 @@ def webapp(
     os.environ["CHARGE_FILE"] = str(charge_file)
     os.environ["BADER_METHOD"] = method
     os.environ["REFINE_METHOD"] = refinement_method
+    os.environ["VACUUM_TOL"] = str(vacuum_tolerance)
+    os.environ["NORMALIZE_VAC"] = str(normalize_vacuum)
+    os.environ["BASIN_TOL"] = str(basin_tolerance)
 
     if reference_file is not None:
         os.environ["REFERENCE_FILE"] = str(reference_file)

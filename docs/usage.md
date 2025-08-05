@@ -23,7 +23,8 @@ bader = Bader.from_dynamic(
     charge_filename = "path/to/charge_file",
     reference_filename = "path/to/charge_file", # Optional
     method = "weight", # Optional
-    directory = Path("path/to/somewhere") # Optional
+    directory = Path("path/to/somewhere"), # Optional
+    vacuum_tol = 1e-03, # Optional
     )
 ```
 
