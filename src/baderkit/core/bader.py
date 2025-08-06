@@ -357,10 +357,10 @@ class Bader:
         if self._atom_edges is None:
             self._atom_edges = get_edges(
                 labeled_array=self.atom_labels,
-                vacuum_mask=np.zeros(self.basin_labels.shape, dtype=np.bool_),
+                vacuum_mask=np.zeros(self.atom_labels.shape, dtype=np.bool_),
                 neighbor_transforms=self.reference_grid.voxel_26_neighbors[0],
             )
-        return self._basin_edges
+        return self._atom_edges
 
     @property
     def vacuum_charge(self) -> float:
