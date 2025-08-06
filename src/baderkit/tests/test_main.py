@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from baderkit.core import Bader, Grid
+from baderkit.core.methods import method_names
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"
@@ -60,12 +61,7 @@ def test_writing_bader(tmp_path):
 
 @pytest.mark.parametrize(
     "method",
-    [
-        "ongrid",
-        "neargrid",
-        "pseudo-neargrid",
-        "weight",
-    ],
+    method_names,
 )
 def test_running_bader_methods(tmp_path, method):
     bader = Bader.from_dynamic(TEST_CHGCAR, method=method)

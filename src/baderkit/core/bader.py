@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import copy
+import importlib
 import logging
 from pathlib import Path
 from typing import Literal, TypeVar
@@ -11,6 +12,7 @@ from numpy.typing import NDArray
 from rich.progress import track
 
 from baderkit.core.grid import Grid
+from baderkit.core.methods import method_names
 from baderkit.core.methods.shared_numba import get_edges
 from baderkit.core.structure import Structure
 
@@ -28,12 +30,7 @@ class Bader:
         self,
         charge_grid: Grid,
         reference_grid: Grid,
-        method: Literal[
-            "ongrid",
-            "neargrid",
-            "pseudo-neargrid",
-            "weight",
-        ] = "neargrid",
+        method: str = "neargrid",
         refinement_method: Literal["recursive", "single"] = "recursive",
         directory: Path = Path("."),
         vacuum_tol: float = 1.0e-3,
@@ -48,9 +45,9 @@ class Bader:
             A Grid object with the charge density that will be integrated.
         reference_grid : Grid
             A grid object whose values will be used to construct the basins.
-        method : Literal["ongrid", "neargrid", "pseudo-neargrid", "weight"], optional
+        method : str, optional
             The algorithm to use for generating bader basins. If None, defaults
-            to weight.
+            to neargrid.
         refinement_method : Literal["recursive", "single"], optional
             For methods that refine the basin edges (neargrid), whether to
             refine the edges until none change or to refine a single time. If
@@ -76,6 +73,12 @@ class Bader:
         None.
 
         """
+        # ensure th method is valid
+        if method not in method_names:
+            raise ValueError(
+                f"Invalid method '{method}'. Available options are: {method_names}"
+            )
+
         self.charge_grid = charge_grid
         self.reference_grid = reference_grid
         self.method = method
@@ -431,12 +434,7 @@ class Bader:
 
         """
 
-        return [
-            "ongrid",
-            "neargrid",
-            "pseudo-neargrid",
-            "weight",
-        ]
+        return method_names
 
     @property
     def results_summary(self) -> dict:
@@ -469,38 +467,21 @@ class Bader:
 
     def run_bader(self) -> None:
         """
-        Runs the entire bader process and saves results to class variables.
-
-        Raises
-        ------
-        ValueError
-            The class method variable must be 'ongrid', 'neargrid',
-            'pseudo-neargrid', or 'weight'.
-
-        Returns
-        -------
-        None.
-
+        Runs the entire Bader process and saves results to class variables.
         """
-        # import the appropriate method
-        if self.method == "ongrid":
-            from baderkit.core.methods import OngridMethod as Method
+        # Normalize the method name to a module and class name
+        module_name = self.method.replace(
+            "-", "_"
+        )  # 'pseudo-neargrid' -> 'pseudo_neargrid'
+        class_name = (
+            "".join(part.capitalize() for part in module_name.split("_")) + "Method"
+        )
 
-        elif self.method == "neargrid":
-            from baderkit.core.methods import NeargridMethod as Method
+        # import method
+        mod = importlib.import_module(f"baderkit.core.methods.{module_name}")
+        Method = getattr(mod, class_name)
 
-        elif self.method == "pseudo-neargrid":
-            from baderkit.core.methods import PseudoNeargridMethod as Method
-
-        elif self.method == "weight":
-            from baderkit.core.methods import WeightMethod as Method
-
-        else:
-            raise ValueError(
-                f"{self.method} is not a valid algorithm."
-                "Acceptable values are 'ongrid', 'neargrid', 'pseudo-neargrid', 'weight'"
-            )
-        # create the method
+        # Instantiate and run the selected method
         method = Method(
             charge_grid=self.charge_grid,
             reference_grid=self.reference_grid,
@@ -509,11 +490,10 @@ class Bader:
             normalize_vacuum=self.normalize_vacuum,
             basin_tol=self.basin_tol,
         )
-        # run the method and store class variables
         results = method.run()
+
         for key, value in results.items():
-            attribute = f"_{key}"
-            setattr(self, attribute, value)
+            setattr(self, f"_{key}", value)
 
     def run_atom_assignment(self, structure: Structure = None):
         """

@@ -20,6 +20,16 @@ class MethodBase:
     """
     A base class that all Bader methods inherit from. Designed to handle the
     basin, charge, and volume assignments which are unique to each method.
+
+    Methods are dynamically imported by the Bader class so that we don't need to
+    list out the methods in multiple places.
+    The method must follow a specific naming convention and be placed in a module
+    with a specific name.
+
+    For example, a method with the name example-name
+        class name:  ExampleNameMethod
+        module name: example_name
+
     """
 
     def __init__(
