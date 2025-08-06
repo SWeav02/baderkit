@@ -424,7 +424,7 @@ class Bader:
         return self._num_vacuum
 
     @staticmethod
-    def methods() -> list[str]:
+    def all_methods() -> list[str]:
         """
 
         Returns
@@ -468,6 +468,11 @@ class Bader:
     def run_bader(self) -> None:
         """
         Runs the entire Bader process and saves results to class variables.
+
+        Returns
+        -------
+        None
+
         """
         # Normalize the method name to a module and class name
         module_name = self.method.replace(
@@ -498,6 +503,17 @@ class Bader:
     def run_atom_assignment(self, structure: Structure = None):
         """
         Assigns bader basins to the atoms in the provided structure.
+
+        Parameters
+        ----------
+        structure : Structure, optional
+            If provided, basins will be assigned to the atoms in this structure.
+            The default is None.
+
+        Returns
+        -------
+        None.
+
         """
         # Default structure
         structure = structure or self.structure

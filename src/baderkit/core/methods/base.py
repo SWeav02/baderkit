@@ -156,17 +156,43 @@ class MethodBase:
 
     @property
     def maxima_mask(self) -> NDArray[bool]:
+        """
+
+        Returns
+        -------
+        NDArray[bool]
+            A mask representing the voxels that are local maxima.
+
+        """
         assert self._maxima_mask is not None, "Maxima mask must be set by run method"
         return self._maxima_mask
 
     @property
     def maxima_vox(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            An Nx3 array representing the voxel indices of each local maximum.
+
+        """
         if self._maxima_vox is None:
             self._maxima_vox = np.argwhere(self.maxima_mask)
         return self._maxima_vox
 
     @property
     def maxima_frac(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            An Nx3 array representing the fractional coordinates of each local
+            maximum. These are set after maxima/basin reduction so there may be
+            fewer than the number of maxima_vox.
+
+        """
         assert self._maxima_frac is not None, "Maxima frac must be set by run method"
         return self._maxima_frac
 
@@ -175,6 +201,16 @@ class MethodBase:
     ###########################################################################
 
     def get_extras(self):
+        """
+
+        Returns
+        -------
+        dict
+            Collects the important class variables.
+
+        """
+        # TODO: This has to be called in every method currently. This should be
+        # moved to a method in this abstract class to avoid repeat code/forgetting
         return {
             "vacuum_mask": self.vacuum_mask,
             "num_vacuum": self.num_vacuum,
@@ -186,6 +222,23 @@ class MethodBase:
         self,
         labels: NDArray[int],
     ):
+        """
+        Calculates the charges and volumes for the basins and vacuum from the
+        provided label array. This is used by most methods except for `weight`.
+
+        Parameters
+        ----------
+        labels : NDArray[int]
+            A 3D array of the same shape as the reference grid with entries
+            representing the basin the voxel belongs to.
+
+        Returns
+        -------
+        dict
+            A dictionary with information on charges, volumes, and siginificant
+            basins.
+
+        """
         logging.info("Calculating basin charges and volumes")
         grid = self.charge_grid
         # NOTE: I used to use numpy directly, but for systems with many basins
@@ -320,7 +373,7 @@ class MethodBase:
         Returns
         -------
         Self
-            A deep copy of this Bader object.
+            A deep copy of this Method object.
 
         """
         return copy.deepcopy(self)
