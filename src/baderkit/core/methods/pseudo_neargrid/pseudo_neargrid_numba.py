@@ -10,44 +10,6 @@ from baderkit.core.methods.shared_numba import (
 )
 
 
-@njit(cache=True)
-def is_cyclical_path(
-    flat_labels: NDArray[np.int64],
-    initial_label: np.int64,
-    neighbor_label: np.int64,
-) -> np.bool_:
-    """
-    Checks if this path is circular, returning to the initial point or another
-    point on the path.
-
-    Parameters
-    ----------
-    flat_labels : NDArray[np.int64]
-        The current pointer for each grid point, raveled to 1D.
-    initial_label : np.int64
-        The initial grid point index.
-    neighbor_label : np.int64
-        The initial grid point's best neigbhor's index.
-
-    Returns
-    -------
-    np.bool_
-        Whether or not this point is on a cyclical path
-
-    """
-    current_label = neighbor_label
-    while True:
-        new_label = flat_labels[current_label]
-        if new_label == current_label or new_label == initial_label:
-            # This path is cyclical
-            return True
-        elif new_label == -1:
-            # This path isn't cyclical
-            return False
-        # otherwise keep going
-        current_label = new_label
-
-
 @njit(cache=True, parallel=True)
 def get_pseudo_neargrid_labels(
     data: NDArray[np.float64],
@@ -168,24 +130,18 @@ def get_pseudo_neargrid_labels(
         ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
         # At this point, several things could go wrong.
         # 1. We hit a vacuum point
-        # 2. We connect to a path that loops back to the current point
-        # Either of these will result in small unrealistic basins. We correct by
-        # making an ongrid step
+        # 2. We point back to this point
+        # 3. We point to a point that is lower than this one
+        # These will result in unrealistic basins, so we correct with an ongrid
+        # step
         neighbor_index = initial_labels[ni, nj, nk]
-        neighbor_label = flat_labels[neighbor_index]  # current neigh assignment
+        # neighbor_label = flat_labels[neighbor_index]  # current neigh assignment
         is_self = (
             neighbor_index == initial_label
         )  # if the neighbor is the current point
         is_vacuum = vacuum_mask[ni, nj, nk]  # if the neighbor is in the vacuum
-        if neighbor_label != -1:  # if the neighbor has an assignment already
-            # we need to check that this point doesn't loop to itself
-            if is_cyclical_path(
-                flat_labels,
-                initial_label,
-                neighbor_index,
-            ):
-                is_self = True
-        if is_self or is_vacuum:
+        is_lower = data[i, j, k] >= data[ni, nj, nk]
+        if is_self or is_vacuum or is_lower:
             shift, neigh, is_max = get_best_neighbor(
                 data=data,
                 i=i,

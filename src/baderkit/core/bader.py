@@ -104,15 +104,15 @@ class Bader:
         # self._atom_charges = None
         # self._atom_volumes = None
         # self._atom_surface_distances = None
-        
+
     ###########################################################################
     # Set Properties
     ###########################################################################
     def _reset_properties(
-            self, 
-            include_properties: list[str] = None,
-            exclude_properties: list[str] = [],
-            ):
+        self,
+        include_properties: list[str] = None,
+        exclude_properties: list[str] = [],
+    ):
         # if include properties is not provided, we wnat to reset everything
         if include_properties is None:
             include_properties = [
@@ -139,69 +139,71 @@ class Bader:
                 "atom_charges",
                 "atom_volumes",
                 "atom_surface_distances",
-                ]
+            ]
         # get our final list of properties
-        reset_properties = [i for i in include_properties if i not in exclude_properties]
+        reset_properties = [
+            i for i in include_properties if i not in exclude_properties
+        ]
         # set corresponding hidden variable to None
         for prop in reset_properties:
             setattr(self, f"_{prop}", None)
-    
+
     @property
     def charge_grid(self) -> Grid:
         return self._charge_grid
-    
+
     @charge_grid.setter
     def charge_grid(self, value: Grid):
         self._charge_grid = value
         self._reset_properties()
-    
+
     @property
     def reference_grid(self) -> Grid:
         return self._reference_grid
-    
+
     @reference_grid.setter
     def reference_grid(self, value: Grid):
         self._reference_grid = value
         self._reset_properties()
-    
+
     @property
     def method(self) -> str:
         return self._method
-    
+
     @method.setter
     def method(self, value: str):
         self._method = value
         self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
-    
+
     @property
     def vacuum_tol(self) -> float:
         return self._vacuum_tol
-    
+
     @vacuum_tol.setter
     def vacuum_tol(self, value: float):
         self._vacuum_tol = value
         self._reset_properties()
         # TODO: only reset everything if the vacuum actually changes
-    
+
     @property
     def normalize_vacuum(self) -> bool:
         return self._normalize_vacuum
-    
+
     @normalize_vacuum.setter
     def normalize_vacuum(self, value: bool) -> bool:
         self._normalize_vacuum = value
         self._reset_properties()
         # TODO: only reset everything if the vacuum actually changes
-    
+
     @property
     def basin_tol(self) -> float:
         return self._basin_tol
-    
+
     @basin_tol.setter
     def basin_tol(self, value: float):
         self._basin_tol = value
         self._reset_properties(include_properties=["significant_basins"])
-    
+
     ###########################################################################
     # Calculated Properties
     ###########################################################################
