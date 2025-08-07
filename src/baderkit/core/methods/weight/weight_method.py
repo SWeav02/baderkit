@@ -166,7 +166,6 @@ class WeightMethod(MethodBase):
             "vacuum_charge": charge_data[self.vacuum_mask].sum() / shape.prod(),
             "vacuum_volume": (self.num_vacuum / reference_grid.voxel_num)
             * reference_grid.structure.volume,
-            "significant_basins": charges > self.basin_tol,
         }
         results.update(self.get_extras())
         return results

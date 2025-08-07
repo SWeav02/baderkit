@@ -36,11 +36,8 @@ class MethodBase:
         self,
         charge_grid: Grid,
         reference_grid: Grid,
-        directory: Path = Path("."),
-        refinement_method: Literal["recursive", "single"] = "recursive",
         vacuum_tol: float = 1.0e-3,
         normalize_vacuum: bool = True,
-        basin_tol: float = 1.0e-3,
     ):
         """
 
@@ -50,13 +47,6 @@ class MethodBase:
             A Grid object with the charge density that will be integrated.
         reference_grid : Grid
             A grid object whose values will be used to construct the basins.
-        directory : Path, optional
-            The directory that files will be written to by default.
-            The default is Path("."), or the current active directory.
-        refinement_method : Literal["recursive", "single"], optional
-            For methods that refine the basin edges (neargrid), whether to
-            refine the edges until none change or to refine a single time. If
-            None, defaults to recursive.
         vacuum_tol: float, optional
             The value below which a point will be considered part of the vacuum.
             The default is 0.001.
@@ -65,10 +55,6 @@ class MethodBase:
             units for vacuum tolerance comparison. This should be set to True if
             the data follows VASP's CHGCAR standards, but False if the data should
             be compared as is (e.g. in ELFCARs)
-        basin_tol: float, optional
-            The value below which a basin will not be considered significant. This
-            is used to avoid writing out data that is likely not valuable.
-            The default is 0.001.
 
         Returns
         -------
@@ -78,11 +64,8 @@ class MethodBase:
         # define variables needed by all methods
         self.charge_grid = charge_grid
         self.reference_grid = reference_grid
-        self.directory = directory
-        self.refinement_method = refinement_method
         self.vacuum_tol = vacuum_tol
         self.normalize_vacuum = normalize_vacuum
-        self.basin_tol = basin_tol
 
         # These variables are also often needed but are calculated during the run
         self._vacuum_mask = None
@@ -249,13 +232,11 @@ class MethodBase:
             cell_volume=grid.structure.volume,
             maxima_num=len(self.maxima_frac),
         )
-        significant_basins = charges > self.basin_tol
         return {
             "basin_charges": charges,
             "basin_volumes": volumes,
             "vacuum_charge": vacuum_charge,
             "vacuum_volume": vacuum_volume,
-            "significant_basins": significant_basins,
         }
 
     @staticmethod

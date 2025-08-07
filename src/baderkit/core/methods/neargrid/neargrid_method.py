@@ -115,8 +115,9 @@ class NeargridMethod(MethodBase):
 
             print(f"{reassignments} values changed")
             # if our refinement method is single, we cancel the loop here
-            if self.refinement_method == "single":
-                break
+            # NOTE: We no longer allow single refinement for simplicity.
+            # if self.refinement_method == "single":
+            #     break
         # Our labels currently span 1 and up, with 1 corresponding to vacuum. We
         # subtract by 2 to return to -1 as vacuum and labels spanning 0 up
         labels -= 2

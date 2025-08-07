@@ -31,8 +31,6 @@ class Bader:
         charge_grid: Grid,
         reference_grid: Grid,
         method: str = "neargrid",
-        refinement_method: Literal["recursive", "single"] = "recursive",
-        directory: Path = Path("."),
         vacuum_tol: float = 1.0e-3,
         normalize_vacuum: bool = True,
         basin_tol: float = 1.0e-3,
@@ -48,13 +46,6 @@ class Bader:
         method : str, optional
             The algorithm to use for generating bader basins. If None, defaults
             to neargrid.
-        refinement_method : Literal["recursive", "single"], optional
-            For methods that refine the basin edges (neargrid), whether to
-            refine the edges until none change or to refine a single time. If
-            None, defaults to recursive.
-        directory : Path, optional
-            The directory that files will be written to by default.
-            The default is Path("."), or the current active directory.
         vacuum_tol: float, optional
             The value below which a point will be considered part of the vacuum.
             The default is 0.001.
@@ -79,41 +70,141 @@ class Bader:
                 f"Invalid method '{method}'. Available options are: {method_names}"
             )
 
-        self.charge_grid = charge_grid
-        self.reference_grid = reference_grid
-        self.method = method
-        self.directory = directory
-        self.refinement_method = refinement_method
-        self.vacuum_tol = vacuum_tol
-        self.normalize_vacuum = normalize_vacuum
-        self.basin_tol = basin_tol
+        self._charge_grid = charge_grid
+        self._reference_grid = reference_grid
+        self._method = method
+        self._vacuum_tol = vacuum_tol
+        self._normalize_vacuum = normalize_vacuum
+        self._basin_tol = basin_tol
 
-        # define hidden class variables. This allows us to cache properties and
+        # set hidden class variables. This allows us to cache properties and
         # still be able to recalculate them if needed, though that should only
         # be done by advanced users
+        self._reset_properties()
         # Assigned by run_bader
-        self._basin_labels = None
-        self._basin_maxima_frac = None
-        self._basin_maxima_vox = None
-        self._basin_charges = None
-        self._basin_volumes = None
-        self._vacuum_charge = None
-        self._vacuum_volume = None
-        self._significant_basins = None
-        self._vacuum_mask = None
-        self._num_vacuum = None
-        # Assigned by calling the property
-        self._basin_surface_distances = None
-        self._basin_edges = None
-        self._atom_edges = None
-        self._structure = None
-        # Assigned by run_atom_assignment
-        self._basin_atoms = None
-        self._basin_atom_dists = None
-        self._atom_labels = None
-        self._atom_charges = None
-        self._atom_volumes = None
-        self._atom_surface_distances = None
+        # self._basin_labels = None
+        # self._basin_maxima_frac = None
+        # self._basin_maxima_vox = None
+        # self._basin_charges = None
+        # self._basin_volumes = None
+        # self._vacuum_charge = None
+        # self._vacuum_volume = None
+        # self._significant_basins = None
+        # self._vacuum_mask = None
+        # self._num_vacuum = None
+        # # Assigned by calling the property
+        # self._basin_surface_distances = None
+        # self._basin_edges = None
+        # self._atom_edges = None
+        # self._structure = None
+        # # Assigned by run_atom_assignment
+        # self._basin_atoms = None
+        # self._basin_atom_dists = None
+        # self._atom_labels = None
+        # self._atom_charges = None
+        # self._atom_volumes = None
+        # self._atom_surface_distances = None
+        
+    ###########################################################################
+    # Set Properties
+    ###########################################################################
+    def _reset_properties(
+            self, 
+            include_properties: list[str] = None,
+            exclude_properties: list[str] = [],
+            ):
+        # if include properties is not provided, we wnat to reset everything
+        if include_properties is None:
+            include_properties = [
+                # assigned by run_bader
+                "basin_labels",
+                "basin_maxima_frac",
+                "basin_maxima_vox",
+                "basin_charges",
+                "basin_volumes",
+                "vacuum_charge",
+                "vacuum_volume",
+                "significant_basins",
+                "vacuum_mask",
+                "num_vacuum",
+                # Assigned by calling the property
+                "basin_surface_distances",
+                "basin_edges",
+                "atom_edges",
+                "structure",
+                # Assigned by run_atom_assignment
+                "basin_atoms",
+                "basin_atom_dists",
+                "atom_labels",
+                "atom_charges",
+                "atom_volumes",
+                "atom_surface_distances",
+                ]
+        # get our final list of properties
+        reset_properties = [i for i in include_properties if i not in exclude_properties]
+        # set corresponding hidden variable to None
+        for prop in reset_properties:
+            setattr(self, f"_{prop}", None)
+    
+    @property
+    def charge_grid(self) -> Grid:
+        return self._charge_grid
+    
+    @charge_grid.setter
+    def charge_grid(self, value: Grid):
+        self._charge_grid = value
+        self._reset_properties()
+    
+    @property
+    def reference_grid(self) -> Grid:
+        return self._reference_grid
+    
+    @reference_grid.setter
+    def reference_grid(self, value: Grid):
+        self._reference_grid = value
+        self._reset_properties()
+    
+    @property
+    def method(self) -> str:
+        return self._method
+    
+    @method.setter
+    def method(self, value: str):
+        self._method = value
+        self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
+    
+    @property
+    def vacuum_tol(self) -> float:
+        return self._vacuum_tol
+    
+    @vacuum_tol.setter
+    def vacuum_tol(self, value: float):
+        self._vacuum_tol = value
+        self._reset_properties()
+        # TODO: only reset everything if the vacuum actually changes
+    
+    @property
+    def normalize_vacuum(self) -> bool:
+        return self._normalize_vacuum
+    
+    @normalize_vacuum.setter
+    def normalize_vacuum(self, value: bool) -> bool:
+        self._normalize_vacuum = value
+        self._reset_properties()
+        # TODO: only reset everything if the vacuum actually changes
+    
+    @property
+    def basin_tol(self) -> float:
+        return self._basin_tol
+    
+    @basin_tol.setter
+    def basin_tol(self, value: float):
+        self._basin_tol = value
+        self._reset_properties(include_properties=["significant_basins"])
+    
+    ###########################################################################
+    # Calculated Properties
+    ###########################################################################
 
     @property
     def basin_labels(self) -> NDArray[float]:
@@ -245,7 +336,7 @@ class Bader:
 
         """
         if self._significant_basins is None:
-            self.run_bader()
+            self._significant_basins = self.basin_charges < self.basin_tol
         return self._significant_basins
 
     @property
@@ -490,10 +581,8 @@ class Bader:
         method = Method(
             charge_grid=self.charge_grid,
             reference_grid=self.reference_grid,
-            directory=self.directory,
             vacuum_tol=self.vacuum_tol,
             normalize_vacuum=self.normalize_vacuum,
-            basin_tol=self.basin_tol,
         )
         results = method.run()
 
@@ -778,9 +867,9 @@ class Bader:
         ----------
         basin_indices : NDArray
             The list of basin indices to write
-        directory: str | Path
-            The directory to write the files in. If None, the directory currently
-            assigned to the Bader object will work.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
         file_prefix : str, optional
             The string to append to each file name. The default is "CHGCAR".
         data_type : Literal["charge", "reference"], optional
@@ -798,7 +887,7 @@ class Bader:
 
         data_array = grid.total
         if directory is None:
-            directory = self.directory
+            directory = Path(".")
         for basin in basin_indices:
             mask = self.basin_labels == basin
             data_array_copy = data_array.copy()
@@ -821,9 +910,9 @@ class Bader:
 
         Parameters
         ----------
-        directory: str | Path
-            The directory to write the files in. If None, the directory currently
-            assigned to the Bader object will work.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
         file_prefix : str, optional
             The string to append to each file name. The default is "CHGCAR".
         data_type : Literal["charge", "reference"], optional
@@ -859,9 +948,9 @@ class Bader:
         ----------
         basin_indices : NDArray
             The list of basin indices to sum and write
-        directory: str | Path
-            The directory to write the files in. If None, the directory currently
-            assigned to the Bader object will work.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
         file_prefix : str, optional
             The string to append to each file name. The default is "CHGCAR".
         data_type : Literal["charge", "reference"], optional
@@ -879,7 +968,7 @@ class Bader:
 
         data_array = grid.total
         if directory is None:
-            directory = self.directory
+            directory = Path(".")
         mask = np.isin(self.basin_labels, basin_indices)
         data_array_copy = data_array.copy()
         data_array_copy[~mask] = 0
@@ -904,9 +993,9 @@ class Bader:
         ----------
         atom_indices : NDArray
             The list of atom indices to write
-        directory: str | Path
-            The directory to write the files in. If None, the directory currently
-            assigned to the Bader object will work.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
         file_prefix : str, optional
             The string to append to each file name. The default is "CHGCAR".
         data_type : Literal["charge", "reference"], optional
@@ -924,7 +1013,7 @@ class Bader:
 
         data_array = grid.total
         if directory is None:
-            directory = self.directory
+            directory = Path(".")
         for atom_index in atom_indices:
             mask = self.atom_labels == atom_index
             data_array_copy = data_array.copy()
@@ -947,9 +1036,9 @@ class Bader:
 
         Parameters
         ----------
-        directory: str | Path
-            The directory to write the files in. If None, the directory currently
-            assigned to the Bader object will work.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
         file_prefix : str, optional
             The string to append to each file name. The default is "CHGCAR".
         data_type : Literal["charge", "reference"], optional
@@ -985,9 +1074,9 @@ class Bader:
         ----------
         atom_indices : NDArray
             The list of atom indices to sum and write
-        directory: str | Path
-            The directory to write the files in. If None, the directory currently
-            assigned to the Bader object will work.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
         file_prefix : str, optional
             The string to append to each file name. The default is "CHGCAR".
         data_type : Literal["charge", "reference"], optional
@@ -1005,7 +1094,7 @@ class Bader:
 
         data_array = grid.total
         if directory is None:
-            directory = self.directory
+            directory = Path(".")
         mask = np.isin(self.atom_labels, atom_indices)
         data_array_copy = data_array.copy()
         data_array_copy[~mask] = 0
@@ -1072,9 +1161,9 @@ class Bader:
 
         Parameters
         ----------
-        directory : Path | str | None, optional
-            The directory to write to. If None, the current directory assigned
-            to the bader class will be used.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
 
         Returns
         -------
@@ -1082,7 +1171,7 @@ class Bader:
 
         """
         if directory is None:
-            directory = self.directory
+            directory = Path(".")
 
         # Get atom results summary
         atoms_df = self.get_atom_results_dataframe()
