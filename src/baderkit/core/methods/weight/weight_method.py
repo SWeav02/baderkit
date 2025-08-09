@@ -6,11 +6,10 @@ import numpy as np
 
 from baderkit.core.methods.base import MethodBase
 
-from .weight_numba import (
+from .weight_numba import (  # reduce_weight_maxima,
     get_multi_weight_voxels,
     get_neighbor_flux,
     get_single_weight_voxels,
-    reduce_weight_maxima,
 )
 
 # TODO: Use list of list storage for initial flux calcs. For points that would
@@ -61,6 +60,7 @@ class WeightMethod(MethodBase):
         ]
         # Get the flux of volume from each voxel to its neighbor.
         logging.info("Calculating voxel flux contributions")
+        all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
         flux_array, neigh_indices_array, weight_maxima_mask = get_neighbor_flux(
             data=data,
             sorted_voxel_coords=sorted_voxel_coords.copy(),
@@ -68,9 +68,20 @@ class WeightMethod(MethodBase):
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             facet_areas=facet_areas,
+            all_neighbor_transforms=all_neighbor_transforms,
+            all_neighbor_dists=all_neighbor_dists,
         )
+        # NOTE: The maxima found through this method are now the same as those
+        # in other methods, without the need to reduce them in an additional step
         # get the voxel coords of the maxima found throught the weight method
         weight_maxima_vox = sorted_voxel_coords[weight_maxima_mask]
+        # create the maxima mask
+        self._maxima_mask = np.zeros(data.shape, dtype=np.bool_)
+        self._maxima_mask[
+            weight_maxima_vox[:, 0],
+            weight_maxima_vox[:, 1],
+            weight_maxima_vox[:, 2],
+        ] = True
         # Calculate the weights for each voxel to each basin
         logging.info("Calculating weights, charges, and volumes")
         # get charge and volume info
@@ -81,47 +92,11 @@ class WeightMethod(MethodBase):
         sorted_flat_charge_data = sorted_flat_charge_data[: len(sorted_voxel_coords)]
         voxel_volume = reference_grid.voxel_volume
 
-        # There are a few ways that we might end up with extra, non-physical
-        # maxima. The default weight method doesn't use all 26 neighbors when
-        # defining maxima, which can result in some strange assignments. Additionally,
-        # a maximum might be between two symmetrical points, resulting in both
-        # points being labeled as maxima. I believe it is more reasonable to
-        # reduce these maxima, and this also saves time/memory for the rest of
-        # the process.
-
-        # first we reduce to maxima that are higher than the 26 nearest neighbors
         logging.info("Reducing maxima")
-        all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
-        maxima_connections = reduce_weight_maxima(
-            weight_maxima_vox,
-            data,
-            all_neighbor_transforms,
-            all_neighbor_dists,
-        )
-        # NOTE: The maxima are already sorted from highest to lowest
-        # We now have a 1D array pointing each maximum to the index of the
-        # actual maximum it connects to. We want to reset these so that they
-        # run from 0 upward with -1 being unlabeled
-        unique_maxima, labels_flat = np.unique(maxima_connections, return_inverse=True)
         # create a labels array and label maxima
         labels = np.full(data.shape, -1, dtype=np.int64)
-        labels[
-            weight_maxima_vox[:, 0],
-            weight_maxima_vox[:, 1],
-            weight_maxima_vox[:, 2],
-        ] = labels_flat
-        # Get the true maxima vox coords
-        maxima_vox_coords = weight_maxima_vox[
-            maxima_connections == np.arange(len(maxima_connections))
-        ]
-        # Now reduce maxima that are adjacent.
-        self._maxima_mask = np.zeros(data.shape, dtype=np.bool_)
-        self._maxima_mask[
-            maxima_vox_coords[:, 0],
-            maxima_vox_coords[:, 1],
-            maxima_vox_coords[:, 2],
-        ] = True
-        # reduce labels and save frac coords.
+        labels[self._maxima_mask] = np.arange(len(weight_maxima_vox))
+        # reduce maxima/labels and save frac coords.
         # NOTE: reduction algorithm returns with unlabeled values as -1
         labels, self._maxima_frac = self.reduce_label_maxima(labels)
         maxima_num = len(self.maxima_frac)

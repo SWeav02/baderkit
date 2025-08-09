@@ -41,19 +41,17 @@ def get_gradient_pointers(
                 ti, tj, tk = 0.0, 0.0, 0.0
                 # loop over neighbors
                 for x in range(neigh_num):
-                    shift = neigh_transforms[x]
-                    ii = i + shift[0]
-                    jj = j + shift[1]
-                    kk = k + shift[2]
+                    si, sj, sk = neigh_transforms[x]
                     # wrap
-                    ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
+                    ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
                     # get the neighbors value
                     neigh_value = data[ii, jj, kk]
+                    # if the value is lower than the current point, ignore it
+                    if neigh_value <= base_value:
+                        continue
+
                     # calculate the volume flowing to this voxel
                     diff = neigh_value - base_value
-                    # make sure diff is above a cutoff for rounding errors
-                    if diff < 1e-12:
-                        continue
                     # get the weighted cartesian vector for this transform
                     ci, cj, ck = weighted_cart[x] * diff
                     # add to the total

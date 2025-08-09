@@ -30,8 +30,6 @@ class GradientWeightMethod(MethodBase):
         all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
         # Now we get pointers
         logging.info("Calculating steepest neighbors")
-        # TODO: Only use half the voronoi transforms and use more realistic grad
-        # across cell.
         pointers_3d, self._maxima_mask = get_gradient_pointers(
             initial_labels=reference_grid.all_voxel_indices,
             data=reference_grid.total,

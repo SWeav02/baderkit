@@ -375,7 +375,6 @@ def get_best_neighbor(
     bti = 0
     btj = 0
     btk = 0
-    # best_transform = np.zeros(3, dtype=np.int64)
     # create initial best neighbor
     bni = i
     bnj = j
@@ -394,8 +393,6 @@ def get_best_neighbor(
             best = diff
             bti, btj, btk = (si, sj, sk)
             bni, bnj, bnk = (ii, jj, kk)
-            # best_transform = (si, sj, sk)
-            # best_neigh[:] = (ii, jj, kk)
     # We've finished our loop. return the best shift, neighbor, and whether this
     # is a max
     # NOTE: Can't do is_max = best == 0.0 for older numba

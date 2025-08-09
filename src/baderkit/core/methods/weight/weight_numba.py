@@ -15,6 +15,8 @@ def get_neighbor_flux(
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
     facet_areas: NDArray[np.float64],
+    all_neighbor_transforms,
+    all_neighbor_dists,
 ):
     """
     For a 3D array of data set in real space, calculates the flux accross
@@ -73,36 +75,49 @@ def get_neighbor_flux(
         # get the initial value
         base_value = data[i, j, k]
         # iterate over each neighbor sharing a voronoi facet
-        for shift_index, (shift, area_dist) in enumerate(
+        for shift_index, ((si, sj, sk), area_dist) in enumerate(
             zip(neighbor_transforms, neighbor_area_over_dist)
         ):
-            ii = i + shift[0]
-            jj = j + shift[1]
-            kk = k + shift[2]
             # loop
-            ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
+            ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             # get the neighbors value
             neigh_value = data[ii, jj, kk]
-            # calculate the volume flowing to this voxel
+            # if this value is below the current points value, continue
+            if neigh_value <= base_value:
+                continue
+            # calculate the flux flowing to this voxel
             diff = neigh_value - base_value
-            # make sure diff is above a cutoff for rounding errors
-            if diff < 1e-12:
-                diff = 0.0
-                # TODO: Can I just continue here?
             flux = diff * area_dist
             # only assign flux if it is above 0
             if flux > 0.0:
                 flux_array[coord_index, shift_index] = flux
-                neigh_label = voxel_indices[ii, jj, kk]
-                neigh_array[coord_index, shift_index] = neigh_label
+                # add this neighbor label
+                neigh_array[coord_index, shift_index] = voxel_indices[ii, jj, kk]
 
         # normalize flux row to 1
         row = flux_array[coord_index]
         row_sum = row.sum()
         if row_sum == 0.0:
-            # this is a maximum. Convert from 0 to 1 to avoid division by 0
-            maxima_mask[coord_index] = True
-            row_sum = 1
+            # there is no flux flowing to any neighbors. Check if this is a true
+            # maximum
+            shift, (ni, nj, nk), is_max = get_best_neighbor(
+                data=data,
+                i=i,
+                j=j,
+                k=k,
+                neighbor_transforms=all_neighbor_transforms,
+                neighbor_dists=all_neighbor_dists,
+            )
+            # if this is a maximum, set the row to 0, note its a max, and continue
+            if is_max:
+                flux_array[coord_index] = row
+                maxima_mask[coord_index] = True
+                continue
+            # otherwise, set all of the weight to the highest neighbor and continue
+            flux_array[coord_index, 0] = 1
+            neigh_array[coord_index, 0] = voxel_indices[ni, nj, nk]
+            continue
+
         flux_array[coord_index] = row / row_sum
 
     return flux_array, neigh_array, maxima_mask
@@ -351,71 +366,71 @@ def get_multi_weight_voxels(
     return new_labels, charge_array, volume_array
 
 
-@njit(parallel=True, cache=True)
-def reduce_weight_maxima(
-    maxima_vox_coords: NDArray[np.int64],
-    data: NDArray[np.float64],
-    neighbor_transforms: NDArray[np.int64],
-    neighbor_dists: NDArray[np.float64],
-):
-    """
-    Determines whether each maximum found by the weight method is a true ongrid
-    maximum.
+# @njit(parallel=True, cache=True)
+# def reduce_weight_maxima(
+#     maxima_vox_coords: NDArray[np.int64],
+#     data: NDArray[np.float64],
+#     neighbor_transforms: NDArray[np.int64],
+#     neighbor_dists: NDArray[np.float64],
+# ):
+#     """
+#     Determines whether each maximum found by the weight method is a true ongrid
+#     maximum.
 
-    Parameters
-    ----------
-    maxima_vox_coords : NDArray[np.int64]
-        The voxel coordinates of maxima determined from the weight method
-    data : NDArray[np.float64]
-        A 3D grid of values for each point.
-    neighbor_transforms : NDArray[np.int64]
-        The transformations from each voxel to its neighbors.
-    neighbor_dists : NDArray[np.float64]
-        The distance to each neighboring voxel.
+#     Parameters
+#     ----------
+#     maxima_vox_coords : NDArray[np.int64]
+#         The voxel coordinates of maxima determined from the weight method
+#     data : NDArray[np.float64]
+#         A 3D grid of values for each point.
+#     neighbor_transforms : NDArray[np.int64]
+#         The transformations from each voxel to its neighbors.
+#     neighbor_dists : NDArray[np.float64]
+#         The distance to each neighboring voxel.
 
-    Returns
-    -------
-    maxima_indices : NDArray[np.int64]
-        A mapping of each weight maximum to its corresponding ongrid maximum
+#     Returns
+#     -------
+#     maxima_indices : NDArray[np.int64]
+#         A mapping of each weight maximum to its corresponding ongrid maximum
 
-    """
-    # create tracker for connecting maxima
-    maxima_indices = np.zeros(len(maxima_vox_coords), dtype=np.int64)
-    for max_idx in prange(len(maxima_vox_coords)):
-        # create scratch current coord
-        current_coord = maxima_vox_coords[max_idx]
-        i, j, k = current_coord
-        # check if this is a maximum
-        _, _, is_max = get_best_neighbor(
-            data, i, j, k, neighbor_transforms, neighbor_dists
-        )
-        if is_max:
-            # this is a real maximum
-            maxima_indices[max_idx] = max_idx
-            continue
+#     """
+#     # create tracker for connecting maxima
+#     maxima_indices = np.zeros(len(maxima_vox_coords), dtype=np.int64)
+#     for max_idx in prange(len(maxima_vox_coords)):
+#         # create scratch current coord
+#         current_coord = maxima_vox_coords[max_idx]
+#         i, j, k = current_coord
+#         # check if this is a maximum
+#         _, _, is_max = get_best_neighbor(
+#             data, i, j, k, neighbor_transforms, neighbor_dists
+#         )
+#         if is_max:
+#             # this is a real maximum
+#             maxima_indices[max_idx] = max_idx
+#             continue
 
-        # otherwise this isn't a true maximum. Hill climb until on is reached
-        while True:
-            ii, jj, kk = current_coord
-            _, new_coord, is_max = get_best_neighbor(
-                data=data,
-                i=ii,
-                j=jj,
-                k=kk,
-                neighbor_transforms=neighbor_transforms,
-                neighbor_dists=neighbor_dists,
-            )
-            if is_max:
-                # this coord is a maximum. We want to set the fake maximum to
-                # this true one
-                for real_max_idx in range(len(maxima_vox_coords)):
-                    rx, ry, rz = maxima_vox_coords[real_max_idx]
-                    # check if this maxima matches where we currently are
-                    if rx == ii and ry == jj and rz == kk:
-                        maxima_indices[max_idx] = real_max_idx
-                        break
+#         # otherwise this isn't a true maximum. Hill climb until on is reached
+#         while True:
+#             ii, jj, kk = current_coord
+#             _, new_coord, is_max = get_best_neighbor(
+#                 data=data,
+#                 i=ii,
+#                 j=jj,
+#                 k=kk,
+#                 neighbor_transforms=neighbor_transforms,
+#                 neighbor_dists=neighbor_dists,
+#             )
+#             if is_max:
+#                 # this coord is a maximum. We want to set the fake maximum to
+#                 # this true one
+#                 for real_max_idx in range(len(maxima_vox_coords)):
+#                     rx, ry, rz = maxima_vox_coords[real_max_idx]
+#                     # check if this maxima matches where we currently are
+#                     if rx == ii and ry == jj and rz == kk:
+#                         maxima_indices[max_idx] = real_max_idx
+#                         break
 
-                break
-            # update the coord and continue
-            current_coord = new_coord
-    return maxima_indices
+#                 break
+#             # update the coord and continue
+#             current_coord = new_coord
+#     return maxima_indices
