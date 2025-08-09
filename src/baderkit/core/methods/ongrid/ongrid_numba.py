@@ -43,6 +43,8 @@ def get_steepest_pointers(
     # create array to store the label of the neighboring voxel with the greatest
     # elf value
     pointers = initial_labels.copy()
+    # create an array to store maxima
+    maxima_mask = np.zeros(data.shape, dtype=np.bool_)
     # loop over each voxel in parallel
     for i in prange(nx):
         for j in range(ny):
@@ -53,7 +55,7 @@ def get_steepest_pointers(
                     pointers[i, j, k] = -1
                     continue
                 # get the best neighbor
-                best_transform, best_neigh, _ = get_best_neighbor(
+                _, (x, y, z), is_max = get_best_neighbor(
                     data=data,
                     i=i,
                     j=j,
@@ -61,6 +63,7 @@ def get_steepest_pointers(
                     neighbor_transforms=neighbor_transforms,
                     neighbor_dists=neighbor_dists,
                 )
-                x, y, z = best_neigh
                 pointers[i, j, k] = initial_labels[x, y, z]
-    return pointers
+                if is_max:
+                    maxima_mask[i, j, k] = True
+    return pointers, maxima_mask

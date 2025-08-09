@@ -73,6 +73,8 @@ class MethodBase:
         self._maxima_mask = None
         self._maxima_vox = None
         self._maxima_frac = None
+        self._car2lat = None
+        self._dir2lat = None
 
     def run(self) -> dict:
         """
@@ -179,6 +181,25 @@ class MethodBase:
         assert self._maxima_frac is not None, "Maxima frac must be set by run method"
         return self._maxima_frac
 
+    @property
+    def car2lat(self) -> NDArray[float]:
+        if self._car2lat is None:
+            grid = self.reference_grid.copy()
+            matrix = grid.matrix
+            # convert to lattice vectors as columns
+            dir2car = matrix.T
+            # get lattice to cartesian matrix
+            lat2car = dir2car / grid.shape[np.newaxis, :]
+            # get inverse for cartesian to lattice matrix
+            self._car2lat = np.linalg.inv(lat2car)
+        return self._car2lat
+
+    @property
+    def dir2lat(self) -> NDArray[float]:
+        if self._dir2lat is None:
+            self._dir2lat = self.car2lat.dot(self.car2lat.T)
+        return self._dir2lat
+
     ###########################################################################
     # Functions used by most or all methods
     ###########################################################################
@@ -239,10 +260,7 @@ class MethodBase:
             "vacuum_volume": vacuum_volume,
         }
 
-    @staticmethod
-    def get_roots(
-        pointers: NDArray[int], valid: NDArray[bool] | None = None
-    ) -> NDArray[int]:
+    def get_roots(self, pointers: NDArray[int]) -> NDArray[int]:
         """
         Finds the roots of a 1D array of pointers where each index points to its
         parent.
@@ -251,9 +269,6 @@ class MethodBase:
         ----------
         pointers : NDArray[int]
             A 1D array where each entry points to that entries parent.
-        valid : NDArray[bool] | None, optional
-            A mask the same shape as the pointers array. False values will be
-            ignored. The default is None.
 
         Returns
         -------
@@ -261,6 +276,11 @@ class MethodBase:
             A 1D array where each entry points to that entries root parent.
 
         """
+        # mask for non-vacuum indices (not -1)
+        if self.num_vacuum:
+            valid = pointers != -1
+        else:
+            valid = None
         if valid is not None:
             while True:
                 # create a copy to avoid modifying in-place before comparison

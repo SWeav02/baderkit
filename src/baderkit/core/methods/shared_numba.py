@@ -48,12 +48,9 @@ def get_edges(
                 # get this voxels label
                 label = labeled_array[i, j, k]
                 # iterate over the neighboring voxels
-                for shift_index, shift in enumerate(neighbor_transforms):
-                    ii = i + shift[0]
-                    jj = j + shift[1]
-                    kk = k + shift[2]
+                for si, sj, sk in neighbor_transforms:
                     # wrap points
-                    ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
+                    ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
                     # get neighbors label
                     neigh_label = labeled_array[ii, jj, kk]
                     # if any label is different, the current voxel is an edge.
@@ -149,7 +146,8 @@ def wrap_point(
 def get_gradient_simple(
     data: NDArray[np.float64],
     voxel_coord: NDArray[np.int64],
-    car2lat: NDArray[np.float64],
+    # car2lat: NDArray[np.float64],
+    dir2lat: NDArray[np.float64],
 ) -> tuple[NDArray[np.int64], NDArray[np.int64], np.bool_]:
     """
     Peforms a neargrid step from the provided voxel coordinate.
@@ -181,24 +179,24 @@ def get_gradient_simple(
     charge0_10 = data[i, (j - 1) % ny, k]
     charge_100 = data[(i - 1) % nx, j, k]
 
-    charge_grad_vox = np.array([0.0, 0.0, 0.0], dtype=np.float64)
-    charge_grad_vox[0] = (charge100 - charge_100) / 2.0
-    charge_grad_vox[1] = (charge010 - charge0_10) / 2.0
-    charge_grad_vox[2] = (charge001 - charge00_1) / 2.0
+    gi = (charge100 - charge_100) / 2.0
+    gj = (charge010 - charge0_10) / 2.0
+    gk = (charge001 - charge00_1) / 2.0
 
     if charge100 <= charge000 and charge_100 <= charge000:
-        charge_grad_vox[0] = 0.0
+        gi = 0.0
     if charge010 <= charge000 and charge0_10 <= charge000:
-        charge_grad_vox[1] = 0.0
+        gj = 0.0
     if charge001 <= charge000 and charge00_1 <= charge000:
-        charge_grad_vox[2] = 0.0
+        gk = 0.0
 
-    # convert to cartesian coordinates
-    charge_grad_cart = np.dot(charge_grad_vox, car2lat)
-    # express in direct coordinates
-    charge_grad_frac = np.dot(car2lat, charge_grad_cart)
-    # return the gradient
-    return charge_grad_frac
+    # convert to direct
+    # NOTE: Doing this rather than the original car2lat with two np.dot operations
+    # saves about half the time.
+    r0 = dir2lat[0, 0] * gi + dir2lat[0, 1] * gj + dir2lat[0, 2] * gk
+    r1 = dir2lat[1, 0] * gi + dir2lat[1, 1] * gj + dir2lat[1, 2] * gk
+    r2 = dir2lat[2, 0] * gi + dir2lat[2, 1] * gj + dir2lat[2, 2] * gk
+    return r0, r1, r2
 
 
 @njit(cache=True, parallel=True)
@@ -217,12 +215,9 @@ def combine_neigh_maxima(
     for max_idx in range(len(maxima_vox)):
         i, j, k = maxima_vox[max_idx]
         best_label = initial_labels[max_idx]
-        for shift in neighbor_transforms:
-            ii = i + shift[0]
-            jj = j + shift[1]
-            kk = k + shift[2]
+        for si, sj, sk in neighbor_transforms:
             # wrap
-            ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
+            ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             # check if new point is also a maximum
             if maxima_mask[ii, jj, kk] and labels[ii, jj, kk] < best_label:
                 best_label = labels[ii, jj, kk]
@@ -376,28 +371,40 @@ def get_best_neighbor(
     # to the voxel pointing to itself
     base = data[i, j, k]
     best = 0.0
-    best_transform = np.zeros(3, dtype=np.int64)
-    best_neigh = np.array([i, j, k], dtype=np.int64)
+    # create initial best transform. Default to this point
+    bti = 0
+    btj = 0
+    btk = 0
+    # best_transform = np.zeros(3, dtype=np.int64)
+    # create initial best neighbor
+    bni = i
+    bnj = j
+    bnk = k
+    # best_neigh = np.array([i, j, k], dtype=np.int64)
     # For each neighbor get the difference in value and if its better
     # than any previous, replace the current best
-    for shift, dist in zip(neighbor_transforms, neighbor_dists):
-        ii = i + shift[0]
-        jj = j + shift[1]
-        kk = k + shift[2]
+    for (si, sj, sk), dist in zip(neighbor_transforms, neighbor_dists):
         # loop
-        ii, jj, kk = wrap_point(ii, jj, kk, nx, ny, nz)
+        ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
         # calculate the difference in value taking into account distance
         diff = (data[ii, jj, kk] - base) / dist
         # if better than the current best, note the best and the
         # current label
         if diff > best:
             best = diff
-            best_transform = shift
-            best_neigh[:] = (ii, jj, kk)
+            bti, btj, btk = (si, sj, sk)
+            bni, bnj, bnk = (ii, jj, kk)
+            # best_transform = (si, sj, sk)
+            # best_neigh[:] = (ii, jj, kk)
     # We've finished our loop. return the best shift, neighbor, and whether this
     # is a max
     # NOTE: Can't do is_max = best == 0.0 for older numba
     is_max = False
     if best == 0.0:
         is_max = True
-    return best_transform, best_neigh, is_max
+    # return best_transform, best_neigh, is_max
+    return (
+        np.array((bti, btj, btk), dtype=np.int64),
+        np.array((bni, bnj, bnk), dtype=np.int64),
+        is_max,
+    )

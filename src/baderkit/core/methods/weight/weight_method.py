@@ -13,6 +13,10 @@ from .weight_numba import (
     reduce_weight_maxima,
 )
 
+# TODO: Use list of list storage for initial flux calcs. For points that would
+# be given no flux, check if they're true maxima and make all flux point to highest
+# neighbor. That should prevent fake maxima so we don't need to peform maxima reduction
+
 
 class WeightMethod(MethodBase):
 

@@ -6,8 +6,9 @@ from numpy.typing import NDArray
 
 from baderkit.core.methods.shared_numba import get_best_neighbor, wrap_point
 
+
 @njit(parallel=True, cache=True)
-def get_test_pointers(
+def get_gradient_pointers(
     initial_labels,
     data,
     neigh_transforms,
@@ -15,9 +16,8 @@ def get_test_pointers(
     all_neighbor_transforms,
     all_neighbor_dists,
     vacuum_mask,
-    # inv_lattice_matrix,
     car2lat,
-        ):
+):
     nx, ny, nz = data.shape
     # create array to store the label of the neighboring voxel with the greatest
     # elf value
@@ -36,7 +36,7 @@ def get_test_pointers(
                     pointers[i, j, k] = -1
                     continue
                 # get the base value of this point
-                base_value = data[i,j,k]
+                base_value = data[i, j, k]
                 # create a vector to store the total gradient
                 ti, tj, tk = 0.0, 0.0, 0.0
                 # loop over neighbors
@@ -62,7 +62,12 @@ def get_test_pointers(
                     tk += ck
                 # convert to frac coords
                 # ti, tj, tk = np.array((ti, tj, tk), dtype=np.float64) @ inv_lattice_matrix
-                ti, tj, tk = np.dot(car2lat, np.array((ti, tj, tk), dtype=np.float64))
+                # ti, tj, tk = np.dot(car2lat, np.array((ti, tj, tk), dtype=np.float64))
+                ti_new = car2lat[0, 0] * ti + car2lat[0, 1] * tj + car2lat[0, 2] * tk
+                tj_new = car2lat[1, 0] * ti + car2lat[1, 1] * tj + car2lat[1, 2] * tk
+                tk_new = car2lat[2, 0] * ti + car2lat[2, 1] * tj + car2lat[2, 2] * tk
+
+                ti, tj, tk = ti_new, tj_new, tk_new
                 # If the gradient is 0, check if this is a max or default to a
                 # ongrid step
                 max_grad = 0.0
@@ -108,4 +113,3 @@ def get_test_pointers(
                 # set pointer
                 pointers[i, j, k] = initial_labels[ni, nj, nk]
     return pointers, maxima_mask
-    

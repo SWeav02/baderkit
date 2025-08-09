@@ -32,7 +32,7 @@ class OngridMethod(MethodBase):
         # For each voxel, get the label of the surrounding voxel that has the highest
         # density
         logging.info("Calculating steepest neighbors")
-        pointers_3d = get_steepest_pointers(
+        pointers_3d, self._maxima_mask = get_steepest_pointers(
             data=data,
             initial_labels=grid.all_voxel_indices,
             neighbor_transforms=neighbor_transforms,
@@ -50,12 +50,7 @@ class OngridMethod(MethodBase):
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
         logging.info("Finding roots")
-        # mask for non-vacuum indices (not -1)
-        if self.num_vacuum:
-            valid = pointers != -1
-        else:
-            valid = None
-        pointers = self.get_roots(pointers, valid)
+        pointers = self.get_roots(pointers)
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
         unique_roots, labels_flat = np.unique(pointers, return_inverse=True)
@@ -65,8 +60,6 @@ class OngridMethod(MethodBase):
             labels_flat -= 1
         # reconstruct a 3D array with our labels
         labels = labels_flat.reshape(shape)
-        # find the position of the maxima
-        self._maxima_mask = pointers_3d == grid.all_voxel_indices
         # reduce maxima/basins
         labels, self._maxima_frac = self.reduce_label_maxima(labels)
         # assign all results

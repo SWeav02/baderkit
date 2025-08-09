@@ -6,10 +6,10 @@ import numpy as np
 
 from baderkit.core.methods.base import MethodBase
 
-from .test_numba import get_test_pointers
+from .gradient_weight_numba import get_gradient_pointers
 
 
-class TestMethod(MethodBase):
+class GradientWeightMethod(MethodBase):
 
     def run(self):
         reference_grid = self.reference_grid.copy()
@@ -21,20 +21,18 @@ class TestMethod(MethodBase):
         # Get the transforms in cartesian coordinates, normalize, and weight by
         # area and distance
         neighbor_carts = reference_grid.get_cart_coords_from_vox(neighbor_transforms)
-        neighbor_carts = (neighbor_carts.T * facet_areas / (
-            neighbor_dists * np.linalg.norm(neighbor_carts, axis=1))).T
+        neighbor_carts = (
+            neighbor_carts.T
+            * facet_areas
+            / (neighbor_dists * np.linalg.norm(neighbor_carts, axis=1))
+        ).T
         # Get all neighbors
         all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
         # Now we get pointers
         logging.info("Calculating steepest neighbors")
-        matrix = reference_grid.matrix
-        # convert to lattice vectors as columns
-        dir2car = matrix.T
-        # get lattice to cartesian matrix
-        lat2car = dir2car / reference_grid.shape[np.newaxis, :]
-        # get inverse for cartesian to lattice matrix
-        car2lat = np.linalg.inv(lat2car)
-        pointers_3d, self._maxima_mask = get_test_pointers(
+        # TODO: Only use half the voronoi transforms and use more realistic grad
+        # across cell.
+        pointers_3d, self._maxima_mask = get_gradient_pointers(
             initial_labels=reference_grid.all_voxel_indices,
             data=reference_grid.total,
             neigh_transforms=neighbor_transforms,
@@ -42,9 +40,8 @@ class TestMethod(MethodBase):
             all_neighbor_transforms=all_neighbor_transforms,
             all_neighbor_dists=all_neighbor_dists,
             vacuum_mask=self.vacuum_mask,
-            # inv_lattice_matrix=np.linalg.inv(reference_grid.matrix)
-            car2lat=car2lat,
-            )
+            car2lat=self.car2lat,
+        )
         # ravel the best labels to get a 1D array pointing from each voxel to its steepest
         # neighbor
         pointers = pointers_3d.ravel()
@@ -56,12 +53,7 @@ class TestMethod(MethodBase):
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
         logging.info("Finding roots")
-        # mask for non-vacuum indices (not -1)
-        if self.num_vacuum:
-            valid = pointers != -1
-        else:
-            valid = None
-        pointers = self.get_roots(pointers, valid)
+        pointers = self.get_roots(pointers)
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
         unique_roots, labels_flat = np.unique(pointers, return_inverse=True)
@@ -81,4 +73,3 @@ class TestMethod(MethodBase):
         results.update(self.get_basin_charges_and_volumes(labels))
         results.update(self.get_extras())
         return results
-        

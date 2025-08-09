@@ -81,29 +81,6 @@ class Bader:
         # still be able to recalculate them if needed, though that should only
         # be done by advanced users
         self._reset_properties()
-        # Assigned by run_bader
-        # self._basin_labels = None
-        # self._basin_maxima_frac = None
-        # self._basin_maxima_vox = None
-        # self._basin_charges = None
-        # self._basin_volumes = None
-        # self._vacuum_charge = None
-        # self._vacuum_volume = None
-        # self._significant_basins = None
-        # self._vacuum_mask = None
-        # self._num_vacuum = None
-        # # Assigned by calling the property
-        # self._basin_surface_distances = None
-        # self._basin_edges = None
-        # self._atom_edges = None
-        # self._structure = None
-        # # Assigned by run_atom_assignment
-        # self._basin_atoms = None
-        # self._basin_atom_dists = None
-        # self._atom_labels = None
-        # self._atom_charges = None
-        # self._atom_volumes = None
-        # self._atom_surface_distances = None
 
     ###########################################################################
     # Set Properties

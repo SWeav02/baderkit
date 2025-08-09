@@ -9,11 +9,12 @@ from baderkit.core import Bader, Grid
 
 grid = Grid.from_vasp("CHGCAR")
 
-test_num = 20
+test_num = 10
 results = {}
 times = {}
-
-for method in Bader.all_methods():
+methods = Bader.all_methods()
+# methods = ["ongrid"]
+for method in methods:
     # do an initial run of each method for caching
     bader = Bader(
         charge_grid=grid,

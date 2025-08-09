@@ -3,8 +3,6 @@
 method_names = [
     "ongrid",
     "neargrid",
-    "pseudo-neargrid",
     "weight",
-    "test",
-    "fast-neargrid",
+    "gradient-weight",
 ]
