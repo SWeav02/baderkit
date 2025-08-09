@@ -13,13 +13,12 @@ test_num = 20
 results = {}
 times = {}
 
-for method in Bader.methods():
+for method in Bader.all_methods():
     # do an initial run of each method for caching
     bader = Bader(
         charge_grid=grid,
         reference_grid=grid,
         method=method,
-        refinement_method="recursive",
     )
     result = bader.results_summary
     # Now run our tests
@@ -29,7 +28,6 @@ for method in Bader.methods():
             charge_grid=grid,
             reference_grid=grid,
             method=method,
-            refinement_method="recursive",
         )
         result = bader.results_summary
     t1 = time.time()

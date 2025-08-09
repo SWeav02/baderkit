@@ -88,6 +88,7 @@ def get_neighbor_flux(
             # make sure diff is above a cutoff for rounding errors
             if diff < 1e-12:
                 diff = 0.0
+                # TODO: Can I just continue here?
             flux = diff * area_dist
             # only assign flux if it is above 0
             if flux > 0.0:

@@ -5,4 +5,6 @@ method_names = [
     "neargrid",
     "pseudo-neargrid",
     "weight",
+    "test",
+    "fast-neargrid",
 ]

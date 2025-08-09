@@ -6,39 +6,45 @@ import numpy as np
 
 from baderkit.core.methods.base import MethodBase
 
-from .ongrid_numba import get_steepest_pointers
+from .test_numba import get_test_pointers
 
 
-class OngridMethod(MethodBase):
+class TestMethod(MethodBase):
 
     def run(self):
-        """
-        Assigns voxels to basins and calculates charge using the on-grid
-        method:
-            G. Henkelman, A. Arnaldsson, and H. Jónsson
-            A fast and robust algorithm for Bader decomposition of charge density,
-            Comput. Mater. Sci. 36, 354-360 (2006)
-
-        Returns
-        -------
-        None.
-
-        """
-        grid = self.reference_grid
-        data = grid.total
-        shape = data.shape
-        # get shifts to move from a voxel to the 26 surrounding voxels
-        neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
-        # For each voxel, get the label of the surrounding voxel that has the highest
-        # density
-        logging.info("Calculating steepest neighbors")
-        pointers_3d = get_steepest_pointers(
-            data=data,
-            initial_labels=grid.all_voxel_indices,
-            neighbor_transforms=neighbor_transforms,
-            neighbor_dists=neighbor_dists,
-            vacuum_mask=self.vacuum_mask,
+        reference_grid = self.reference_grid.copy()
+        # get the voronoi neighbors, their distances, and the area of the corresponding
+        # facets.
+        neighbor_transforms, neighbor_dists, facet_areas, _ = (
+            reference_grid.voxel_voronoi_facets
         )
+        # Get the transforms in cartesian coordinates, normalize, and weight by
+        # area and distance
+        neighbor_carts = reference_grid.get_cart_coords_from_vox(neighbor_transforms)
+        neighbor_carts = (neighbor_carts.T * facet_areas / (
+            neighbor_dists * np.linalg.norm(neighbor_carts, axis=1))).T
+        # Get all neighbors
+        all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
+        # Now we get pointers
+        logging.info("Calculating steepest neighbors")
+        matrix = reference_grid.matrix
+        # convert to lattice vectors as columns
+        dir2car = matrix.T
+        # get lattice to cartesian matrix
+        lat2car = dir2car / reference_grid.shape[np.newaxis, :]
+        # get inverse for cartesian to lattice matrix
+        car2lat = np.linalg.inv(lat2car)
+        pointers_3d, self._maxima_mask = get_test_pointers(
+            initial_labels=reference_grid.all_voxel_indices,
+            data=reference_grid.total,
+            neigh_transforms=neighbor_transforms,
+            weighted_cart=neighbor_carts,
+            all_neighbor_transforms=all_neighbor_transforms,
+            all_neighbor_dists=all_neighbor_dists,
+            vacuum_mask=self.vacuum_mask,
+            # inv_lattice_matrix=np.linalg.inv(reference_grid.matrix)
+            car2lat=car2lat,
+            )
         # ravel the best labels to get a 1D array pointing from each voxel to its steepest
         # neighbor
         pointers = pointers_3d.ravel()
@@ -64,9 +70,7 @@ class OngridMethod(MethodBase):
         if -1 in unique_roots:
             labels_flat -= 1
         # reconstruct a 3D array with our labels
-        labels = labels_flat.reshape(shape)
-        # find the position of the maxima
-        self._maxima_mask = pointers_3d == grid.all_voxel_indices
+        labels = labels_flat.reshape(reference_grid.shape)
         # reduce maxima/basins
         labels, self._maxima_frac = self.reduce_label_maxima(labels)
         # assign all results
@@ -77,3 +81,4 @@ class OngridMethod(MethodBase):
         results.update(self.get_basin_charges_and_volumes(labels))
         results.update(self.get_extras())
         return results
+        

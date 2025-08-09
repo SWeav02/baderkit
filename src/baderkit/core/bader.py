@@ -338,7 +338,7 @@ class Bader:
 
         """
         if self._significant_basins is None:
-            self._significant_basins = self.basin_charges < self.basin_tol
+            self._significant_basins = self.basin_charges > self.basin_tol
         return self._significant_basins
 
     @property
