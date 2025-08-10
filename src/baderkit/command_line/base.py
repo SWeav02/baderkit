@@ -38,7 +38,7 @@ def version():
 class Method(str, Enum):
     weight = "weight"
     ongrid = "ongrid"
-    reverse_neargrid = "sort-neargrid"
+    gradient_weight = "gradient-weight"
     neargrid = "neargrid"
 
 
@@ -69,7 +69,7 @@ def run(
         help="The path to the reference file",
     ),
     method: Method = typer.Option(
-        Method.reverse_neargrid,
+        Method.neargrid,
         "--method",
         "-m",
         help="The method to use for separating bader basins",
