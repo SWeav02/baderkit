@@ -41,16 +41,14 @@ def test_read_bader_from_file():
 def test_writing_bader(tmp_path):
     # read in bader
     bader = Bader.from_dynamic(TEST_CHGCAR, method="ongrid")
-    # change bader directory
-    bader.directory = tmp_path
     # get results
     results = bader.results_summary
     # Try writing results
-    bader.write_results_summary()
-    bader.write_atom_volumes([0])
-    bader.write_atom_volumes_sum([0])
-    bader.write_basin_volumes([0])
-    bader.write_basin_volumes_sum([0])
+    bader.write_results_summary(directory=tmp_path)
+    bader.write_atom_volumes([0], directory=tmp_path)
+    bader.write_atom_volumes_sum([0], directory=tmp_path)
+    bader.write_basin_volumes([0], directory=tmp_path)
+    bader.write_basin_volumes_sum([0], directory=tmp_path)
     assert Path(tmp_path / "bader_atom_summary.tsv").exists()
     assert Path(tmp_path / "bader_basin_summary.tsv").exists()
     assert Path(tmp_path / "CHGCAR_a0").exists()
