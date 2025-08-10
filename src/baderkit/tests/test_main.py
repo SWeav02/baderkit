@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from baderkit.core import Bader, Grid
+from baderkit.core.methods import method_names
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"
@@ -40,16 +41,14 @@ def test_read_bader_from_file():
 def test_writing_bader(tmp_path):
     # read in bader
     bader = Bader.from_dynamic(TEST_CHGCAR, method="ongrid")
-    # change bader directory
-    bader.directory = tmp_path
     # get results
     results = bader.results_summary
     # Try writing results
-    bader.write_results_summary()
-    bader.write_atom_volumes([0])
-    bader.write_atom_volumes_sum([0])
-    bader.write_basin_volumes([0])
-    bader.write_basin_volumes_sum([0])
+    bader.write_results_summary(directory=tmp_path)
+    bader.write_atom_volumes([0], directory=tmp_path)
+    bader.write_atom_volumes_sum([0], directory=tmp_path)
+    bader.write_basin_volumes([0], directory=tmp_path)
+    bader.write_basin_volumes_sum([0], directory=tmp_path)
     assert Path(tmp_path / "bader_atom_summary.tsv").exists()
     assert Path(tmp_path / "bader_basin_summary.tsv").exists()
     assert Path(tmp_path / "CHGCAR_a0").exists()
@@ -60,12 +59,7 @@ def test_writing_bader(tmp_path):
 
 @pytest.mark.parametrize(
     "method",
-    [
-        "ongrid",
-        "neargrid",
-        "pseudo-neargrid",
-        "weight",
-    ],
+    method_names,
 )
 def test_running_bader_methods(tmp_path, method):
     bader = Bader.from_dynamic(TEST_CHGCAR, method=method)

@@ -30,7 +30,6 @@ def load_plotter():
     vacuum_tol = float(env["VACUUM_TOL"])
     normalize_vac = bool(env["NORMALIZE_VAC"])
     basin_tol = float(env["BASIN_TOL"])
-    refinement_method = env["REFINE_METHOD"]
     if "REFERENCE_FILE" in env.keys():
         reference_filename = env["REFERENCE_FILE"]
     else:
@@ -39,7 +38,6 @@ def load_plotter():
         charge_filename=charge_filename,
         reference_filename=reference_filename,
         method=method,
-        refinement_method=refinement_method,
         vacuum_tol=vacuum_tol,
         normalize_vacuum=normalize_vac,
         basin_tol=basin_tol,

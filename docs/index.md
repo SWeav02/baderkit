@@ -20,7 +20,7 @@ Fortran code:
 
 We have also added one variation to these methods:
 
- - [x] Pseudo Near Grid
+ - [x] Gradient Weight
 
 !!! Note
     Much of this package runs on [Numba](https://numba.pydata.org/) which compiles 

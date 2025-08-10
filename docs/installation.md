@@ -26,9 +26,9 @@ conda-forge is updated with the most recent version.
    baderkit --help
    ```
 
-## Optional Webapp
+## Optional Web App
 
-In addition to the core package, there is an optional webapp feature which allows
+In addition to the core package, there is an optional web app feature which allows
 for easy viewing and plotting of results. This requires extra dependencies which
 can be installed through pip with the following command:
 ```bash
