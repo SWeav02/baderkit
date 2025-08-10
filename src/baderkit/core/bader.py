@@ -127,6 +127,14 @@ class Bader:
 
     @property
     def charge_grid(self) -> Grid:
+        """
+
+        Returns
+        -------
+        Grid
+            A Grid object with the charge density that will be integrated.
+
+        """
         return self._charge_grid
 
     @charge_grid.setter
@@ -136,6 +144,14 @@ class Bader:
 
     @property
     def reference_grid(self) -> Grid:
+        """
+
+        Returns
+        -------
+        Grid
+            A grid object whose values will be used to construct the basins.
+
+        """
         return self._reference_grid
 
     @reference_grid.setter
@@ -145,6 +161,15 @@ class Bader:
 
     @property
     def method(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            The algorithm to use for generating bader basins. If None, defaults
+            to neargrid.
+
+        """
         return self._method
 
     @method.setter
@@ -154,6 +179,15 @@ class Bader:
 
     @property
     def vacuum_tol(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The value below which a point will be considered part of the vacuum.
+            The default is 0.001.
+
+        """
         return self._vacuum_tol
 
     @vacuum_tol.setter
@@ -164,6 +198,17 @@ class Bader:
 
     @property
     def normalize_vacuum(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            Whether or not the reference data needs to be converted to real space
+            units for vacuum tolerance comparison. This should be set to True if
+            the data follows VASP's CHGCAR standards, but False if the data should
+            be compared as is (e.g. in ELFCARs)
+
+        """
         return self._normalize_vacuum
 
     @normalize_vacuum.setter
@@ -174,6 +219,16 @@ class Bader:
 
     @property
     def basin_tol(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The value below which a basin will not be considered significant. This
+            is used to avoid writing out data that is likely not valuable.
+            The default is 0.001.
+
+        """
         return self._basin_tol
 
     @basin_tol.setter
