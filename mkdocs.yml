@@ -65,6 +65,7 @@ nav:
   - Installation: installation.md
   - Background: background.md
   - Methods: methods.md
+  - Implementation FAQ: implementation.md
   - Basic Usage: usage.md
   - API Reference: 
     - Core:

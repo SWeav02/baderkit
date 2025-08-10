@@ -60,11 +60,6 @@ class Method(str, Enum):
     neargrid = "neargrid"
 
 
-class RefinementMethod(str, Enum):
-    recursive = "recursive"
-    single = "single"
-
-
 @tools_app.command()
 def webapp(
     charge_file: Path = typer.Argument(
@@ -82,13 +77,6 @@ def webapp(
         "--method",
         "-m",
         help="The method to use for separating bader basins",
-        case_sensitive=False,
-    ),
-    refinement_method: RefinementMethod = typer.Option(
-        RefinementMethod.recursive,
-        "--refinement-method",
-        "--rm",
-        help="For methods that refine the edges (neargrid, hybrid-neargrid), whether to refine recursively or a single time.",
         case_sensitive=False,
     ),
     vacuum_tolerance: float = typer.Option(
@@ -122,7 +110,6 @@ def webapp(
     # set environmental variables
     os.environ["CHARGE_FILE"] = str(charge_file)
     os.environ["BADER_METHOD"] = method
-    os.environ["REFINE_METHOD"] = refinement_method
     os.environ["VACUUM_TOL"] = str(vacuum_tolerance)
     os.environ["NORMALIZE_VAC"] = str(normalize_vacuum)
     os.environ["BASIN_TOL"] = str(basin_tolerance)

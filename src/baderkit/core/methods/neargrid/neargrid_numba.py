@@ -44,6 +44,9 @@ def get_gradient_pointers(
 
     Returns
     -------
+    pointers : NDArray[np.int64]
+        A 3D array where each entry is the index of the neighbor that is most
+        along the gradient. A value of -1 indicates a vacuum point.
     gradients : NDArray[np.float32]
         A 4D array where gradients[i,j,k] returns the gradient at point (i,j,k)
     maxima_mask : NDArray[np.bool_]

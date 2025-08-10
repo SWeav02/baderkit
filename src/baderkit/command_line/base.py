@@ -42,11 +42,6 @@ class Method(str, Enum):
     neargrid = "neargrid"
 
 
-class RefinementMethod(str, Enum):
-    recursive = "recursive"
-    single = "single"
-
-
 class Format(str, Enum):
     vasp = "vasp"
     cube = "cube"
@@ -78,13 +73,6 @@ def run(
         "--method",
         "-m",
         help="The method to use for separating bader basins",
-        case_sensitive=False,
-    ),
-    refinement_method: RefinementMethod = typer.Option(
-        RefinementMethod.recursive,
-        "--refinement-method",
-        "--rm",
-        help="For methods that refine the edges (neargrid, hybrid-neargrid), whether to refine recursively or a single time.",
         case_sensitive=False,
     ),
     vacuum_tolerance: float = typer.Option(
@@ -136,7 +124,6 @@ def run(
         charge_filename=charge_file,
         reference_filename=reference_file,
         method=method,
-        refinement_method=refinement_method,
         format=format,
         vacuum_tol=vacuum_tolerance,
         normalize_vacuum=normalize_vacuum,

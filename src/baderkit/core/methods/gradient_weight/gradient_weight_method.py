@@ -10,6 +10,10 @@ from .gradient_weight_numba import get_gradient_pointers
 
 
 class GradientWeightMethod(MethodBase):
+    """
+    Assigns each grid point to its highest neighbor determined by calculating
+    a weighted pseudo gradient.
+    """
 
     def run(self):
         reference_grid = self.reference_grid.copy()

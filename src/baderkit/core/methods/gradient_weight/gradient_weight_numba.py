@@ -9,15 +9,47 @@ from baderkit.core.methods.shared_numba import get_best_neighbor, wrap_point
 
 @njit(parallel=True, cache=True)
 def get_gradient_pointers(
-    initial_labels,
-    data,
-    neigh_transforms,
-    weighted_cart,
-    all_neighbor_transforms,
-    all_neighbor_dists,
-    vacuum_mask,
-    car2lat,
+    initial_labels: NDArray[np.int64],
+    data: NDArray[np.float64],
+    neigh_transforms: NDArray[np.int64],
+    weighted_cart: NDArray[np.float64],
+    all_neighbor_transforms: NDArray[np.int64],
+    all_neighbor_dists: NDArray[np.float64],
+    vacuum_mask: NDArray[np.bool_],
+    car2lat: NDArray[np.float64],
 ):
+    """
+    Finds each points highest neighbor by summing weighted gradient vectors
+    normal to each voronoi surface.
+
+    Parameters
+    ----------
+    initial_labels : NDArray[np.int64]
+        A 3D array represengint the flat indices of each grid point
+    data : NDArray[np.float64]
+        A 3D grid of values for each point.
+    neigh_transforms : NDArray[np.int64]
+        The transformations from each voxel to its voronoi neighbors.
+    weighted_cart : NDArray[np.float64]
+        Vectors pointing to each voronoi nieghbor weighted by facet area and distance.
+    all_neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its 26 neighbors.
+    all_neighbor_dists : NDArray[np.float64]
+        The distance to each of the 26 neighboring voxels.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum.
+    car2lat : NDArray[np.float64]
+        A matrix for converting from cartesian coordinates to lattice coords
+
+    Returns
+    -------
+    pointers : NDArray[np.int64]
+        A 3D array where each entry is the index of the neighbor that is most
+        along the gradient. A value of -1 indicates a vacuum point.
+    maxima_mask : NDArray[np.bool_]
+        A 3D array that is True at maxima
+
+    """
     nx, ny, nz = data.shape
     # create array to store the label of the neighboring voxel with the greatest
     # elf value

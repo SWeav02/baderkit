@@ -37,6 +37,8 @@ def get_steepest_pointers(
     pointers : NDArray[np.int64]
         A 3D array where each entry is the index of the neighbor that had the
         greatest increase in value. A value of -1 indicates a vacuum point.
+    maxima_mask : NDArray[np.bool_]
+        A 3D array that is True at maxima
 
     """
     nx, ny, nz = data.shape
