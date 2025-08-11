@@ -1,48 +1,69 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from numba import njit #, prange
+from numba import njit, prange
 from numpy.typing import NDArray
 
 from baderkit.core.methods.shared_numba import get_best_neighbor, wrap_point
 
+# @njit(parallel=True, cache=True)
+# def assign_charge_volume_label(
+#         neigh_labels,
+#         neigh_weights,
+#         basin_weights,
+#         labels,
+#         charge,
+#         basin_charges,
+#         basin_volumes,
+#         ):
+#     basin_weights[:] = 0.0
+#     n = len(neigh_labels)
+
+#     # Accumulate weights per label
+#     for idx in range(n):
+#         label = neigh_labels[idx]
+#         basin_weights[label] += neigh_weights[idx]
+
+#     # normalize to get fractions
+#     basin_weights /= basin_weights.sum()
+
+#     # assign charge and volume
+#     for i in prange(len(basin_weights)):
+#         basin_charges[i] += basin_weights[i] * charge
+#         basin_volumes[i] += basin_weights[i]
+
+#     # assign label
+#     max_val = basin_weights.max()
+#     for weight in basin_weights:
+#         if weight == max_val:
+#             labels
+
+# # Find best label and detect ties in one pass
+# best_label = -1
+# best_weight = -1.0
+# tie_found = False
+# eps = 1e-12  # tolerance for float comparison
+
+# for label in range(len(basin_weights)):
+#     weight = basin_weights[label]
+#     if weight > best_weight + eps:
+#         best_weight = weight
+#         best_label = label
+#         tie_found = False
+#     elif abs(weight - best_weight) <= eps and weight > 0:
+#         # Tie detected
+#         tie_found = True
+
+# if tie_found:
+#     return -1
+# else:
+#     return best_label
+
 
 @njit(cache=True)
-def find_best_label(neigh_labels, neigh_weights, label_sums):
-    label_sums[:] = 0.0
-    n = len(neigh_labels)
-
-    # Accumulate weights per label
-    for idx in range(n):
-        label = neigh_labels[idx]
-        label_sums[label] += neigh_weights[idx]
-
-    # Find best label and detect ties in one pass
-    best_label = -1
-    best_weight = -1.0
-    tie_found = False
-    eps = 1e-12  # tolerance for float comparison
-
-    for label in range(len(label_sums)):
-        weight = label_sums[label]
-        if weight > best_weight + eps:
-            best_weight = weight
-            best_label = label
-            tie_found = False
-        elif abs(weight - best_weight) <= eps and weight > 0:
-            # Tie detected
-            tie_found = True
-
-    if tie_found:
-        return -1
-    else:
-        return best_label
-
-
-
-@njit(fastmath=True, cache=True)
 def get_rough_weight_labels(
     data: NDArray[np.float64],
+    charge_data: NDArray[np.float64],
     sorted_voxel_coords: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_weights: NDArray[np.float64],
@@ -74,7 +95,7 @@ def get_rough_weight_labels(
     -------
     labels : NDArray[np.int64]
         A 3D array where each entry represents the basin the voxel belongs to.
-    
+
     maxima_mask : NDArray[bool]
         A 1D array of length N that is True where the sorted voxel indices are
         a maximum
@@ -88,7 +109,10 @@ def get_rough_weight_labels(
     # create counters for maxima
     max_num = 0
     # create a scratch array for storing weights
-    label_sums = np.zeros(1, dtype=np.float64)
+    basin_weights = np.zeros(1, dtype=np.float64)
+    # create lists for storing charges and weights
+    basin_charges = []
+    basin_volumes = []
     # Loop over each voxel in parallel (except the vacuum points)
     for i, j, k in sorted_voxel_coords:
         # get the initial value for this point
@@ -102,13 +126,13 @@ def get_rough_weight_labels(
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             # if neighbor doesn't have an assignment, continue on
             neigh_label = labels[ii, jj, kk]
-            neigh_data = data[ii,jj,kk]
+            neigh_data = data[ii, jj, kk]
             if neigh_label == -1 or neigh_data <= base_value:
                 continue
             # add this neighbors label and weight to our lists
             neigh_labels.append(neigh_label)
-            neigh_weights.append((neigh_data-base_value)*weight)
-        
+            neigh_weights.append((neigh_data - base_value) * weight)
+
         # if we have no list entries we might be at a maximum. We use the ongrid
         # method to assign the point
         if len(neigh_labels) == 0:
@@ -123,34 +147,42 @@ def get_rough_weight_labels(
             # if this is a maximum, set the row to 0, note its a max, and continue
             if is_max:
                 # note this is a max
-                maxima_mask[i,j,k] = True
+                maxima_mask[i, j, k] = True
                 # set the label
-                labels[i,j,k] = max_num
+                labels[i, j, k] = max_num
                 max_num += 1
                 # update our scratch array
-                label_sums = np.zeros(max_num, dtype=np.float64)
+                basin_weights = np.zeros(max_num, dtype=np.float64)
+                # add charge and volume to assignment array
+                basin_charges.append(charge_data[i, j, k])
+                basin_volumes.append(1.0)
                 continue
             # otherwise, we give the point the same label as its highest neighbor
-            labels[i,j,k] = labels[ni,nj,nk]
+            labels[i, j, k] = labels[ni, nj, nk]
             continue
-        
-        # otherwise we find the label with the most weight
-        best_label = find_best_label(neigh_labels, neigh_weights, label_sums)
-        # if there is a tie for best label, we default back to ongrid
-        if best_label == -1:
-            shift, (ni, nj, nk), is_max = get_best_neighbor(
-                data=data,
-                i=i,
-                j=j,
-                k=k,
-                neighbor_transforms=all_neighbor_transforms,
-                neighbor_dists=all_neighbor_dists,
-            )
-            labels[i,j,k] = labels[ni,nj,nk]
-            continue
-        
-        # assign the best label
-        labels[i,j,k] = best_label
-            
 
-    return labels, maxima_mask
+        # otherwise we assign charge, volumes, and label by weight.
+        # reset label sums
+
+        basin_weights[:] = 0.0
+        # Accumulate weights per label
+        for label, weight in zip(neigh_labels, neigh_weights):
+            basin_weights[label] += weight
+        # normalize to get fractions
+        basin_weights /= basin_weights.sum()
+        # assign charge, volume, and label
+        max_val = basin_weights.max()
+        label_assigned = False
+        for basin, weight in enumerate(basin_weights):
+            basin_charges[basin] += weight * charge_data[i, j, k]
+            basin_volumes[basin] += weight
+            if weight == max_val and not label_assigned:
+                labels[i, j, k] = basin
+                label_assigned = True
+
+    return (
+        labels,
+        maxima_mask,
+        np.array(basin_charges, dtype=np.float64),
+        np.array(basin_volumes, dtype=np.float64),
+    )

@@ -2,8 +2,7 @@
 
 import copy
 import logging
-from pathlib import Path
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -362,10 +361,13 @@ class MethodBase:
         # update_labels
         # Create a mapping from old to new labels. The initial labels should be
         # 0 and up
-        mapping = np.arange(max_label + 1)
-        mapping[mapping] = new_labels
+        # mapping = np.arange(max_label + 1)
+        # mapping[mapping] = new_labels
+        # mapping = new_labels.copy()
+
         # Apply mapping
-        labels = mapping[labels]
+        # labels = mapping[labels]
+        labels = new_labels[labels]
         return labels, frac_coords
 
     def copy(self) -> Self:

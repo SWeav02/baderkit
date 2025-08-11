@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 
-from pathlib import Path
+import subprocess
 import time
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import subprocess
-import matplotlib.pyplot as plt
 
 ###############################################################################
 # Parameters
@@ -37,7 +38,7 @@ for method in methods:
                 cwd=folder,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                check=True
+                check=True,
             )
             t1 = time.time()
             times.append(t1 - t0)
@@ -49,11 +50,13 @@ for method in methods:
 ###############################################################################
 # DataFrame and CSV output
 ###############################################################################
-time_df = pd.DataFrame({
-    "one_axis_grid_points": grid_nums,
-    "ngrid_points": np.array(grid_nums) ** 3,
-    **all_time_avgs
-})
+time_df = pd.DataFrame(
+    {
+        "one_axis_grid_points": grid_nums,
+        "ngrid_points": np.array(grid_nums) ** 3,
+        **all_time_avgs,
+    }
+)
 time_df.to_csv("time_summary_baderkit.csv", index=False)
 
 ###############################################################################
@@ -69,7 +72,7 @@ for method in methods:
         yerr=all_time_std[method],
         marker="o",
         capsize=4,
-        label=method
+        label=method,
     )
 ax.set_xlabel("Grid points along one axis")
 ax.set_ylabel("Average runtime (s)")

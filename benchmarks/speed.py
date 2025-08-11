@@ -9,7 +9,7 @@ from baderkit.core import Bader, Grid
 
 grid = Grid.from_vasp("CHGCAR")
 
-test_num = 20
+test_num = 1
 results = {}
 times = {}
 methods = Bader.all_methods()
@@ -24,13 +24,14 @@ for method in methods:
     result = bader.results_summary
     # Now run our tests
     t0 = time.time()
-    for test_num in range(test_num):
+    for _ in range(test_num):
         bader = Bader(
             charge_grid=grid,
             reference_grid=grid,
             method=method,
         )
         result = bader.results_summary
+        breakpoint()
     t1 = time.time()
     results[method] = result
     times[method] = (t1 - t0) / test_num

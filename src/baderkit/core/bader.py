@@ -671,12 +671,15 @@ class Bader:
 
         # Sum up charges/volumes per atom in one shot. slice with -1 is necessary
         # to prevent no negative value error
-        atom_charges = np.bincount(
-            basin_atoms[:-1], weights=self.basin_charges, minlength=N_atoms
-        )
-        atom_volumes = np.bincount(
-            basin_atoms[:-1], weights=self.basin_volumes, minlength=N_atoms
-        )
+        try:
+            atom_charges = np.bincount(
+                basin_atoms[:-1], weights=self.basin_charges, minlength=N_atoms
+            )
+            atom_volumes = np.bincount(
+                basin_atoms[:-1], weights=self.basin_volumes, minlength=N_atoms
+            )
+        except:
+            breakpoint()
         # Store everything
         self._basin_atoms = basin_atoms[:-1]
         self._basin_atom_dists = basin_atom_dists

@@ -110,7 +110,7 @@ def get_gradient_pointers(
                 ni, nj, nk = wrap_point(i + pi, j + pj, k + pk, nx, ny, nz)
                 # Ensure neighbor is higher than the current point, or backup to
                 # ongrid.
-                if data[i, j, k] > data[ni, nj, nk]:
+                if data[i, j, k] >= data[ni, nj, nk]:
                     shift, (ni, nj, nk), is_max = get_best_neighbor(
                         data=data,
                         i=i,
@@ -119,6 +119,9 @@ def get_gradient_pointers(
                         neighbor_transforms=neighbor_transforms,
                         neighbor_dists=neighbor_dists,
                     )
+                    if is_max:
+                        # NOTE: when would this happen?
+                        maxima_mask[i, j, k] = True
                 # save neighbor, dr, and pointer
                 gradients[i, j, k] = (gi, gj, gk)
                 pointers[i, j, k] = initial_labels[ni, nj, nk]
