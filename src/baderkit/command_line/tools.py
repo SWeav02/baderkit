@@ -57,6 +57,7 @@ class Method(str, Enum):
     weight = "weight"
     ongrid = "ongrid"
     gradient_weight = "gradient-weight"
+    rough_weight = "rough-weight"
     neargrid = "neargrid"
 
 
