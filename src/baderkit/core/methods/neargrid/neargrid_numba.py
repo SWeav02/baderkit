@@ -4,16 +4,16 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.methods.shared_numba import (
+from baderkit.core.methods.shared_numba import (  # get_gradient_overdetermined,
     get_best_neighbor,
     get_gradient_simple,
-    # get_gradient_overdetermined,
     wrap_point,
 )
 
 # NOTE: I used to calculate and store the ongrid steps and delta rs in this first
 # method rather than just the gradient. This was a tiny bit faster but not worth
 # the extra memory usage in my opinion. - S. Weaver
+
 
 @njit(cache=True, parallel=True)
 def get_gradient_pointers_simple(
@@ -127,6 +127,7 @@ def get_gradient_pointers_simple(
                 pointers[i, j, k] = initial_labels[ni, nj, nk]
     return pointers, gradients, maxima_mask
 
+
 # NOTE: This is an alternative method that calculates the gradient using all
 # 26 neighbors rather than just the 6 face sharing ones. I didn't find it to
 # make an appreciable difference for NaCl or a rotated H2O molecule, but these
@@ -196,13 +197,13 @@ def get_gradient_pointers_simple(
 #                     continue
 #                 # get gradient
 #                 gi, gj, gk = get_gradient_overdetermined(
-#                     data, 
-#                     i, 
-#                     j, 
-#                     k, 
-#                     vox_transforms=half_trans, 
-#                     transform_dists=half_dists, 
-#                     car2lat=car2lat, 
+#                     data,
+#                     i,
+#                     j,
+#                     k,
+#                     vox_transforms=half_trans,
+#                     transform_dists=half_dists,
+#                     car2lat=car2lat,
 #                     inv_norm_cart_trans=inv_norm_cart_trans,
 #                     )
 #                 max_grad = 0.0
@@ -343,7 +344,7 @@ def refine_fast_neargrid(
                     # relabel just this voxel then stop the loop
                     labels[i, j, k] = current_label
                     break
-    
+
                 # Otherwise, we have not reached a maximum and want to continue
                 # climbing
                 # make a neargrid step
@@ -387,5 +388,5 @@ def refine_fast_neargrid(
                 # update the current coord
                 ii, jj, kk = ni, nj, nk
         print(f"{reassignments} values changed")
-                
+
     return labels

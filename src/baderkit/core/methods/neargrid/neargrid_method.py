@@ -7,9 +7,8 @@ import numpy as np
 from baderkit.core.methods.base import MethodBase
 from baderkit.core.methods.shared_numba import get_edges
 
-from .neargrid_numba import (
+from .neargrid_numba import (  # get_gradient_pointers_overdetermined,
     get_gradient_pointers_simple,
-    # get_gradient_pointers_overdetermined,
     refine_fast_neargrid,
 )
 
@@ -43,7 +42,7 @@ class NeargridMethod(MethodBase):
             vacuum_mask=self.vacuum_mask,
             initial_labels=grid.all_voxel_indices,
         )
-        
+
         # NOTE: This is an alternatvie method using an overdetermined system
         # of all 26 neighbors to calculate the gradient. I didn't see any
         # improvement for NaCl or H2O, but both were cubic systems.
@@ -102,7 +101,7 @@ class NeargridMethod(MethodBase):
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
         )
-        
+
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1

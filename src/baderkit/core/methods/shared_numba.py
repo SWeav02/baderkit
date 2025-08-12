@@ -198,6 +198,7 @@ def get_gradient_simple(
     r2 = dir2lat[2, 0] * gi + dir2lat[2, 1] * gj + dir2lat[2, 2] * gk
     return r0, r1, r2
 
+
 # NOTE
 # This is an alternative method for calculating the gradient that uses all of
 # the neighbors for each grid point to get an overdetermined system with improved
@@ -242,7 +243,7 @@ def get_gradient_simple(
 #             diffs[trans_idx] = (upper_value - lower_value) / (
 #                 2.0 * transform_dists[trans_idx]
 #             )
-    
+
 #     # Solve the overdetermined system to get the Cartesian gradient:
 #     #   norm_cart_transforms.T @ cart_grad ≈ diffs
 #     # Use the pseudoinverse to handle more directions than dimensions
@@ -256,6 +257,7 @@ def get_gradient_simple(
 
 #     ti, tj, tk = ti_new, tj_new, tk_new
 #     return ti, tj, tk
+
 
 @njit(cache=True, parallel=True)
 def combine_neigh_maxima(
@@ -351,9 +353,9 @@ def combine_neigh_maxima(
 
         if count == 1:
             # only one member -> use it directly (and ensure in [0,1))
-            frac_coords[u_idx, 0] = (ref0 % 1.0)
-            frac_coords[u_idx, 1] = (ref1 % 1.0)
-            frac_coords[u_idx, 2] = (ref2 % 1.0)
+            frac_coords[u_idx, 0] = ref0 % 1.0
+            frac_coords[u_idx, 1] = ref1 % 1.0
+            frac_coords[u_idx, 2] = ref2 % 1.0
         else:
             avg0 = (total0 / count) % 1.0
             avg1 = (total1 / count) % 1.0
@@ -363,6 +365,7 @@ def combine_neigh_maxima(
             frac_coords[u_idx, 2] = avg2
 
     return reduced_new_labels, frac_coords
+
 
 @njit(cache=True)
 def get_best_neighbor(

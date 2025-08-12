@@ -82,7 +82,7 @@ class WeightMethod(MethodBase):
             weight_maxima_vox[:, 1],
             weight_maxima_vox[:, 2],
         ] = True
-        
+
         # get charge and volume info
         charge_data = self.charge_grid.total
         flat_charge_data = charge_data.ravel()
@@ -97,7 +97,7 @@ class WeightMethod(MethodBase):
         # NOTE: reduction algorithm returns with unlabeled values as -1
         labels, self._maxima_frac = self.reduce_label_maxima(labels)
         maxima_num = len(self.maxima_frac)
-        
+
         # Calculate the weights for each voxel to each basin
         logging.info("Calculating weights, charges, and volumes")
         # first get labels for voxels with one weight
