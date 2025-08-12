@@ -7,7 +7,7 @@ from typing import TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
-from baderkit.core.grid import Grid
+from baderkit.core.toolkit import Grid
 
 from .shared_numba import combine_neigh_maxima, get_basin_charges_and_volumes
 

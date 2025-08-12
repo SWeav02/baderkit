@@ -11,10 +11,9 @@ import pandas as pd
 from numpy.typing import NDArray
 from rich.progress import track
 
-from baderkit.core.grid import Grid
 from baderkit.core.methods import method_names
 from baderkit.core.methods.shared_numba import get_edges
-from baderkit.core.structure import Structure
+from baderkit.core.toolkit import Grid, Structure
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")

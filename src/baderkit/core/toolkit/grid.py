@@ -15,7 +15,9 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
-from baderkit.core.structure import Structure
+from baderkit.core.toolkit.structure import Structure
+
+from .file_parsers import read_vasp
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Grid")
@@ -759,90 +761,6 @@ class Grid(VolumetricData):
             data=self.data.copy(),
             data_aug=self.data_aug,
         )
-
-    # TODO: The following is my own implementation for reading ELFCARs/CHGCARs
-    # that is faster than the default pymatgen parser. It currently fails in
-    # some instances.
-    # @classmethod
-    # def from_vasp(cls, filename: str | Path):
-    #     """
-    #     Create a grid instance using a CHGCAR or ELFCAR file
-
-    #     Args:
-    #         filename (string):
-    #             The file the instance should be made from. Should be a VASP
-    #             CHGCAR or ELFCAR type file.
-
-    #     Returns:
-    #         Grid from the specified file.
-    #     """
-    #     # ensure we have a path object
-    #     filename = Path(filename)
-    #     with open(filename, 'r') as f:
-    #         # Read header lines first
-    #         next(f)  # line 0
-    #         scale = float(next(f).strip())  # line 1
-
-    #         lattice_matrix = np.array([[float(x) for x in next(f).split()] for _ in range(3)]) * scale
-
-    #         atom_types = next(f).split()
-    #         atom_counts = list(map(int, next(f).split()))
-    #         total_atoms = sum(atom_counts)
-
-    #         # Skip the 'Direct' or 'Cartesian' line
-    #         next(f)
-
-    #         coords = np.array([
-    #             list(map(float, next(f).split()))
-    #             for _ in range(total_atoms)
-    #         ])
-
-    #         lattice = Lattice(lattice_matrix)
-    #         atom_list = [elem for typ, count in zip(atom_types, atom_counts) for elem in [typ]*count]
-    #         structure = Structure(lattice=lattice, species=atom_list, coords=coords)
-
-    #         # Read the FFT grid line
-    #         # skip empty line
-    #         next(f)
-    #         nx, ny, nz = map(int, next(f).split())
-    #         ngrid = nx * ny * nz
-
-    #         # Read the rest of the file as a single string to avoid Python loop overhead
-    #         # Read the remainder of the file as a single string
-    #         rest = f.read()
-    #         # Now we split the file at the next line that has the ngrid if it
-    #         # exists
-    #         data_strings = rest.split(f"{nx}  {ny}  {nz}")
-
-    #         data = []
-    #         for data_string in data_strings:
-    #             # Truncate everything after the word "augmentation"
-    #             cutoff_index = data_string.lower().find("augmentation")
-    #             if cutoff_index != -1:
-    #                 data_string = data_string[:cutoff_index]
-    #             # Split into values and convert to float
-    #             data_array = np.fromiter((float(x) for x in data_string.split()), dtype=float)
-
-    #             # remove shape line if necessary
-    #             if len(data_array) > ngrid:
-    #                 delete_indices = np.arange(ngrid, ngrid+3)
-    #                 data_array = np.delete(data_array, delete_indices)
-
-    #             data.append(data_array)
-
-    #         # Fast check for spin-polarized case
-    #         if len(data) == 1:
-    #             data_array=data[0]
-    #             total = data_array.reshape((nx, ny, nz), order='F')
-    #             data = {"total": total}
-    #         elif len(data) == 2:
-    #             total = data[0].reshape((nx, ny, nz), order='F')
-    #             diff = data[1].reshape((nx, ny, nz), order='F')
-    #             data = {"total": total, "diff": diff}
-    #         else:
-    #             raise ValueError("Unexpected number of data points: does not match grid size.")
-
-    #     return Grid(structure, data)
 
     def get_atoms_in_volume(self, volume_mask: NDArray[bool]) -> NDArray[int]:
         """
@@ -1617,6 +1535,32 @@ class Grid(VolumetricData):
     def from_vasp(cls, grid_file: str | Path) -> Self:
         """
         Create a grid instance using a CHGCAR or ELFCAR file.
+
+        Parameters
+        ----------
+        grid_file : str | Path
+            The file the instance should be made from. Should be a VASP
+            CHGCAR or ELFCAR type file.
+
+        Returns
+        -------
+        Self
+            Grid from the specified file.
+
+        """
+        logging.info(f"Loading {grid_file} from file")
+        structure, data, data_aug = read_vasp(grid_file)
+        return cls(
+            structure=structure,
+            data=data,
+            data_aug=data_aug,
+        )
+
+    @classmethod
+    def from_vasp_pymatgen(cls, grid_file: str | Path) -> Self:
+        """
+        Create a grid instance using a CHGCAR or ELFCAR file. Uses pymatgen's
+        parse_file method which is often surprisingly slow.
 
         Parameters
         ----------
