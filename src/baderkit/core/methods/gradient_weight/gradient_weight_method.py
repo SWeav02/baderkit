@@ -17,30 +17,35 @@ class GradientWeightMethod(MethodBase):
 
     def run(self):
         reference_grid = self.reference_grid.copy()
-        # get the voronoi neighbors, their distances, and the area of the corresponding
-        # facets.
-        neighbor_transforms, neighbor_dists, facet_areas, _ = (
-            reference_grid.voxel_voronoi_facets
-        )
+        # # get the voronoi neighbors, their distances, and the area of the corresponding
+        # # facets.
+        # neighbor_transforms, neighbor_dists, facet_areas, _ = (
+        #     reference_grid.voxel_voronoi_facets
+        # )
+        neighbor_transforms, neighbor_dists = reference_grid.voxel_26_neighbors
         # Get the transforms in cartesian coordinates, normalize, and weight by
         # area and distance
         neighbor_carts = reference_grid.get_cart_coords_from_vox(neighbor_transforms)
+        # neighbor_carts = (
+        #     neighbor_carts.T
+        #     * facet_areas
+        #     / (neighbor_dists * np.linalg.norm(neighbor_carts, axis=1))
+        # ).T
         neighbor_carts = (
-            neighbor_carts.T
-            * facet_areas
-            / (neighbor_dists * np.linalg.norm(neighbor_carts, axis=1))
+            neighbor_carts.T / (neighbor_dists * np.linalg.norm(neighbor_carts, axis=1))
         ).T
         # Get all neighbors
-        all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
+        # all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
         # Now we get pointers
         logging.info("Calculating steepest neighbors")
         pointers_3d, self._maxima_mask = get_gradient_pointers(
             initial_labels=reference_grid.all_voxel_indices,
             data=reference_grid.total,
-            neigh_transforms=neighbor_transforms,
+            neighbor_transforms=neighbor_transforms,
+            neighbor_dists=neighbor_dists,
             weighted_cart=neighbor_carts,
-            all_neighbor_transforms=all_neighbor_transforms,
-            all_neighbor_dists=all_neighbor_dists,
+            # all_neighbor_transforms=all_neighbor_transforms,
+            # all_neighbor_dists=all_neighbor_dists,
             vacuum_mask=self.vacuum_mask,
             car2lat=self.car2lat,
         )
