@@ -319,7 +319,6 @@ def get_gradient_overdetermined(
     transform_dists,
     car2lat,
     inv_norm_cart_trans,
-    # inv_lattice_matrix,
 ):
     nx, ny, nz = data.shape
     # Value at the central point
@@ -354,6 +353,8 @@ def get_gradient_overdetermined(
     # Solve the overdetermined system to get the Cartesian gradient:
     #   norm_cart_transforms.T @ cart_grad ≈ diffs
     # Use the pseudoinverse to handle more directions than dimensions
+    # inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms) where
+    # norm_cart_transforms is an N, 3 shaped array pointing to 13 unique neighbors
     ti, tj, tk = inv_norm_cart_trans @ diffs
     # Convert Cartesian gradient to fractional (lattice) coordinates
     ti_new = car2lat[0, 0] * ti + car2lat[0, 1] * tj + car2lat[0, 2] * tk

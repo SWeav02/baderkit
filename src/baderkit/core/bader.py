@@ -33,6 +33,7 @@ class Bader:
         vacuum_tol: float = 1.0e-3,
         normalize_vacuum: bool = True,
         basin_tol: float = 1.0e-3,
+        grad_method: str = "overdetermined",
     ):
         """
 
@@ -75,6 +76,7 @@ class Bader:
         self._vacuum_tol = vacuum_tol
         self._normalize_vacuum = normalize_vacuum
         self._basin_tol = basin_tol
+        self.grad_method = grad_method
 
         # set hidden class variables. This allows us to cache properties and
         # still be able to recalculate them if needed, though that should only
@@ -616,6 +618,7 @@ class Bader:
             reference_grid=self.reference_grid,
             vacuum_tol=self.vacuum_tol,
             normalize_vacuum=self.normalize_vacuum,
+            grad_method=self.grad_method,
         )
         results = method.run()
 
