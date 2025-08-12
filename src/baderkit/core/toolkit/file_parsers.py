@@ -73,7 +73,7 @@ def read_vasp(filename: str | Path):
         try:
             if tuple(map(int, rest[i].split())) == fft_dim_ints:
                 break
-        except ValueError:
+        except:
             pass
         i += 1
     # get the first augmentation set of lines

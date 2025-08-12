@@ -15,9 +15,8 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
+from baderkit.core.toolkit.file_parsers import read_vasp
 from baderkit.core.toolkit.structure import Structure
-
-from .file_parsers import read_vasp
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Grid")
