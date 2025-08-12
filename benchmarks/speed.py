@@ -31,7 +31,6 @@ for method in methods:
             method=method,
         )
         result = bader.results_summary
-        breakpoint()
     t1 = time.time()
     results[method] = result
     times[method] = (t1 - t0) / test_num

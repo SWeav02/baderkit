@@ -5,5 +5,4 @@ method_names = [
     "neargrid",
     "weight",
     "gradient-weight",
-    "rough-weight",
 ]
