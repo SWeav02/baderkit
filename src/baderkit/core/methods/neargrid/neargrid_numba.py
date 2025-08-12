@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 from baderkit.core.methods.shared_numba import (
     get_best_neighbor,
     get_gradient_simple,
-    get_gradient_overdetermined,
+    # get_gradient_overdetermined,
     wrap_point,
 )
 
@@ -127,128 +127,133 @@ def get_gradient_pointers_simple(
                 pointers[i, j, k] = initial_labels[ni, nj, nk]
     return pointers, gradients, maxima_mask
 
-@njit(cache=True, parallel=True)
-def get_gradient_pointers_overdetermined(
-    data: NDArray[np.float64],
-    car2lat,
-    inv_norm_cart_trans,
-    neighbor_transforms: NDArray[np.int64],
-    neighbor_dists: NDArray[np.float64],
-    vacuum_mask: NDArray[np.bool_],
-    initial_labels: NDArray[np.int64],
-):
-    """
-    Calculates the ongrid steps and delta r at each point in the grid
+# NOTE: This is an alternative method that calculates the gradient using all
+# 26 neighbors rather than just the 6 face sharing ones. I didn't find it to
+# make an appreciable difference for NaCl or a rotated H2O molecule, but these
+# were both on cubic grids, so it's possible it makes a bigger difference in
+# more skewed systems.
+# @njit(cache=True, parallel=True)
+# def get_gradient_pointers_overdetermined(
+#     data: NDArray[np.float64],
+#     car2lat,
+#     inv_norm_cart_trans,
+#     neighbor_transforms: NDArray[np.int64],
+#     neighbor_dists: NDArray[np.float64],
+#     vacuum_mask: NDArray[np.bool_],
+#     initial_labels: NDArray[np.int64],
+# ):
+#     """
+#     Calculates the ongrid steps and delta r at each point in the grid
 
-    Parameters
-    ----------
-    data : NDArray[np.float64]
-        A 3D grid of values for each point.
-    car2lat : NDArray[np.float64]
-        A matrix for converting from cartesian coordinates to lattice coords
-    inv_norm_cart_trans : NDArray[np.float64]
-        pseudo inverse of normalized cartesian transforms to neighbors
-    neighbor_transforms : NDArray[np.int64]
-        The transformations from each voxel to its neighbors.
-    neighbor_dists : NDArray[np.float64]
-        The distance to each neighboring voxel.
-    vacuum_mask : NDArray[np.bool_]
-        A 3D array representing the location of the vacuum.
-    initial_labels : NDArray[np.int64]
-        A 3D array represengint the flat indices of each grid point
+#     Parameters
+#     ----------
+#     data : NDArray[np.float64]
+#         A 3D grid of values for each point.
+#     car2lat : NDArray[np.float64]
+#         A matrix for converting from cartesian coordinates to lattice coords
+#     inv_norm_cart_trans : NDArray[np.float64]
+#         pseudo inverse of normalized cartesian transforms to neighbors
+#     neighbor_transforms : NDArray[np.int64]
+#         The transformations from each voxel to its neighbors.
+#     neighbor_dists : NDArray[np.float64]
+#         The distance to each neighboring voxel.
+#     vacuum_mask : NDArray[np.bool_]
+#         A 3D array representing the location of the vacuum.
+#     initial_labels : NDArray[np.int64]
+#         A 3D array represengint the flat indices of each grid point
 
-    Returns
-    -------
-    pointers : NDArray[np.int64]
-        A 3D array where each entry is the index of the neighbor that is most
-        along the gradient. A value of -1 indicates a vacuum point.
-    gradients : NDArray[np.float32]
-        A 4D array where gradients[i,j,k] returns the gradient at point (i,j,k)
-    maxima_mask : NDArray[np.bool_]
-        A 3D array that is True at maxima
+#     Returns
+#     -------
+#     pointers : NDArray[np.int64]
+#         A 3D array where each entry is the index of the neighbor that is most
+#         along the gradient. A value of -1 indicates a vacuum point.
+#     gradients : NDArray[np.float32]
+#         A 4D array where gradients[i,j,k] returns the gradient at point (i,j,k)
+#     maxima_mask : NDArray[np.bool_]
+#         A 3D array that is True at maxima
 
-    """
-    nx, ny, nz = data.shape
-    # create array for storing maxima
-    maxima_mask = np.zeros(data.shape, dtype=np.bool_)
-    # Create a new array for storing gradients
-    # NOTE: I would even do a float16 here but numba doesn't support it. I doubt
-    # we need the accuracy.
-    gradients = np.zeros((nx, ny, nz, 3), dtype=np.float32)
-    # create array for storing pointers
-    pointers = initial_labels.copy()
-    # get half the transforms for overdetermined gradient
-    half_trans = neighbor_transforms[:13]
-    half_dists = neighbor_dists[:13]
-    # loop over each grid point in parallel
-    for i in prange(nx):
-        for j in range(ny):
-            for k in range(nz):
-                # check if this point is part of the vacuum. If it is, we can
-                # ignore this point.
-                if vacuum_mask[i, j, k]:
-                    pointers[i, j, k] = -1
-                    continue
-                # get gradient
-                gi, gj, gk = get_gradient_overdetermined(
-                    data, 
-                    i, 
-                    j, 
-                    k, 
-                    vox_transforms=half_trans, 
-                    transform_dists=half_dists, 
-                    car2lat=car2lat, 
-                    inv_norm_cart_trans=inv_norm_cart_trans,
-                    )
-                max_grad = 0.0
-                for x in (gi, gj, gk):
-                    ax = abs(x)
-                    if ax > max_grad:
-                        max_grad = ax
-                if max_grad < 1e-30:
-                    # we have no gradient so we reset the total delta r
-                    # Check if this is a maximum and if not step ongrid
-                    (si, sj, sk), (ni, nj, nk), is_max = get_best_neighbor(
-                        data=data,
-                        i=i,
-                        j=j,
-                        k=k,
-                        neighbor_transforms=neighbor_transforms,
-                        neighbor_dists=neighbor_dists,
-                    )
-                    # set gradient and point. Note gradient is exactly ongrid in
-                    # this instance
-                    gradients[i, j, k] = (si, sj, sk)
-                    pointers[i, j, k] = initial_labels[ni, nj, nk]
-                    if is_max:
-                        maxima_mask[i, j, k] = True
-                    continue
-                # Normalize
-                gi /= max_grad
-                gj /= max_grad
-                gk /= max_grad
-                # get pointer
-                pi, pj, pk = round(gi), round(gj), round(gk)
-                # get neighbor and wrap
-                ni, nj, nk = wrap_point(i + pi, j + pj, k + pk, nx, ny, nz)
-                # Ensure neighbor is higher than the current point, or backup to
-                # ongrid.
-                if data[i, j, k] >= data[ni, nj, nk]:
-                    shift, (ni, nj, nk), is_max = get_best_neighbor(
-                        data=data,
-                        i=i,
-                        j=j,
-                        k=k,
-                        neighbor_transforms=neighbor_transforms,
-                        neighbor_dists=neighbor_dists,
-                    )
-                    if is_max:
-                        # NOTE: when would this happen?
-                        maxima_mask[i, j, k] = True
-                # save neighbor, dr, and pointer
-                gradients[i, j, k] = (gi, gj, gk)
-                pointers[i, j, k] = initial_labels[ni, nj, nk]
-    return pointers, gradients, maxima_mask
+#     """
+#     nx, ny, nz = data.shape
+#     # create array for storing maxima
+#     maxima_mask = np.zeros(data.shape, dtype=np.bool_)
+#     # Create a new array for storing gradients
+#     # NOTE: I would even do a float16 here but numba doesn't support it. I doubt
+#     # we need the accuracy.
+#     gradients = np.zeros((nx, ny, nz, 3), dtype=np.float32)
+#     # create array for storing pointers
+#     pointers = initial_labels.copy()
+#     # get half the transforms for overdetermined gradient
+#     half_trans = neighbor_transforms[:13]
+#     half_dists = neighbor_dists[:13]
+#     # loop over each grid point in parallel
+#     for i in prange(nx):
+#         for j in range(ny):
+#             for k in range(nz):
+#                 # check if this point is part of the vacuum. If it is, we can
+#                 # ignore this point.
+#                 if vacuum_mask[i, j, k]:
+#                     pointers[i, j, k] = -1
+#                     continue
+#                 # get gradient
+#                 gi, gj, gk = get_gradient_overdetermined(
+#                     data, 
+#                     i, 
+#                     j, 
+#                     k, 
+#                     vox_transforms=half_trans, 
+#                     transform_dists=half_dists, 
+#                     car2lat=car2lat, 
+#                     inv_norm_cart_trans=inv_norm_cart_trans,
+#                     )
+#                 max_grad = 0.0
+#                 for x in (gi, gj, gk):
+#                     ax = abs(x)
+#                     if ax > max_grad:
+#                         max_grad = ax
+#                 if max_grad < 1e-30:
+#                     # we have no gradient so we reset the total delta r
+#                     # Check if this is a maximum and if not step ongrid
+#                     (si, sj, sk), (ni, nj, nk), is_max = get_best_neighbor(
+#                         data=data,
+#                         i=i,
+#                         j=j,
+#                         k=k,
+#                         neighbor_transforms=neighbor_transforms,
+#                         neighbor_dists=neighbor_dists,
+#                     )
+#                     # set gradient and point. Note gradient is exactly ongrid in
+#                     # this instance
+#                     gradients[i, j, k] = (si, sj, sk)
+#                     pointers[i, j, k] = initial_labels[ni, nj, nk]
+#                     if is_max:
+#                         maxima_mask[i, j, k] = True
+#                     continue
+#                 # Normalize
+#                 gi /= max_grad
+#                 gj /= max_grad
+#                 gk /= max_grad
+#                 # get pointer
+#                 pi, pj, pk = round(gi), round(gj), round(gk)
+#                 # get neighbor and wrap
+#                 ni, nj, nk = wrap_point(i + pi, j + pj, k + pk, nx, ny, nz)
+#                 # Ensure neighbor is higher than the current point, or backup to
+#                 # ongrid.
+#                 if data[i, j, k] >= data[ni, nj, nk]:
+#                     shift, (ni, nj, nk), is_max = get_best_neighbor(
+#                         data=data,
+#                         i=i,
+#                         j=j,
+#                         k=k,
+#                         neighbor_transforms=neighbor_transforms,
+#                         neighbor_dists=neighbor_dists,
+#                     )
+#                     if is_max:
+#                         # NOTE: when would this happen?
+#                         maxima_mask[i, j, k] = True
+#                 # save neighbor, dr, and pointer
+#                 gradients[i, j, k] = (gi, gj, gk)
+#                 pointers[i, j, k] = initial_labels[ni, nj, nk]
+#     return pointers, gradients, maxima_mask
 
 
 @njit(parallel=True, cache=True)

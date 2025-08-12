@@ -82,8 +82,7 @@ class WeightMethod(MethodBase):
             weight_maxima_vox[:, 1],
             weight_maxima_vox[:, 2],
         ] = True
-        # Calculate the weights for each voxel to each basin
-        logging.info("Calculating weights, charges, and volumes")
+        
         # get charge and volume info
         charge_data = self.charge_grid.total
         flat_charge_data = charge_data.ravel()
@@ -91,7 +90,6 @@ class WeightMethod(MethodBase):
         # remove vacuum from charge data
         sorted_flat_charge_data = sorted_flat_charge_data[: len(sorted_voxel_coords)]
         voxel_volume = reference_grid.voxel_volume
-
         # create a labels array and label maxima
         labels = np.full(data.shape, -1, dtype=np.int64)
         labels[self._maxima_mask] = np.arange(len(weight_maxima_vox))
@@ -99,7 +97,10 @@ class WeightMethod(MethodBase):
         # NOTE: reduction algorithm returns with unlabeled values as -1
         labels, self._maxima_frac = self.reduce_label_maxima(labels)
         maxima_num = len(self.maxima_frac)
-        # get labels for voxels with one weight
+        
+        # Calculate the weights for each voxel to each basin
+        logging.info("Calculating weights, charges, and volumes")
+        # first get labels for voxels with one weight
         labels, unassigned_mask, charges, volumes = get_single_weight_voxels(
             neigh_indices_array=neigh_indices_array,
             sorted_voxel_coords=sorted_voxel_coords,

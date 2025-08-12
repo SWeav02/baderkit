@@ -38,7 +38,6 @@ def version():
 class Method(str, Enum):
     weight = "weight"
     ongrid = "ongrid"
-    gradient_weight = "gradient-weight"
     neargrid = "neargrid"
 
 

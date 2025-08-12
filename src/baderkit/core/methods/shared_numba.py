@@ -198,6 +198,64 @@ def get_gradient_simple(
     r2 = dir2lat[2, 0] * gi + dir2lat[2, 1] * gj + dir2lat[2, 2] * gk
     return r0, r1, r2
 
+# NOTE
+# This is an alternative method for calculating the gradient that uses all of
+# the neighbors for each grid point to get an overdetermined system with improved
+# sampling. I didn't find it made a big difference.
+# @njit(cache=True)
+# def get_gradient_overdetermined(
+#     data,
+#     i,
+#     j,
+#     k,
+#     vox_transforms,
+#     transform_dists,
+#     car2lat,
+#     inv_norm_cart_trans,
+# ):
+#     nx, ny, nz = data.shape
+#     # Value at the central point
+#     point_value = data[i, j, k]
+#     # Number of neighbor displacements/transforms
+#     num_transforms = len(vox_transforms)
+
+#     # Array to hold finite‐difference estimates along each transform direction
+#     diffs = np.zeros(num_transforms)
+#     # Loop over each neighbor transform
+#     for trans_idx in range(num_transforms):
+#         # Displacement vector in voxel (grid) coordinates
+#         x, y, z = vox_transforms[trans_idx]
+#         # Compute “upper” neighbor index, wrapped by periodic boundaries
+#         ui, uj, uk = wrap_point(i + x, j + y, k + z, nx, ny, nz)
+#         # Compute “lower” neighbor index (opposite direction), also wrapped
+#         li, lj, lk = wrap_point(i - x, j - y, k - z, nx, ny, nz)
+#         # Values at the neighboring points
+#         upper_value = data[ui, uj, uk]
+#         lower_value = data[li, lj, lk]
+
+#         # If both neighbors are below or equal to the center, zero out this direction
+#         # (prevents spurious negative slopes if data dips on both sides)
+#         if lower_value <= point_value and upper_value <= point_value:
+#             diffs[trans_idx] = 0.0
+#         else:
+#             # Standard central‐difference estimate: (f(i+Δ) – f(i–Δ)) / (2Δ)
+#             diffs[trans_idx] = (upper_value - lower_value) / (
+#                 2.0 * transform_dists[trans_idx]
+#             )
+    
+#     # Solve the overdetermined system to get the Cartesian gradient:
+#     #   norm_cart_transforms.T @ cart_grad ≈ diffs
+#     # Use the pseudoinverse to handle more directions than dimensions
+#     # inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms) where
+#     # norm_cart_transforms is an N, 3 shaped array pointing to 13 unique neighbors
+#     ti, tj, tk = inv_norm_cart_trans @ diffs
+#     # Convert Cartesian gradient to fractional (lattice) coordinates
+#     ti_new = car2lat[0, 0] * ti + car2lat[0, 1] * tj + car2lat[0, 2] * tk
+#     tj_new = car2lat[1, 0] * ti + car2lat[1, 1] * tj + car2lat[1, 2] * tk
+#     tk_new = car2lat[2, 0] * ti + car2lat[2, 1] * tj + car2lat[2, 2] * tk
+
+#     ti, tj, tk = ti_new, tj_new, tk_new
+#     return ti, tj, tk
 
 @njit(cache=True, parallel=True)
 def combine_neigh_maxima(
@@ -305,65 +363,6 @@ def combine_neigh_maxima(
             frac_coords[u_idx, 2] = avg2
 
     return reduced_new_labels, frac_coords
-
-
-# This is an alternative method for calculating the gradient that either doesn't
-# work or isn't a valid method.
-@njit(cache=True)
-def get_gradient_overdetermined(
-    data,
-    i,
-    j,
-    k,
-    vox_transforms,
-    transform_dists,
-    car2lat,
-    inv_norm_cart_trans,
-):
-    nx, ny, nz = data.shape
-    # Value at the central point
-    point_value = data[i, j, k]
-    # Number of neighbor displacements/transforms
-    num_transforms = len(vox_transforms)
-
-    # Array to hold finite‐difference estimates along each transform direction
-    diffs = np.zeros(num_transforms)
-    # Loop over each neighbor transform
-    for trans_idx in range(num_transforms):
-        # Displacement vector in voxel (grid) coordinates
-        x, y, z = vox_transforms[trans_idx]
-        # Compute “upper” neighbor index, wrapped by periodic boundaries
-        ui, uj, uk = wrap_point(i + x, j + y, k + z, nx, ny, nz)
-        # Compute “lower” neighbor index (opposite direction), also wrapped
-        li, lj, lk = wrap_point(i - x, j - y, k - z, nx, ny, nz)
-        # Values at the neighboring points
-        upper_value = data[ui, uj, uk]
-        lower_value = data[li, lj, lk]
-
-        # If both neighbors are below or equal to the center, zero out this direction
-        # (prevents spurious negative slopes if data dips on both sides)
-        if lower_value <= point_value and upper_value <= point_value:
-            diffs[trans_idx] = 0.0
-        else:
-            # Standard central‐difference estimate: (f(i+Δ) – f(i–Δ)) / (2Δ)
-            diffs[trans_idx] = (upper_value - lower_value) / (
-                2.0 * transform_dists[trans_idx]
-            )
-    
-    # Solve the overdetermined system to get the Cartesian gradient:
-    #   norm_cart_transforms.T @ cart_grad ≈ diffs
-    # Use the pseudoinverse to handle more directions than dimensions
-    # inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms) where
-    # norm_cart_transforms is an N, 3 shaped array pointing to 13 unique neighbors
-    ti, tj, tk = inv_norm_cart_trans @ diffs
-    # Convert Cartesian gradient to fractional (lattice) coordinates
-    ti_new = car2lat[0, 0] * ti + car2lat[0, 1] * tj + car2lat[0, 2] * tk
-    tj_new = car2lat[1, 0] * ti + car2lat[1, 1] * tj + car2lat[1, 2] * tk
-    tk_new = car2lat[2, 0] * ti + car2lat[2, 1] * tj + car2lat[2, 2] * tk
-
-    ti, tj, tk = ti_new, tj_new, tk_new
-    return ti, tj, tk
-
 
 @njit(cache=True)
 def get_best_neighbor(
