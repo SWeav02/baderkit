@@ -37,6 +37,7 @@ class MethodBase:
         reference_grid: Grid,
         vacuum_tol: float = 1.0e-3,
         normalize_vacuum: bool = True,
+        grad_method: str = "overdetermined", # or "simple"
     ):
         """
 
@@ -65,6 +66,7 @@ class MethodBase:
         self.reference_grid = reference_grid
         self.vacuum_tol = vacuum_tol
         self.normalize_vacuum = normalize_vacuum
+        self.grad_method = grad_method
 
         # These variables are also often needed but are calculated during the run
         self._vacuum_mask = None

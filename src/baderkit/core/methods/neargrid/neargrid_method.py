@@ -8,7 +8,8 @@ from baderkit.core.methods.base import MethodBase
 from baderkit.core.methods.shared_numba import get_edges
 
 from .neargrid_numba import (
-    get_gradient_pointers,
+    get_gradient_pointers_simple,
+    get_gradient_pointers_overdetermined,
     refine_fast_neargrid,
 )
 
@@ -32,15 +33,32 @@ class NeargridMethod(MethodBase):
         # get neigbhor transforms
         neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
         logging.info("Calculating gradients")
-        # calculate gradients and pointers to best neighbors
-        labels, gradients, self._maxima_mask = get_gradient_pointers(
-            data=grid.total,
-            dir2lat=self.dir2lat,
-            neighbor_dists=neighbor_dists,
-            neighbor_transforms=neighbor_transforms,
-            vacuum_mask=self.vacuum_mask,
-            initial_labels=grid.all_voxel_indices,
-        )
+        if self.grad_method == "simple":
+            # calculate gradients and pointers to best neighbors
+            labels, gradients, self._maxima_mask = get_gradient_pointers_simple(
+                data=grid.total,
+                dir2lat=self.dir2lat,
+                neighbor_dists=neighbor_dists,
+                neighbor_transforms=neighbor_transforms,
+                vacuum_mask=self.vacuum_mask,
+                initial_labels=grid.all_voxel_indices,
+            )
+        elif self.grad_method == "overdetermined":
+            # get cartesian transforms and normalize
+            cart_transforms = grid.get_cart_coords_from_vox(neighbor_transforms)
+            norm_cart_transforms = (cart_transforms.T / np.linalg.norm(cart_transforms, axis=1)).T
+            # get the pseudo inverse
+            inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms[:13])
+            # calculate gradients and pointers to best neighbors
+            labels, gradients, self._maxima_mask = get_gradient_pointers_overdetermined(
+                data=grid.total,
+                car2lat=self.car2lat,
+                inv_norm_cart_trans=inv_norm_cart_trans,
+                neighbor_dists=neighbor_dists,
+                neighbor_transforms=neighbor_transforms,
+                vacuum_mask=self.vacuum_mask,
+                initial_labels=grid.all_voxel_indices,
+            )
         # Convert to 1D. We use the same name for minimal memory
         labels = labels.ravel()
         # Find roots
