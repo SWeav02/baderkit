@@ -62,8 +62,7 @@ class NeargridMethod(MethodBase):
         labels += 1
 
         # Now we refine the edges with the neargrid method
-        reassignments = 1
-        # get our edges, not including edges on the vacuum.
+        # Get our edges, not including edges on the vacuum.
         refinement_mask = get_edges(
             labeled_array=labels,
             neighbor_transforms=neighbor_transforms,
@@ -73,27 +72,16 @@ class NeargridMethod(MethodBase):
         refinement_mask[self.maxima_mask] = False
         # note these labels should not be reassigned again in future cycles
         labels[refinement_mask] = -labels[refinement_mask]
-
-        while reassignments > 0:
-            # get refinement indices
-            refinement_indices = np.argwhere(refinement_mask)
-            if len(refinement_indices) == 0:
-                # there's nothing to refine so we break
-                break
-            print(f"Refining {len(refinement_indices)} points")
-            # reassign edges
-            labels, reassignments, refinement_mask = refine_fast_neargrid(
-                data=grid.total,
-                labels=labels,
-                refinement_indices=refinement_indices,
-                refinement_mask=refinement_mask,
-                maxima_mask=self.maxima_mask,
-                gradients=gradients,
-                neighbor_dists=neighbor_dists,
-                neighbor_transforms=neighbor_transforms,
-            )
-
-            print(f"{reassignments} values changed")
+        labels = refine_fast_neargrid(
+            data=grid.total,
+            labels=labels,
+            refinement_mask=refinement_mask,
+            maxima_mask=self.maxima_mask,
+            gradients=gradients,
+            neighbor_dists=neighbor_dists,
+            neighbor_transforms=neighbor_transforms,
+        )
+        
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1

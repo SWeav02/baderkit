@@ -331,6 +331,7 @@ class MethodBase:
             The averaged fractional coordinates for each set of adjacent maxima.
 
         """
+        logging.info("Reducing maxima")
         # TODO: stop reassignments if no reduction is needed
         maxima_vox = self.maxima_vox
         # order maxima voxels from lowest to highest labels

@@ -92,7 +92,6 @@ class WeightMethod(MethodBase):
         sorted_flat_charge_data = sorted_flat_charge_data[: len(sorted_voxel_coords)]
         voxel_volume = reference_grid.voxel_volume
 
-        logging.info("Reducing maxima")
         # create a labels array and label maxima
         labels = np.full(data.shape, -1, dtype=np.int64)
         labels[self._maxima_mask] = np.arange(len(weight_maxima_vox))

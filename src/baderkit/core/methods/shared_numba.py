@@ -210,13 +210,12 @@ def combine_neigh_maxima(
     nx, ny, nz = labels.shape
     initial_labels = np.arange(len(maxima_vox), dtype=np.int64)
     new_labels = np.zeros(len(maxima_vox), dtype=np.int64)
-
     # check each neighbor and it its a max with a lower index, update the index
-    for max_idx in range(len(maxima_vox)):
+    for max_idx in prange(len(maxima_vox)):
         i, j, k = maxima_vox[max_idx]
         best_label = initial_labels[max_idx]
         for si, sj, sk in neighbor_transforms:
-            # wrap
+            # get neighbor and wrap
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             # check if new point is also a maximum
             if maxima_mask[ii, jj, kk] and labels[ii, jj, kk] < best_label:
@@ -233,45 +232,77 @@ def combine_neigh_maxima(
     # Now we want to calculate the new frac coords for each group. We also want
     # to make sure the labels go from 0, 1, 2, ... so on, while currently they
     # may skip some (e.g. 0,2,3,5,...)
-    # get unique labels to combine and create an array for storing average frac coords
+    # find unique labels and their count
     unique_labels = np.unique(new_labels)
-    frac_coords = np.zeros((len(unique_labels), 3), dtype=np.float64)
-    # create array to store the reduce labels
-    reduced_new_labels = np.zeros(len(new_labels), dtype=np.int64)
-    # create a counter to assist in relabeling
-    label_counter = -1
-    for label in unique_labels:
-        # increment our label counter
-        label_counter += 1
-        all_coords = []
-        for max_idx in range(len(new_labels)):
-            new_label = new_labels[max_idx]
-            # skip labels that don't match
-            if new_labels[new_label] != label:
-                continue
-            # update the label and add this coord
-            reduced_new_labels[max_idx] = label_counter
-            all_coords.append(maxima_frac[max_idx])
+    n_unique = len(unique_labels)
 
-        # if we have only one maxima, add it to the array and continue
-        if len(all_coords) == 1:
-            frac_coords[label_counter] = all_coords[0]
+    # Prepare result arrays
+    reduced_new_labels = np.empty(len(new_labels), dtype=np.int64)
+    frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
+
+    # Parallel loop: for each unique label, scan new_labels and compute the average
+    for u_idx in prange(n_unique):
+        target_label = unique_labels[u_idx]
+
+        # We'll accumulate (unwrapped) coordinates into total
+        total0 = 0.0
+        total1 = 0.0
+        total2 = 0.0
+        count = 0
+
+        # reference coord used for unwrapping
+        ref0 = 0.0
+        ref1 = 0.0
+        ref2 = 0.0
+        ref_set = False
+
+        # scan all maxima and pick those that belong to this target_group
+        for m in range(len(new_labels)):
+            lab = new_labels[m]
+            # skip if not part of this group
+            if lab != target_label:
+                continue
+
+            # assign reduced label (sequential index u_idx)
+            reduced_new_labels[m] = u_idx
+
+            # first seen -> set reference for unwrapping
+            c0 = maxima_frac[m, 0]
+            c1 = maxima_frac[m, 1]
+            c2 = maxima_frac[m, 2]
+            if not ref_set:
+                ref0, ref1, ref2 = c0, c1, c2
+                ref_set = True
+
+            # unwrap coordinate relative to reference: unwrapped = coord - round(coord - ref)
+            # Using np.round via float -> use built-in round for numba compatibility
+            # but call round(x) (returns float)
+            un0 = c0 - round(c0 - ref0)
+            un1 = c1 - round(c1 - ref1)
+            un2 = c2 - round(c2 - ref2)
+
+            total0 += un0
+            total1 += un1
+            total2 += un2
+            count += 1
+
+        # if no members (shouldn't happen) skip
+        if count == 0:
+            # mark nothing (for safety)
             continue
-        # use the first coord as our reference and create an array to serve as
-        # our average
-        ref = all_coords[0]
-        total = np.zeros(3, dtype=np.float64)
-        # loop over each coord, shift it to be close to the original point,
-        # add it to our total, then divide to average
-        for i in range(len(all_coords)):
-            coord = all_coords[i]
-            # unwrap each coord relative to ref
-            unwrapped = coord - np.round(coord - ref)
-            total += unwrapped
-        # average and wrap
-        avg = total / len(all_coords)
-        avg %= 1.0
-        frac_coords[label_counter] = avg
+
+        if count == 1:
+            # only one member -> use it directly (and ensure in [0,1))
+            frac_coords[u_idx, 0] = (ref0 % 1.0)
+            frac_coords[u_idx, 1] = (ref1 % 1.0)
+            frac_coords[u_idx, 2] = (ref2 % 1.0)
+        else:
+            avg0 = (total0 / count) % 1.0
+            avg1 = (total1 / count) % 1.0
+            avg2 = (total2 / count) % 1.0
+            frac_coords[u_idx, 0] = avg0
+            frac_coords[u_idx, 1] = avg1
+            frac_coords[u_idx, 2] = avg2
 
     return reduced_new_labels, frac_coords
 

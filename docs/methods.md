@@ -10,7 +10,6 @@ This page provides descriptions and recommendations for when to use each method.
 |ongrid         |Very Fast|Low       |:material-check:          |
 |neargrid       |Very Fast|High      |:material-check:          |
 |weight         |Medium   |Very High |:material-close:          |
-|gradient-weight|Fast     |High      |:material-check:          |
 
 ---
 
@@ -90,18 +89,4 @@ This page provides descriptions and recommendations for when to use each method.
     
     M. Yu and D. R. Trinkle, Accurate and efficient algorithm for Bader charge integration, [J. Chem. Phys. 134, 064111 (2011)](https://theory.cm.utexas.edu/henkelman/code/bader/download/yu11_064111.pdf)   
 
-=== "gradient-weight"
-    **Key Takeaways:** An experimental method with the goal of reaching similar
-    accuracy to the `neargrid` method without an edge refinment.
-    
-    This method combines aspects of the `weight` and `ongrid` methods to
-    achieve high accuracy and speed while maintaining low memory usage.
-    **It is a work in progress and has not been tested thoroughly.**
-    
-    Similar to the weight method, a voronoi cell is generated for each point on the
-    grid. The vectors pointing to each voronoi neighbor are normalized and scaled
-    based on facet area and distance. For each point on the grid, the scaled
-    vectors for each higher voronoi neighbor are multiplied by the difference between
-    the neighbor and central point, then summed together to get a total weighted
-    gradient. The points are then assigned to the neighbor closest to this vector.
     

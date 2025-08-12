@@ -132,13 +132,12 @@ def get_gradient_pointers(
 def refine_fast_neargrid(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
-    refinement_indices: NDArray[np.int64],
     refinement_mask: NDArray[np.bool_],
     maxima_mask: NDArray[np.bool_],
     gradients: NDArray[np.float32],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
-) -> tuple[NDArray[np.int64], np.int64, NDArray[np.bool_], NDArray[np.bool_]]:
+) -> NDArray[np.int64]:
     """
     Refines the provided voxels by running the neargrid method until a maximum
     is found for each.
@@ -149,12 +148,8 @@ def refine_fast_neargrid(
         A 3D grid of values for each point.
     labels : NDArray[np.int64]
         A 3D grid of labels representing current voxel assignments.
-    refinement_indices : NDArray[np.int64]
-        An Nx3 array of voxel indices to perform the refinement on.
     refinement_mask : NDArray[np.bool_]
         A 3D mask that is true at the voxel indices to be refined.
-    checked_mask : NDArray[np.bool_]
-        A 3D mask that is true at voxels that have already been refined.
     maxima_mask : NDArray[np.bool_]
         A 3D mask that is true at maxima.
     gradients : NDArray[np.float16]
@@ -168,97 +163,101 @@ def refine_fast_neargrid(
     -------
     labels : NDArray[np.int64]
         The updated assignment for each point on the grid.
-    reassignments : np.int64
-        The number of points that were reassigned.
-    refinement_mask : NDArray[np.bool_]
-        The updated mask of points that need to be refined
-    checked_mask : NDArray[np.bool_]
-        The updated mask of points that have been checked.
 
     """
     # get shape
     nx, ny, nz = data.shape
-
-    # now we reassign any voxel in our refinement mask
-    # NOTE: this reassignment count may not be perfectly accurate if any race
-    # conditions occur due to the parallelization
-    reassignments = 0
-    for vox_idx in prange(len(refinement_indices)):
-        i, j, k = refinement_indices[vox_idx]
-        # get our initial label for comparison. We need to take absolute value
-        # because refined labels are marked as negative
-        label = abs(labels[i, j, k])
-        # create delta r
-        tdi, tdj, tdk = (0.0, 0.0, 0.0)
-        # set the initial coord
-        ii, jj, kk = (i, j, k)
-        # start climbing
-        while True:
-            # check if we've hit a maximum
-            if maxima_mask[ii, jj, kk]:
-                # remove the point from the refinement list
-                refinement_mask[i, j, k] = False
-                # We've hit a maximum.
-                current_label = abs(labels[ii, jj, kk])
-                # Check if this is a reassignment
-                if label != current_label:
-                    reassignments += 1
-                    # add neighbors to our refinement mask for the next iteration
-                    for si, sj, sk in neighbor_transforms:
-                        # get new neighbor and wrap
-                        ni, nj, nk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-                        # If we haven't already checked this point, add it.
-                        # The vacuum and previously checked values are less than
-                        # or equal to 0
-                        if labels[ni, nj, nk] > 0:
-                            refinement_mask[ni, nj, nk] = True
-                            # note we don't want to reassign this again in the
-                            # future
-                            labels[ni, nj, nk] = -abs(labels[ni, nj, nk])
-                # relabel just this voxel then stop the loop
-                labels[i, j, k] = current_label
-                break
-
-            # Otherwise, we have not reached a maximum and want to continue
-            # climbing
-            # make a neargrid step
-            # 1. get gradient
-            gi, gj, gk = gradients[ii, jj, kk]
-            # 2. Round to obtain a pointer to the neighbor most along this gradient
-            pi = round(gi)
-            pj = round(gj)
-            pk = round(gk)
-            # get neighbor. Don't wrap yet since we'll do that later anyways
-            ni = ii + pi
-            nj = jj + pj
-            nk = kk + pk
-            # 3. Add difference to the total dr
-            tdi += gi - pi
-            tdj += gj - pj
-            tdk += gk - pk
-            # 4. update new coord and total delta r
-            ni += round(tdi)
-            nj += round(tdj)
-            nk += round(tdk)
-            tdi -= round(tdi)
-            tdj -= round(tdj)
-            tdk -= round(tdk)
-            # 4. wrap coord
-            ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
-            # make sure the new point has a higher value than the current one
-            # or back up to ongrid. This makes it impossible that we will ever
-            # loop back to the current path, avoiding the need to track it.
-            if data[ii, jj, kk] > data[ni, nj, nk]:
-                _, (ni, nj, nk), _ = get_best_neighbor(
-                    data=data,
-                    i=ii,
-                    j=jj,
-                    k=kk,
-                    neighbor_transforms=neighbor_transforms,
-                    neighbor_dists=neighbor_dists,
-                )
-                # reset delta r because we used an ongrid step
-                tdi, tdj, tdk = (0.0, 0.0, 0.0)
-            # update the current coord
-            ii, jj, kk = ni, nj, nk
-    return labels, reassignments, refinement_mask
+    # refine iteratively until no assignments change
+    reassignments = 1
+    while reassignments > 0:
+        # get refinement indices
+        refinement_indices = np.argwhere(refinement_mask)
+        if len(refinement_indices) == 0:
+            # there's nothing to refine so we break
+            break
+        print(f"Refining {len(refinement_indices)} points")
+        # now we reassign any voxel in our refinement mask
+        # NOTE: this reassignment count may not be perfectly accurate if any race
+        # conditions occur due to the parallelization
+        reassignments = 0
+        for vox_idx in prange(len(refinement_indices)):
+            i, j, k = refinement_indices[vox_idx]
+            # get our initial label for comparison. We need to take absolute value
+            # because refined labels are marked as negative
+            label = abs(labels[i, j, k])
+            # create delta r
+            tdi, tdj, tdk = (0.0, 0.0, 0.0)
+            # set the initial coord
+            ii, jj, kk = (i, j, k)
+            # start climbing
+            while True:
+                # check if we've hit a maximum
+                if maxima_mask[ii, jj, kk]:
+                    # remove the point from the refinement list
+                    refinement_mask[i, j, k] = False
+                    # We've hit a maximum.
+                    current_label = abs(labels[ii, jj, kk])
+                    # Check if this is a reassignment
+                    if label != current_label:
+                        reassignments += 1
+                        # add neighbors to our refinement mask for the next iteration
+                        for si, sj, sk in neighbor_transforms:
+                            # get new neighbor and wrap
+                            ni, nj, nk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                            # If we haven't already checked this point, add it.
+                            # The vacuum and previously checked values are less than
+                            # or equal to 0
+                            if labels[ni, nj, nk] > 0:
+                                refinement_mask[ni, nj, nk] = True
+                                # note we don't want to reassign this again in the
+                                # future
+                                labels[ni, nj, nk] = -abs(labels[ni, nj, nk])
+                    # relabel just this voxel then stop the loop
+                    labels[i, j, k] = current_label
+                    break
+    
+                # Otherwise, we have not reached a maximum and want to continue
+                # climbing
+                # make a neargrid step
+                # 1. get gradient
+                gi, gj, gk = gradients[ii, jj, kk]
+                # 2. Round to obtain a pointer to the neighbor most along this gradient
+                pi = round(gi)
+                pj = round(gj)
+                pk = round(gk)
+                # get neighbor. Don't wrap yet since we'll do that later anyways
+                ni = ii + pi
+                nj = jj + pj
+                nk = kk + pk
+                # 3. Add difference to the total dr
+                tdi += gi - pi
+                tdj += gj - pj
+                tdk += gk - pk
+                # 4. update new coord and total delta r
+                ni += round(tdi)
+                nj += round(tdj)
+                nk += round(tdk)
+                tdi -= round(tdi)
+                tdj -= round(tdj)
+                tdk -= round(tdk)
+                # 4. wrap coord
+                ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
+                # make sure the new point has a higher value than the current one
+                # or back up to ongrid. This makes it impossible that we will ever
+                # loop back to the current path, avoiding the need to track it.
+                if data[ii, jj, kk] > data[ni, nj, nk]:
+                    _, (ni, nj, nk), _ = get_best_neighbor(
+                        data=data,
+                        i=ii,
+                        j=jj,
+                        k=kk,
+                        neighbor_transforms=neighbor_transforms,
+                        neighbor_dists=neighbor_dists,
+                    )
+                    # reset delta r because we used an ongrid step
+                    tdi, tdj, tdk = (0.0, 0.0, 0.0)
+                # update the current coord
+                ii, jj, kk = ni, nj, nk
+        print(f"{reassignments} values changed")
+                
+    return labels
