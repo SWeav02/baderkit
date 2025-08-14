@@ -266,6 +266,7 @@ def refine_fast_neargrid(
     gradients: NDArray[np.float32],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
+    initial_labels: NDArray[np.int64],
 ) -> NDArray[np.int64]:
     """
     Refines the provided voxels by running the neargrid method until a maximum
@@ -318,6 +319,8 @@ def refine_fast_neargrid(
             tdi, tdj, tdk = (0.0, 0.0, 0.0)
             # set the initial coord
             ii, jj, kk = (i, j, k)
+            # create a list to store the path
+            path = []
             # start climbing
             while True:
                 # check if we've hit a maximum
@@ -347,6 +350,9 @@ def refine_fast_neargrid(
 
                 # Otherwise, we have not reached a maximum and want to continue
                 # climbing
+                # add this point to our path
+                current_index = initial_labels[ii, jj, kk]
+                path.append(current_index)
                 # make a neargrid step
                 # 1. get gradient
                 gi, gj, gk = gradients[ii, jj, kk]
@@ -371,11 +377,8 @@ def refine_fast_neargrid(
                 tdk -= round(tdk)
                 # 4. wrap coord
                 ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
-                # make sure the new point has a higher value than the current one
-                # or back up to ongrid. This makes it impossible that we will ever
-                # loop back to the current path, avoiding the need to track it.
-                # NOTE: This may decrease accuracy.
-                if data[ii, jj, kk] >= data[ni, nj, nk]:
+                # check if we've hit a point in the path or a vacuum point
+                if initial_labels[ni, nj, nk] in path or not labels[ni, nj, nk]:
                     _, (ni, nj, nk), _ = get_best_neighbor(
                         data=data,
                         i=ii,

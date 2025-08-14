@@ -100,6 +100,7 @@ class NeargridMethod(MethodBase):
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
+            initial_labels=grid.all_voxel_indices,
         )
 
         # switch negative labels back to positive and subtract by 1 to get to
