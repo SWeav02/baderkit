@@ -115,6 +115,7 @@ class Bader:
                 "atom_charges",
                 "atom_volumes",
                 "atom_surface_distances",
+                "total_electron_number",
             ]
         # get our final list of properties
         reset_properties = [
@@ -547,6 +548,22 @@ class Bader:
             self._num_vacuum = np.count_nonzero(self.vacuum_mask)
         return self._num_vacuum
 
+    @property
+    def total_electron_number(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total number of electrons in the system calculated from the
+            atom charges and vacuum charge. If this does not match the true
+            total electron number within reasonable floating point error,
+            there is a major problem.
+
+        """
+
+        return self.atom_charges.sum() + self.vacuum_charge
+
     @staticmethod
     def all_methods() -> list[str]:
         """
@@ -586,6 +603,7 @@ class Bader:
             "vacuum_charge": self.vacuum_charge,
             "vacuum_volume": self.vacuum_volume,
             "significant_basins": self.significant_basins,
+            "total_electron_num": self.total_electron_number,
         }
         return results_dict
 
@@ -1235,10 +1253,6 @@ class Bader:
             for col in basin_df.columns
         }
 
-        vacuum_charge = self.vacuum_charge
-        vacuum_volume = self.vacuum_volume
-        number_of_electrons = self.atom_charges.sum() + vacuum_charge
-
         # Write to file with aligned columns using tab as separator
         for df, col_widths, name in zip(
             [formatted_atoms_df, formatted_basin_df],
@@ -1259,6 +1273,6 @@ class Bader:
                 # write vacuum summary to atom file
                 if name == "bader_atom_summary.tsv":
                     f.write("\n")
-                    f.write(f"Vacuum Charge:\t\t{vacuum_charge:.6f}\n")
-                    f.write(f"Vacuum Volume:\t\t{vacuum_volume:.6f}\n")
-                    f.write(f"Total Electrons:\t{number_of_electrons:.6f}\n")
+                    f.write(f"Vacuum Charge:\t\t{self.vacuum_charge:.6f}\n")
+                    f.write(f"Vacuum Volume:\t\t{self.vacuum_volume:.6f}\n")
+                    f.write(f"Total Electrons:\t{self.number_of_electrons:.6f}\n")

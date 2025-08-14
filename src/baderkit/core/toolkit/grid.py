@@ -15,7 +15,7 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
-from baderkit.core.toolkit.file_parsers import read_vasp
+from baderkit.core.toolkit.file_parsers import read_cube, read_vasp, write_cube
 from baderkit.core.toolkit.structure import Structure
 
 # This allows for Self typing and is compatible with python versions before 3.11
@@ -1556,6 +1556,30 @@ class Grid(VolumetricData):
         )
 
     @classmethod
+    def from_cube(cls, grid_file: str | Path) -> Self:
+        """
+        Create a grid instance using a gaussian cube file.
+
+        Parameters
+        ----------
+        grid_file : str | Path
+            The file the instance should be made from. Should be a gaussian
+            cube file.
+
+        Returns
+        -------
+        Self
+            Grid from the specified file.
+
+        """
+        logging.info(f"Loading {grid_file} from file")
+        structure, data = read_cube(grid_file)
+        return cls(
+            structure=structure,
+            data=data,
+        )
+
+    @classmethod
     def from_vasp_pymatgen(cls, grid_file: str | Path) -> Self:
         """
         Create a grid instance using a CHGCAR or ELFCAR file. Uses pymatgen's
@@ -1765,3 +1789,16 @@ class Grid(VolumetricData):
         file_name = Path(file_name)
         logging.info(f"Writing {file_name.name}")
         super().write_file(file_name=file_name, vasp4_compatible=vasp4_compatible)
+
+    def write_cube(
+        self,
+        file_name: Path | str,
+        **kwargs,
+    ):
+
+        logging.info(f"Writing {file_name.name}")
+        write_cube(
+            filename=file_name,
+            grid=self,
+            **kwargs,
+        )
