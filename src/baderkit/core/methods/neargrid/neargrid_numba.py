@@ -342,7 +342,7 @@ def refine_fast_neargrid(
                                 # future
                                 labels[ni, nj, nk] = -abs(labels[ni, nj, nk])
                     # relabel just this voxel then stop the loop
-                    labels[i, j, k] = current_label
+                    labels[i, j, k] = -current_label
                     break
 
                 # Otherwise, we have not reached a maximum and want to continue
@@ -374,7 +374,8 @@ def refine_fast_neargrid(
                 # make sure the new point has a higher value than the current one
                 # or back up to ongrid. This makes it impossible that we will ever
                 # loop back to the current path, avoiding the need to track it.
-                if data[ii, jj, kk] > data[ni, nj, nk]:
+                # NOTE: This may decrease accuracy.
+                if data[ii, jj, kk] >= data[ni, nj, nk]:
                     _, (ni, nj, nk), _ = get_best_neighbor(
                         data=data,
                         i=ii,

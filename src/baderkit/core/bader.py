@@ -1275,4 +1275,4 @@ class Bader:
                     f.write("\n")
                     f.write(f"Vacuum Charge:\t\t{self.vacuum_charge:.6f}\n")
                     f.write(f"Vacuum Volume:\t\t{self.vacuum_volume:.6f}\n")
-                    f.write(f"Total Electrons:\t{self.number_of_electrons:.6f}\n")
+                    f.write(f"Total Electrons:\t{self.total_electron_number:.6f}\n")
