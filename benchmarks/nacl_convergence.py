@@ -31,7 +31,7 @@ for grid_num in grid_nums:
     # run each method and save Na oxidation state
     for method in methods:
         bader = Bader(charge_grid, reference_grid, method=method)
-        charges[method].append(bader.atom_charges[0])
+        charges[method].append(9 - bader.atom_charges[0])
 
 ###############################################################################
 # DataFrames
@@ -44,7 +44,7 @@ oxidation_df = pd.DataFrame(
     }
 )
 
-oxidation_df.to_csv("oxidation_summary.csv", index=False)
+oxidation_df.to_csv("oxidation_summary_baderkit.csv", index=False)
 
 ###############################################################################
 # Plotting
@@ -55,16 +55,16 @@ plt.style.use("seaborn-v0_8-darkgrid")
 fig, ax = plt.subplots()
 for method in methods:
     ax.plot(
-        oxidation_df["one_axis_grid_points"],
+        oxidation_df["ngrid_points"] / 1000000,
         oxidation_df[method],
         marker="o",
         label=method,
     )
-ax.set_xlabel("Grid points along one axis")
-ax.set_ylabel("First atom charge")
-ax.set_title("Bader Charges vs Grid Density")
+ax.set_xlabel("Grid points (millions)")
+ax.set_ylabel("Na Oxidation State")
+ax.set_title("BaderKit Na Charge vs Grid Density")
 ax.legend()
 plt.tight_layout()
-plt.savefig("charges_vs_grid.png", dpi=300)
+plt.savefig("charges_vs_grid_baderkit.png", dpi=300)
 
 plt.show()

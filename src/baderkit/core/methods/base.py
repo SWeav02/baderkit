@@ -35,8 +35,8 @@ class MethodBase:
         self,
         charge_grid: Grid,
         reference_grid: Grid,
-        vacuum_tol: float = 1.0e-3,
-        normalize_vacuum: bool = True,
+        vacuum_mask: NDArray[bool],
+        num_vacuum: int,
     ):
         """
 
@@ -63,12 +63,10 @@ class MethodBase:
         # define variables needed by all methods
         self.charge_grid = charge_grid
         self.reference_grid = reference_grid
-        self.vacuum_tol = vacuum_tol
-        self.normalize_vacuum = normalize_vacuum
+        self.vacuum_mask = vacuum_mask
+        self.num_vacuum = num_vacuum
 
         # These variables are also often needed but are calculated during the run
-        self._vacuum_mask = None
-        self._num_vacuum = None
         self._maxima_mask = None
         self._maxima_vox = None
         self._maxima_frac = None
@@ -104,39 +102,6 @@ class MethodBase:
     ###########################################################################
     # Properties used by most or all methods
     ###########################################################################
-
-    @property
-    def vacuum_mask(self) -> NDArray[bool]:
-        """
-
-        Returns
-        -------
-        NDArray[bool]
-            A mask representing the voxels that belong to the vacuum.
-
-        """
-        if self._vacuum_mask is None:
-            if self.normalize_vacuum:
-                self._vacuum_mask = self.reference_grid.total < (
-                    self.vacuum_tol / self.reference_grid.structure.volume
-                )
-            else:
-                self._vacuum_mask = self.reference_grid.total < self.vacuum_tol
-        return self._vacuum_mask
-
-    @property
-    def num_vacuum(self) -> int:
-        """
-
-        Returns
-        -------
-        int
-            The number of vacuum points in the array
-
-        """
-        if self._num_vacuum is None:
-            self._num_vacuum = np.count_nonzero(self.vacuum_mask)
-        return self._num_vacuum
 
     @property
     def maxima_mask(self) -> NDArray[bool]:
@@ -215,8 +180,6 @@ class MethodBase:
         # TODO: This has to be called in every method currently. This should be
         # moved to a method in this abstract class to avoid repeat code/forgetting
         return {
-            "vacuum_mask": self.vacuum_mask,
-            "num_vacuum": self.num_vacuum,
             "basin_maxima_vox": self.maxima_vox,
             "basin_maxima_frac": self.maxima_frac,
         }

@@ -527,7 +527,7 @@ class Bader:
         if self._vacuum_mask is None:
             if self.normalize_vacuum:
                 self._vacuum_mask = self.reference_grid.total < (
-                    self.vacuum_tol / self.structure.volume
+                    self.vacuum_tol * self.structure.volume
                 )
             else:
                 self._vacuum_mask = self.reference_grid.total < self.vacuum_tol
@@ -614,8 +614,8 @@ class Bader:
         method = Method(
             charge_grid=self.charge_grid,
             reference_grid=self.reference_grid,
-            vacuum_tol=self.vacuum_tol,
-            normalize_vacuum=self.normalize_vacuum,
+            vacuum_mask=self.vacuum_mask,
+            num_vacuum=self.num_vacuum,
         )
         results = method.run()
 
@@ -1183,7 +1183,7 @@ class Bader:
                 "z": basin_frac_coords[:, 2],
                 "charge": self.basin_charges[subset],
                 "volume": self.basin_volumes[subset],
-                "surface_dist": self.basin_surface_distances,
+                "surface_dist": self.basin_surface_distances[self.significant_basins],
             }
         )
         return basin_df

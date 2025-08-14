@@ -8,7 +8,7 @@ from baderkit.core import Bader, Grid
 
 base_dir = Path(".")
 
-methods = ["ongrid", "neargrid", "weight", "gradient-weight"]
+methods = ["ongrid", "neargrid", "weight"]
 angles = [
     "000",
     "015",
@@ -45,7 +45,8 @@ for angle in angles:
         bader = Bader(
             method=method, charge_grid=charge_grid, reference_grid=reference_grid
         )
-        results[method].append(bader.atom_charges[1])  # oxygen index
+        # append the oxidation state by subtracting from PP electron count
+        results[method].append(6 - bader.atom_charges[1])  # oxygen index
 
 ###############################################################################
 # Combined Plot
@@ -57,7 +58,7 @@ for method in methods:
     ax.plot(angle_vals, results[method], marker="o", label=method)
 
 ax.set_xlabel("Rotation angle (degrees)")
-ax.set_ylabel("Oxygen charge")
+ax.set_ylabel("Oxygen charge (e)")
 ax.set_title("Oxygen Charge vs. Rotation Angle")
 ax.legend()
 plt.tight_layout()
