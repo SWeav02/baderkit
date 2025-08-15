@@ -8,23 +8,27 @@ import time
 from baderkit.core import Bader, Grid
 
 grid = Grid.from_vasp("CHGCAR")
+try:
+    reference_grid = Grid.from_vasp("CHGCAR_sum")
+except:
+    reference_grid = grid.copy()
 
 test_num = 20
 results = {}
 times = {}
 methods = Bader.all_methods()
-# methods = ["weight"]
+# methods = ["neargrid"]
 for method in methods:
     # do an initial run of each method for caching
     bader = Bader(
         charge_grid=grid,
-        reference_grid=grid,
+        reference_grid=reference_grid,
         method=method,
     )
     result = bader.results_summary
     # Now run our tests
     t0 = time.time()
-    for test_num in range(test_num):
+    for _ in range(test_num):
         bader = Bader(
             charge_grid=grid,
             reference_grid=grid,

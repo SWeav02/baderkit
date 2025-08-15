@@ -56,7 +56,6 @@ def sum(
 class Method(str, Enum):
     weight = "weight"
     ongrid = "ongrid"
-    gradient_weight = "gradient-weight"
     neargrid = "neargrid"
 
 
@@ -73,7 +72,7 @@ def webapp(
         help="The path to the reference file",
     ),
     method: Method = typer.Option(
-        Method.gradient_weight,
+        Method.neargrid,
         "--method",
         "-m",
         help="The method to use for separating bader basins",

@@ -11,10 +11,9 @@ import pandas as pd
 from numpy.typing import NDArray
 from rich.progress import track
 
-from baderkit.core.grid import Grid
 from baderkit.core.methods import method_names
 from baderkit.core.methods.shared_numba import get_edges
-from baderkit.core.structure import Structure
+from baderkit.core.toolkit import Grid, Structure
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
@@ -116,6 +115,7 @@ class Bader:
                 "atom_charges",
                 "atom_volumes",
                 "atom_surface_distances",
+                "total_electron_number",
             ]
         # get our final list of properties
         reset_properties = [
@@ -528,7 +528,7 @@ class Bader:
         if self._vacuum_mask is None:
             if self.normalize_vacuum:
                 self._vacuum_mask = self.reference_grid.total < (
-                    self.vacuum_tol / self.structure.volume
+                    self.vacuum_tol * self.structure.volume
                 )
             else:
                 self._vacuum_mask = self.reference_grid.total < self.vacuum_tol
@@ -547,6 +547,22 @@ class Bader:
         if self._num_vacuum is None:
             self._num_vacuum = np.count_nonzero(self.vacuum_mask)
         return self._num_vacuum
+
+    @property
+    def total_electron_number(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total number of electrons in the system calculated from the
+            atom charges and vacuum charge. If this does not match the true
+            total electron number within reasonable floating point error,
+            there is a major problem.
+
+        """
+
+        return self.atom_charges.sum() + self.vacuum_charge
 
     @staticmethod
     def all_methods() -> list[str]:
@@ -587,6 +603,7 @@ class Bader:
             "vacuum_charge": self.vacuum_charge,
             "vacuum_volume": self.vacuum_volume,
             "significant_basins": self.significant_basins,
+            "total_electron_num": self.total_electron_number,
         }
         return results_dict
 
@@ -615,8 +632,8 @@ class Bader:
         method = Method(
             charge_grid=self.charge_grid,
             reference_grid=self.reference_grid,
-            vacuum_tol=self.vacuum_tol,
-            normalize_vacuum=self.normalize_vacuum,
+            vacuum_mask=self.vacuum_mask,
+            num_vacuum=self.num_vacuum,
         )
         results = method.run()
 
@@ -671,12 +688,15 @@ class Bader:
 
         # Sum up charges/volumes per atom in one shot. slice with -1 is necessary
         # to prevent no negative value error
-        atom_charges = np.bincount(
-            basin_atoms[:-1], weights=self.basin_charges, minlength=N_atoms
-        )
-        atom_volumes = np.bincount(
-            basin_atoms[:-1], weights=self.basin_volumes, minlength=N_atoms
-        )
+        try:
+            atom_charges = np.bincount(
+                basin_atoms[:-1], weights=self.basin_charges, minlength=N_atoms
+            )
+            atom_volumes = np.bincount(
+                basin_atoms[:-1], weights=self.basin_volumes, minlength=N_atoms
+            )
+        except:
+            breakpoint()
         # Store everything
         self._basin_atoms = basin_atoms[:-1]
         self._basin_atom_dists = basin_atom_dists
@@ -1181,7 +1201,7 @@ class Bader:
                 "z": basin_frac_coords[:, 2],
                 "charge": self.basin_charges[subset],
                 "volume": self.basin_volumes[subset],
-                "surface_dist": self.basin_surface_distances,
+                "surface_dist": self.basin_surface_distances[self.significant_basins],
             }
         )
         return basin_df
@@ -1233,10 +1253,6 @@ class Bader:
             for col in basin_df.columns
         }
 
-        vacuum_charge = self.vacuum_charge
-        vacuum_volume = self.vacuum_volume
-        number_of_electrons = self.atom_charges.sum() + vacuum_charge
-
         # Write to file with aligned columns using tab as separator
         for df, col_widths, name in zip(
             [formatted_atoms_df, formatted_basin_df],
@@ -1257,6 +1273,6 @@ class Bader:
                 # write vacuum summary to atom file
                 if name == "bader_atom_summary.tsv":
                     f.write("\n")
-                    f.write(f"Vacuum Charge:\t\t{vacuum_charge:.6f}\n")
-                    f.write(f"Vacuum Volume:\t\t{vacuum_volume:.6f}\n")
-                    f.write(f"Total Electrons:\t{number_of_electrons:.6f}\n")
+                    f.write(f"Vacuum Charge:\t\t{self.vacuum_charge:.6f}\n")
+                    f.write(f"Vacuum Volume:\t\t{self.vacuum_volume:.6f}\n")
+                    f.write(f"Total Electrons:\t{self.total_electron_number:.6f}\n")

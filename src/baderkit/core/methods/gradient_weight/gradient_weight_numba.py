@@ -11,10 +11,11 @@ from baderkit.core.methods.shared_numba import get_best_neighbor, wrap_point
 def get_gradient_pointers(
     initial_labels: NDArray[np.int64],
     data: NDArray[np.float64],
-    neigh_transforms: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
+    neighbor_dists: NDArray[np.float64],
     weighted_cart: NDArray[np.float64],
-    all_neighbor_transforms: NDArray[np.int64],
-    all_neighbor_dists: NDArray[np.float64],
+    # all_neighbor_transforms: NDArray[np.int64],
+    # all_neighbor_dists: NDArray[np.float64],
     vacuum_mask: NDArray[np.bool_],
     car2lat: NDArray[np.float64],
 ):
@@ -28,7 +29,7 @@ def get_gradient_pointers(
         A 3D array represengint the flat indices of each grid point
     data : NDArray[np.float64]
         A 3D grid of values for each point.
-    neigh_transforms : NDArray[np.int64]
+    neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its voronoi neighbors.
     weighted_cart : NDArray[np.float64]
         Vectors pointing to each voronoi nieghbor weighted by facet area and distance.
@@ -57,7 +58,7 @@ def get_gradient_pointers(
     # create a mask for maxima
     maxima_mask = np.zeros(data.shape, dtype=np.bool_)
     # get number of neighbors so we don't have to do it every loop
-    neigh_num = len(neigh_transforms)
+    neigh_num = len(neighbor_transforms)
     # loop over each voxel in parallel
     for i in prange(nx):
         for j in range(ny):
@@ -73,7 +74,7 @@ def get_gradient_pointers(
                 ti, tj, tk = 0.0, 0.0, 0.0
                 # loop over neighbors
                 for x in range(neigh_num):
-                    si, sj, sk = neigh_transforms[x]
+                    si, sj, sk = neighbor_transforms[x]
                     # wrap
                     ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
                     # get the neighbors value
@@ -82,10 +83,8 @@ def get_gradient_pointers(
                     if neigh_value <= base_value:
                         continue
 
-                    # calculate the volume flowing to this voxel
-                    diff = neigh_value - base_value
                     # get the weighted cartesian vector for this transform
-                    ci, cj, ck = weighted_cart[x] * diff
+                    ci, cj, ck = weighted_cart[x] * (neigh_value - base_value)
                     # add to the total
                     ti += ci
                     tj += cj
@@ -112,8 +111,10 @@ def get_gradient_pointers(
                         i=i,
                         j=j,
                         k=k,
-                        neighbor_transforms=all_neighbor_transforms,
-                        neighbor_dists=all_neighbor_dists,
+                        # neighbor_transforms=all_neighbor_transforms,
+                        # neighbor_dists=all_neighbor_dists,
+                        neighbor_transforms=neighbor_transforms,
+                        neighbor_dists=neighbor_dists,
                     )
                     # set pointer
                     pointers[i, j, k] = initial_labels[ni, nj, nk]
@@ -136,8 +137,10 @@ def get_gradient_pointers(
                         i=i,
                         j=j,
                         k=k,
-                        neighbor_transforms=all_neighbor_transforms,
-                        neighbor_dists=all_neighbor_dists,
+                        # neighbor_transforms=all_neighbor_transforms,
+                        # neighbor_dists=all_neighbor_dists,
+                        neighbor_transforms=neighbor_transforms,
+                        neighbor_dists=neighbor_dists,
                     )
 
                 # set pointer
