@@ -1204,7 +1204,8 @@ class Bader:
                 "z": basin_frac_coords[:, 2],
                 "charge": self.basin_charges[subset],
                 "volume": self.basin_volumes[subset],
-                "surface_dist": self.basin_surface_distances[self.significant_basins],
+                "surface_dist": self.basin_surface_distances[subset],
+                "atom_dist": self.basin_atom_dists[subset],
             }
         )
         return basin_df
@@ -1235,7 +1236,7 @@ class Bader:
         formatted_atoms_df = atoms_df.copy()
         numeric_cols = formatted_atoms_df.select_dtypes(include="number").columns
         formatted_atoms_df[numeric_cols] = formatted_atoms_df[numeric_cols].map(
-            lambda x: f"{x:.6f}"
+            lambda x: f"{x:.5f}"
         )
 
         # Get basin results summary
@@ -1243,7 +1244,7 @@ class Bader:
         formatted_basin_df = basin_df.copy()
         numeric_cols = formatted_basin_df.select_dtypes(include="number").columns
         formatted_basin_df[numeric_cols] = formatted_basin_df[numeric_cols].map(
-            lambda x: f"{x:.6f}"
+            lambda x: f"{x:.5f}"
         )
 
         # Determine max width per column including header
@@ -1276,6 +1277,6 @@ class Bader:
                 # write vacuum summary to atom file
                 if name == "bader_atom_summary.tsv":
                     f.write("\n")
-                    f.write(f"Vacuum Charge:\t\t{self.vacuum_charge:.6f}\n")
-                    f.write(f"Vacuum Volume:\t\t{self.vacuum_volume:.6f}\n")
-                    f.write(f"Total Electrons:\t{self.total_electron_number:.6f}\n")
+                    f.write(f"Vacuum Charge:\t\t{self.vacuum_charge:.5f}\n")
+                    f.write(f"Vacuum Volume:\t\t{self.vacuum_volume:.5f}\n")
+                    f.write(f"Total Electrons:\t{self.total_electron_number:.5f}\n")
