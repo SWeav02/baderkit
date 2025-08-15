@@ -68,3 +68,62 @@ flux in parallel, greatly increasing speed. This comes at the cost of storing th
 information in memory using an array that is several times the size of the 
 original grid.
 
+- **Unknown Bug-fix:** We have found that in some cases, particularly in non-cubic
+systems, the results of our method vary from the original. In particular we often
+find fewer local maxima (prior to any maxima reduction). As an example, the
+Henkelman code finds 8 local maxima in our [test system](https://github.com/SWeav02/baderkit/tree/main/src/baderkit/tests/test_files)
+while our own code finds 6. After
+careful examination, we are quite sure the 6 maxima are correct. We are unsure
+what causes this bug, but it also appears to affect the calculated positions of
+the basin maxima in the `BCF.dat` output for all systems and slightly affect the
+calculated charges.
+
+## Speed, Convergence, and Orientation
+
+We have performed benchmark tests to compare our code's speed with the original
+Fortran implementation. We also provide benchmarks on convergence and orientation
+bias for each method.
+
+The speed and convergence tests were run on a conventional cubic 8 atom NaCl
+structure at varying grid densities. The charge density was calculated using the
+Vieanna *Ab-initio* Simulation Package (VASP) with the PBE GGA density functional, an energy
+cutoff of 372.85 eV, a 3x3x3 Monkhorst–Pack *k*-point mesh, and VASP's default
+GW pseudo-potentials. The unit cell relaxed to a lattice size of 5.53 A.
+
+The orientation tests were run on a water molecule in a cubic lattice with 270 grid points 
+along each 8.04 A axis. Calculations were performed
+using VASP, PBE GGA density functional, an energy cutoff of 400 eV, a 2x2x2
+Monkhorst–Pack *k*-point mesh, and VASP's default PBE pseudo-potentials.
+
+All bader calculations were performed using an Intel Core i9-9940X CPU with
+14 cores (2 threads per core).
+
+=== "Speed"
+    
+    Both the Henkelman group's code and BaderKit were called through the command-line
+    to get an accurate speed comparison that encorporates the entire Bader workflow
+    including file read/write, basin assignment, and atom assignment. The systematic
+    increase in time for all BaderKit methods is due to the initialization of
+    Python's interperator.
+    
+    ![baderkit_vs_henk_time](images/time_vs_grid_baderkit_henk_subplots.png)
+    
+    Both the ongrid and neargrid method show improved scaling in BaderKit
+    over the original code. In this system, the weight method is comparable, though
+    we note the BaderKit method currently uses significantly more memory.
+    
+=== "Convergence"
+
+    Convergence results were identical for both codes. As expected from the
+    original papers, the `weight` method converges first, followed by the `neargrid`
+    method then the `ongrid` method.
+    
+    
+    ![baderkit_conv](images/charges_vs_grid_baderkit.png)
+    
+=== "Orientation"
+    
+    Orientation results were identical for both codes. Both the `weight` and
+    `neargrid` methods show minimal variation with orientation of the molecule.
+    
+    ![baderkit_orient](images/oxygen_charge_vs_angle.png)
