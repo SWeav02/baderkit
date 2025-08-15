@@ -86,13 +86,11 @@ def get_neighbor_flux(
             if neigh_value <= base_value:
                 continue
             # calculate the flux flowing to this voxel
-            diff = neigh_value - base_value
-            flux = diff * area_dist
-            # only assign flux if it is above 0
-            if flux > 0.0:
-                flux_array[coord_index, shift_index] = flux
-                # add this neighbor label
-                neigh_array[coord_index, shift_index] = voxel_indices[ii, jj, kk]
+            flux = (neigh_value - base_value) * area_dist
+            # assign flux
+            flux_array[coord_index, shift_index] = flux
+            # add this neighbor label
+            neigh_array[coord_index, shift_index] = voxel_indices[ii, jj, kk]
 
         # normalize flux row to 1
         row = flux_array[coord_index]
@@ -108,9 +106,9 @@ def get_neighbor_flux(
                 neighbor_transforms=all_neighbor_transforms,
                 neighbor_dists=all_neighbor_dists,
             )
-            # if this is a maximum, set the row to 0, note its a max, and continue
+            # if this is a maximum note its a max and continue
             if is_max:
-                flux_array[coord_index] = row
+                # We don't need to assign the flux/neighbors
                 maxima_mask[coord_index] = True
                 continue
             # otherwise, set all of the weight to the highest neighbor and continue
@@ -183,29 +181,20 @@ def get_single_weight_voxels(
     charge_array = np.zeros(maxima_num, dtype=np.float64)
     volume_array = np.zeros(maxima_num, dtype=np.float64)
     # create counter for maxima
-    maxima = 0
+    # maxima = 0
     # loop over voxels
     for vox_idx in range(n_voxels):
-        neighbors = neigh_indices_array[vox_idx]
+        i, j, k = sorted_voxel_coords[vox_idx]
         charge = sorted_flat_charge_data[vox_idx]
-        if np.all(neighbors < 0):
-            # we have a maximum and assign it to its own label.
-            # NOTE: We first check if the point already has a label. We do
-            # this because our hybrid weight method assigns maxima beforehand
-            i, j, k = sorted_voxel_coords[vox_idx]
-            maxima_label = labels[i, j, k]
-            if maxima_label == -1:
-                labels[i, j, k] = maxima
-                # assign charge and volume
-                charge_array[maxima] += charge
-                volume_array[maxima] += voxel_volume
-                # increase our maxima counter
-                maxima += 1
-            else:
-                # just assign charge and volume
-                charge_array[maxima_label] += charge
-                volume_array[maxima_label] += voxel_volume
+        # We assign maxima before this step, so we check if this point has a
+        # label already
+        label = labels[i, j, k]
+        if label != -1:
+            # this is a maximum or reduced maximum. assign all of its charge
+            charge_array[label] += charge
+            volume_array[label] += voxel_volume
             continue
+        neighbors = neigh_indices_array[vox_idx]
         # otherwise we check each neighbor and check its label
         current_label = -1
         label_num = 0
@@ -226,13 +215,17 @@ def get_single_weight_voxels(
             if neigh_label != current_label:
                 current_label = neigh_label
                 label_num += 1
-        # if we only have one label, update our this point's label
+                # if we have more than one label, immediately break
+                if label_num > 1:
+                    break
+        # if we only have one label, update this point's label
         if label_num == 1:
-            i, j, k = sorted_voxel_coords[vox_idx]
+            # i, j, k = sorted_voxel_coords[vox_idx]
             labels[i, j, k] = current_label
             # assign charge and volume
             charge_array[current_label] += charge
             volume_array[current_label] += voxel_volume
+        # otherwise, mark this as a point that has a split assignment.
         else:
             unassigned_mask[vox_idx] = True
     return labels, unassigned_mask, charge_array, volume_array
@@ -332,6 +325,7 @@ def get_multi_weight_voxels(
                 current_weight.append(weight * frac)
                 current_labels.append(label)
         # reduce labels and weights to unique
+        # TODO: The following two loops can probably be combined somehow.
         unique_labels = []
         unique_weights = []
         for i in range(len(current_labels)):
