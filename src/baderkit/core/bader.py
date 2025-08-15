@@ -80,6 +80,7 @@ class Bader:
         # still be able to recalculate them if needed, though that should only
         # be done by advanced users
         self._reset_properties()
+        self._use_overdetermined = False
 
     ###########################################################################
     # Set Properties
@@ -635,6 +636,8 @@ class Bader:
             vacuum_mask=self.vacuum_mask,
             num_vacuum=self.num_vacuum,
         )
+        if self._use_overdetermined:
+            method._use_overdetermined = True
         results = method.run()
 
         for key, value in results.items():
