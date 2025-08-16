@@ -4,4 +4,5 @@ method_names = [
     "ongrid",
     "neargrid",
     "weight",
+    "neargrid-weight",
 ]
