@@ -1326,6 +1326,13 @@ class Bader:
             [atom_col_widths, basin_col_widths],
             ["bader_atom_summary.tsv", "bader_basin_summary.tsv"],
         ):
+            # Note what we're writing in log
+            if "atom" in name:
+                logging.info(f"Writing atom summary to {name}")
+            else:
+                logging.info(f"Writing basin summary to {name}")
+
+            # write output summaries
             with open(directory / name, "w") as f:
                 # Write header
                 header = "\t".join(f"{col:<{col_widths[col]}}" for col in df.columns)
