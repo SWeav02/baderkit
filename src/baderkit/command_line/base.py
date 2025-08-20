@@ -12,6 +12,9 @@ from pathlib import Path
 
 import typer
 
+from baderkit.core.methods import Method
+from baderkit.core.toolkit import Format
+
 baderkit_app = typer.Typer(rich_markup_mode="markdown")
 
 
@@ -31,18 +34,6 @@ def version():
     import baderkit
 
     print(f"Installed version: v{baderkit.__version__}")
-
-
-# Enums for auto-fill options
-class Method(str, Enum):
-    weight = "weight"
-    ongrid = "ongrid"
-    neargrid = "neargrid"
-
-
-class Format(str, Enum):
-    vasp = "vasp"
-    cube = "cube"
 
 
 class PrintOptions(str, Enum):
@@ -147,7 +138,7 @@ def run(
         bader.write_basin_volumes_sum(basin_indices=indices)
 
 
-@baderkit_app.command()
+@baderkit_app.command(no_args_is_help=True)
 def sum(
     file1: Path = typer.Argument(
         ...,
@@ -157,10 +148,30 @@ def sum(
         ...,
         help="The path to the second file to sum",
     ),
+    output_name: Path = typer.Option(
+        None,
+        "--output-path",
+        "-o",
+        help="The path to write the summed grids to",
+        case_sensitive=True,
+    ),
+    input_format: Format = typer.Option(
+        Format.vasp,
+        "--input-format",
+        "-if",
+        help="The input format of the files",
+        case_sensitive=False,
+    ),
+    output_format: Format = typer.Option(
+        Format.vasp,
+        "--output-format",
+        "-of",
+        help="The output format of the files",
+        case_sensitive=False,
+    ),
 ):
     """
-    A helper function for summing two grids. Note that the output is currently
-    always a VASP file.
+    A helper function for summing two grids.
     """
     from baderkit.core import Grid
 
@@ -169,19 +180,41 @@ def sum(
     file2 = Path(file2)
     logging.info(f"Summing files {file1.name} and {file2.name}")
 
-    grid1 = Grid.from_dynamic(file1)
-    grid2 = Grid.from_dynamic(file2)
+    if input_format == "vasp":
+        grid1 = Grid.from_vasp(file1)
+        grid2 = Grid.from_vasp(file2)
+    elif input_format == "cube":
+        grid1 = Grid.from_cube(file1)
+        grid2 = Grid.from_cube(file2)
+
+    shape1 = tuple(grid1.shape)
+    shape2 = tuple(grid2.shape)
+    assert (
+        shape1 == shape2
+    ), f"""
+    Grids must have the same shape. {file1.name}: {shape1} differs from {file2.name}: {shape2}
+    """
     # sum grids
     summed_grid = Grid.sum_grids(grid1, grid2)
     # get name to use
-    if "elf" in file1.name.lower():
-        file_pre = "ELFCAR"
-    else:
-        file_pre = "CHGCAR"
-    summed_grid.write_file(f"{file_pre}_sum")
+    if output_name is None:
+        if "elf" in file1.name.lower():
+            file_pre = "ELFCAR"
+        else:
+            file_pre = "CHGCAR"
+        output_name = f"{file_pre}_sum"
+        if output_format == "cube":
+            output_name += ".cube"
+    # convert output to path
+    output_name = Path(output_name)
+    # write to file
+    if output_format == "vasp":
+        summed_grid.write_vasp(output_name)
+    elif output_format == "cube":
+        summed_grid.write_cube(output_name)
 
 
-@baderkit_app.command()
+@baderkit_app.command(no_args_is_help=True)
 def webapp(
     charge_file: Path = typer.Argument(
         ...,

@@ -2,11 +2,26 @@
 # -*- coding: utf-8 -*-
 
 import math
+from enum import Enum
 from pathlib import Path
 
 import numpy as np
 from numpy.typing import NDArray
 from pymatgen.core import Lattice, Structure
+
+
+# We list all available import/export formats that we've worked on for consistency
+# here
+class Format(str, Enum):
+    vasp = "vasp"
+    cube = "cube"
+
+    @property
+    def writer(self):
+        return {
+            Format.vasp: "write_vasp",
+            Format.cube: "write_cube",
+        }[self]
 
 
 def read_vasp(filename: str | Path):

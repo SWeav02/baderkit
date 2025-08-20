@@ -11,9 +11,9 @@ import pandas as pd
 from numpy.typing import NDArray
 from rich.progress import track
 
-from baderkit.core.methods import method_names
+from baderkit.core.methods import Method
 from baderkit.core.methods.shared_numba import get_edges
-from baderkit.core.toolkit import Grid, Structure
+from baderkit.core.toolkit import Format, Grid, Structure
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
@@ -29,7 +29,7 @@ class Bader:
         self,
         charge_grid: Grid,
         reference_grid: Grid,
-        method: str = "neargrid",
+        method: str | Method = Method.neargrid,
         vacuum_tol: float = 1.0e-3,
         normalize_vacuum: bool = True,
         basin_tol: float = 1.0e-3,
@@ -42,9 +42,8 @@ class Bader:
             A Grid object with the charge density that will be integrated.
         reference_grid : Grid
             A grid object whose values will be used to construct the basins.
-        method : str, optional
-            The algorithm to use for generating bader basins. If None, defaults
-            to neargrid.
+        method : str | Method, optional
+            The algorithm to use for generating bader basins. Defaults to neargrid.
         vacuum_tol: float, optional
             The value below which a point will be considered part of the vacuum.
             The default is 0.001.
@@ -64,9 +63,9 @@ class Bader:
 
         """
         # ensure th method is valid
-        if method not in method_names:
+        if method not in Method:
             raise ValueError(
-                f"Invalid method '{method}'. Available options are: {method_names}"
+                f"Invalid method '{method}'. Available options are: {[i.value for i in Method]}"
             )
 
         self._charge_grid = charge_grid
@@ -174,7 +173,10 @@ class Bader:
         return self._method
 
     @method.setter
-    def method(self, value: str):
+    def method(self, value: str | Method):
+        assert (
+            value in Method
+        ), f"Invalid method '{value}'. Available options are: {[i.value for i in Method]}"
         self._method = value
         self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
 
@@ -614,7 +616,7 @@ class Bader:
 
         """
 
-        return method_names
+        return [i.value for i in Method]
 
     @property
     def results_summary(self) -> dict:
@@ -945,18 +947,27 @@ class Bader:
         """
         return copy.deepcopy(self)
 
+    @staticmethod
+    def _write_output(grid: Grid, output_format: Format, file_path: Path, **kwargs):
+        # Make sure format is a Format object not a string
+        output_format = Format(output_format)
+        # get the writing method corresponding to this output format
+        method_name = output_format.writer
+        # write the
+        getattr(grid, method_name)(file_path, **kwargs)
+
     def write_basin_volumes(
         self,
         basin_indices: NDArray,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes bader basins to vasp-like files. Points belonging to the basin
         will have values from the charge or reference grid, and all other points
-        will be 0. Filenames are written as {file_prefix}_b{i} where i is the
-        basin index.
+        will be 0.
 
         Parameters
         ----------
@@ -965,19 +976,20 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
         None.
 
         """
-        if data_type == "charge":
+        # get the grid to use
+        if source_grid == "charge":
             grid = self.charge_grid.copy()
-        elif data_type == "reference":
+        elif source_grid == "reference":
             grid = self.reference_grid.copy()
 
         data_array = grid.total
@@ -989,29 +1001,31 @@ class Bader:
             data_array_copy[~mask] = 0
             data = {"total": data_array_copy}
             grid = Grid(structure=self.structure, data=data)
-            grid.write_file(directory / f"{file_prefix}_b{basin}")
+            file_path = directory / f"{grid.data_type.prefix}_b{basin}"
+            # write file
+            self._write_output(grid, output_format, file_path, **writer_kwargs)
 
     def write_all_basin_volumes(
         self,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes all bader basins to vasp-like files. Points belonging to the basin
         will have values from the charge or reference grid, and all other points
-        will be 0. Filenames are written as {file_prefix}_b{i} where i is the
-        basin index.
+        will be 0.
 
         Parameters
         ----------
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
@@ -1022,22 +1036,23 @@ class Bader:
         self.write_basin_volumes(
             basin_indices=basin_indices,
             directory=directory,
-            file_prefix=file_prefix,
-            data_type=data_type,
+            source_grid=source_grid,
+            output_format=output_format,
+            **writer_kwargs,
         )
 
     def write_basin_volumes_sum(
         self,
         basin_indices: NDArray,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes the union of the provided bader basins to vasp-like files.
         Points belonging to the basins will have values from the charge or
-        reference grid, and all other points will be 0. Filenames are written
-        as {file_prefix}_bsum.
+        reference grid, and all other points will be 0.
 
         Parameters
         ----------
@@ -1046,19 +1061,19 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
         None.
 
         """
-        if data_type == "charge":
+        if source_grid == "charge":
             grid = self.charge_grid.copy()
-        elif data_type == "reference":
+        elif source_grid == "reference":
             grid = self.reference_grid.copy()
 
         data_array = grid.total
@@ -1069,20 +1084,22 @@ class Bader:
         data_array_copy[~mask] = 0
         data = {"total": data_array_copy}
         grid = Grid(structure=self.structure, data=data)
-        grid.write_file(directory / f"{file_prefix}_bsum")
+        file_path = directory / f"{grid.data_type.prefix}_bsum"
+        # write file
+        self._write_output(grid, output_format, file_path, **writer_kwargs)
 
     def write_atom_volumes(
         self,
         atom_indices: NDArray,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes atomic basins to vasp-like files. Points belonging to the atom
         will have values from the charge or reference grid, and all other points
-        will be 0. Filenames are written as {file_prefix}_a{i} where i is the
-        atom index.
+        will be 0.
 
         Parameters
         ----------
@@ -1091,19 +1108,19 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
         None.
 
         """
-        if data_type == "charge":
+        if source_grid == "charge":
             grid = self.charge_grid.copy()
-        elif data_type == "reference":
+        elif source_grid == "reference":
             grid = self.reference_grid.copy()
 
         data_array = grid.total
@@ -1115,29 +1132,34 @@ class Bader:
             data_array_copy[~mask] = 0
             data = {"total": data_array_copy}
             grid = Grid(structure=self.structure, data=data)
-            grid.write_file(directory / f"{file_prefix}_a{atom_index}")
+            file_path = directory / f"{grid.data_type.prefix}_a{atom_index}"
+            # write file
+            self._write_output(grid, output_format, file_path, **writer_kwargs)
 
     def write_all_atom_volumes(
         self,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes all atomic basins to vasp-like files. Points belonging to the atom
         will have values from the charge or reference grid, and all other points
-        will be 0. Filenames are written as {file_prefix}_a{i} where i is the
-        atom index.
+        will be 0.
 
         Parameters
         ----------
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
@@ -1148,22 +1170,23 @@ class Bader:
         self.write_atom_volumes(
             atom_indices=atom_indices,
             directory=directory,
-            file_prefix=file_prefix,
-            data_type=data_type,
+            source_grid=source_grid,
+            output_format=output_format,
+            **writer_kwargs,
         )
 
     def write_atom_volumes_sum(
         self,
         atom_indices: NDArray,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes the union of the provided atom basins to vasp-like files.
         Points belonging to the atoms will have values from the charge or
-        reference grid, and all other points will be 0. Filenames are written
-        as {file_prefix}_asum.
+        reference grid, and all other points will be 0.
 
         Parameters
         ----------
@@ -1172,19 +1195,19 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
         None.
 
         """
-        if data_type == "charge":
+        if source_grid == "charge":
             grid = self.charge_grid.copy()
-        elif data_type == "reference":
+        elif source_grid == "reference":
             grid = self.reference_grid.copy()
 
         data_array = grid.total
@@ -1195,7 +1218,9 @@ class Bader:
         data_array_copy[~mask] = 0
         data = {"total": data_array_copy}
         grid = Grid(structure=self.structure, data=data)
-        grid.write_file(directory / f"{file_prefix}_asum")
+        file_path = directory / f"{grid.data_type.prefix}_asum"
+        # write file
+        self._write_output(grid, output_format, file_path, **writer_kwargs)
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """

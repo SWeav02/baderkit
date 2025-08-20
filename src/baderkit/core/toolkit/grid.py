@@ -3,6 +3,7 @@
 import itertools
 import logging
 import math
+from enum import Enum
 from functools import cached_property
 from pathlib import Path
 from typing import Literal, TypeVar
@@ -15,11 +16,23 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
-from baderkit.core.toolkit.file_parsers import read_cube, read_vasp, write_cube
+from baderkit.core.toolkit.file_parsers import Format, read_cube, read_vasp, write_cube
 from baderkit.core.toolkit.structure import Structure
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Grid")
+
+
+class DataType(str, Enum):
+    charge = "charge"
+    elf = "elf"
+
+    @property
+    def prefix(self):
+        return {
+            DataType.charge: "CHGCAR",
+            DataType.elf: "ELFCAR",
+        }[self]
 
 
 class Grid(VolumetricData):
@@ -31,10 +44,17 @@ class Grid(VolumetricData):
     To recalculate properties, make a new Grid instance
     """
 
-    def __init__(self, **kwargs):
+    def __init__(
+        self,
+        source_format: Format = None,
+        data_type: DataType = DataType.charge,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         # convert structure to baderkit utility version
         self.structure = Structure.from_dict(self.structure.as_dict())
+        self.format = source_format
+        self.data_type = data_type
 
     @property
     def total(self) -> NDArray[float]:
@@ -1530,8 +1550,37 @@ class Grid(VolumetricData):
     ###########################################################################
     # Functions for loading from files or strings
     ###########################################################################
+    @staticmethod
+    def _guess_file_format(
+        filename: str,
+        data: NDArray[np.float64],
+    ):
+        # guess from filename
+        data_type = None
+        logging.info("Guessing data type from file name")
+        if "elf" in filename.lower():
+            data_type = DataType.elf
+        elif any(i in filename.lower() for i in ["chg", "charge"]):
+            data_type = DataType.charge
+
+        # if data type is still none, guess from data range
+        if data_type is None:
+            logging.info(
+                "Data type could not be determined from name. Guessing from data range."
+            )
+            if data.max() <= 1 and data.min() >= 0:
+                data_type = DataType.elf
+            else:
+                data_type = DataType.charge
+        logging.info(f"Data type set as {data_type.value}")
+        return data_type
+
     @classmethod
-    def from_vasp(cls, grid_file: str | Path) -> Self:
+    def from_vasp(
+        cls,
+        grid_file: str | Path,
+        data_type: str | DataType = None,
+    ) -> Self:
         """
         Create a grid instance using a CHGCAR or ELFCAR file.
 
@@ -1540,6 +1589,10 @@ class Grid(VolumetricData):
         grid_file : str | Path
             The file the instance should be made from. Should be a VASP
             CHGCAR or ELFCAR type file.
+        data_type: str | DataType
+            The type of data loaded from the file, either charge or elf. If
+            None, the type will be guessed from the filename then the data range.
+            Defaults to None.
 
         Returns
         -------
@@ -1548,15 +1601,27 @@ class Grid(VolumetricData):
 
         """
         logging.info(f"Loading {grid_file} from file")
+        # get structure and data from file
+        grid_file = Path(grid_file)
         structure, data, data_aug = read_vasp(grid_file)
+        # guess data type
+        if data_type is None:
+            data_type = cls._guess_file_format(grid_file.name, data["total"])
+
         return cls(
             structure=structure,
             data=data,
             data_aug=data_aug,
+            data_type=data_type,
+            source_format=Format.vasp,
         )
 
     @classmethod
-    def from_cube(cls, grid_file: str | Path) -> Self:
+    def from_cube(
+        cls,
+        grid_file: str | Path,
+        data_type: str | DataType = None,
+    ) -> Self:
         """
         Create a grid instance using a gaussian cube file.
 
@@ -1565,6 +1630,10 @@ class Grid(VolumetricData):
         grid_file : str | Path
             The file the instance should be made from. Should be a gaussian
             cube file.
+        data_type: str | DataType
+            The type of data loaded from the file, either charge or elf. If
+            None, the type will be guessed from the filename then the data range.
+            Defaults to None.
 
         Returns
         -------
@@ -1574,13 +1643,22 @@ class Grid(VolumetricData):
         """
         logging.info(f"Loading {grid_file} from file")
         structure, data = read_cube(grid_file)
+        # guess data type
+        if data_type is None:
+            data_type = cls._guess_file_format(grid_file.name, data["total"])
         return cls(
             structure=structure,
             data=data,
+            data_type=data_type,
+            source_format=Format.cube,
         )
 
     @classmethod
-    def from_vasp_pymatgen(cls, grid_file: str | Path) -> Self:
+    def from_vasp_pymatgen(
+        cls,
+        grid_file: str | Path,
+        data_type: str | DataType = None,
+    ) -> Self:
         """
         Create a grid instance using a CHGCAR or ELFCAR file. Uses pymatgen's
         parse_file method which is often surprisingly slow.
@@ -1590,6 +1668,10 @@ class Grid(VolumetricData):
         grid_file : str | Path
             The file the instance should be made from. Should be a VASP
             CHGCAR or ELFCAR type file.
+        data_type: str | DataType
+            The type of data loaded from the file, either charge or elf. If
+            None, the type will be guessed from the filename then the data range.
+            Defaults to None.
 
         Returns
         -------
@@ -1600,6 +1682,9 @@ class Grid(VolumetricData):
         logging.info(f"Loading {grid_file} from file")
         # Create string to add structure to.
         poscar, data, data_aug = cls.parse_file(grid_file)
+        # guess data type
+        if data_type is None:
+            data_type = cls._guess_file_format(grid_file.name, data["total"])
 
         return cls(structure=poscar.structure, data=data, data_aug=data_aug)
 
@@ -1607,7 +1692,7 @@ class Grid(VolumetricData):
     def from_dynamic(
         cls,
         grid_file: str | Path,
-        format: Literal["vasp", "cube", None] = None,
+        format: str | Format = None,
     ) -> Self:
         """
         Create a grid instance using a VASP or .cube file. If no format is provided
@@ -1617,7 +1702,7 @@ class Grid(VolumetricData):
         ----------
         grid_file : str | Path
             The file the instance should be made from.
-        format : Literal["vasp", "cube", None], optional
+        format : Format, optional
             The format of the provided file. If None, a guess will be made based
             on the name of the file. The default is None.
 
@@ -1631,16 +1716,16 @@ class Grid(VolumetricData):
         if format is None:
             # guess format from file name
             if ".cube" in grid_file.name.lower():
-                format = "cube"
+                format = Format.cube
             elif "car" in grid_file.name.lower():
-                format = "vasp"
+                format = Format.vasp
             else:
                 raise ValueError(
                     "No format recognized. Cube files should contain '.cube' and vasp should contain 'CAR'."
                 )
-        if format == "cube":
+        if format == Format.cube:
             return cls.from_cube(grid_file)
-        elif format == "vasp":
+        elif format == Format.vasp:
             return cls.from_vasp(grid_file)
         else:
             raise ValueError(
@@ -1766,7 +1851,7 @@ class Grid(VolumetricData):
 
         return cls(structure=poscar.structure, data=data, data_aug=data_aug)
 
-    def write_file(
+    def write_vasp(
         self,
         file_name: Path | str,
         vasp4_compatible: bool = False,
@@ -1795,7 +1880,7 @@ class Grid(VolumetricData):
         file_name: Path | str,
         **kwargs,
     ):
-
+        file_name = Path(file_name)
         logging.info(f"Writing {file_name.name}")
         write_cube(
             filename=file_name,
