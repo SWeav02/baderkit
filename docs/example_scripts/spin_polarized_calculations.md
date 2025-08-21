@@ -1,0 +1,50 @@
+# Spin Separated Calculations
+
+BaderKit runs on whatever set of data is stored in the `total` property of the
+`Grid` class. By default, this data is read from the first set of
+data in a `CHGCAR` or `cube` format file. This typically represents the total
+charge density of both the spin-up and spin-down electrons.
+
+In VASP, spin polarized calculations will also write an additional set of data
+representing the difference between the spin-up and spin-down charge densities.
+When read from file, this data is stored in the `diff` property of the `Grid`
+class.
+
+Assuming we have run a spin-polarized calculation with VASP, we can run the
+Bader analysis on the separate spin-up and spin-down systems by creating two
+`Grid` and `Bader` class objects with the appropriate charge densities in the
+`total` property.
+
+---
+
+```python
+# import 
+from baderkit.core import Bader, Grid
+
+# load the spin polarized charge grid
+polarized_grid = Grid.from_vasp("CHGCAR")
+
+# split the polarized grid to the spin up and spin down components
+grid_up, grid_down = polarized_grid.split_to_spin()
+
+# create our Bader classes
+bader_up = Bader(grid_up)
+bader_down = Bader(grid_down)
+
+# get results
+results_up = bader_up.results_summary
+results_down = bader_down.results_summary
+```
+
+!!! Tip
+    This analysis can be run on results from softwares other than VASP as well.
+    Either set up the `polarized_grid` so that it follows VASP's `total` and `diff`
+    format, or load/create the `grid_up` and `grid_down` from already split
+    data.
+
+!!! Warning
+    This example does not use the core + valence charge density as we suggest in
+    our [warning](/baderkit/#warning-for-vasp-and-other-pseudopotential-codes).
+    This is because VASP does not write spin separated `AECCAR0` or `AECCAR2` files.
+    You can still use the `CHGCAR_sum` as a reference, but the bader basins will
+    be defined by the total charge density, not the spin-polarized ones.

@@ -65,7 +65,7 @@ if st.session_state.too_many_atoms:
     st.markdown(
         """
         Too many atoms in the structure. The BaderKit webapp can currently only
-        handle up to ~50 atoms. If you still need visualization, basins can be written
+        handle up to ~40 atoms. If you still need visualization, basins can be written
         out with the `--print` tag and visualized using tools such as VESTA or OVITO.
         """
     )
@@ -86,22 +86,26 @@ with st.sidebar:
         #######################################################################
         with basins_tab:
             st.markdown(
-                "Select basins to show on the plot. The display will be union of the selection."
+                """
+                Select atom and basin volumes to show on the plot. The display will be union of the selection.
+                """
             )
             # get selection
             settings["visible_atom_basins"] = st.segmented_control(
-                "Atom Basins",
+                "Atom Volumes",
                 [i for i in range(len(bader.atom_charges))],
                 selection_mode="multi",
                 key="vis_atoms",
+                help="Numbers refer to the atom's index. Each atom volume is a union of the basins assigned to this volume and may contain multiple local maxima.",
             )
             # don't display bader selection if there are too many of them.
             if len(bader.basin_charges) <= 40:
                 settings["visible_bader_basins"] = st.segmented_control(
-                    "Bader Basins",
+                    "Basin Volumes",
                     [i for i in range(len(bader.basin_charges))],
                     selection_mode="multi",
                     key="vis_basins",
+                    help="Numbers refer to the basin's index which is generally arbitrary. Each basin volume is associated with one local maximum.",
                 )
             else:
                 st.markdown("Too many basins were found in the structure to display.")

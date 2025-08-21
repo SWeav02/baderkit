@@ -28,10 +28,10 @@ class Bader:
     def __init__(
         self,
         charge_grid: Grid,
-        reference_grid: Grid,
+        reference_grid: Grid | None = None,
         method: str | Method = Method.neargrid,
         vacuum_tol: float = 1.0e-3,
-        normalize_vacuum: bool = True,
+        normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
     ):
         """
@@ -40,8 +40,9 @@ class Bader:
         ----------
         charge_grid : Grid
             A Grid object with the charge density that will be integrated.
-        reference_grid : Grid
-            A grid object whose values will be used to construct the basins.
+        reference_grid : Grid | None
+            A grid object whose values will be used to construct the basins. If
+            None, defaults to the charge_grid.
         method : str | Method, optional
             The algorithm to use for generating bader basins. Defaults to neargrid.
         vacuum_tol: float, optional
@@ -49,9 +50,9 @@ class Bader:
             The default is 0.001.
         normalize_vacuum: bool, optional
             Whether or not the reference data needs to be converted to real space
-            units for vacuum tolerance comparison. This should be set to True if
-            the data follows VASP's CHGCAR standards, but False if the data should
-            be compared as is (e.g. in ELFCARs)
+            units for vacuum tolerance comparison. This should be True for charge
+            densities and False for the ELF. If None, the setting will be guessed
+            from the supplied reference_grid's.
         basin_tol: float, optional
             The value below which a basin will not be considered significant. This
             is used to avoid writing out data that is likely not valuable.
@@ -69,7 +70,19 @@ class Bader:
             )
 
         self._charge_grid = charge_grid
+
+        # if no reference is provided, use the base charge grid
+        if reference_grid is None:
+            reference_grid = charge_grid.copy()
         self._reference_grid = reference_grid
+
+        # guess whether the reference should be scaled for vacuum tolerance comparison
+        if normalize_vacuum is None:
+            if reference_grid.data_type == "elf":
+                normalize_vacuum = False
+            else:
+                normalize_vacuum = True
+
         self._method = method
         self._vacuum_tol = vacuum_tol
         self._normalize_vacuum = normalize_vacuum
@@ -857,9 +870,12 @@ class Bader:
         """
         charge_grid = Grid.from_vasp(charge_filename)
         if reference_filename is None:
-            reference_grid = charge_grid.copy()
+            reference_grid = None
         else:
             reference_grid = Grid.from_vasp(reference_filename)
+
+        # If a flag for
+
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
 
     @classmethod
@@ -890,7 +906,7 @@ class Bader:
         """
         charge_grid = Grid.from_cube(charge_filename)
         if reference_filename is None:
-            reference_grid = charge_grid.copy()
+            reference_grid = None
         else:
             reference_grid = Grid.from_cube(reference_filename)
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
@@ -931,7 +947,7 @@ class Bader:
 
         charge_grid = Grid.from_dynamic(charge_filename, format=format)
         if reference_filename is None:
-            reference_grid = charge_grid.copy()
+            reference_grid = None
         else:
             reference_grid = Grid.from_dynamic(reference_filename, format=format)
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)

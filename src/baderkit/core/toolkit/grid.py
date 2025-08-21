@@ -54,6 +54,16 @@ class Grid(VolumetricData):
         # convert structure to baderkit utility version
         self.structure = Structure.from_dict(self.structure.as_dict())
         self.format = source_format
+
+        if data_type is None:
+            # attempt to guess data type from data range
+            if data_type is None:
+                logging.info("Guessing data type from data range.")
+                if self.total.max() <= 1 and self.total.min() >= 0:
+                    data_type = DataType.elf
+                else:
+                    data_type = DataType.charge
+        logging.info(f"Data type set as {data_type.value}")
         self.data_type = data_type
 
     @property
@@ -1015,18 +1025,9 @@ class Grid(VolumetricData):
         # TODO: Add augment data
         return Grid(structure=self.structure, data=data)
 
-    def split_to_spin(
-        self,
-        data_type: Literal["elf", "charge"] = "elf",
-    ) -> tuple[Self, Self]:
+    def split_to_spin(self) -> tuple[Self, Self]:
         """
         Splits the grid to two Grid objects representing the spin up and spin down contributions
-
-        Parameters
-        ----------
-        data_type : Literal["elf", "charge"], optional
-            The type of data contained in the Grid. The default is "elf".
-
 
         Returns
         -------
@@ -1042,10 +1043,16 @@ class Grid(VolumetricData):
 
         # Now we get the separate data parts. If the data is ELF, the parts are
         # stored as total=spin up and diff = spin down
-        if data_type == "elf":
+        if self.data_type == "elf":
+            logging.info(
+                "Splitting Grid using ELFCAR conventions (spin-up in 'total', spin-down in 'diff')"
+            )
             spin_up_data = self.total.copy()
             spin_down_data = self.diff.copy()
-        elif data_type == "charge":
+        elif self.data_type == "charge":
+            logging.info(
+                "Splitting Grid using CHGCAR conventions (spin-up + spin-down in 'total', spin-up - spin-down in 'diff')"
+            )
             spin_data = self.spin_data
             # pymatgen uses some custom class as keys here
             for key in spin_data.keys():
@@ -1058,20 +1065,30 @@ class Grid(VolumetricData):
         spin_up_data = {"total": spin_up_data}
         spin_down_data = {"total": spin_down_data}
 
-        # TODO: Add augment data?
+        # get augment data
+        aug_up_data = (
+            {"total": self.data_aug["total"]} if "total" in self.data_aug else {}
+        )
+        aug_down_data = (
+            {"total": self.data_aug["diff"]} if "diff" in self.data_aug else {}
+        )
+
         spin_up_grid = Grid(
             structure=self.structure.copy(),
             data=spin_up_data,
+            data_aug=aug_up_data,
+            data_type=self.data_type,
         )
         spin_down_grid = Grid(
             structure=self.structure.copy(),
             data=spin_down_data,
+            data_aug=aug_down_data,
+            data_type=self.data_type,
         )
 
         return spin_up_grid, spin_down_grid
 
-    @classmethod
-    def sum_grids(cls, grid1: Self, grid2: Self) -> Self:
+    def sum_grids(grid1: Self, grid2: Self) -> Self:
         """
         Takes in two grids and returns a single grid summing their values.
 
@@ -1089,6 +1106,9 @@ class Grid(VolumetricData):
 
         """
         assert np.all(grid1.shape == grid2.shape), "Grids must have the same size."
+        assert (
+            grid1.data_type == grid2.data_type
+        ), f"Grids must be the same data type. grid1: {grid1.data_type}. grid2: {grid2.data_type}."
         total1 = grid1.total
         diff1 = grid1.diff
 
@@ -1106,7 +1126,11 @@ class Grid(VolumetricData):
         # instance because we want to keep any useful information such as whether
         # the grid is spin polarized or not.
 
-        return cls(structure=grid1.structure.copy(), data=data)
+        # TODO: get augment data?
+
+        return Grid(
+            structure=grid1.structure.copy(), data=data, data_type=grid1.data_type
+        )
 
     @staticmethod
     def label(input: NDArray, structure: NDArray = np.ones([3, 3, 3])) -> NDArray[int]:
@@ -1562,17 +1586,6 @@ class Grid(VolumetricData):
             data_type = DataType.elf
         elif any(i in filename.lower() for i in ["chg", "charge"]):
             data_type = DataType.charge
-
-        # if data type is still none, guess from data range
-        if data_type is None:
-            logging.info(
-                "Data type could not be determined from name. Guessing from data range."
-            )
-            if data.max() <= 1 and data.min() >= 0:
-                data_type = DataType.elf
-            else:
-                data_type = DataType.charge
-        logging.info(f"Data type set as {data_type.value}")
         return data_type
 
     @classmethod

@@ -828,8 +828,8 @@ class GridPlotter(StructurePlotter):
         self.grid = grid
         self._show_surface = True
         self._show_caps = True
-        self._surface_opacity = 0.8
-        self._cap_opacity = 0.8
+        self._surface_opacity = 0.5
+        self._cap_opacity = 0.5
         self._colormap = "viridis"
         self._use_solid_surface_color = False
         self._use_solid_cap_color = False
