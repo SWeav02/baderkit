@@ -128,7 +128,6 @@ def get_single_weight_voxels(
     data: NDArray[np.float64],
     maxima_num: np.int64,
     sorted_flat_charge_data: NDArray[np.float64],
-    voxel_volume: np.float64,
     labels: NDArray[np.int64] = None,
 ):
     """
@@ -150,8 +149,6 @@ def get_single_weight_voxels(
         The number of local maxima in the grid
     sorted_flat_charge_data : NDArray[np.float64]
         The charge density at each value sorted highest to lowest.
-    voxel_volume : np.float64
-        The volume of a single voxel
     labels : NDArray[np.int64], optional
         A 3D array of preassigned labels.
 
@@ -179,7 +176,7 @@ def get_single_weight_voxels(
     unassigned_mask = np.zeros(n_voxels, dtype=np.bool_)
     # create arrays for storing volumes and charges
     charge_array = np.zeros(maxima_num, dtype=np.float64)
-    volume_array = np.zeros(maxima_num, dtype=np.float64)
+    volume_array = np.zeros(maxima_num, dtype=np.int64)
     # create counter for maxima
     # maxima = 0
     # loop over voxels
@@ -192,7 +189,7 @@ def get_single_weight_voxels(
         if label != -1:
             # this is a maximum or reduced maximum. assign all of its charge
             charge_array[label] += charge
-            volume_array[label] += voxel_volume
+            volume_array[label] += 1
             continue
         neighbors = neigh_indices_array[vox_idx]
         # otherwise we check each neighbor and check its label
@@ -220,11 +217,10 @@ def get_single_weight_voxels(
                     break
         # if we only have one label, update this point's label
         if label_num == 1:
-            # i, j, k = sorted_voxel_coords[vox_idx]
             labels[i, j, k] = current_label
             # assign charge and volume
             charge_array[current_label] += charge
-            volume_array[current_label] += voxel_volume
+            volume_array[current_label] += 1
         # otherwise, mark this as a point that has a split assignment.
         else:
             unassigned_mask[vox_idx] = True
@@ -240,9 +236,8 @@ def get_multi_weight_voxels(
     vox_to_unass_pointer: NDArray[np.int64],
     sorted_voxel_coords: NDArray[np.int64],
     charge_array: NDArray[np.float64],
-    volume_array: NDArray[np.float64],
+    volume_array: NDArray[np.int64],
     sorted_flat_charge_data: NDArray[np.float64],
-    voxel_volume: np.float64,
     maxima_num: np.int64,
 ):
     """
@@ -275,12 +270,10 @@ def get_multi_weight_voxels(
         point. This must be sorted from highest value to lowest.
     charge_array : NDArray[np.float64]
         The charge on each basin that has been assigned so far
-    volume_array : NDArray[np.float64]
+    volume_array : NDArray[np.int64]
         The volume on each basin that has been assigned so far
     sorted_flat_charge_data : NDArray[np.float64]
         The charge density at each value sorted highest to lowest.
-    voxel_volume : np.float64
-        The volume of a single voxel
     maxima_num : np.int64
         The number of local maxima in the grid
 
@@ -294,6 +287,11 @@ def get_multi_weight_voxels(
         The final volume of each basin
 
     """
+    # create a temporary volume array to compare integer volume assignments
+    # to fractional ones
+    full_charge_array = charge_array.copy()
+    # convert volume array to float
+    volume_array = volume_array.astype(np.float64)
     # create list to store weights
     weight_lists = []
     label_lists = []
@@ -340,20 +338,40 @@ def get_multi_weight_voxels(
             if not found:
                 unique_labels.append(label)
                 unique_weights.append(weight)
-        # assign label, charge, and volume
-        best_weight = 0.0
+        # create variables for storing the highest weight and corresponding
+        # label.
+        # best_weight = 0.0
         best_label = -1
+        # create a variable to track the basin with the integer assignments
+        # furthest from the true volume.
+        # lowest_diff = 1.0e12
+        best_improvement = 0.0
+        # get the charge at this voxel
         charge = sorted_flat_charge_data[vox_idx]
+        # assign charge and volume
         for label, weight in zip(unique_labels, unique_weights):
-            # update charge and volume
+            # update charge and volume for this label
             charge_array[label] += weight * charge
-            volume_array[label] += weight * voxel_volume
-            if weight >= best_weight:
-                best_weight = weight
+            volume_array[label] += weight
+
+            # skip if weight isn't significant
+            if weight < (1.0 / len(unique_labels) - 1e-12):
+                continue
+
+            # get a score for how much adding the full charge to this label would improve the
+            # overall assignment
+            improvement = abs(full_charge_array[label] - charge_array[label]) - abs(
+                charge + full_charge_array[label] - charge_array[label]
+            ) / abs(charge_array[label])
+            if improvement > best_improvement:
+                best_improvement = improvement
                 best_label = label
-        # update label
+
+        # update label and integer volumes
         i, j, k = sorted_voxel_coords[vox_idx]
         new_labels[i, j, k] = best_label
+        # temp_volume_array[best_label] += 1
+        full_charge_array[best_label] += charge
         # assign this weight row
         weight_lists.append(unique_weights)
         label_lists.append(unique_labels)

@@ -89,7 +89,6 @@ class WeightMethod(MethodBase):
         sorted_flat_charge_data = flat_charge_data[sorted_data_indices]
         # remove vacuum from charge data
         sorted_flat_charge_data = sorted_flat_charge_data[: len(sorted_voxel_coords)]
-        voxel_volume = reference_grid.voxel_volume
         # create a labels array and label maxima
         labels = np.full(data.shape, -1, dtype=np.int64)
         labels[self._maxima_mask] = np.arange(len(weight_maxima_vox))
@@ -107,7 +106,6 @@ class WeightMethod(MethodBase):
             data=data,
             maxima_num=maxima_num,
             sorted_flat_charge_data=sorted_flat_charge_data,
-            voxel_volume=voxel_volume,
             labels=labels,
         )
         # Now we have the labels for the voxels that have exactly one weight.
@@ -120,7 +118,6 @@ class WeightMethod(MethodBase):
 
         vox_to_unass_pointer = np.full(len(neigh_indices_array), -1, dtype=np.int64)
         vox_to_unass_pointer[unassigned_mask] = np.arange(unassigned_num)
-
         # get labels, charges, and volumes
         labels, charges, volumes = get_multi_weight_voxels(
             flux_array=flux_array,
@@ -132,11 +129,12 @@ class WeightMethod(MethodBase):
             charge_array=charges,
             volume_array=volumes,
             sorted_flat_charge_data=sorted_flat_charge_data,
-            voxel_volume=voxel_volume,
             maxima_num=maxima_num,
         )
-
+        # adjust charges from vasp convention
         charges /= shape.prod()
+        # adjust volumes from voxel count
+        volumes *= reference_grid.voxel_volume
         # assign all values
         results = {
             "basin_labels": labels,
