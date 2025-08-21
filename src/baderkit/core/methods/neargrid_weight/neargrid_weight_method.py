@@ -132,6 +132,11 @@ class NeargridWeightMethod(MethodBase):
                 edge_mask=edge_mask,
             )
         )
+        # get voronoi neighbors/weights
+        neighbor_transforms, neighbor_dists, facet_areas, _ = (
+            grid.voxel_voronoi_facets
+        )
+        neighbor_weights = facet_areas / neighbor_dists
         # get edge charge/volume
         charges, volumes = get_edge_charges_volumes(
             reference_data=grid.total,
@@ -141,7 +146,7 @@ class NeargridWeightMethod(MethodBase):
             charges=charges,
             volumes=volumes,
             neighbor_transforms=neighbor_transforms,
-            neighbor_weights=1 / neighbor_dists,  # use voronoi instead?
+            neighbor_weights=neighbor_weights,  # use voronoi instead?
         )
 
         volumes = volumes * grid.structure.volume / grid.voxel_num
