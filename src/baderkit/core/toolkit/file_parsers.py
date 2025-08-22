@@ -167,74 +167,93 @@ def read_vasp(filename: str | Path):
     return structure, data, data_aug
 
 
-# def write_vasp(
-#         filename: str | Path, grid,
-#         vasp4_compatible: bool = False,
-#         ) -> None:
-#     """
-#     This is largely borrowed from PyMatGen's write function, but attempts
-#     to speed things up by avoiding the python for loop across FFT data.
-#     """
-#     filename = Path(filename)
-#     structure = grid.structure
-#     data = grid.data
-#     data_aug = grid.data_aug
+def format_fortran_float(flt: float) -> str:
+    """Fortran code prints floats with a leading zero in scientific
+    notation. When writing CHGCAR files, we adopt this convention
+    to ensure written CHGCAR files are byte-to-byte identical to
+    their input files as far as possible.
 
-#     poscar = Poscar(structure)
-#     lattice_matrix = structure.lattice.matrix
+    Args:
+        flt (float): Float to print.
+
+    Returns:
+        str: The float in Fortran format.
+    """
+    flt_str = f"{flt:.10E}"
+    if flt >= 0:
+        return f" 0.{flt_str[0]}{flt_str[2:12]}E{int(flt_str[13:]) + 1:+03}"
+    return f" -.{flt_str[1]}{flt_str[3:13]}E{int(flt_str[14:]) + 1:+03}"
+
+def write_vasp_data(file, arr, line_len=5, chunk_size = 1000):
+    flat = arr.ravel(order="F")
+    # loop over data in chunks of 1000
+    for i in range(0, len(flat), chunk_size):
+        chunk = flat[i:i+chunk_size]
+        formatted = [format_fortran_float(d) for d in chunk]
+        # formatted = [f"{d:.10E}" for d in chunk]
+        if not formatted:
+            continue
+        rows = ("".join(formatted[i:i+5]) for i in range(0, len(formatted), 5))
+        file.write("\n".join(rows) + "\n")
 
 
-#     # Header lines
-#     lines = "Written by BaderKit\n"
-#     # Scale. Read method converts scale so this should always be 1.
-#     lines += "   1.00000000000000\n"
-#     # lattice matrix
-#     for vec in lattice_matrix:
-#         lines += f" {vec[0]:12.6f}{vec[1]:12.6f}{vec[2]:12.6f}\n"
-#     # atom symbols and counts
-#     if not vasp4_compatible:
-#         lines += "".join(f"{s:5}" for s in poscar.site_symbols) + "\n"
-#     lines += "".join(f"{x:6}" for x in poscar.natoms) + "\n"
-#     # atom coordinates
-#     lines += "Direct\n"
-#     for site in structure:
-#         dim, b, c = site.frac_coords
-#         lines += f"{dim:10.6f}{b:10.6f}{c:10.6f}\n"
-#     lines += " \n"
 
-#     # open file
-#     with open(filename, "w") as file:
-#         # write full header
-#         file.write(lines)
-#         # Write eahc FFT grid and aug data if it exists
-#         vals_per_line = 5
-#         for key in ["total", "diff", "diff_x", "diff_y", "diff_z"]:
-#             arr = data.get(key, None)
-#             if arr is None:
-#                 continue
-#             # grid dims
-#             nx, ny, nz = arr.shape
-#             file.write(f"{nx:5d}{ny:5d}{nz:5d}\n")
+def write_vasp(
+        filename: str | Path, grid,
+        vasp4_compatible: bool = False,
+        ) -> None:
+    """
+    This is largely borrowed from PyMatGen's write function, but attempts
+    to speed things up by reducing python loops
+    """
+    filename = Path(filename)
+    structure = grid.structure
+    data = grid.data
+    data_aug = grid.data_aug
 
-#             # flatten with Fortran ordering
-#             arr = arr.ravel(order="F")
+    poscar = Poscar(structure)
+    lattice_matrix = structure.lattice.matrix
 
-#             # pad to a multiple of vals_per_line, then reshape into rows
-#             pad_len = (-arr.size) % vals_per_line
-#             if pad_len:
-#                 arr = np.pad(arr, (0, pad_len), mode="constant", constant_values=0.0)
 
-#             arr = arr.reshape(-1, vals_per_line)
+    # Header lines
+    lines = "Written by BaderKit\n"
+    # Scale. Read method converts scale so this should always be 1.
+    lines += "   1.00000000000000\n"
+    # lattice matrix
+    for vec in lattice_matrix:
+        lines += f" {vec[0]:12.6f}{vec[1]:12.6f}{vec[2]:12.6f}\n"
+    # atom symbols and counts
+    if not vasp4_compatible:
+        lines += "".join(f"{s:5}" for s in poscar.site_symbols) + "\n"
+    lines += "".join(f"{x:6}" for x in poscar.natoms) + "\n"
+    # atom coordinates
+    lines += "Direct\n"
+    for site in structure:
+        dim, b, c = site.frac_coords
+        lines += f"{dim:10.6f}{b:10.6f}{c:10.6f}\n"
+    lines += " \n"
 
-#             # write efficiently using numpy.savetxt (C-optimized formatting)
-#             # each row becomes a line, values separated by a single space
-#             np.savetxt(file, arr, fmt="%12.10E", delimiter=" ")
+    # open file
+    with open(filename, "w") as file:
+        # write full header
+        file.write(lines)
+        # Write eahc FFT grid and aug data if it exists
+        for key in ["total", "diff", "diff_x", "diff_y", "diff_z"]:
+            arr = data.get(key, None)
+            if arr is None:
+                continue
+            # grid dims
+            nx, ny, nz = arr.shape
+            file.write(f"{nx:6d}{ny:6d}{nz:6d}\n")
+            
+            # write to file
+            write_vasp_data(file, arr)
 
-#             # augmentation info (raw text lines) - write all at once
-#             if key in data_aug and data_aug[key]:
-#                 # ensure augmentation lines end with newline
-#                 aug_lines = [ln if ln.endswith("\n") else ln + "\n" for ln in data_aug[key]]
-#                 file.writelines(aug_lines)
+            # augmentation info (raw text lines) - write all at once
+            if key in data_aug and data_aug[key]:
+                # ensure augmentation lines end with newline
+                aug_lines = [ln if ln.endswith("\n") else ln + "\n" for ln in data_aug[key]]
+                file.writelines(aug_lines)
 
 
 def read_cube(
@@ -313,6 +332,7 @@ def read_cube(
     return structure, data, ion_charges, origin
 
 
+
 def write_cube(
     filename: str | Path,
     grid,
@@ -365,9 +385,6 @@ def write_cube(
     origin *= 1.88973
     positions *= 1.88973
 
-    # Flatten in Fortran order (ix fastest outer, iz fastest inner)
-    flat = total.ravel(order="F")
-
     # write to file
     # generate header lines
     header = ""
@@ -383,32 +400,18 @@ def write_cube(
     for Z, q, pos in zip(atomic_numbers, ion_charges, positions):
         x, y, z = pos
         header += f"{int(Z):5d}{float(q):12.6f}{x:12.6f}{y:12.6f}{z:12.6f}\n"
-
+   
+    # get flat, then reshape to lines of the appropriate size
+    flat = total.ravel(order="F")
+    flat = flat.reshape((nx*ny, nz))
+    
     with open(cube_path, "w", encoding="utf-8") as file:
         file.write(header)
+        for line in flat:
+            formatted = [f"{float(d):13.5E}" for d in line]
+            if not formatted:
+                continue
+            # join 6 entries per line, then join lines and add final newline
+            rows = ("".join(formatted[i:i+6]) for i in range(0, len(formatted), 6))
+            file.write("\n".join(rows) + "\n")
 
-        # loop over data
-        line_count = 0
-        loop_count = 0
-        total = 0
-        lines = ""
-        line = []
-        for d in flat:
-            line.append(f"{d:13.5E}")
-            line_count += 1
-            loop_count += 1
-            # if we've reached 6 values for this line, add the line to our list
-            if line_count % 6 == 0:
-                lines += "".join(line) + "\n"
-                line = []
-            # if we've looped over the entire z axis, write this set of data and
-            # reset
-            if loop_count == nz:
-                # If we have some leftover values, write them
-                if line_count % 6 != 0:
-                    lines += "".join(line) + "\n"
-                file.write(lines)
-                lines = ""
-                line = []
-                line_count = 0
-                loop_count = 0

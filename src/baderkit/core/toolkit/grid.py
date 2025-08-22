@@ -23,7 +23,8 @@ from baderkit.core.toolkit.file_parsers import (
     read_vasp,
 )
 from baderkit.core.toolkit.file_parsers import (
-    write_cube as write_cube_file,  # write_vasp as write_vasp_file,
+    write_cube as write_cube_file, 
+    write_vasp as write_vasp_file,
 )
 from baderkit.core.toolkit.structure import Structure
 
@@ -1868,42 +1869,42 @@ class Grid(VolumetricData):
 
         return cls(structure=poscar.structure, data=data, data_aug=data_aug)
 
-    def write_vasp(
-        self,
-        file_name: Path | str,
-        vasp4_compatible: bool = False,
-    ):
-        """
-        Writes the Grid to a VASP-like file at the provided path using
-        PyMatGen's default method.
-        """
-        file_name = Path(file_name)
-        logging.info(f"Writing {file_name.name}")
-        super().write_file(file_name=file_name, vasp4_compatible=vasp4_compatible)
-
     # def write_vasp(
     #     self,
     #     file_name: Path | str,
+    #     vasp4_compatible: bool = False,
     # ):
     #     """
-    #     Writes the Grid to a VASP-like file at the provided path.
-
-    #     Parameters
-    #     ----------
-    #     file_name : Path | str
-    #         The name of the file to write to.
-
-    #     Returns
-    #     -------
-    #     None.
-
+    #     Writes the Grid to a VASP-like file at the provided path using
+    #     PyMatGen's default method.
     #     """
     #     file_name = Path(file_name)
     #     logging.info(f"Writing {file_name.name}")
-    #     write_vasp_file(
-    #         filename=file_name,
-    #         grid=self,
-    #         )
+    #     super().write_file(file_name=file_name, vasp4_compatible=vasp4_compatible)
+
+    def write_vasp(
+        self,
+        file_name: Path | str,
+    ):
+        """
+        Writes the Grid to a VASP-like file at the provided path.
+
+        Parameters
+        ----------
+        file_name : Path | str
+            The name of the file to write to.
+
+        Returns
+        -------
+        None.
+
+        """
+        file_name = Path(file_name)
+        logging.info(f"Writing {file_name.name}")
+        write_vasp_file(
+            filename=file_name,
+            grid=self,
+            )
 
     def write_cube(
         self,
