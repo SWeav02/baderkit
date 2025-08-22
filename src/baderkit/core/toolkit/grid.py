@@ -16,7 +16,15 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
-from baderkit.core.toolkit.file_parsers import Format, read_cube, read_vasp, write_cube
+from baderkit.core.toolkit.file_parsers import (
+    Format,
+    detect_format,
+    read_cube,
+    read_vasp,
+)
+from baderkit.core.toolkit.file_parsers import (
+    write_cube as write_cube_file,  # write_vasp as write_vasp_file,
+)
 from baderkit.core.toolkit.structure import Structure
 
 # This allows for Self typing and is compatible with python versions before 3.11
@@ -1655,7 +1663,9 @@ class Grid(VolumetricData):
 
         """
         logging.info(f"Loading {grid_file} from file")
-        structure, data = read_cube(grid_file)
+        structure, data, ion_charges, origin = read_cube(grid_file)
+        # TODO: Also save the ion charges/origin for writing later
+
         # guess data type
         if data_type is None:
             data_type = cls._guess_file_format(grid_file.name, data["total"])
@@ -1727,15 +1737,9 @@ class Grid(VolumetricData):
         """
         grid_file = Path(grid_file)
         if format is None:
-            # guess format from file name
-            if ".cube" in grid_file.name.lower():
-                format = Format.cube
-            elif "car" in grid_file.name.lower():
-                format = Format.vasp
-            else:
-                raise ValueError(
-                    "No format recognized. Cube files should contain '.cube' and vasp should contain 'CAR'."
-                )
+            # guess format from file
+            format = detect_format(grid_file)
+
         if format == Format.cube:
             return cls.from_cube(grid_file)
         elif format == Format.vasp:
@@ -1870,23 +1874,36 @@ class Grid(VolumetricData):
         vasp4_compatible: bool = False,
     ):
         """
-        Writes the Grid to a VASP-like file at the provided path.
-
-        Parameters
-        ----------
-        file_name : Path | str
-            The name of the file to write to.
-        vasp4_compatible : bool, optional
-            Whether or not to make the grid vasp 4 compatible. The default is False.
-
-        Returns
-        -------
-        None.
-
+        Writes the Grid to a VASP-like file at the provided path using
+        PyMatGen's default method.
         """
         file_name = Path(file_name)
         logging.info(f"Writing {file_name.name}")
         super().write_file(file_name=file_name, vasp4_compatible=vasp4_compatible)
+
+    # def write_vasp(
+    #     self,
+    #     file_name: Path | str,
+    # ):
+    #     """
+    #     Writes the Grid to a VASP-like file at the provided path.
+
+    #     Parameters
+    #     ----------
+    #     file_name : Path | str
+    #         The name of the file to write to.
+
+    #     Returns
+    #     -------
+    #     None.
+
+    #     """
+    #     file_name = Path(file_name)
+    #     logging.info(f"Writing {file_name.name}")
+    #     write_vasp_file(
+    #         filename=file_name,
+    #         grid=self,
+    #         )
 
     def write_cube(
         self,
@@ -1895,7 +1912,7 @@ class Grid(VolumetricData):
     ):
         file_name = Path(file_name)
         logging.info(f"Writing {file_name.name}")
-        write_cube(
+        write_cube_file(
             filename=file_name,
             grid=self,
             **kwargs,

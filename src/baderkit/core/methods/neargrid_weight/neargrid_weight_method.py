@@ -133,9 +133,7 @@ class NeargridWeightMethod(MethodBase):
             )
         )
         # get voronoi neighbors/weights
-        neighbor_transforms, neighbor_dists, facet_areas, _ = (
-            grid.voxel_voronoi_facets
-        )
+        neighbor_transforms, neighbor_dists, facet_areas, _ = grid.voxel_voronoi_facets
         neighbor_weights = facet_areas / neighbor_dists
         # get edge charge/volume
         charges, volumes = get_edge_charges_volumes(
