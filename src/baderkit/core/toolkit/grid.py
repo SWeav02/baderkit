@@ -22,10 +22,8 @@ from baderkit.core.toolkit.file_parsers import (
     read_cube,
     read_vasp,
 )
-from baderkit.core.toolkit.file_parsers import (
-    write_cube as write_cube_file, 
-    write_vasp as write_vasp_file,
-)
+from baderkit.core.toolkit.file_parsers import write_cube as write_cube_file
+from baderkit.core.toolkit.file_parsers import write_vasp as write_vasp_file
 from baderkit.core.toolkit.structure import Structure
 
 # This allows for Self typing and is compatible with python versions before 3.11
@@ -1885,6 +1883,7 @@ class Grid(VolumetricData):
     def write_vasp(
         self,
         file_name: Path | str,
+        vasp4_compatible: bool = False,
     ):
         """
         Writes the Grid to a VASP-like file at the provided path.
@@ -1902,9 +1901,8 @@ class Grid(VolumetricData):
         file_name = Path(file_name)
         logging.info(f"Writing {file_name.name}")
         write_vasp_file(
-            filename=file_name,
-            grid=self,
-            )
+            filename=file_name, grid=self, vasp4_compatible=vasp4_compatible
+        )
 
     def write_cube(
         self,

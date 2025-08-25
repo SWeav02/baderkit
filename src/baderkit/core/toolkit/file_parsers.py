@@ -6,6 +6,7 @@ from enum import Enum
 from pathlib import Path
 
 import numpy as np
+from numba import njit
 from numpy.typing import NDArray
 from pymatgen.core import Lattice, Structure
 from pymatgen.io.vasp import Poscar
@@ -167,41 +168,69 @@ def read_vasp(filename: str | Path):
     return structure, data, data_aug
 
 
-def format_fortran_float(flt: float) -> str:
-    """Fortran code prints floats with a leading zero in scientific
-    notation. When writing CHGCAR files, we adopt this convention
-    to ensure written CHGCAR files are byte-to-byte identical to
-    their input files as far as possible.
+@njit(cache=True)
+def format_fortran(mant, exp):
+    abs_exp = abs(exp)
+    pre = " 0." if mant >= 0 else " -."
+    if exp >= 0:
+        if abs_exp < 10:
+            pre_es = "E+0"
+        else:
+            pre_es = "E+"
+    else:
+        if abs_exp < 10:
+            pre_es = "E-0"
+        else:
+            pre_es = "E-"
+    return pre + str(mant) + pre_es + str(abs_exp)
 
-    Args:
-        flt (float): Float to print.
 
-    Returns:
-        str: The float in Fortran format.
-    """
-    flt_str = f"{flt:.10E}"
-    if flt >= 0:
-        return f" 0.{flt_str[0]}{flt_str[2:12]}E{int(flt_str[13:]) + 1:+03}"
-    return f" -.{flt_str[1]}{flt_str[3:13]}E{int(flt_str[14:]) + 1:+03}"
+@njit(cache=True)
+def format_fortran_arr(mants, exps, line_len):
+    formatted = []
+    for m, e in zip(mants, exps):
+        formatted.append(format_fortran(m, e))
+    # return formatted
+    if len(formatted) == 0:
+        return ""
+    else:
+        rows = []
+        for i in range(0, len(formatted), line_len):
+            rows.append("".join(formatted[i : i + line_len]))
 
-def write_vasp_data(file, arr, line_len=5, chunk_size = 1000):
+        return "\n".join(rows) + "\n"
+
+
+def write_vasp_data(file, arr, chunk_lines=50, line_len=5):
+    # calculate chunk size
+    chunk_size = line_len * chunk_lines
+    # flatten array in Fortran order (z fastest)
     flat = arr.ravel(order="F")
-    # loop over data in chunks of 1000
-    for i in range(0, len(flat), chunk_size):
-        chunk = flat[i:i+chunk_size]
-        formatted = [format_fortran_float(d) for d in chunk]
-        # formatted = [f"{d:.10E}" for d in chunk]
-        if not formatted:
-            continue
-        rows = ("".join(formatted[i:i+5]) for i in range(0, len(formatted), 5))
-        file.write("\n".join(rows) + "\n")
+    # create placeholder for mantissa and exponent in fortran scientific notation
+    mant = np.zeros_like(flat, dtype=float)
+    exp = np.zeros_like(flat, dtype=int)
+    # mask out places where value is 0
+    nonzero = flat != 0
+    # update exponent and mantissa arrays with appropriate values. Note we add 1 to
+    # the exp for fortran formatting later and multiply the mant so it is an
+    # integer with a length of 10 digits
+    exp[nonzero] = np.floor(np.log10(np.abs(flat[nonzero]))) + 1
+    mant[nonzero] = (flat[nonzero] / (10.0 ** exp[nonzero])) * 1e11
+    mant = np.round(mant).astype(np.int64)
 
+    for i in range(0, len(flat), chunk_size):
+        formatted = format_fortran_arr(
+            mant[i : i + chunk_size], exp[i : i + chunk_size], line_len
+        )
+        if formatted:
+            file.write(formatted)
 
 
 def write_vasp(
-        filename: str | Path, grid,
-        vasp4_compatible: bool = False,
-        ) -> None:
+    filename: str | Path,
+    grid,
+    vasp4_compatible: bool = False,
+) -> None:
     """
     This is largely borrowed from PyMatGen's write function, but attempts
     to speed things up by reducing python loops
@@ -213,7 +242,6 @@ def write_vasp(
 
     poscar = Poscar(structure)
     lattice_matrix = structure.lattice.matrix
-
 
     # Header lines
     lines = "Written by BaderKit\n"
@@ -245,14 +273,16 @@ def write_vasp(
             # grid dims
             nx, ny, nz = arr.shape
             file.write(f"{nx:6d}{ny:6d}{nz:6d}\n")
-            
+
             # write to file
             write_vasp_data(file, arr)
 
             # augmentation info (raw text lines) - write all at once
             if key in data_aug and data_aug[key]:
                 # ensure augmentation lines end with newline
-                aug_lines = [ln if ln.endswith("\n") else ln + "\n" for ln in data_aug[key]]
+                aug_lines = [
+                    ln if ln.endswith("\n") else ln + "\n" for ln in data_aug[key]
+                ]
                 file.writelines(aug_lines)
 
 
@@ -332,7 +362,6 @@ def read_cube(
     return structure, data, ion_charges, origin
 
 
-
 def write_cube(
     filename: str | Path,
     grid,
@@ -400,11 +429,11 @@ def write_cube(
     for Z, q, pos in zip(atomic_numbers, ion_charges, positions):
         x, y, z = pos
         header += f"{int(Z):5d}{float(q):12.6f}{x:12.6f}{y:12.6f}{z:12.6f}\n"
-   
+
     # get flat, then reshape to lines of the appropriate size
     flat = total.ravel(order="F")
-    flat = flat.reshape((nx*ny, nz))
-    
+    flat = flat.reshape((nx * ny, nz))
+
     with open(cube_path, "w", encoding="utf-8") as file:
         file.write(header)
         for line in flat:
@@ -412,6 +441,5 @@ def write_cube(
             if not formatted:
                 continue
             # join 6 entries per line, then join lines and add final newline
-            rows = ("".join(formatted[i:i+6]) for i in range(0, len(formatted), 6))
+            rows = ("".join(formatted[i : i + 6]) for i in range(0, len(formatted), 6))
             file.write("\n".join(rows) + "\n")
-
