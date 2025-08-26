@@ -9,13 +9,26 @@ from baderkit.core import Bader
 methods = Bader.all_methods()
 
 # load results
-orientation_df = pd.read_csv("orientation_summary_baderkit.csv", index=False)
+orientation_df = pd.read_csv("orientation_summary_baderkit.csv")
 
 plt.style.use("seaborn-v0_8-darkgrid")
 
+# different dash styles and markers for up to 4 methods
+line_styles = ["-", "--", "-.", ":"]
+markers = ["o", "s", "^", "D"]  # circle, square, triangle, diamond
+
 fig, ax = plt.subplots()
-for method in methods:
-    ax.plot(orientation_df["angles"], orientation_df[method], marker="o", label=method)
+for i, method in enumerate(methods):
+    ax.plot(
+        orientation_df["angles"],
+        orientation_df[method],
+        marker=markers[i % len(markers)],
+        linestyle=line_styles[i % len(line_styles)],
+        label=method,
+        alpha=0.6,  # add transparency
+        linewidth=2,  # slightly thicker lines for clarity
+        markersize=6,  # adjust marker size
+    )
 
 ax.set_xlabel("Rotation angle (degrees)")
 ax.set_ylabel("Oxygen charge (e)")

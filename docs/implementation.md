@@ -1,8 +1,112 @@
-# Implementation FAQ
+# Methods and Benchmarks
 
-The BaderKit code is in general very different from the Henkelman group's 
-Fortran code. This page provides benchmarks for the code as well as an overview
-of differences between implementations.
+Through the years, several methods for performing grid-based Bader assignment have been
+developed. BaderKit includes each of the methods available in the Henkelman group's code
+as well as one developed by our own group. Here we provide brief descriptions for each and 
+benchmark them to 
+assist in selecting the one most appropriate for you. Additionally, we provide
+information on how BaderKit's implementation differs from the original Fortran
+code.
+
+---
+
+## Methods
+
+Below is a summary of approximate results for each method on a computer with 12
+cores and 32 gb of memory.
+
+| Method | Speed (s/atom)<sup>1</sup> | Converged Grid Density (pts/Å<sup>3</sup>) | Max System Size (atoms)<sup>1</sup>  | Orientation Error (e<sup>-</sup>)<sup>2</sup> |
+|:-------------:|:--------------------------------------:|:---------------------------------:|:------------------------------------:|:----------------:|
+| ongrid        | <span style="color:green;">0.22</span> | <span style="color:red;">Slow</span> | <span style="color:green;">177</span>  | <span style="color:red;">0.04</span> |
+| neargrid      | <span style="color:green;">0.22</span> | <span style="color:red;">Slow</span> | <span style="color:green;">160</span>  | <span style="color:green;">0.0001</span> |
+| weight        | <span style="color:orange;">0.28</span>   | <span style="color:green;">Fast</span> | <span style="color:red;">90</span> | <span style="color:orange;">0.001</span> |
+| neargrid-weight | <span style="color:green;">0.22</span> | <span style="color:orange;">Medium</span> | <span style="color:green;">160</span> | <span style="color:green;">0.0001</span> |
+
+<small>1. Assuming ~30 Å<sup>3</sup> per atom and a resolution of 10000 pts/Å<sup>3</sup></small>
+
+<small>2. Calculated from standard deviation of orientation benchmarks</small>
+    
+=== "neargrid (default)"
+
+    **Key Takeaway:** *Very fast and memory efficient. Requires a finer grid than the weight method.*
+    
+    This algorithm was developed by Henkelman et. al. after the ongrid method
+    to fix orientation errors. It assigns each point on the grid to one basin,
+    and its accuracy is therefore very dependent on the grid density.
+    
+    A gradient vector is calculated at each point using the three nearest neighbors. 
+    A step is made to the neighboring point closest to this gradient vector. A
+    correction vector pointing from the new point to the original gradient is
+    calculated to preserve information about the true gradient.
+    
+    At each step, this correction vector is compounded. If any component of the 
+    correction vector is ever closer to a neighboring point than the current one, 
+    a correction is made to keep the path closer to the true gradient.
+    
+    After all of the points are assigned, a refinement must be made to the 
+    points on the edge, as the accumulation of the gradient is technically only
+    correct for the first point in the path.
+    
+    **Reference**
+    
+    W. Tang, E. Sanville, and G. Henkelman, A grid-based Bader analysis algorithm without lattice bias, [J. Phys.: Condens. Matter 21, 084204 (2009)](https://theory.cm.utexas.edu/henkelman/code/bader/download/tang09_084204.pdf)
+    
+
+=== "weight"
+    
+    **Key Takeaways:** *Converges at relatively rough grid densities, but is
+    slower and requires more memory than the neargrid method.*
+    
+    This method converges quickly with grid density by allowing each point to
+    be partially assigned to multiple basins. To reduce orientation errors, a
+    voronoi cell is generated for each point on the grid to determine its nearest
+    neighbors. A "flux" is calculated 
+    from each point to its neighbors using the difference 
+    in charge density modified by the distance to the neighbor and area of the 
+    shared voronoi facet. The total flux is then normalized to determine the
+    fraction of volume flowing to each neighbor.
+    
+    Moving from highest to lowest, each point is assigned to basins by assigning
+    the fraction going to each neighbor to that neighbors own fractional assignments,
+    creating a 'weight' corresponding to the portion of each point flowing to a
+    given basin. The ordering from highest to lowest ensures that the higher neighbors have
+    already received their assignment.
+    
+    
+    **Reference**
+    
+    M. Yu and D. R. Trinkle, Accurate and efficient algorithm for Bader charge integration, [J. Chem. Phys. 134, 064111 (2011)](https://theory.cm.utexas.edu/henkelman/code/bader/download/yu11_064111.pdf)   
+
+=== "ongrid"
+    
+    **Key Takeaways:** *Fast, but prone to orientation errors. We do
+    not recommend using this method, but it is kept for historical reasons.*
+    
+    This is the original algorithm proposed by Henkelman et. al. It is very
+    fast, but prone to error. It gives slightly different oxidation 
+    states for different orientations of a molecule or material.
+    
+    For each point on the grid, the gradient is calculated for the 26 nearest 
+    neighbors, and the neighbor with the steepest gradient is selected as the 
+    next point in the path. This path is followed until a maximum is reached or
+    a previous point in the path is hit. In the former case, all of the points in the path
+    are assigned to the maximum, and in the latter they are assigned to the same
+    maximum as the colliding path.
+    
+    **Reference**
+    
+    G. Henkelman, A. Arnaldsson, and H. Jónsson, A fast and robust algorithm for Bader decomposition of charge density, [Comput. Mater. Sci. 36, 354-360 (2006)](https://theory.cm.utexas.edu/henkelman/code/bader/download/henkelman06_354.pdf)
+
+=== "neargrid-weight"
+
+    **Key Takeaways:** *Similar speed and accuracy to the original neargrid method,
+    but converges at lower grid densities.*
+    
+    This method is a hybrid of the neargrid and weight methods. It first runs the
+    neargrid exactly, then uses the fractional assignment of the weight method
+    to split the grid points at basin edges. The result is a method that requires
+    minimal additional time over the original neargrid method, but with a
+    convergence rate approaching that of the weight method.
 
 ---
 
@@ -38,7 +142,7 @@ of differences between implementations.
 
     ![baderkit_conv](images/memory_vs_grid_baderkit.png)
     
-    The plot above shows the maximum memory usage in MB of each method for a 
+    The plot above shows the maximum memory usage in GB of each method for a 
     given number of grid points. 
     
 === "Orientation"

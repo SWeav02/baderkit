@@ -62,8 +62,8 @@ markdown_extensions:
   
 nav:
   - Quick Start: index.md
-  - Background and Methods: background.md
-  - Implementation FAQ: implementation.md
+  - Background: background.md
+  - Methods and Benchmarks: implementation.md
   - API Reference: 
     - Core:
       - Bader: api_reference/core/bader.md

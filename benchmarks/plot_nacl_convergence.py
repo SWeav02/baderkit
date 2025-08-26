@@ -9,18 +9,26 @@ from baderkit.core import Bader
 methods = Bader.all_methods()
 
 # load results
-oxidation_df = pd.read_csv("oxidation_summary_baderkit.csv", index=False)
+oxidation_df = pd.read_csv("oxidation_summary_baderkit.csv")
 
 plt.style.use("seaborn-v0_8-darkgrid")
 
+# different dash styles and markers for up to 4 methods
+line_styles = ["-", "--", "-.", ":"]
+markers = ["o", "s", "^", "D"]  # circle, square, triangle, diamond
+
 # --- Plot charges vs. grid points ---
 fig, ax = plt.subplots()
-for method in methods:
+for i, method in enumerate(methods):
     ax.plot(
-        oxidation_df["ngrid_points"] / 1000000,
+        oxidation_df["ngrid_points"] / 1_000_000,
         oxidation_df[method],
-        marker="o",
+        marker=markers[i % len(markers)],
+        linestyle=line_styles[i % len(line_styles)],
         label=method,
+        alpha=0.6,  # add transparency
+        linewidth=2,  # slightly thicker lines for clarity
+        markersize=6,  # adjust marker size
     )
 ax.set_xlabel("Grid points (millions)")
 ax.set_ylabel("Na Oxidation State")
