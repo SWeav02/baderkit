@@ -6,6 +6,7 @@ import numpy as np
 import streamlit as st
 from PIL import Image
 
+from baderkit.command_line.base import float_or_bool
 from baderkit.core import Bader, Grid
 from baderkit.plotting import BaderPlotter
 from baderkit.plotting.core.defaults import COLORMAPS
@@ -27,7 +28,7 @@ def load_plotter():
     env = os.environ.copy()
     charge_filename = env["CHARGE_FILE"]
     method = env["BADER_METHOD"]
-    vacuum_tol = float(env["VACUUM_TOL"])
+    vacuum_tol = float_or_bool(env["VACUUM_TOL"])
     normalize_vac = bool(env["NORMALIZE_VAC"])
     basin_tol = float(env["BASIN_TOL"])
     if "REFERENCE_FILE" in env.keys():

@@ -45,6 +45,22 @@ class PrintOptions(str, Enum):
     sum_basins = "sum_basins"
 
 
+def float_or_bool(value: str):
+    """
+    Function for parsing arguments that may be a bool or float
+    """
+    # Handle booleans
+    if value.lower() in {"true", "t", "yes", "y"}:
+        return True
+    if value.lower() in {"false", "f", "no", "n"}:
+        return False
+    # Otherwise, try float
+    try:
+        return float(value)
+    except ValueError:
+        raise typer.BadParameter("Value must be a float or a boolean.")
+
+
 @baderkit_app.command(no_args_is_help=True)
 def run(
     charge_file: Path = typer.Argument(
@@ -64,11 +80,12 @@ def run(
         help="The method to use for separating bader basins",
         case_sensitive=False,
     ),
-    vacuum_tolerance: float = typer.Option(
-        1.0e-03,
+    vacuum_tolerance: str = typer.Option(
+        "1.0e-03",
         "--vacuum-tolerance",
         "-vtol",
-        help="The value below which a point will be considered part of the vacuum. By default the grid points are normalized by the structure's volume to accomodate VASP's charge format. This can be turned of with the --normalize-vacuum tag.",
+        help="The value below which a point will be considered part of the vacuum. By default the grid points are normalized by the structure's volume to accomodate VASP's charge format. This can be turned of with the --normalize-vacuum tag. The vacuum can be ignored by setting this to `False`",
+        callback=float_or_bool,
     ),
     normalize_vacuum: bool = typer.Option(
         True,
@@ -233,11 +250,12 @@ def webapp(
         help="The method to use for separating bader basins",
         case_sensitive=False,
     ),
-    vacuum_tolerance: float = typer.Option(
-        1.0e-03,
+    vacuum_tolerance: str = typer.Option(
+        "1.0e-03",
         "--vacuum-tolerance",
         "-vtol",
-        help="The value below which a point will be considered part of the vacuum. By default the grid points are normalized by the structure's volume to accomodate VASP's charge format. This can be turned of with the --normalize-vacuum tag.",
+        help="The value below which a point will be considered part of the vacuum. By default the grid points are normalized by the structure's volume to accomodate VASP's charge format. This can be turned of with the --normalize-vacuum tag. The vacuum can be ignored by setting this to `False`",
+        callback=float_or_bool,
     ),
     normalize_vacuum: bool = typer.Option(
         True,

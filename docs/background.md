@@ -1,6 +1,6 @@
 # Background and Methods
 
-## Theory
+## Background
 In chemistry and materials science, we often find ourselves talking about the 
 oxidation state of a given atom. We discuss the atom as if it has taken or given 
 exactly one electron. However, in real molecules and materials, the charge density 
@@ -27,7 +27,7 @@ sometimes termed an *attractor*. Each attractor typically (though not always)
 correspond to an atom, and the charge and oxidation state of the atom can be determined 
 by integrating the charge density within this region.
 
-![bader_separation](images/bader_separation.png)
+![bader_separation](images/bader_separation_wb.png)
 
 In practice, it is often difficult and computationally expense to thoroughly 
 sample the zero-flux surface defining basins. To avoid this problem, 
@@ -48,18 +48,19 @@ Through the years, several methods for performing this steepest ascent have been
 developed. We have implemented the same methods that exist in the Henkelman group's
 excellent Fortran code. Here we provide brief descriptions for each method.
 For a summary of the differences in our implementation vs. the original code
-and speed/convergence tests, see our [Implementation FAQ](/baderkit/implementation).
+and benchmark tests, see our [Implementation FAQ](/baderkit/implementation).
 
-| Method        | Speed   | Accuracy |
-|---------------|---------|----------|
-|ongrid         |Very Fast|Low       |
-|neargrid       |Very Fast|High      |
-|weight         |Medium   |Very High |
+| Method        | Speed   | Convergence Rate | Orientation Bias |
+|---------------|---------|------------------|------------------|
+|ongrid         |Very Fast|Slow              |Very High         |
+|neargrid       |Very Fast|Slow              |Very Low          |
+|weight         |Medium   |Very Fast         |Low               |
+|neargrid-weight|Very Fast|Fast              |Very Low          |
     
 === "neargrid (default)"
 
-    **Key Takeaways:** Very fast, memory efficient, and potentially very accurate. 
-    Requires a much finer grid than the weight method.
+    **Key Takeaway:** *Very fast, memory efficient, and potentially very accurate. 
+    Requires a finer grid than the weight method.*
     
     This algorithm was developed by Henkelman et. al. after the ongrid method
     to fix orientation errors. It assigns each point on the grid to one basin,
@@ -85,8 +86,8 @@ and speed/convergence tests, see our [Implementation FAQ](/baderkit/implementati
 
 === "weight"
     
-    **Key Takeaways:** Converges at relatively rough grid densities, but is
-    slower and requires more memory than the neargrid method.
+    **Key Takeaways:** *Converges at relatively rough grid densities, but is
+    slower and requires more memory than the neargrid method.*
     
     This method converges quickly with grid density by allowing each point to
     be partially assigned to multiple basins. To reduce orientation errors, a
@@ -110,8 +111,8 @@ and speed/convergence tests, see our [Implementation FAQ](/baderkit/implementati
 
 === "ongrid"
     
-    **Key Takeaways:** Fast, but prone to orientation errors. We do
-    not recommend using this method, but it is kept for historical reasons.
+    **Key Takeaways:** *Fast, but prone to orientation errors. We do
+    not recommend using this method, but it is kept for historical reasons.*
     
     This is the original algorithm proposed by Henkelman et. al. It is very
     fast, but prone to error. It gives slightly different oxidation 
@@ -127,3 +128,16 @@ and speed/convergence tests, see our [Implementation FAQ](/baderkit/implementati
     **Reference**
     
     G. Henkelman, A. Arnaldsson, and H. Jónsson, A fast and robust algorithm for Bader decomposition of charge density, [Comput. Mater. Sci. 36, 354-360 (2006)](https://theory.cm.utexas.edu/henkelman/code/bader/download/henkelman06_354.pdf)
+
+=== "neargrid-weight"
+
+    **Key Takeaways:** *Similar speed and accuracy to the original neargrid method,
+    but converges at lower grid densities.*
+    
+    This method is a hybrid of the neargrid and weight methods. It first runs the
+    neargrid exactly, then uses the fractional assignment of the weight method
+    to split the grid points at basin edges. The result is a method that requires
+    minimal additional time over the original neargrid method, but with a
+    convergence rate approaching that of the weight method.
+    
+    

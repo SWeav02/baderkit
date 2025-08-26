@@ -30,7 +30,7 @@ class Bader:
         charge_grid: Grid,
         reference_grid: Grid | None = None,
         method: str | Method = Method.neargrid,
-        vacuum_tol: float = 1.0e-3,
+        vacuum_tol: float | bool = 1.0e-3,
         normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
     ):
@@ -45,17 +45,19 @@ class Bader:
             None, defaults to the charge_grid.
         method : str | Method, optional
             The algorithm to use for generating bader basins. Defaults to neargrid.
-        vacuum_tol: float, optional
-            The value below which a point will be considered part of the vacuum.
+        vacuum_tol: float | bool, optional
+            If a float is provided, this is the value below which a point will
+            be considered part of the vacuum. If a bool is provided, no vacuum
+            will be used on False, and the default tolerance will be used on True.
             The default is 0.001.
         normalize_vacuum: bool, optional
             Whether or not the reference data needs to be converted to real space
             units for vacuum tolerance comparison. This should be True for charge
             densities and False for the ELF. If None, the setting will be guessed
-            from the supplied reference_grid's.
+            from the reference grid's data type.
         basin_tol: float, optional
             The value below which a basin will not be considered significant. This
-            is used to avoid writing out data that is likely not valuable.
+            is used only used to avoid writing out data that is likely not valuable.
             The default is 0.001.
 
         Returns
@@ -84,7 +86,12 @@ class Bader:
                 normalize_vacuum = True
 
         self._method = method
-        self._vacuum_tol = vacuum_tol
+
+        # if vacuum tolerance is True, set it to the same default as above
+        if vacuum_tol is True:
+            self._vacuum_tol = 1.0e-3
+        else:
+            self._vacuum_tol = vacuum_tol
         self._normalize_vacuum = normalize_vacuum
         self._basin_tol = basin_tol
 
@@ -194,7 +201,7 @@ class Bader:
         self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
 
     @property
-    def vacuum_tol(self) -> float:
+    def vacuum_tol(self) -> float | bool:
         """
 
         Returns
@@ -207,7 +214,7 @@ class Bader:
         return self._vacuum_tol
 
     @vacuum_tol.setter
-    def vacuum_tol(self, value: float):
+    def vacuum_tol(self, value: float | bool):
         self._vacuum_tol = value
         self._reset_properties()
         # TODO: only reset everything if the vacuum actually changes
@@ -580,12 +587,18 @@ class Bader:
 
         """
         if self._vacuum_mask is None:
-            if self.normalize_vacuum:
-                self._vacuum_mask = self.reference_grid.total < (
-                    self.vacuum_tol * self.structure.volume
+            # if vacuum tolerance is set to False, ignore vacuum
+            if self.vacuum_tol is False:
+                self._vacuum_mask = np.zeros_like(
+                    self.reference_grid.total, dtype=np.bool_
                 )
             else:
-                self._vacuum_mask = self.reference_grid.total < self.vacuum_tol
+                if self.normalize_vacuum:
+                    self._vacuum_mask = self.reference_grid.total < (
+                        self.vacuum_tol * self.structure.volume
+                    )
+                else:
+                    self._vacuum_mask = self.reference_grid.total < self.vacuum_tol
         return self._vacuum_mask
 
     @property

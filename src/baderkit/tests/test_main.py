@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from baderkit.core import Bader, Grid
-from baderkit.core.methods import method_names
+from baderkit.core.methods import Method
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"
@@ -59,7 +59,7 @@ def test_writing_bader(tmp_path):
 
 @pytest.mark.parametrize(
     "method",
-    method_names,
+    [i.value for i in Method],
 )
 def test_running_bader_methods(tmp_path, method):
     bader = Bader.from_dynamic(TEST_CHGCAR, method=method)

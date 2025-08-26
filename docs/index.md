@@ -1,14 +1,15 @@
 # Quick Start
 
-## About
 BaderKit reproduces the methods for Bader charge analysis available in the 
 [Henkelman group's](https://theory.cm.utexas.edu/henkelman/code/bader/) excellent 
 Fortran code within the Python ecosystem. It is built on
 top of the [PyMatGen](https://pymatgen.org/) package, allowing for
 easy extension to other projects. Under the hood, BaderKit runs on [Numba](https://numba.pydata.org/numba-doc/dev/index.html) 
 and [NumPy](https://numpy.org/doc/stable/index.html) to parallelize and vectorize
-calculations. This allows BaderKit to reach speeds comparable or faster than the
-original code.
+calculations. This allows BaderKit to reach speeds [comparable or faster](/baderkit/implementation/#speed-convergence-and-orientation-benchmarks)
+than the original code.
+
+---
 
 ## Installation
 
@@ -63,6 +64,8 @@ original code.
         dependencies than the base app. Unfortunately, this means conda cannot
         be used, as it does not allow for optional dependencies.
 
+---
+
 ## Basic Use
 
 Once installed, BaderKit can be used through the command line interface or through
@@ -76,17 +79,22 @@ and [Examples](/baderkit/examples) pages.
 
     1. Activate your environment with BaderKit installed. If you are not using an
     environment manager, skip to step 2.
-    ```bash
-    conda activate my_env
-    ```
+    
+        ```bash
+        conda activate my_env
+        ```
+        
     2. Navigate to the directory with your charge density file.
-    ```bash
-    cd /path/to/directory
-    ```
+    
+        ```bash
+        cd /path/to/directory
+        ```
+    
     3. Run the bader analysis. Replace 'chargefile' with the name of your file.
-    ```bash
-    baderkit run chargefile
-    ```
+    
+        ```bash
+        baderkit run chargefile
+        ```
     
     Output files for atoms and bader basins will be written automatically to 
     `bader_atom_summary.tsv` and `bader_basin_summary.tsv` respectively. Additional 
@@ -98,40 +106,47 @@ and [Examples](/baderkit/examples) pages.
 
 === "Python"
     
-    1. The core functionality of BaderKit revolves around the `Bader` class.
-    First, import the `Bader` class.
+    1. The core functionality of BaderKit revolves around the `Bader` class. First, import the `Bader` class.
     
-    ```python
-    from baderkit.core import Bader
-    ```
+        ```python
+        from baderkit.core import Bader
+        ```
+    
     2. Use the `Bader` class' `from_dynamic` method to read a `CHGCAR` or `cube`
     file.
-    ```python
-    # instantiate the class
-    bader = Bader.from_dynamic("path/to/charge_file")
-    ```
+    
+        ```python
+        # instantiate the class
+        bader = Bader.from_dynamic("path/to/charge_file")
+        ```
+    
     3. To run the analysis, we can call any class property. Try getting a complete
     summary in dictionary format.
-    ```python
-    results = bader.results_summary
-    ```
+        ```python
+        results = bader.results_summary
+        ```
+    
     4. Now try getting individual properties. For more details on each property,
     see the [API reference](../api_reference/core/bader/#src.baderkit.core.bader.Bader).
-    ```python
-    atom_charges = bader.atom_charges # Total atom charges
-    atom_labels = bader.atom_labels # Atom assignments for each point in the grid
-    basin_volumes = bader.basin_volumes # The volumes of each bader basin
-    maxima_coords = bader.basin_maxima_frac # Frac coordinates of each attractor
-    ```
+        ```python
+        atom_charges = bader.atom_charges # Total atom charges
+        atom_labels = bader.atom_labels # Atom assignments for each point in the grid
+        basin_volumes = bader.basin_volumes # The volumes of each bader basin
+        maxima_coords = bader.basin_maxima_frac # Frac coordinates of each attractor
+        ```
+    
     5. BaderKit also provides convenience methods for writing results to file. First,
     let's write a summary of the full analysis.
-    ```python
-    bader.write_results_summary()
-    ```
+    
+        ```python
+        bader.write_results_summary()
+        ```
+    
     6. Now let's write the volume assigned to one of our atoms.
-    ```python
-    bader.write_atom_volumes(atom_indices = [0])
-    ```
+    
+        ```python
+        bader.write_atom_volumes(atom_indices = [0])
+        ```
     
     !!! Tip
         After creating a `Bader` class object, it doesn't matter what order
@@ -139,38 +154,45 @@ and [Examples](/baderkit/examples) pages.
         properties/results only when they are needed and caches them.
 
 === "Web App"
-    If you've installed the optional web app, it can be started through the
-    command line.
+
     1. Activate your environment with BaderKit installed. If you are not using an
     environment manager, skip to step 2.
-    ```bash
-    conda activate my_env
-    ```
+    
+        ```bash
+        conda activate my_env
+        ```
+    
     2. Navigate to the directory with your charge density file.
-    ```bash
-    cd /path/to/directory
-    ```
+    
+        ```bash
+        cd /path/to/directory
+        ```
+    
     3. Run the bader analysis. Replace 'chargefile' with the name of your file.
-    ```bash
-    baderkit webapp chargefile
-    ```
-    This will run the Bader analysis and launch the webapp in your default
-    browser:
-    ![streamlit_app](images/streamlit_screenshot.png)
-    Most of the options available in the `baderkit run` command are also availabe
-    for the webapp. You can run the help command to view them.
-    ```bash
-    baderkit webapp --help
-    ```
+        ```bash
+        baderkit webapp chargefile
+        ```
+        
+        This will run the Bader analysis and launch the webapp in your default
+        browser:
+        ![streamlit_app](images/streamlit_screenshot.png)
+        Most of the options available in the `baderkit run` command are also availabe
+        for the webapp. You can run the help command to view them.
+        
+        ```bash
+        baderkit webapp --help
+        ```
     !!! Warning
         Currently the viewport is made by converting the plot to 
         html each time the Apply button is clicked. changes made after hitting
         apply (e.g. rotation, zoom) will not show up in exported images. Additionally,
         the viewport may flicker while the html is being exported.
 
+---
+
 ## Warning for VASP (And other pseudopotential codes)
 
-VASP and other pseudopotential codes typically only include the valence electrons
+VASP and other pseudopotential codes only include the valence electrons
 in their charge density outputs. In VASP, there is an option to write out the
 core electron density by adding the tag `LAECHG=.TRUE.` to your `INCAR` file.
 
@@ -214,11 +236,11 @@ is much more accurate for partitioning. **We highly recommend doing this**.
         reference_grid = reference_grid
         )
     ```
-    From here, the `Bader` class object can be used as described in the Basic Usage
+    From here, the `Bader` class object can be used as described in the [Basic Use](/baderkit/#__tabbed_2_2)
     section.
 
 !!! Warning
     A fine grid is needed to accurately reproduce the core charge density. We
-    have found that a grid density of 22 pts/Ang along each lattice vector is
+    have found that a grid density of ~22 pts/Å along each lattice vector is
     fine enough in most cases, but we generally recommend testing an
     increasing set of grid densities until convergence is reached.

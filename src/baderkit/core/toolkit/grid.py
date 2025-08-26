@@ -64,13 +64,11 @@ class Grid(VolumetricData):
 
         if data_type is None:
             # attempt to guess data type from data range
-            if data_type is None:
-                logging.info("Guessing data type from data range.")
-                if self.total.max() <= 1 and self.total.min() >= 0:
-                    data_type = DataType.elf
-                else:
-                    data_type = DataType.charge
-        logging.info(f"Data type set as {data_type.value}")
+            if self.total.max() <= 1 and self.total.min() >= 0:
+                data_type = DataType.elf
+            else:
+                data_type = DataType.charge
+            logging.info(f"Data type set as {data_type.value} from data range")
         self.data_type = data_type
 
     @property
@@ -1588,11 +1586,12 @@ class Grid(VolumetricData):
     ):
         # guess from filename
         data_type = None
-        logging.info("Guessing data type from file name")
         if "elf" in filename.lower():
             data_type = DataType.elf
         elif any(i in filename.lower() for i in ["chg", "charge"]):
             data_type = DataType.charge
+        if data_type is not None:
+            logging.info(f"Data type set as {data_type.value} from file name")
         return data_type
 
     @classmethod
@@ -1726,7 +1725,8 @@ class Grid(VolumetricData):
             The file the instance should be made from.
         format : Format, optional
             The format of the provided file. If None, a guess will be made based
-            on the name of the file. The default is None.
+            on the name of the file. Setting this is identical to calling the
+            from methods for the corresponding file type. The default is None.
 
         Returns
         -------
@@ -1745,7 +1745,7 @@ class Grid(VolumetricData):
             return cls.from_vasp(grid_file)
         else:
             raise ValueError(
-                "Provided format is not recognized. Must be 'vasp' or 'cube'"
+                "Provided format '{format}'. Options are: {[i.value for i in Format]}"
             )
 
     @classmethod

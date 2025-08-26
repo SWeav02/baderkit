@@ -22,9 +22,7 @@ def test_sum():
         # copy CHGCAR over to temp path
         shutil.copyfile(TEST_CHGCAR, "CHGCAR")
         # run sum
-        result = runner.invoke(
-            app=baderkit_app, args=["tools", "sum", "CHGCAR", "CHGCAR"]
-        )
+        result = runner.invoke(app=baderkit_app, args=["sum", "CHGCAR", "CHGCAR"])
         assert result.exit_code == 0
         assert Path("CHGCAR_sum").exists()
 
