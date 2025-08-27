@@ -112,16 +112,31 @@ class Grid(VolumetricData):
         # but that isn't always what we want. Additionally, I have found some
         # padding of the grid is usually required to get accurate interpolation
         # near the edges.
-        padded_total = np.pad(self.data["total"], 10, mode="wrap")
-        xpoints_pad = np.linspace(-0.1, 1.1, num=self.shape[0] + 20)
-        ypoints_pad = np.linspace(-0.1, 1.1, num=self.shape[1] + 20)
-        zpoints_pad = np.linspace(-0.1, 1.1, num=self.shape[2] + 20)
+        x, y, z = self.dim
+        pad = 10
+        padded_total = np.pad(self.data["total"], pad, mode="wrap")
+        xpoints_pad = np.linspace(-pad, x + pad - 1, x + pad * 2) / x
+        ypoints_pad = np.linspace(-pad, y + pad - 1, y + pad * 2) / y
+        zpoints_pad = np.linspace(-pad, z + pad - 1, z + pad * 2) / z
         self.interpolator = RegularGridInterpolator(
             (xpoints_pad, ypoints_pad, zpoints_pad),
             padded_total,
             method=interpolation_method,
             bounds_error=True,
         )
+
+        # assign cached properties
+        self._reset_cache()
+
+    def _reset_cache(self):
+        self._grid_indices = None
+        self._flat_grid_indices = None
+        self._point_dists = None
+        self._max_point_dist = None
+        self._grid_neighbor_transforms = None
+        self._symmetry_data = None
+        self._maxima_mask = None
+        self._minima_mask = None
 
     @property
     def total(self) -> NDArray[float]:
@@ -139,6 +154,8 @@ class Grid(VolumetricData):
     @total.setter
     def total(self, new_total: NDArray[float]):
         self.data["total"] = new_total
+        # reset cache
+        self._reset_cache()
 
     @property
     def diff(self) -> NDArray[float] | None:
@@ -157,6 +174,8 @@ class Grid(VolumetricData):
     @diff.setter
     def diff(self, new_diff):
         self.data["diff"] = new_diff
+        # reset cache
+        self._reset_cache()
 
     @property
     def shape(self) -> NDArray[int]:
@@ -183,7 +202,7 @@ class Grid(VolumetricData):
         """
         return self.structure.lattice.matrix
 
-    @cached_property
+    @property
     def grid_indices(self) -> NDArray[int]:
         """
 
@@ -193,9 +212,11 @@ class Grid(VolumetricData):
             The indices for all points on the grid. Uses 'C' ordering.
 
         """
-        return np.indices(self.shape).reshape(3, -1).T
+        if self._grid_indices is None:
+            self._grid_indices = np.indices(self.shape).reshape(3, -1).T
+        return self._grid_indices
 
-    @cached_property
+    @property
     def flat_grid_indices(self) -> NDArray[int]:
         """
 
@@ -206,9 +227,13 @@ class Grid(VolumetricData):
             of that voxel if you were to flatten/ravel the grid. Uses 'C' ordering.
 
         """
-        return np.arange(np.prod(self.shape), dtype=np.int64).reshape(self.shape)
+        if self._flat_grid_indices is None:
+            self._flat_grid_indices = np.arange(
+                np.prod(self.shape), dtype=np.int64
+            ).reshape(self.shape)
+        return self._flat_grid_indices
 
-    @cached_property
+    @property
     def point_dists(self) -> NDArray[float]:
         """
 
@@ -218,26 +243,26 @@ class Grid(VolumetricData):
             The distance from each point to the origin in cartesian coordinates.
 
         """
-
-        cart_coords = self.grid_to_cart(self.grid_indices)
-        a, b, c = self.matrix
-        corners = [
-            np.array([0, 0, 0]),
-            a,
-            b,
-            c,
-            a + b,
-            a + c,
-            b + c,
-            a + b + c,
-        ]
-        distances = []
-        for corner in corners:
-            voxel_distances = np.linalg.norm(cart_coords - corner, axis=1).round(6)
-            distances.append(voxel_distances)
-        min_distances = np.min(np.column_stack(distances), axis=1)
-        min_distances = min_distances.reshape(self.shape)
-        return min_distances
+        if self._point_dists is None:
+            cart_coords = self.grid_to_cart(self.grid_indices)
+            a, b, c = self.matrix
+            corners = [
+                np.array([0, 0, 0]),
+                a,
+                b,
+                c,
+                a + b,
+                a + c,
+                b + c,
+                a + b + c,
+            ]
+            distances = []
+            for corner in corners:
+                voxel_distances = np.linalg.norm(cart_coords - corner, axis=1).round(6)
+                distances.append(voxel_distances)
+            min_distances = np.min(np.column_stack(distances), axis=1)
+            self._point_dists = min_distances.reshape(self.shape)
+        return self._point_dists
 
     @property
     def point_volume(self) -> float:
@@ -252,7 +277,7 @@ class Grid(VolumetricData):
         volume = self.structure.volume
         return volume / self.ngridpts
 
-    @cached_property
+    @property
     def max_point_dist(self) -> float:
         """
 
@@ -263,47 +288,50 @@ class Grid(VolumetricData):
             assumes the voxel is the same shape as the lattice.
 
         """
-        # We need to find the coordinates that make up a single voxel. This
-        # is just the cartesian coordinates of the unit cell divided by
-        # its grid size
-        a, b, c = self.matrix
-        end = [0, 0, 0]
-        vox_a = [x / self.shape[0] for x in a]
-        vox_b = [x / self.shape[1] for x in b]
-        vox_c = [x / self.shape[2] for x in c]
-        # We want the three other vertices on the other side of the voxel. These
-        # can be found by adding the vectors in a cycle (e.g. a+b, b+c, c+a)
-        vox_a1 = [x + x1 for x, x1 in zip(vox_a, vox_b)]
-        vox_b1 = [x + x1 for x, x1 in zip(vox_b, vox_c)]
-        vox_c1 = [x + x1 for x, x1 in zip(vox_c, vox_a)]
-        # The final vertex can be found by adding the last unsummed vector to any
-        # of these
-        end1 = [x + x1 for x, x1 in zip(vox_a1, vox_c)]
-        # The center of the voxel sits exactly between the two ends
-        center = [(x + x1) / 2 for x, x1 in zip(end, end1)]
-        # Shift each point here so that the origin is the center of the
-        # voxel.
-        voxel_vertices = []
-        for vector in [
-            center,
-            end,
-            vox_a,
-            vox_b,
-            vox_c,
-            vox_a1,
-            vox_b1,
-            vox_c1,
-            end,
-        ]:
-            new_vector = [(x - x1) for x, x1 in zip(vector, center)]
-            voxel_vertices.append(new_vector)
+        if self._max_point_dist is None:
+            # We need to find the coordinates that make up a single voxel. This
+            # is just the cartesian coordinates of the unit cell divided by
+            # its grid size
+            a, b, c = self.matrix
+            end = [0, 0, 0]
+            vox_a = [x / self.shape[0] for x in a]
+            vox_b = [x / self.shape[1] for x in b]
+            vox_c = [x / self.shape[2] for x in c]
+            # We want the three other vertices on the other side of the voxel. These
+            # can be found by adding the vectors in a cycle (e.g. a+b, b+c, c+a)
+            vox_a1 = [x + x1 for x, x1 in zip(vox_a, vox_b)]
+            vox_b1 = [x + x1 for x, x1 in zip(vox_b, vox_c)]
+            vox_c1 = [x + x1 for x, x1 in zip(vox_c, vox_a)]
+            # The final vertex can be found by adding the last unsummed vector to any
+            # of these
+            end1 = [x + x1 for x, x1 in zip(vox_a1, vox_c)]
+            # The center of the voxel sits exactly between the two ends
+            center = [(x + x1) / 2 for x, x1 in zip(end, end1)]
+            # Shift each point here so that the origin is the center of the
+            # voxel.
+            voxel_vertices = []
+            for vector in [
+                center,
+                end,
+                vox_a,
+                vox_b,
+                vox_c,
+                vox_a1,
+                vox_b1,
+                vox_c1,
+                end,
+            ]:
+                new_vector = [(x - x1) for x, x1 in zip(vector, center)]
+                voxel_vertices.append(new_vector)
 
-        # Now we need to find the maximum distance from the center of the voxel
-        # to one of its edges. This should be at one of the vertices.
-        # We can't say for sure which one is the largest distance so we find all
-        # of their distances and return the maximum
-        max_distance = max([np.linalg.norm(vector) for vector in voxel_vertices])
-        return max_distance
+            # Now we need to find the maximum distance from the center of the voxel
+            # to one of its edges. This should be at one of the vertices.
+            # We can't say for sure which one is the largest distance so we find all
+            # of their distances and return the maximum
+            self._max_point_dist = max(
+                [np.linalg.norm(vector) for vector in voxel_vertices]
+            )
+        return self._max_point_dist
 
     @cached_property
     def point_neighbor_voronoi_transforms(
@@ -397,7 +425,7 @@ class Grid(VolumetricData):
                 dists.append(all_dists[i])
         return np.array(faces).astype(int), np.array(dists)
 
-    @cached_property
+    @property
     def grid_neighbor_transforms(self) -> list:
         """
         The transforms for translating a grid index to neighboring unit
@@ -410,28 +438,30 @@ class Grid(VolumetricData):
             A list of voxel grid_neighbor_transforms unique to the grid dimensions.
 
         """
-        a, b, c = self.shape
-        grid_neighbor_transforms = [
-            (t, u, v)
-            for t, u, v in itertools.product([-a, 0, a], [-b, 0, b], [-c, 0, c])
-        ]
-        # sort grid_neighbor_transforms. There may be a better way of sorting them. I
-        # noticed that generally the correct site was found most commonly
-        # for the original site and generally was found at grid_neighbor_transforms that
-        # were either all negative/0 or positive/0
-        grid_neighbor_transforms_sorted = []
-        for item in grid_neighbor_transforms:
-            if all(val <= 0 for val in item):
-                grid_neighbor_transforms_sorted.append(item)
-            elif all(val >= 0 for val in item):
-                grid_neighbor_transforms_sorted.append(item)
-        for item in grid_neighbor_transforms:
-            if item not in grid_neighbor_transforms_sorted:
-                grid_neighbor_transforms_sorted.append(item)
-        grid_neighbor_transforms_sorted.insert(
-            0, grid_neighbor_transforms_sorted.pop(7)
-        )
-        return grid_neighbor_transforms_sorted
+        if self._grid_neighbor_transforms is None:
+            a, b, c = self.shape
+            grid_neighbor_transforms = [
+                (t, u, v)
+                for t, u, v in itertools.product([-a, 0, a], [-b, 0, b], [-c, 0, c])
+            ]
+            # sort grid_neighbor_transforms. There may be a better way of sorting them. I
+            # noticed that generally the correct site was found most commonly
+            # for the original site and generally was found at grid_neighbor_transforms that
+            # were either all negative/0 or positive/0
+            grid_neighbor_transforms_sorted = []
+            for item in grid_neighbor_transforms:
+                if all(val <= 0 for val in item):
+                    grid_neighbor_transforms_sorted.append(item)
+                elif all(val >= 0 for val in item):
+                    grid_neighbor_transforms_sorted.append(item)
+            for item in grid_neighbor_transforms:
+                if item not in grid_neighbor_transforms_sorted:
+                    grid_neighbor_transforms_sorted.append(item)
+            grid_neighbor_transforms_sorted.insert(
+                0, grid_neighbor_transforms_sorted.pop(7)
+            )
+            self._grid_neighbor_transforms = grid_neighbor_transforms_sorted
+        return self._grid_neighbor_transforms
 
     @property
     def grid_resolution(self) -> float:
@@ -447,7 +477,7 @@ class Grid(VolumetricData):
         number_of_voxels = self.ngridpts
         return number_of_voxels / volume
 
-    @cached_property
+    @property
     def symmetry_data(self):
         """
 
@@ -457,7 +487,11 @@ class Grid(VolumetricData):
             The pymatgen symmetry dataset for the Grid's Structure object
 
         """
-        return SpacegroupAnalyzer(self.structure).get_symmetry_dataset()
+        if self._symmetry_data is None:
+            self._symmetry_data = SpacegroupAnalyzer(
+                self.structure
+            ).get_symmetry_dataset()
+        return self._symmetry_data
 
     @property
     def equivalent_atoms(self) -> NDArray[int]:
@@ -471,36 +505,50 @@ class Grid(VolumetricData):
         """
         return self.symmetry_data.equivalent_atoms
 
-    @cached_property
+    @property
     def maxima_mask(self) -> NDArray[bool]:
         """
-        A mask with the same dimensions as the data where maxima are located.
 
         Returns
         -------
         NDArray[bool]
-            An array that is True where maxima are located.
+            A mask with the same dimensions as the data that is True at local
+            maxima. Adjacent points with the same value will both be labeled as
+            True.
         """
-        # avoid circular import
-        from baderkit.core.numba_functions import get_maxima
+        if self._maxima_mask is None:
+            # avoid circular import
+            from baderkit.core.methods.shared_numba import get_maxima
 
-        return get_maxima(
-            self.total,
-            neighbor_transforms=self.point_neighbor_transforms[0],
-            vacuum_mask=np.zeros_like(self.total, dtype=np.bool_),
-        )
+            self._maxima_mask = get_maxima(
+                self.total,
+                neighbor_transforms=self.point_neighbor_transforms[0],
+                vacuum_mask=np.zeros_like(self.total, dtype=np.bool_),
+            )
+        return self._maxima_mask
 
-    @cached_property
-    def maxima_indices(self) -> NDArray[int]:
+    @property
+    def minima_mask(self) -> NDArray[bool]:
         """
-        The voxel indices where maxima are located
 
         Returns
         -------
-        NDArray[int]
-            An Nx3 array representing the voxel indices of maxima.
+        NDArray[bool]
+            A mask with the same dimensions as the data that is True at local
+            minima. Adjacent points with the same value will both be labeled as
+            True.
         """
-        return np.argwhere(self.maxima_mask)
+        if self._minima_mask is None:
+            # avoid circular import
+            from baderkit.core.methods.shared_numba import get_maxima
+
+            self._minima_mask = get_maxima(
+                self.total,
+                neighbor_transforms=self.point_neighbor_transforms[0],
+                vacuum_mask=np.zeros_like(self.total, dtype=np.bool_),
+                use_minima=True,
+            )
+        return self._minima_mask
 
     def value_at(
         self,
@@ -564,6 +612,42 @@ class Grid(VolumetricData):
         # interpolate values
         return self.interpolator(frac_coords)
 
+    def linear_slice(self, p1: NDArray[float], p2: NDArray[float], n: int = 100):
+        """
+        Interpolates the data between two fractional coordinates.
+
+        Parameters
+        ----------
+        p1 : NDArray[float]
+            The fractional coordinates of the first point
+        p2 : NDArray[float]
+            The fractional coordinates of the second point
+        n : int, optional
+            The number of points to collect along the line
+
+        Returns:
+            List of n data points (mostly interpolated) representing a linear slice of the
+            data from point p1 to point p2.
+        """
+        if type(p1) not in {list, np.ndarray}:
+            raise TypeError(
+                f"type of p1 should be list or np.ndarray, got {type(p1).__name__}"
+            )
+        if len(p1) != 3:
+            raise ValueError(f"length of p1 should be 3, got {len(p1)}")
+        if type(p2) not in {list, np.ndarray}:
+            raise TypeError(
+                f"type of p2 should be list or np.ndarray, got {type(p2).__name__}"
+            )
+        if len(p2) != 3:
+            raise ValueError(f"length of p2 should be 3, got {len(p2)}")
+
+        x_pts = np.linspace(p1[0], p2[0], num=n)
+        y_pts = np.linspace(p1[1], p2[1], num=n)
+        z_pts = np.linspace(p1[2], p2[2], num=n)
+        frac_coords = np.column_stack((x_pts, y_pts, z_pts))
+        return self.values_at(frac_coords)
+
     def get_box_around_point(self, point: NDArray, neighbor_size: int = 1) -> NDArray:
         """
         Gets a box around a given point taking into account wrapping at cell
@@ -590,7 +674,7 @@ class Grid(VolumetricData):
             slices.append(idx)
         return self.total[np.ix_(slices[0], slices[1], slices[2])]
 
-    def get_maxima_near_frac_coord(self, frac_coords: NDArray) -> NDArray[float]:
+    def climb_to_max(self, frac_coords: NDArray) -> NDArray[float]:
         """
         Hill climbs to a maximum from the provided fractional coordinate.
 
@@ -603,54 +687,39 @@ class Grid(VolumetricData):
         -------
         NDArray[float]
             The final fractional coordinates after hill climbing.
+        float
+            The data value at the found maximum
 
         """
         # Convert to voxel coords and round
         coords = np.round(self.frac_to_grid(frac_coords)).astype(int)
         # wrap around edges of cell
         coords %= self.shape
-        # initialize coords for the while loop
-        # init_coords = coords + 1
-        current_coords = coords.copy()
-        # get the distance to each neighbor of a voxel as a small grid
-        _, dists = self.point_neighbor_transforms
-        # Add dist of 1 at center to avoid divide by 0 later
-        dists = np.insert(dists, 13, 1)
-        # reshape to 3x3x3 grid
-        dists = dists.reshape([3, 3, 3])
+        i, j, k = coords
 
-        # Start hill climbing
-        while True:
-            # get the value at the current point
-            value = self.total[current_coords[0], current_coords[1], current_coords[2]]
-            # get the values in the voxels around it
-            box = self.get_box_around_point(current_coords)
-            # subtract the center value and divide by distance to get an approximate
-            # gradient at each neighbor
-            grad = (box - value) / dists
-            # get the location and value of the maximum in this box
-            max_idx = np.array(np.unravel_index(np.argmax(grad), grad.shape))
-            max_val = grad[max_idx[0], max_idx[1], max_idx[2]]
-            # If the max gradient is 0, we have reached our peak
-            if max_val == 0:
-                break
-            # otherwise, get the offset to the maximum in the box and update
-            # our current coords
-            local_offset = max_idx - 1  # shift from subset center
-            current_coords = current_coords + local_offset
-            current_coords %= self.shape
+        # import numba function to avoid circular import
+        from baderkit.core.methods.shared_numba import climb_to_max
 
-        # Now, if there is another voxel with the same value bordering this one,
-        # average the coords between them
-        max_loc = np.array(np.where(grad == max_val))
-        res = max_loc.mean(axis=1)
-        local_offset = res - 1  # shift from subset center
-        current_coords = current_coords + local_offset
+        # get neighbors and dists
+        neighbor_transforms, neighbor_dists = self.point_neighbor_transforms
+        # get max
+        mi, mj, mk = climb_to_max(
+            self.total, i, j, k, neighbor_transforms, neighbor_dists
+        )
+        # get value at max
+        max_val = self.total[mi, mj, mk]
+        # Now we check if this point borders other points with the same value
+        box = self.get_box_around_point((mi, mj, mk))
+        all_max = np.argwhere(box == max_val)
+        avg_pos = all_max.mean(axis=1)
+        local_offset = avg_pos - 1  # shift from subset center
+        current_coords = np.array((mi, mj, mk)) + local_offset
         current_coords %= self.shape
 
         new_frac_coords = self.grid_to_frac(current_coords)
+        x, y, z = new_frac_coords
 
-        return new_frac_coords
+        return new_frac_coords, self.value_at(x, y, z)
 
     @staticmethod
     def get_2x_supercell(data: NDArray | None = None) -> NDArray:
