@@ -63,6 +63,64 @@ def get_edges(
     return edges
 
 
+@njit(parallel=True, cache=True)
+def get_maxima(
+    data: NDArray[np.float64],
+    neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+    use_minima: bool = False,
+):
+    """
+    For a 3D array of data, return a mask that is True at local maxima.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D array of data.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
+    use_minima : bool, optional
+        Whether or not to search for minima instead of maxima.
+
+    Returns
+    -------
+    maxima : NDArray[np.bool_]
+        A mask with the same shape as the input grid that is True at points
+        that are local maxima.
+
+    """
+    nx, ny, nz = data.shape
+    # create 3D array to store maxima
+    maxima = np.zeros_like(data, dtype=np.bool_)
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
+                # get this voxels value
+                value = data[i, j, k]
+                is_max = True
+                # iterate over the neighboring voxels
+                for si, sj, sk in neighbor_transforms:
+                    # wrap points
+                    ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                    if not use_minima:
+                        if data[ii, jj, kk] > value:
+                            is_max = False
+                            break
+                    else:
+                        if data[ii, jj, kk] < value:
+                            is_max = False
+                            break
+                if is_max:
+                    maxima[i, j, k] = True
+    return maxima
+
+
 @njit(fastmath=True, cache=True)
 def get_basin_charges_and_volumes(
     data: NDArray[np.float64],
@@ -444,3 +502,58 @@ def get_best_neighbor(
         np.array((bni, bnj, bnk), dtype=np.int64),
         is_max,
     )
+
+
+@njit(cache=True)
+def climb_to_max(
+    data: NDArray[np.float64],
+    i: np.int64,
+    j: np.int64,
+    k: np.int64,
+    neighbor_transforms: NDArray[np.int64],
+    neighbor_dists: NDArray[np.int64],
+):
+    """
+    For a given coordinate (i,j,k) in a grid (data), hill climbs until a maximum
+    is reached.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        The data for each voxel.
+    i : np.int64
+        First coordinate
+    j : np.int64
+        Second coordinate
+    k : np.int64
+        Third coordinate
+    neighbor_transforms : NDArray[np.int64]
+        Transformations to apply to get to the voxels neighbors
+    neighbor_dists : NDArray[np.int64]
+        The distance to each voxels neighbor
+
+    Returns
+    -------
+    mi : np.int64
+        The first coordinate of the maximum
+    mj : np.int64
+        The second coordinate of the maximum
+    mk : np.int64
+        The third coordinate of the maximum
+
+    """
+    # start hill climbing
+    while True:
+        _, (mi, mj, mk), is_max = get_best_neighbor(
+            data,
+            i,
+            j,
+            k,
+            neighbor_transforms,
+            neighbor_dists,
+        )
+        if is_max:
+            break
+        # otherwise, update coord
+        i, j, k = (mi, mj, mk)
+    return mi, mj, mk

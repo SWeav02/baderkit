@@ -3,12 +3,13 @@
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import pandas as pd
 
 from baderkit.core import Bader, Grid
 
 base_dir = Path(".")
 
-methods = ["ongrid", "neargrid", "weight"]
+methods = ["weight", "ongrid", "neargrid", "neargrid-weight"]
 angles = [
     "000",
     "015",
@@ -47,6 +48,17 @@ for angle in angles:
         )
         # append the oxidation state by subtracting from PP electron count
         results[method].append(6 - bader.atom_charges[1])  # oxygen index
+
+###############################################################################
+# Save results
+###############################################################################
+orientation_df = pd.DataFrame(
+    {
+        "angles": angles,
+        **results,
+    }
+)
+orientation_df.to_csv("orientation_summary_baderkit.csv", index=False)
 
 ###############################################################################
 # Combined Plot

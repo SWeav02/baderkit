@@ -11,9 +11,9 @@ import pandas as pd
 from numpy.typing import NDArray
 from rich.progress import track
 
-from baderkit.core.methods import method_names
+from baderkit.core.methods import Method
 from baderkit.core.methods.shared_numba import get_edges
-from baderkit.core.toolkit import Grid, Structure
+from baderkit.core.toolkit import Format, Grid, Structure
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
@@ -23,56 +23,68 @@ class Bader:
     """
     Class for running Bader analysis on a regular grid. For information on each
     method, see our [docs](https://sweav02.github.io/baderkit/)
+
+    Parameters
+    ----------
+    charge_grid : Grid
+        A Grid object with the charge density that will be integrated.
+    reference_grid : Grid | None
+        A grid object whose values will be used to construct the basins. If
+        None, defaults to the charge_grid.
+    method : str | Method, optional
+        The algorithm to use for generating bader basins.
+    vacuum_tol: float | bool, optional
+        If a float is provided, this is the value below which a point will
+        be considered part of the vacuum. If a bool is provided, no vacuum
+        will be used on False, and the default tolerance will be used on True.
+    normalize_vacuum: bool, optional
+        Whether or not the reference data needs to be converted to real space
+        units for vacuum tolerance comparison. This should be True for charge
+        densities and False for the ELF. If None, the setting will be guessed
+        from the reference grid's data type.
+    basin_tol: float, optional
+        The value below which a basin will not be considered significant. This
+        is used only used to avoid writing out data that is likely not valuable.
+
     """
 
     def __init__(
         self,
         charge_grid: Grid,
-        reference_grid: Grid,
-        method: str = "neargrid",
-        vacuum_tol: float = 1.0e-3,
-        normalize_vacuum: bool = True,
+        reference_grid: Grid | None = None,
+        method: str | Method = Method.neargrid,
+        vacuum_tol: float | bool = 1.0e-3,
+        normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
     ):
-        """
 
-        Parameters
-        ----------
-        charge_grid : Grid
-            A Grid object with the charge density that will be integrated.
-        reference_grid : Grid
-            A grid object whose values will be used to construct the basins.
-        method : str, optional
-            The algorithm to use for generating bader basins. If None, defaults
-            to neargrid.
-        vacuum_tol: float, optional
-            The value below which a point will be considered part of the vacuum.
-            The default is 0.001.
-        normalize_vacuum: bool, optional
-            Whether or not the reference data needs to be converted to real space
-            units for vacuum tolerance comparison. This should be set to True if
-            the data follows VASP's CHGCAR standards, but False if the data should
-            be compared as is (e.g. in ELFCARs)
-        basin_tol: float, optional
-            The value below which a basin will not be considered significant. This
-            is used to avoid writing out data that is likely not valuable.
-            The default is 0.001.
-
-        Returns
-        -------
-        None.
-
-        """
         # ensure th method is valid
-        if method not in method_names:
+        if method not in {m.value for m in Method}:
             raise ValueError(
-                f"Invalid method '{method}'. Available options are: {method_names}"
+                f"Invalid method '{method}'. Available options are: {[i.value for i in Method]}"
             )
 
         self._charge_grid = charge_grid
+
+        # if no reference is provided, use the base charge grid
+        if reference_grid is None:
+            reference_grid = charge_grid.copy()
         self._reference_grid = reference_grid
+
+        # guess whether the reference should be scaled for vacuum tolerance comparison
+        if normalize_vacuum is None:
+            if reference_grid.data_type == "elf":
+                normalize_vacuum = False
+            else:
+                normalize_vacuum = True
+
         self._method = method
-        self._vacuum_tol = vacuum_tol
+
+        # if vacuum tolerance is True, set it to the same default as above
+        if vacuum_tol is True:
+            self._vacuum_tol = 1.0e-3
+        else:
+            self._vacuum_tol = vacuum_tol
         self._normalize_vacuum = normalize_vacuum
         self._basin_tol = basin_tol
 
@@ -174,12 +186,15 @@ class Bader:
         return self._method
 
     @method.setter
-    def method(self, value: str):
+    def method(self, value: str | Method):
+        assert (
+            value in Method
+        ), f"Invalid method '{value}'. Available options are: {[i.value for i in Method]}"
         self._method = value
         self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
 
     @property
-    def vacuum_tol(self) -> float:
+    def vacuum_tol(self) -> float | bool:
         """
 
         Returns
@@ -192,7 +207,7 @@ class Bader:
         return self._vacuum_tol
 
     @vacuum_tol.setter
-    def vacuum_tol(self, value: float):
+    def vacuum_tol(self, value: float | bool):
         self._vacuum_tol = value
         self._reset_properties()
         # TODO: only reset everything if the vacuum actually changes
@@ -271,6 +286,44 @@ class Bader:
         if self._basin_maxima_frac is None:
             self.run_bader()
         return self._basin_maxima_frac
+
+    @property
+    def basin_maxima_charge_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The charge data value at each maximum
+
+        """
+
+        # get the voxel coordinates for reduced maxima
+        voxel_coords = np.round(
+            self.charge_grid.frac_to_grid(self.basin_maxima_frac)
+        ).astype(int)
+        return self.charge_grid.total[
+            voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]
+        ]
+
+    @property
+    def basin_maxima_ref_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The reference data value at each maximum
+
+        """
+
+        # get the voxel coordinates for reduced maxima
+        voxel_coords = np.round(
+            self.reference_grid.frac_to_grid(self.basin_maxima_frac)
+        ).astype(int)
+        return self.reference_grid.total[
+            voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]
+        ]
 
     @property
     def basin_maxima_vox(self) -> NDArray[int]:
@@ -465,7 +518,7 @@ class Bader:
             self._basin_edges = get_edges(
                 labeled_array=self.basin_labels,
                 vacuum_mask=np.zeros(self.basin_labels.shape, dtype=np.bool_),
-                neighbor_transforms=self.reference_grid.voxel_26_neighbors[0],
+                neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
         return self._basin_edges
 
@@ -484,7 +537,7 @@ class Bader:
             self._atom_edges = get_edges(
                 labeled_array=self.atom_labels,
                 vacuum_mask=np.zeros(self.atom_labels.shape, dtype=np.bool_),
-                neighbor_transforms=self.reference_grid.voxel_26_neighbors[0],
+                neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
         return self._atom_edges
 
@@ -527,12 +580,18 @@ class Bader:
 
         """
         if self._vacuum_mask is None:
-            if self.normalize_vacuum:
-                self._vacuum_mask = self.reference_grid.total < (
-                    self.vacuum_tol * self.structure.volume
+            # if vacuum tolerance is set to False, ignore vacuum
+            if self.vacuum_tol is False:
+                self._vacuum_mask = np.zeros_like(
+                    self.reference_grid.total, dtype=np.bool_
                 )
             else:
-                self._vacuum_mask = self.reference_grid.total < self.vacuum_tol
+                if self.normalize_vacuum:
+                    self._vacuum_mask = self.reference_grid.total < (
+                        self.vacuum_tol * self.structure.volume
+                    )
+                else:
+                    self._vacuum_mask = self.reference_grid.total < self.vacuum_tol
         return self._vacuum_mask
 
     @property
@@ -576,7 +635,7 @@ class Bader:
 
         """
 
-        return method_names
+        return [i.value for i in Method]
 
     @property
     def results_summary(self) -> dict:
@@ -730,16 +789,14 @@ class Bader:
             atom_edge_mask = (atom_labeled_voxels == atom_index) & edge_mask
             edge_vox_coords = np.argwhere(atom_edge_mask)
             # convert to frac coords
-            edge_frac_coords = self.reference_grid.get_frac_coords_from_vox(
-                edge_vox_coords
-            )
+            edge_frac_coords = self.reference_grid.grid_to_frac(edge_vox_coords)
             atom_frac_coord = self.structure.frac_coords[atom_index]
             # Get the difference in coords between atom and edges
             coord_diff = atom_frac_coord - edge_frac_coords
             # Wrap any coords that are more than 0.5 or less than -0.5
             coord_diff -= np.round(coord_diff)
             # Convert to cartesian coordinates
-            cart_coords = self.reference_grid.get_cart_coords_from_frac(coord_diff)
+            cart_coords = self.reference_grid.frac_to_cart(coord_diff)
             # Calculate distance of each
             norm = np.linalg.norm(cart_coords, axis=1)
             if len(norm) == 0:
@@ -775,14 +832,12 @@ class Bader:
                 continue
             basin_edge_mask = (basin_labeled_voxels == basin) & edge_mask
             edge_vox_coords = np.argwhere(basin_edge_mask)
-            edge_frac_coords = self.reference_grid.get_frac_coords_from_vox(
-                edge_vox_coords
-            )
+            edge_frac_coords = self.reference_grid.grid_to_frac(edge_vox_coords)
             basin_frac_coord = self.basin_maxima_frac[basin]
 
             coord_diff = basin_frac_coord - edge_frac_coords
             coord_diff -= np.round(coord_diff)
-            cart_coords = self.reference_grid.get_cart_coords_from_frac(coord_diff)
+            cart_coords = self.reference_grid.frac_to_cart(coord_diff)
             norm = np.linalg.norm(cart_coords, axis=1)
             basin_radii.append(norm.min())
         basin_radii = np.array(basin_radii)
@@ -817,9 +872,12 @@ class Bader:
         """
         charge_grid = Grid.from_vasp(charge_filename)
         if reference_filename is None:
-            reference_grid = charge_grid.copy()
+            reference_grid = None
         else:
             reference_grid = Grid.from_vasp(reference_filename)
+
+        # If a flag for
+
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
 
     @classmethod
@@ -850,7 +908,7 @@ class Bader:
         """
         charge_grid = Grid.from_cube(charge_filename)
         if reference_filename is None:
-            reference_grid = charge_grid.copy()
+            reference_grid = None
         else:
             reference_grid = Grid.from_cube(reference_filename)
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
@@ -891,7 +949,7 @@ class Bader:
 
         charge_grid = Grid.from_dynamic(charge_filename, format=format)
         if reference_filename is None:
-            reference_grid = charge_grid.copy()
+            reference_grid = None
         else:
             reference_grid = Grid.from_dynamic(reference_filename, format=format)
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
@@ -907,18 +965,27 @@ class Bader:
         """
         return copy.deepcopy(self)
 
+    @staticmethod
+    def _write_output(grid: Grid, output_format: Format, file_path: Path, **kwargs):
+        # Make sure format is a Format object not a string
+        output_format = Format(output_format)
+        # get the writing method corresponding to this output format
+        method_name = output_format.writer
+        # write the
+        getattr(grid, method_name)(file_path, **kwargs)
+
     def write_basin_volumes(
         self,
         basin_indices: NDArray,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes bader basins to vasp-like files. Points belonging to the basin
         will have values from the charge or reference grid, and all other points
-        will be 0. Filenames are written as {file_prefix}_b{i} where i is the
-        basin index.
+        will be 0.
 
         Parameters
         ----------
@@ -927,19 +994,20 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
         None.
 
         """
-        if data_type == "charge":
+        # get the grid to use
+        if source_grid == "charge":
             grid = self.charge_grid.copy()
-        elif data_type == "reference":
+        elif source_grid == "reference":
             grid = self.reference_grid.copy()
 
         data_array = grid.total
@@ -951,29 +1019,31 @@ class Bader:
             data_array_copy[~mask] = 0
             data = {"total": data_array_copy}
             grid = Grid(structure=self.structure, data=data)
-            grid.write_file(directory / f"{file_prefix}_b{basin}")
+            file_path = directory / f"{grid.data_type.prefix}_b{basin}"
+            # write file
+            self._write_output(grid, output_format, file_path, **writer_kwargs)
 
     def write_all_basin_volumes(
         self,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes all bader basins to vasp-like files. Points belonging to the basin
         will have values from the charge or reference grid, and all other points
-        will be 0. Filenames are written as {file_prefix}_b{i} where i is the
-        basin index.
+        will be 0.
 
         Parameters
         ----------
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
@@ -984,22 +1054,23 @@ class Bader:
         self.write_basin_volumes(
             basin_indices=basin_indices,
             directory=directory,
-            file_prefix=file_prefix,
-            data_type=data_type,
+            source_grid=source_grid,
+            output_format=output_format,
+            **writer_kwargs,
         )
 
     def write_basin_volumes_sum(
         self,
         basin_indices: NDArray,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes the union of the provided bader basins to vasp-like files.
         Points belonging to the basins will have values from the charge or
-        reference grid, and all other points will be 0. Filenames are written
-        as {file_prefix}_bsum.
+        reference grid, and all other points will be 0.
 
         Parameters
         ----------
@@ -1008,19 +1079,19 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
         None.
 
         """
-        if data_type == "charge":
+        if source_grid == "charge":
             grid = self.charge_grid.copy()
-        elif data_type == "reference":
+        elif source_grid == "reference":
             grid = self.reference_grid.copy()
 
         data_array = grid.total
@@ -1031,20 +1102,22 @@ class Bader:
         data_array_copy[~mask] = 0
         data = {"total": data_array_copy}
         grid = Grid(structure=self.structure, data=data)
-        grid.write_file(directory / f"{file_prefix}_bsum")
+        file_path = directory / f"{grid.data_type.prefix}_bsum"
+        # write file
+        self._write_output(grid, output_format, file_path, **writer_kwargs)
 
     def write_atom_volumes(
         self,
         atom_indices: NDArray,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes atomic basins to vasp-like files. Points belonging to the atom
         will have values from the charge or reference grid, and all other points
-        will be 0. Filenames are written as {file_prefix}_a{i} where i is the
-        atom index.
+        will be 0.
 
         Parameters
         ----------
@@ -1053,19 +1126,19 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
         None.
 
         """
-        if data_type == "charge":
+        if source_grid == "charge":
             grid = self.charge_grid.copy()
-        elif data_type == "reference":
+        elif source_grid == "reference":
             grid = self.reference_grid.copy()
 
         data_array = grid.total
@@ -1077,29 +1150,34 @@ class Bader:
             data_array_copy[~mask] = 0
             data = {"total": data_array_copy}
             grid = Grid(structure=self.structure, data=data)
-            grid.write_file(directory / f"{file_prefix}_a{atom_index}")
+            file_path = directory / f"{grid.data_type.prefix}_a{atom_index}"
+            # write file
+            self._write_output(grid, output_format, file_path, **writer_kwargs)
 
     def write_all_atom_volumes(
         self,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes all atomic basins to vasp-like files. Points belonging to the atom
         will have values from the charge or reference grid, and all other points
-        will be 0. Filenames are written as {file_prefix}_a{i} where i is the
-        atom index.
+        will be 0.
 
         Parameters
         ----------
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
@@ -1110,22 +1188,23 @@ class Bader:
         self.write_atom_volumes(
             atom_indices=atom_indices,
             directory=directory,
-            file_prefix=file_prefix,
-            data_type=data_type,
+            source_grid=source_grid,
+            output_format=output_format,
+            **writer_kwargs,
         )
 
     def write_atom_volumes_sum(
         self,
         atom_indices: NDArray,
         directory: str | Path = None,
-        file_prefix: str = "CHGCAR",
-        data_type: Literal["charge", "reference"] = "charge",
+        source_grid: Literal["charge", "reference"] = "charge",
+        output_format: str | Format = Format.vasp,
+        **writer_kwargs,
     ):
         """
         Writes the union of the provided atom basins to vasp-like files.
         Points belonging to the atoms will have values from the charge or
-        reference grid, and all other points will be 0. Filenames are written
-        as {file_prefix}_asum.
+        reference grid, and all other points will be 0.
 
         Parameters
         ----------
@@ -1134,19 +1213,19 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        file_prefix : str, optional
-            The string to append to each file name. The default is "CHGCAR".
-        data_type : Literal["charge", "reference"], optional
+        source_grid : Literal["charge", "reference"], optional
             Which file to write from. The default is "charge".
+        output_format: str | Format, optional
+            The file format to write with. Defaults to vasp.
 
         Returns
         -------
         None.
 
         """
-        if data_type == "charge":
+        if source_grid == "charge":
             grid = self.charge_grid.copy()
-        elif data_type == "reference":
+        elif source_grid == "reference":
             grid = self.reference_grid.copy()
 
         data_array = grid.total
@@ -1157,7 +1236,9 @@ class Bader:
         data_array_copy[~mask] = 0
         data = {"total": data_array_copy}
         grid = Grid(structure=self.structure, data=data)
-        grid.write_file(directory / f"{file_prefix}_asum")
+        file_path = directory / f"{grid.data_type.prefix}_asum"
+        # write file
+        self._write_output(grid, output_format, file_path, **writer_kwargs)
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """
@@ -1263,6 +1344,13 @@ class Bader:
             [atom_col_widths, basin_col_widths],
             ["bader_atom_summary.tsv", "bader_basin_summary.tsv"],
         ):
+            # Note what we're writing in log
+            if "atom" in name:
+                logging.info(f"Writing atom summary to {name}")
+            else:
+                logging.info(f"Writing basin summary to {name}")
+
+            # write output summaries
             with open(directory / name, "w") as f:
                 # Write header
                 header = "\t".join(f"{col:<{col_widths[col]}}" for col in df.columns)

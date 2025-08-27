@@ -828,8 +828,8 @@ class GridPlotter(StructurePlotter):
         self.grid = grid
         self._show_surface = True
         self._show_caps = True
-        self._surface_opacity = 0.8
-        self._cap_opacity = 0.8
+        self._surface_opacity = 0.5
+        self._cap_opacity = 0.5
         self._colormap = "viridis"
         self._use_solid_surface_color = False
         self._use_solid_cap_color = False
@@ -848,7 +848,7 @@ class GridPlotter(StructurePlotter):
         self._iso_val = self.min_val  # np.mean(grid.total)
         # generate the structured grid
         indices = np.indices(self.shape).reshape(3, -1, order="F").T
-        self.points = grid.get_cart_coords_from_vox(indices)
+        self.points = grid.grid_to_cart(indices)
         self.structured_grid = self._make_structured_grid(self.values)
         # generate the surface
         self.surface = self.structured_grid.extract_surface()

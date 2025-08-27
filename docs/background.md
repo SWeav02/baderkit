@@ -26,7 +26,7 @@ sometimes termed an *attractor*. Each attractor typically (though not always)
 correspond to an atom, and the charge and oxidation state of the atom can be determined 
 by integrating the charge density within this region.
 
-![bader_separation](images/bader_separation.png)
+![bader_separation](images/bader_separation_wb.png)
 
 In practice, it is often difficult and computationally expense to thoroughly 
 sample the zero-flux surface defining basins. To avoid this problem, 
@@ -39,11 +39,8 @@ The end result is a robust and efficient method for dividing the charge density
 into basins, without ever needing to calculate the exact location of the zero-flux 
 surface.
 
-
-
-Through the years, several methods for performing this steepest ascent have been
-developed. We have implemented the same methods that exist in the Henkelman group's
-excellent Fortran code. We
-highly recommend reading about each on our [Methods](./methods.md) page to determine
-which is the best for your use case.
-
+Since the development of their original algorithm the Henkelman group and others have
+developed several improved methods for performing this steepest ascent. Each has
+its own advantages and disadvantages. We recommend reading through our [Methods and Benchmarks](/baderkit/implementation)
+page to determine the best one for your use case.
+    

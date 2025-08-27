@@ -3,3 +3,4 @@ src/baderkit.egg-info
 .spyproject
 src/baderkit/trame
 build
+~/sync_files.py

@@ -28,13 +28,13 @@ class OngridMethod(MethodBase):
         data = grid.total
         shape = data.shape
         # get shifts to move from a voxel to the 26 surrounding voxels
-        neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
+        neighbor_transforms, neighbor_dists = grid.point_neighbor_transforms
         # For each voxel, get the label of the surrounding voxel that has the highest
         # density
         logging.info("Calculating steepest neighbors")
         pointers_3d, self._maxima_mask = get_steepest_pointers(
             data=data,
-            initial_labels=grid.all_voxel_indices,
+            initial_labels=grid.flat_grid_indices,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             vacuum_mask=self.vacuum_mask,

@@ -5,16 +5,20 @@ import logging
 import numpy as np
 
 from baderkit.core.methods.base import MethodBase
-from baderkit.core.methods.shared_numba import get_edges
-
-from .neargrid_numba import (
+from baderkit.core.methods.neargrid.neargrid_numba import (
     get_gradient_pointers_overdetermined,
     get_gradient_pointers_simple,
     refine_fast_neargrid,
 )
+from baderkit.core.methods.shared_numba import get_edges
+
+from .neargrid_weight_numba import (
+    get_edge_charges_volumes,
+    get_interior_basin_charges_and_volumes,
+)
 
 
-class NeargridMethod(MethodBase):
+class NeargridWeightMethod(MethodBase):
 
     _use_overdetermined = False
 
@@ -107,15 +111,54 @@ class NeargridMethod(MethodBase):
             neighbor_transforms=neighbor_transforms,
             initial_labels=grid.flat_grid_indices,
         )
-
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1
+
+        # get final edges
+        edge_mask = get_edges(
+            labels,
+            neighbor_transforms,
+            self.vacuum_mask,
+        )
+
+        # get interior charge/volume
+        charges, volumes, vacuum_charge, vacuum_volume = (
+            get_interior_basin_charges_and_volumes(
+                data=self.charge_grid.total,
+                labels=labels,
+                cell_volume=grid.structure.volume,
+                maxima_num=len(self.maxima_frac),
+                edge_mask=edge_mask,
+            )
+        )
+        # get voronoi neighbors/weights
+        neighbor_transforms, neighbor_dists, facet_areas, _ = (
+            grid.point_neighbor_voronoi_transforms
+        )
+        neighbor_weights = facet_areas / neighbor_dists
+        # get edge charge/volume
+        charges, volumes = get_edge_charges_volumes(
+            reference_data=grid.total,
+            charge_data=self.charge_grid.total,
+            edge_indices=np.argwhere(edge_mask),
+            labels=labels,
+            charges=charges,
+            volumes=volumes,
+            neighbor_transforms=neighbor_transforms,
+            neighbor_weights=neighbor_weights,  # use voronoi instead?
+        )
+
+        volumes = volumes * grid.structure.volume / grid.ngridpts
+        charges = charges / grid.ngridpts
+
         # get all results
         results = {
             "basin_labels": labels,
+            "basin_charges": charges,
+            "basin_volumes": volumes,
+            "vacuum_charge": vacuum_charge,
+            "vacuum_volume": vacuum_volume,
         }
-        # assign charges/volumes, etc.
-        results.update(self.get_basin_charges_and_volumes(labels))
         results.update(self.get_extras())
         return results
