@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
 
-from pathlib import Path
-import os, psutil, time
+import os
 import threading
+import time
+from pathlib import Path
 from typing import Any, Callable, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import psutil
 
 from baderkit.core import Bader, Grid
 
@@ -15,12 +17,13 @@ from baderkit.core import Bader, Grid
 # Function for tracking memory
 ###############################################################################
 
+
 def measure_peak_memory(
     func: Callable, *args, interval: float = 0.01, **kwargs
 ) -> Tuple[Any, float]:
     """
     Run a function and measure its peak memory usage (RSS).
-    
+
     Parameters
     ----------
     func : Callable
@@ -29,7 +32,7 @@ def measure_peak_memory(
         Arguments to pass to the function.
     interval : float, optional
         How often to sample memory usage in seconds (default: 0.01).
-    
+
     Returns
     -------
     result : Any
@@ -67,6 +70,7 @@ def run_bader(charge_grid, reference_grid, method, **kwargs):
     bader = Bader(charge_grid, reference_grid, method)
     return bader.results_summary
 
+
 ###############################################################################
 # Running Bader
 ###############################################################################
@@ -89,7 +93,12 @@ for grid_num in grid_nums:
 
     # run each method and save peak memory usage
     for method in methods:
-        result, memory = measure_peak_memory(run_bader, charge_grid=charge_grid, reference_grid=reference_grid, method=method)
+        result, memory = measure_peak_memory(
+            run_bader,
+            charge_grid=charge_grid,
+            reference_grid=reference_grid,
+            method=method,
+        )
         memory_used[method].append(memory)
 
 ###############################################################################

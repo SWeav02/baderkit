@@ -304,7 +304,7 @@ class MethodBase:
         maxima_sorted_indices = np.argsort(maxima_labels)
         maxima_vox = maxima_vox[maxima_sorted_indices]
         # reduce maxima
-        neighbor_transforms, _ = self.reference_grid.voxel_26_neighbors
+        neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
         new_labels, frac_coords = combine_neigh_maxima(
             labels,
             neighbor_transforms,

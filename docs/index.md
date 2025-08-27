@@ -224,10 +224,7 @@ is much more accurate for partitioning. **We highly recommend doing this**.
     ```
     3. Sum the AECCAR files
     ```python
-    reference_grid = Grid.sum_grids(
-        grid1 = aeccar0_grid, 
-        grid2 = aeccar2_grid
-        )
+    reference_grid = aeccar0.linear_add(aeccar2_grid)
     ```
     4. Create the bader object
     ```python

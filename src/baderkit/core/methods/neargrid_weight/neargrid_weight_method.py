@@ -37,7 +37,7 @@ class NeargridWeightMethod(MethodBase):
         """
         grid = self.reference_grid.copy()
         # get neigbhor transforms
-        neighbor_transforms, neighbor_dists = grid.voxel_26_neighbors
+        neighbor_transforms, neighbor_dists = grid.point_neighbor_transforms
         logging.info("Calculating gradients")
         if not self._use_overdetermined:
             # calculate gradients and pointers to best neighbors
@@ -47,14 +47,14 @@ class NeargridWeightMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                initial_labels=grid.all_voxel_indices,
+                initial_labels=grid.flat_grid_indices,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system
             # of all 26 neighbors to calculate the gradient. I didn't see any
             # improvement for NaCl or H2O, but both were cubic systems.
             # get cartesian transforms and normalize
-            cart_transforms = grid.get_cart_coords_from_vox(neighbor_transforms)
+            cart_transforms = grid.grid_to_cart(neighbor_transforms)
             norm_cart_transforms = (
                 cart_transforms.T / np.linalg.norm(cart_transforms, axis=1)
             ).T
@@ -68,7 +68,7 @@ class NeargridWeightMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                initial_labels=grid.all_voxel_indices,
+                initial_labels=grid.flat_grid_indices,
             )
         # Convert to 1D. We use the same name for minimal memory
         labels = labels.ravel()
@@ -109,7 +109,7 @@ class NeargridWeightMethod(MethodBase):
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
-            initial_labels=grid.all_voxel_indices,
+            initial_labels=grid.flat_grid_indices,
         )
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
@@ -133,7 +133,9 @@ class NeargridWeightMethod(MethodBase):
             )
         )
         # get voronoi neighbors/weights
-        neighbor_transforms, neighbor_dists, facet_areas, _ = grid.voxel_voronoi_facets
+        neighbor_transforms, neighbor_dists, facet_areas, _ = (
+            grid.point_neighbor_voronoi_transforms
+        )
         neighbor_weights = facet_areas / neighbor_dists
         # get edge charge/volume
         charges, volumes = get_edge_charges_volumes(
@@ -147,8 +149,8 @@ class NeargridWeightMethod(MethodBase):
             neighbor_weights=neighbor_weights,  # use voronoi instead?
         )
 
-        volumes = volumes * grid.structure.volume / grid.voxel_num
-        charges = charges / grid.voxel_num
+        volumes = volumes * grid.structure.volume / grid.ngridpts
+        charges = charges / grid.ngridpts
 
         # get all results
         results = {

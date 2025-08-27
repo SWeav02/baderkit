@@ -63,6 +63,57 @@ def get_edges(
     return edges
 
 
+@njit(parallel=True, cache=True)
+def get_maxima(
+    data: NDArray[np.float64],
+    neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+):
+    """
+    In a 3D array of labeled voxels, finds the voxels that neighbor at
+    least one voxel with a different label.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D array of data.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
+
+    Returns
+    -------
+    maxima : NDArray[np.bool_]
+        A mask with the same shape as the input grid that is True at points
+        that are local maxima.
+
+    """
+    nx, ny, nz = data.shape
+    # create 3D array to store maxima
+    maxima = np.zeros_like(data, dtype=np.bool_)
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
+                # get this voxels value
+                value = data[i, j, k]
+                is_max = True
+                # iterate over the neighboring voxels
+                for si, sj, sk in neighbor_transforms:
+                    # wrap points
+                    ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                    if data[ii, jj, kk] > value:
+                        is_max = False
+                        break
+                if is_max:
+                    maxima[i, j, k] = True
+    return maxima
+
+
 @njit(fastmath=True, cache=True)
 def get_basin_charges_and_volumes(
     data: NDArray[np.float64],

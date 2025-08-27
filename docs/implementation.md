@@ -12,23 +12,26 @@ code.
 
 ## Methods
 
-Below is a summary of approximate results for each method on a computer with 12
-cores and 32 gb of memory.
+Below is a summary of the benchmarks and suggested use cases for each method.
+Values are based on a computer with 12 cores and 32 GB of memory. We suggest
+doing your own tests for your computer and system.
 
-| Method | Speed (s/atom)<sup>1</sup> | Converged Grid Density (pts/Å<sup>3</sup>) | Max System Size (atoms)<sup>1</sup>  | Orientation Error (e<sup>-</sup>)<sup>2</sup> |
+| Method | Speed (s/atom)<small><sup>1</sup></small> | Converged Grid<br> Density (pts/Å<sup>3</sup>)<small><sup>2</sup></small> | Max Atoms<small><sup>1</sup></small>  | Orientation Error (e<sup>-</sup>)<small><sup>3</sup></small> |
 |:-------------:|:--------------------------------------:|:---------------------------------:|:------------------------------------:|:----------------:|
-| ongrid        | <span style="color:green;">0.22</span> | <span style="color:red;">Slow</span> | <span style="color:green;">177</span>  | <span style="color:red;">0.04</span> |
-| neargrid      | <span style="color:green;">0.22</span> | <span style="color:red;">Slow</span> | <span style="color:green;">160</span>  | <span style="color:green;">0.0001</span> |
-| weight        | <span style="color:orange;">0.28</span>   | <span style="color:green;">Fast</span> | <span style="color:red;">90</span> | <span style="color:orange;">0.001</span> |
-| neargrid-weight | <span style="color:green;">0.22</span> | <span style="color:orange;">Medium</span> | <span style="color:green;">160</span> | <span style="color:green;">0.0001</span> |
+| neargrid      | <span style="color:green;">0.22</span> | <span style="color:orange;">63000</span> | <span style="color:green;">160</span>  | <span style="color:green;">0.0001</span> |
+| weight        | <span style="color:orange;">0.28</span>   | <span style="color:green;">8300</span> | <span style="color:red;">90</span> | <span style="color:orange;">0.001</span> |
+| neargrid-weight | <span style="color:green;">0.22</span> | <span style="color:orange;">56000</span> | <span style="color:green;">160</span> | <span style="color:green;">0.0001</span> |
+| ongrid        | <span style="color:green;">0.22</span> | <span style="color:red;">>150000</span> | <span style="color:green;">177</span>  | <span style="color:red;">0.04</span> |
 
 <small>1. Assuming ~30 Å<sup>3</sup> per atom and a resolution of 10000 pts/Å<sup>3</sup></small>
 
-<small>2. Calculated from standard deviation of orientation benchmarks</small>
+<small>2. Resolution at which benchmark reached within 0.001 e<sup>-</sup> of converged value</small>
+
+<small>3. Standard deviation of orientation benchmarks</small>
     
 === "neargrid (default)"
 
-    **Key Takeaway:** *Very fast and memory efficient. Requires a finer grid than the weight method.*
+    **Key Takeaway:** *Very fast and memory efficient, but requires a fine grid.*
     
     This algorithm was developed by Henkelman et. al. after the ongrid method
     to fix orientation errors. It assigns each point on the grid to one basin,
@@ -54,8 +57,8 @@ cores and 32 gb of memory.
 
 === "weight"
     
-    **Key Takeaways:** *Converges at relatively rough grid densities, but is
-    slower and requires more memory than the neargrid method.*
+    **Key Takeaways:** *Converges at rough grid densities, but is
+    slower and requires more memory.*
     
     This method converges quickly with grid density by allowing each point to
     be partially assigned to multiple basins. To reduce orientation errors, a
@@ -77,6 +80,17 @@ cores and 32 gb of memory.
     
     M. Yu and D. R. Trinkle, Accurate and efficient algorithm for Bader charge integration, [J. Chem. Phys. 134, 064111 (2011)](https://theory.cm.utexas.edu/henkelman/code/bader/download/yu11_064111.pdf)   
 
+=== "neargrid-weight"
+
+    **Key Takeaways:** *Similar to the original neargrid method,
+    but converges at lower grid densities. Still in testing.*
+    
+    This method is a hybrid of the neargrid and weight methods. It first runs the
+    neargrid exactly, then uses the fractional assignment of the weight method
+    to split the grid points at basin edges. The result is a method that requires
+    minimal additional time over the original neargrid method, but with a
+    convergence rate approaching that of the weight method.
+
 === "ongrid"
     
     **Key Takeaways:** *Fast, but prone to orientation errors. We do
@@ -97,17 +111,6 @@ cores and 32 gb of memory.
     
     G. Henkelman, A. Arnaldsson, and H. Jónsson, A fast and robust algorithm for Bader decomposition of charge density, [Comput. Mater. Sci. 36, 354-360 (2006)](https://theory.cm.utexas.edu/henkelman/code/bader/download/henkelman06_354.pdf)
 
-=== "neargrid-weight"
-
-    **Key Takeaways:** *Similar speed and accuracy to the original neargrid method,
-    but converges at lower grid densities.*
-    
-    This method is a hybrid of the neargrid and weight methods. It first runs the
-    neargrid exactly, then uses the fractional assignment of the weight method
-    to split the grid points at basin edges. The result is a method that requires
-    minimal additional time over the original neargrid method, but with a
-    convergence rate approaching that of the weight method.
-
 ---
 
 ## Benchmarks
@@ -117,62 +120,55 @@ cores and 32 gb of memory.
     
     ![baderkit_vs_henk_time](images/time_vs_grid_baderkit_henk_subplots.png)
     
-    The plot above shows speed comparisons for running the BaderKit and Henkelman 
-    group's code using the command line. This includes the file read/write,
-    basin assignment, and atom assignment steps. The systematic
-    increase in time for all BaderKit methods is due to the initialization of
-    Python's interperator. In all cases, BaderKit shows comparable or improved
-    speeds. The `neargrid-weight` method adds very little additional time compared
-    with the original `neargrid` method.
+    BaderKit shows comparable or improved speeds for all methods. The `neargrid-weight`
+    method adds very little additional time over the original `neargrid` method.
     
 === "Convergence"    
     
     ![baderkit_conv](images/charges_vs_grid_baderkit.png)
     
-    The plot above shows the oxidation state on a Na atom in a conventional
-    NaCl crystal structure at increasing grid densities, calculated with each method. 
-    As expected from their
-    original papers, the `weight` method converges first, followed by the `neargrid`
-    method then the `ongrid` method. Our own `neargrid-weight` method converges
-    faster than the original `neargrid` method.
-    
-    The Henkelman group's code produces identical results and is therefore not shown.
+    As expected from their original papers, the `weight` method converges first
+    followed by the `neargrid` method. The `ongrid` method does not converge even
+    at a resolution >150000 pts/Å<sup>3</sup>. Our own `neargrid-weight` method
+    converges faster than the original `ongrid` method.
     
 === "Memory"
 
     ![baderkit_conv](images/memory_vs_grid_baderkit.png)
     
-    The plot above shows the maximum memory usage in GB of each method for a 
-    given number of grid points. 
+    The `weight` method uses considerably more memory than other methods. However,
+    this is offset by the significantly lower grid density needed to reach
+    convergence.
     
 === "Orientation"
     
     ![baderkit_orient](images/oxygen_charge_vs_angle.png)
     
-    The plot above shows the oxidation state on the oxygen atom of a water
-    molecule in vacuum. The `neargrid`, `weight`, and `neargrid-weight` methods
-    show minimal variance with orientation, while the `ongrid` method shows fairly
-    extreme bias.
-    
-    The Henkelman group's code produces identical results and is therefore not shown.
+    The `neargrid`, `weight`, and `neargrid-weight` methods
+    show minimal variance with orientation, while the `ongrid` method shows
+    a large bias.
     
 === "Calculation Details"
 
-    Speed and convergence tests were run on a conventional cubic 8 atom NaCl
+    Speed, convergence, and memory benchmarks were performed on a conventional cubic 8 atom NaCl
     structure at varying grid densities. The charge density was calculated using the
     Vienna *Ab-initio* Simulation Package (VASP) with the PBE GGA density functional, an energy
     cutoff of 372.85 eV, a 3x3x3 Monkhorst–Pack *k*-point mesh, and VASP's default
     GW pseudo-potentials. The unit cell relaxed to a lattice size of 5.53 Å.
-    The speed tests were run 10 times and the average taken to account for minor
-    fluctuations in computational time.
-
-    The orientation tests were run on a water molecule in a cubic lattice with 270 grid points 
+    
+    Orientation benchmarks were run on a water molecule in a cubic lattice with 270 grid points 
     along each 8.04 Å axis. Calculations were performed
     using VASP, PBE GGA density functional, an energy cutoff of 400 eV, a 2x2x2
     Monkhorst–Pack *k*-point mesh, and VASP's default PBE pseudo-potentials.
-
+    
     All bader calculations were performed using an Intel Core i9-9940X CPU with
     14 cores (2 threads per core).
+    
+    Speed benchmarks were run 10 times and the average taken to account for minor
+    fluctuations in computational time. Speed tests were run through the command
+    line to capture the entire workflow including file read/write, basin assignment,
+    and atom assignment. The systematic shift in all BaderKit methods is due
+    to the initialization of Python's interpreter.    
 
 ---
 
@@ -223,7 +219,7 @@ cores and 32 gb of memory.
     in the path. We therefore abandon the initial assignment entirely, instead calculating
     pointers from each point to its highest neighbor in parallel and reducing with a `pointer jumping` algorithm. 
     These pointers differ from the `ongrid` method in that they are calculated using 
-    the gradient. The edges are then refined by performing the tru hill climbing for each
+    the gradient. The edges are then refined by performing the true hill climbing for each
     edge point in parallel. The result is identical to the original method with speed
     comparable to the `ongrid` method.
 

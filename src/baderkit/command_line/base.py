@@ -212,7 +212,7 @@ def sum(
     Grids must have the same shape. {file1.name}: {shape1} differs from {file2.name}: {shape2}
     """
     # sum grids
-    summed_grid = Grid.sum_grids(grid1, grid2)
+    summed_grid = grid1.linear_add(grid2)
     # get name to use
     if output_name is None:
         if "elf" in file1.name.lower():

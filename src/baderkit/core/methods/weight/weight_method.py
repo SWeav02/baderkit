@@ -36,7 +36,7 @@ class WeightMethod(MethodBase):
         # get the voronoi neighbors, their distances, and the area of the corresponding
         # facets. This is used to calculate the volume flux from each voxel
         neighbor_transforms, neighbor_dists, facet_areas, _ = (
-            reference_grid.voxel_voronoi_facets
+            reference_grid.point_neighbor_voronoi_transforms
         )
         logging.info("Sorting reference data")
         data = reference_grid.total
@@ -60,7 +60,9 @@ class WeightMethod(MethodBase):
         ]
         # Get the flux of volume from each voxel to its neighbor.
         logging.info("Calculating voxel flux contributions")
-        all_neighbor_transforms, all_neighbor_dists = reference_grid.voxel_26_neighbors
+        all_neighbor_transforms, all_neighbor_dists = (
+            reference_grid.point_neighbor_transforms
+        )
         flux_array, neigh_indices_array, weight_maxima_mask = get_neighbor_flux(
             data=data,
             sorted_voxel_coords=sorted_voxel_coords.copy(),
@@ -134,14 +136,14 @@ class WeightMethod(MethodBase):
         # adjust charges from vasp convention
         charges /= shape.prod()
         # adjust volumes from voxel count
-        volumes *= reference_grid.voxel_volume
+        volumes *= reference_grid.point_volume
         # assign all values
         results = {
             "basin_labels": labels,
             "basin_charges": charges,
             "basin_volumes": volumes,
             "vacuum_charge": charge_data[self.vacuum_mask].sum() / shape.prod(),
-            "vacuum_volume": (self.num_vacuum / reference_grid.voxel_num)
+            "vacuum_volume": (self.num_vacuum / reference_grid.ngridpts)
             * reference_grid.structure.volume,
         }
         results.update(self.get_extras())

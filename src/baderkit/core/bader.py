@@ -23,6 +23,29 @@ class Bader:
     """
     Class for running Bader analysis on a regular grid. For information on each
     method, see our [docs](https://sweav02.github.io/baderkit/)
+
+    Parameters
+    ----------
+    charge_grid : Grid
+        A Grid object with the charge density that will be integrated.
+    reference_grid : Grid | None
+        A grid object whose values will be used to construct the basins. If
+        None, defaults to the charge_grid.
+    method : str | Method, optional
+        The algorithm to use for generating bader basins.
+    vacuum_tol: float | bool, optional
+        If a float is provided, this is the value below which a point will
+        be considered part of the vacuum. If a bool is provided, no vacuum
+        will be used on False, and the default tolerance will be used on True.
+    normalize_vacuum: bool, optional
+        Whether or not the reference data needs to be converted to real space
+        units for vacuum tolerance comparison. This should be True for charge
+        densities and False for the ELF. If None, the setting will be guessed
+        from the reference grid's data type.
+    basin_tol: float, optional
+        The value below which a basin will not be considered significant. This
+        is used only used to avoid writing out data that is likely not valuable.
+
     """
 
     def __init__(
@@ -34,37 +57,7 @@ class Bader:
         normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
     ):
-        """
 
-        Parameters
-        ----------
-        charge_grid : Grid
-            A Grid object with the charge density that will be integrated.
-        reference_grid : Grid | None
-            A grid object whose values will be used to construct the basins. If
-            None, defaults to the charge_grid.
-        method : str | Method, optional
-            The algorithm to use for generating bader basins. Defaults to neargrid.
-        vacuum_tol: float | bool, optional
-            If a float is provided, this is the value below which a point will
-            be considered part of the vacuum. If a bool is provided, no vacuum
-            will be used on False, and the default tolerance will be used on True.
-            The default is 0.001.
-        normalize_vacuum: bool, optional
-            Whether or not the reference data needs to be converted to real space
-            units for vacuum tolerance comparison. This should be True for charge
-            densities and False for the ELF. If None, the setting will be guessed
-            from the reference grid's data type.
-        basin_tol: float, optional
-            The value below which a basin will not be considered significant. This
-            is used only used to avoid writing out data that is likely not valuable.
-            The default is 0.001.
-
-        Returns
-        -------
-        None.
-
-        """
         # ensure th method is valid
         if method not in Method:
             raise ValueError(
@@ -307,7 +300,7 @@ class Bader:
 
         # get the voxel coordinates for reduced maxima
         voxel_coords = np.round(
-            self.charge_grid.get_voxel_coords_from_frac(self.basin_maxima_frac)
+            self.charge_grid.frac_to_grid(self.basin_maxima_frac)
         ).astype(int)
         return self.charge_grid.total[
             voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]
@@ -326,7 +319,7 @@ class Bader:
 
         # get the voxel coordinates for reduced maxima
         voxel_coords = np.round(
-            self.reference_grid.get_voxel_coords_from_frac(self.basin_maxima_frac)
+            self.reference_grid.frac_to_grid(self.basin_maxima_frac)
         ).astype(int)
         return self.reference_grid.total[
             voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]
@@ -525,7 +518,7 @@ class Bader:
             self._basin_edges = get_edges(
                 labeled_array=self.basin_labels,
                 vacuum_mask=np.zeros(self.basin_labels.shape, dtype=np.bool_),
-                neighbor_transforms=self.reference_grid.voxel_26_neighbors[0],
+                neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
         return self._basin_edges
 
@@ -544,7 +537,7 @@ class Bader:
             self._atom_edges = get_edges(
                 labeled_array=self.atom_labels,
                 vacuum_mask=np.zeros(self.atom_labels.shape, dtype=np.bool_),
-                neighbor_transforms=self.reference_grid.voxel_26_neighbors[0],
+                neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
         return self._atom_edges
 
@@ -796,16 +789,14 @@ class Bader:
             atom_edge_mask = (atom_labeled_voxels == atom_index) & edge_mask
             edge_vox_coords = np.argwhere(atom_edge_mask)
             # convert to frac coords
-            edge_frac_coords = self.reference_grid.get_frac_coords_from_vox(
-                edge_vox_coords
-            )
+            edge_frac_coords = self.reference_grid.grid_to_frac(edge_vox_coords)
             atom_frac_coord = self.structure.frac_coords[atom_index]
             # Get the difference in coords between atom and edges
             coord_diff = atom_frac_coord - edge_frac_coords
             # Wrap any coords that are more than 0.5 or less than -0.5
             coord_diff -= np.round(coord_diff)
             # Convert to cartesian coordinates
-            cart_coords = self.reference_grid.get_cart_coords_from_frac(coord_diff)
+            cart_coords = self.reference_grid.frac_to_cart(coord_diff)
             # Calculate distance of each
             norm = np.linalg.norm(cart_coords, axis=1)
             if len(norm) == 0:
@@ -841,14 +832,12 @@ class Bader:
                 continue
             basin_edge_mask = (basin_labeled_voxels == basin) & edge_mask
             edge_vox_coords = np.argwhere(basin_edge_mask)
-            edge_frac_coords = self.reference_grid.get_frac_coords_from_vox(
-                edge_vox_coords
-            )
+            edge_frac_coords = self.reference_grid.grid_to_frac(edge_vox_coords)
             basin_frac_coord = self.basin_maxima_frac[basin]
 
             coord_diff = basin_frac_coord - edge_frac_coords
             coord_diff -= np.round(coord_diff)
-            cart_coords = self.reference_grid.get_cart_coords_from_frac(coord_diff)
+            cart_coords = self.reference_grid.frac_to_cart(coord_diff)
             norm = np.linalg.norm(cart_coords, axis=1)
             basin_radii.append(norm.min())
         basin_radii = np.array(basin_radii)
