@@ -3,6 +3,7 @@
 import itertools
 import logging
 import math
+from copy import deepcopy
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
@@ -1251,6 +1252,43 @@ class Grid(VolumetricData):
             labeled_array = np.where(labeled_array == j, i, labeled_array)
 
         return labeled_array
+
+    def linear_add(self, other: Self, scale_factor=1.0) -> Self:
+        """
+        Method to do a linear sum of volumetric objects. Used by + and -
+        operators as well. Returns a VolumetricData object containing the
+        linear sum.
+
+        Parameters
+        ----------
+        other : Grid
+            Another Grid object
+        scale_factor : float
+            Factor to scale the other data by
+
+        Returns
+        -------
+            Grid corresponding to self + scale_factor * other.
+        """
+        if self.structure != other.structure:
+            logging.warn(
+                "Structures are different. Make sure you know what you are doing...",
+                stacklevel=2,
+            )
+        if list(self.data) != list(other.data):
+            raise ValueError(
+                "Data have different keys! Maybe one is spin-polarized and the other is not?"
+            )
+
+        # To add checks
+        data = {}
+        for k in self.data:
+            data[k] = self.data[k] + scale_factor * other.data[k]
+
+        new = deepcopy(self)
+        new.data = data
+        new.data_aug = {}
+        return new
 
     # @staticmethod
     # def periodic_center_of_mass(

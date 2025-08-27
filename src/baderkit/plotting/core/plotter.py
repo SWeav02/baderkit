@@ -540,6 +540,7 @@ class StructurePlotter:
             all_frac_coords = [frac_coords]
         # convert to cart coords
         cart_coords = all_frac_coords @ self.structure.lattice.matrix
+        breakpoint()
         # generate meshes for each atom
         spheres = []
         for cart_coord in cart_coords:

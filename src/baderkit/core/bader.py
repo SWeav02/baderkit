@@ -59,7 +59,7 @@ class Bader:
     ):
 
         # ensure th method is valid
-        if method not in Method:
+        if method not in {m.value for m in Method}:
             raise ValueError(
                 f"Invalid method '{method}'. Available options are: {[i.value for i in Method]}"
             )
