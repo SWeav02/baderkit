@@ -423,6 +423,7 @@ def write_cube(
     # number of atoms and origin
     header += f"{natoms:5d}{origin[0]:12.6f}{origin[1]:12.6f}{origin[2]:12.6f}\n"
     # grid lines: npts and voxel vectors
+    # TODO: update formatting to remove leading 0s.
     for i in range(3):
         header += f"{grid.shape[i]:5d}{voxel[i,0]:12.6f}{voxel[i,1]:12.6f}{voxel[i,2]:12.6f}\n"
     # atom lines

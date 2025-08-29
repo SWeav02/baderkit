@@ -9,3 +9,4 @@ class Method(str, Enum):
     ongrid = "ongrid"
     neargrid = "neargrid"
     neargrid_weight = "neargrid-weight"
+    test = "test"
