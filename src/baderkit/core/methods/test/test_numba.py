@@ -42,22 +42,19 @@ def get_interior_basin_charges_and_volumes(
     # charges = charges / total_points
     return charges, volumes, vacuum_charge, vacuum_volume
 
+
 # @njit(fastmath=True, cache=True)
 def get_edge_charges_volumes(
     reference_data,
     charge_data,
     edge_indices,
-    sorted_edge_indices,
     labels,
     charges,
     volumes,
     neighbor_transforms,
-    neighbor_weights,
+    neighbor_dists,
 ):
     nx, ny, nz = reference_data.shape
-    # create list to store weights
-    weight_lists = []
-    label_lists = []
     # loop over edge indices
     for idx in range(len(edge_indices)):
         # get coordinates of grid point
@@ -71,62 +68,64 @@ def get_edge_charges_volumes(
         # get the value at this data point
         value = reference_data[i, j, k]
         # loop over neighbors and assign weight
-        for (si, sj, sk), frac in zip(neighbor_transforms, neighbor_weights):
-            # get neighbor and wrap
-            ni, nj, nk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-            # skip if neighbor is lower
-            neigh_value = reference_data[ni, nj, nk]
-            if neigh_value <= value:
+        for (si, sj, sk), dist in zip(neighbor_transforms, neighbor_dists):
+            # get upper and lower neighbors
+            ui, uj, uk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+            li, lj, lk = wrap_point(i - si, j - sj, k - sk, nx, ny, nz)
+            # get gradient to each neighbor
+            upper_value = reference_data[ui, uj, uk]
+            lower_value = reference_data[li, lj, lk]
+            upper_grad = (upper_value - value) / dist
+            lower_grad = (lower_value - value) / dist
+            # If both grads are lower than the current value, skip
+            if upper_grad <= 0.0 and lower_grad <= 0.0:
                 continue
-            
-            # check if this voxel has already been split
-            neigh_pointer = sorted_edge_indices[ni,nj,nk]
-            if neigh_pointer != -1:
-                neigh_weights = weight_lists[neigh_pointer]
-                neigh_labels = label_lists[neigh_pointer]
-                for label, weight in zip(neigh_labels, neigh_weights):
-                    flux = weight * (neigh_value - value) * frac
-                    current_weights.append(flux)
-                    current_labels.append(label)
-                    total_weight += flux
-                continue
-            # otherwise, add the portion of this voxel moving to this
-            # label
-            flux = (neigh_value - value) * frac
-            current_weights.append(flux)
-            current_labels.append(labels[ni, nj, nk])
-            total_weight += flux
+            # If only one is lower, use only the higher neighbors label
+            if upper_grad <= 0.0:
+                upper_label = labels[li, lj, lk]
+                lower_label = upper_label
+            elif lower_grad <= 0.0:
+                upper_label = labels[ui, uj, uk]
+                lower_label = upper_label
+            # otherwise, use the actual labels
+            else:
+                upper_label = labels[ui, uj, uk]
+                lower_label = labels[li, lj, lk]
+            # add both sides weights/labels
+            current_weights.append(abs(upper_grad))
+            current_weights.append(abs(lower_grad))
+            current_labels.append(upper_label)
+            current_labels.append(lower_label)
+            # update total weight
+            total_weight += abs(upper_grad) + abs(lower_grad)
 
-        # normalize the weights
+        # check for the case that there are no weights. This could happen
+        # at a local minimum
+        if len(current_labels) == 0:
+            label = labels[i, j, k]
+            charge = charge_data[i, j, k]
+            charges[label] += charge
+            volumes[label] += 1.0
+            continue
+
+        # normalize weights
         for weight_idx in range(len(current_weights)):
             current_weights[weight_idx] /= total_weight
 
-        # assign charge and volume and get unique labels
-        unique_weights = []
-        unique_labels = []
         charge = charge_data[i, j, k]
         for label, weight in zip(current_labels, current_weights):
             # update charge and volume
             charges[label] += weight * charge
             volumes[label] += weight
-            # update unique lists
-            found = False
-            for i, ulabel in enumerate(unique_labels):
-                if label == ulabel:
-                    unique_weights[i] += weight
-                    found = True
-            if not found:
-                unique_weights.append(weight)
-                unique_labels.append(label)
-        weight_lists.append(unique_weights)
-        label_lists.append(unique_labels)
-
     return charges, volumes
+
+
 # @njit(fastmath=True, cache=True)
 # def get_edge_charges_volumes(
 #     reference_data,
 #     charge_data,
 #     edge_indices,
+#     sorted_edge_indices,
 #     labels,
 #     charges,
 #     volumes,
@@ -134,6 +133,9 @@ def get_edge_charges_volumes(
 #     neighbor_weights,
 # ):
 #     nx, ny, nz = reference_data.shape
+#     # create list to store weights
+#     weight_lists = []
+#     label_lists = []
 #     # loop over edge indices
 #     for idx in range(len(edge_indices)):
 #         # get coordinates of grid point
@@ -154,6 +156,18 @@ def get_edge_charges_volumes(
 #             neigh_value = reference_data[ni, nj, nk]
 #             if neigh_value <= value:
 #                 continue
+
+#             # check if this voxel has already been split
+#             neigh_pointer = sorted_edge_indices[ni,nj,nk]
+#             if neigh_pointer != -1:
+#                 neigh_weights = weight_lists[neigh_pointer]
+#                 neigh_labels = label_lists[neigh_pointer]
+#                 for label, weight in zip(neigh_labels, neigh_weights):
+#                     flux = weight * (neigh_value - value) * frac
+#                     current_weights.append(flux)
+#                     current_labels.append(label)
+#                     total_weight += flux
+#                 continue
 #             # otherwise, add the portion of this voxel moving to this
 #             # label
 #             flux = (neigh_value - value) * frac
@@ -161,15 +175,28 @@ def get_edge_charges_volumes(
 #             current_labels.append(labels[ni, nj, nk])
 #             total_weight += flux
 
-#         # normalize the weighs
+#         # normalize the weights
 #         for weight_idx in range(len(current_weights)):
 #             current_weights[weight_idx] /= total_weight
 
-#         # assign charge and volume
+#         # assign charge and volume and get unique labels
+#         unique_weights = []
+#         unique_labels = []
 #         charge = charge_data[i, j, k]
 #         for label, weight in zip(current_labels, current_weights):
 #             # update charge and volume
 #             charges[label] += weight * charge
 #             volumes[label] += weight
+#             # update unique lists
+#             found = False
+#             for i, ulabel in enumerate(unique_labels):
+#                 if label == ulabel:
+#                     unique_weights[i] += weight
+#                     found = True
+#             if not found:
+#                 unique_weights.append(weight)
+#                 unique_labels.append(label)
+#         weight_lists.append(unique_weights)
+#         label_lists.append(unique_labels)
 
 #     return charges, volumes
