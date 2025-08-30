@@ -136,27 +136,28 @@ class TestMethod(MethodBase):
         # neighbor_transforms, neighbor_dists, facet_areas, _ = (
         #     grid.point_neighbor_voronoi_transforms
         # )
+        # breakpoint()
         # neighbor_weights = facet_areas / neighbor_dists
         # # get edge indices, values, and sort
         edge_indices = np.argwhere(edge_mask)
-        # sorted_edge_indices = np.full(grid.shape, -1, dtype=np.int64)
-        # # sort data from high to low
-        # sorted_data_indices = np.flip(np.argsort(grid.total[edge_mask], kind="stable"))
-        # edge_indices = edge_indices[sorted_data_indices]
-        # sorted_edge_indices[edge_indices[:,0], edge_indices[:,1], edge_indices[:,2]] = np.arange(len(sorted_data_indices))
+        sorted_edge_indices = np.full(grid.shape, -1, dtype=np.int64)
+        # sort data from high to low
+        sorted_data_indices = np.flip(np.argsort(grid.total[edge_mask], kind="stable"))
+        edge_indices = edge_indices[sorted_data_indices]
+        sorted_edge_indices[edge_indices[:,0], edge_indices[:,1], edge_indices[:,2]] = np.arange(len(sorted_data_indices))
         # breakpoint()
         # get edge charge/volume
         charges, volumes = get_edge_charges_volumes(
             reference_data=grid.total,
             charge_data=self.charge_grid.total,
             edge_indices=edge_indices,
-            # sorted_edge_indices=sorted_edge_indices,
+            sorted_edge_indices=sorted_edge_indices,
             labels=labels,
             charges=charges,
             volumes=volumes,
-            neighbor_transforms=neighbor_transforms[13:],
+            neighbor_transforms=neighbor_transforms[int(len(neighbor_transforms)/2):],
             # neighbor_weights=neighbor_weights,  # use voronoi instead?
-            neighbor_dists=neighbor_dists[13:],
+            neighbor_dists=neighbor_dists[int(len(neighbor_transforms)/2):],
         )
 
         volumes = volumes * grid.structure.volume / grid.ngridpts
