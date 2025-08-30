@@ -43,7 +43,7 @@ def get_interior_basin_charges_and_volumes(
     return charges, volumes, vacuum_charge, vacuum_volume
 
 
-# @njit(fastmath=True, cache=True)
+@njit(fastmath=True, cache=True)
 def get_edge_charges_volumes(
     reference_data,
     charge_data,
