@@ -42,7 +42,7 @@ def get_interior_basin_charges_and_volumes(
     # charges = charges / total_points
     return charges, volumes, vacuum_charge, vacuum_volume
 
-@njit(parallel=True, cache=True)
+@njit(cache=True)
 def get_possible_labels(
         i, j, k,
         nx, ny, nz,
