@@ -16,7 +16,6 @@ def get_interior_basin_charges_and_volumes(
     edge_mask: NDArray[np.bool_],
 ):
     nx, ny, nz = data.shape
-    # total_points = nx * ny * nz
     # create variables to store charges/volumes
     charges = np.zeros(maxima_num, dtype=np.float64)
     volumes = np.zeros(maxima_num, dtype=np.float64)
@@ -38,160 +37,277 @@ def get_interior_basin_charges_and_volumes(
                     volumes[label] += 1.0
     # calculate charge and volume for vacuum
     # NOTE: Don't normalize volumes/charges yet
-    # volumes = volumes * cell_volume / total_points
-    # charges = charges / total_points
     return charges, volumes, vacuum_charge, vacuum_volume
 
+# @njit(cache=True)
+# def get_possible_labels(
+#         i, j, k,
+#         nx, ny, nz,
+#         labels,
+#         neighbor_transforms,
+#         ):
+#     # list to store unique labels
+#     labels = []
+#     weights = []
+#     for shift_idx in range(len(neighbor_transforms)):
+#         si, sj, sk = neighbor_transforms[shift_idx]
+#         # get upper and lower neighbors
+#         ui, uj, uk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+#         li, lj, lk = wrap_point(i - si, j - sj, k - sk, nx, ny, nz)
+#         # get labels
+#         upper_label = labels[ui, uj, uk]
+#         lower_label = labels[li, lj, lk]
+#         if upper_label not in labels:
+#             labels.append(upper_label)
+#             weights.append(0.0)
+#         if lower_label not in labels:
+#             labels.append(lower_label)
+#             weights.append(0.0)
+
+#     return labels, weights
+
 @njit(cache=True)
-def get_possible_labels(
-        i, j, k,
-        nx, ny, nz,
-        labels,
-        neighbor_transforms,
+def get_labels_and_weights(
+    i,j,k,
+    reference_data,
+    labels_array,
+    first_neighbor_transforms,
+    neighbor_transforms,
+    first_neighbor_dists,
+    neighbor_dists,
         ):
-    # create an array the same length as the neighbor transforms
-    transform_num = len(neighbor_transforms)
-    neigh_labels = np.zeros(transform_num*2, dtype=np.int64)
-    for shift_idx in prange(transform_num):
-        si, sj, sk = neighbor_transforms[shift_idx]
-        # get upper and lower neighbors
-        ui, uj, uk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-        li, lj, lk = wrap_point(i - si, j - sj, k - sk, nx, ny, nz)
-        # get labels
-        upper_label = labels[ui, uj, uk]
-        lower_label = labels[li, lj, lk]
-        neigh_labels[shift_idx] = upper_label
-        neigh_labels[shift_idx+transform_num] = lower_label
-    # reduce to unique labels
-    labels = []
+    nx, ny, nz = reference_data.shape
+    # get value
+    value = reference_data[i,j,k]
+    # get tracker for total weight
+    total_weight = 0.0
+    # create lists to store weights and labels
     weights = []
-    for label in neigh_labels:
-        if not label in labels:
-            labels.append(label)
-            weights.append(0.0)
-    return labels, weights
+    labels = []
+    # loop over first neighbors
+    for (si, sj, sk), dist in zip(first_neighbor_transforms, first_neighbor_dists):
+        # get neighbor
+        ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+        # get neigh value
+        neigh_value = reference_data[ii,jj,kk]
+        # check value
+        if neigh_value <= value:
+            continue
+        weight = (neigh_value-value)/dist
+        weights.append(weight)
+        total_weight += weight
+        labels.append(labels_array[ii,jj,kk])
+    # reduce labels
+    reduced_labels = []
+    reduced_weights = []
+    for li, label in enumerate(labels):
+        found = False
+        for ri, rlabel in enumerate(reduced_labels):
+            if rlabel == label:
+                found = True
+                reduced_weights[ri] += weights[li]
+                break
+        if not found:
+            reduced_labels.append(label)
+            reduced_weights.append(weights[li])
+    # loop over second neighbors
+    for (si, sj, sk), dist in zip(neighbor_transforms, neighbor_dists):
+        # get neighbor
+        ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+        # get neigh value
+        neigh_value = reference_data[ii,jj,kk]
+        # check value and skip if lower
+        if neigh_value <= value:
+            continue
+        # add to labels if exists
+        neigh_label = labels_array[ii,jj,kk]
+        for ri, rlabel in enumerate(reduced_labels):
+            if neigh_label == rlabel:
+                weight = (neigh_value-value)/dist
+                reduced_weights[ri] += weight
+                total_weight += weight
+    # if the current total weight is 0.0, we have a local minimum
+    # and return a full weight for the current label
+    if total_weight == 0.0:
+        reduced_labels.append(labels_array[i,j,k])
+        reduced_weights.append(1.0)
+        return reduced_labels, reduced_weights
+    # normalize weights
+    for idx in range(len(reduced_weights)):
+        reduced_weights[idx] /= total_weight
+    return reduced_labels, reduced_weights
 
-    
-
-@njit(fastmath=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_edge_charges_volumes(
     reference_data,
     charge_data,
     edge_indices,
-    sorted_edge_indices,
-    labels,
+    labels_array,
     charges,
     volumes,
+    first_neighbor_transforms,
     neighbor_transforms,
+    first_neighbor_dists,
     neighbor_dists,
 ):
     nx, ny, nz = reference_data.shape
-    # create lists to store weights/lists of previous points
-    weight_lists = []
-    label_lists = []
+    # create an array to store labels and weight
+    label_array = np.full((len(edge_indices),len(first_neighbor_transforms)), -1, dtype=np.int64)
+    weight_array = np.full((len(edge_indices),len(first_neighbor_transforms)), 0.0, dtype=np.float64)
     # loop over edge indices
-    for idx in range(len(edge_indices)):
+    for idx in prange(len(edge_indices)):
         # get coordinates of grid point
         i, j, k = edge_indices[idx]
-        # create a list to store weights/labels in
-        current_labels, current_weights = get_possible_labels(
+        # get weights/labels
+        labels, weights = get_labels_and_weights(
             i,j,k,
-            nx,ny,nz,
-            labels,
-            neighbor_transforms
+            reference_data,
+            labels_array,
+            first_neighbor_transforms,
+            neighbor_transforms,
+            first_neighbor_dists,
+            neighbor_dists,
             )
-        # create a counter for the total weight to normalize
-        # with later
-        total_weight = 0.0
-        # get the value at this data point
-        value = reference_data[i, j, k]
-
-        # loop over neighbors and assign weight
-        for (si, sj, sk), dist in zip(neighbor_transforms, neighbor_dists):
-            # get upper and lower neighbors
-            ui, uj, uk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-            li, lj, lk = wrap_point(i - si, j - sj, k - sk, nx, ny, nz)
-            # get gradient to each neighbor
-            upper_value = reference_data[ui, uj, uk]
-            lower_value = reference_data[li, lj, lk]
-            upper_grad = (upper_value - value) / dist
-            lower_grad = (lower_value - value) / dist
-            # If both grads are lower than the current value, skip
-            if upper_grad <= 0.0 and lower_grad <= 0.0:
-                continue
-            # if one grad is lower, change its neighbor indices to match the
-            # other side. We want to assign the absolute value of its gradient
-            # to the opposite neighbor
-            if upper_grad <= 0.0:
-                ui = li
-                uj = lj
-                uk = lk
-            elif lower_grad <= 0.0:
-                li = ui
-                lj = uj
-                lk = uk
-            
-            for (ni,nj,nk), grad in zip(
-                    ((ui,uj,uk),(li,lj,lk)),
-                    (upper_grad,lower_grad)):
-                # get a pointer to check if this neighbor is also an edge
-                pointer = sorted_edge_indices[ni, nj, nk]
-                # check if this neighbor is split
-                if pointer != -1:
-                    # get the weights/labels for this neighbor
-                    neigh_weights = weight_lists[pointer]
-                    neigh_labels = label_lists[pointer]
-                    # we want to remove any labels that don't border our current
-                    # point.
-                    reduced_labels = []
-                    reduced_weights = []
-                    total_reduced_weight = 0.0
-                    for label, weight in zip(neigh_labels, neigh_weights):
-                        if label in current_labels:
-                            reduced_labels.append(label)
-                            reduced_weights.append(weight)
-                            total_reduced_weight += weight
-                    # Now add the weight to the appropriate label
-                    for label, weight in zip(reduced_labels, reduced_weights):
-                        for weight_idx, clabel in enumerate(current_labels):
-                            if label == clabel:
-                                added_weight = abs(grad * weight / total_reduced_weight)
-                                current_weights[weight_idx] += added_weight
-                                total_weight += added_weight
-                                break
-                else:
-                    # we just add the total grad to the appropriate label
-                    label = labels[ni,nj,nk]
-                    for idx, clabel in enumerate(current_labels):
-                        if label == clabel:
-                            current_weights[idx] += abs(grad)
-                            total_weight += abs(grad)
-
-        # get the charge at this point
+        # store weights/labels
+        for weight_idx in range(len(labels)):
+            label_array[idx, weight_idx] = labels[weight_idx]
+            weight_array[idx, weight_idx] = weights[weight_idx]
+    
+    # Now loop over the weights/charges for our edge indices and sum charge
+    for idx, (labels, weights) in enumerate(zip(label_array, weight_array)):
+        i, j, k = edge_indices[idx]
         charge = charge_data[i, j, k]
-        
-        # check for the case that there are no weights. This could happen
-        # at a local minimum
-        if total_weight == 0.0:
-            label = labels[i, j, k]
-            charges[label] += charge
-            volumes[label] += 1.0
-            weight_lists.append([1.0])
-            label_lists.append([label])
-            continue
-        
-        # normalize weights
-        for weight_idx in range(len(current_weights)):
-            current_weights[weight_idx] /= total_weight
-        
-        # assign charge and volume
-        for label, weight in zip(current_labels, current_weights):
-            # update charge and volume
+        for label, weight in zip(labels, weights):
+            # stop if we hit an empty label
+            if label == -1:
+                break
+            # otherwise add the charge/volume
             charges[label] += weight * charge
             volumes[label] += weight
-        weight_lists.append(current_weights)
-        label_lists.append(current_labels)
+
     return charges, volumes
+
+
+# sorted using gradients. Converges about as fast as weight method.
+# @njit(fastmath=True, cache=True)
+# def get_edge_charges_volumes(
+#     reference_data,
+#     charge_data,
+#     edge_indices,
+#     sorted_edge_indices,
+#     labels,
+#     charges,
+#     volumes,
+#     neighbor_transforms,
+#     neighbor_dists,
+# ):
+#     nx, ny, nz = reference_data.shape
+#     # create lists to store weights/lists of previous points
+#     weight_lists = []
+#     label_lists = []
+#     # loop over edge indices
+#     for idx in range(len(edge_indices)):
+#         # get coordinates of grid point
+#         i, j, k = edge_indices[idx]
+#         # create a list to store weights/labels in
+#         current_labels, current_weights = get_possible_labels(
+#             i,j,k,
+#             nx,ny,nz,
+#             labels,
+#             neighbor_transforms
+#             )
+#         # create a counter for the total weight to normalize
+#         # with later
+#         total_weight = 0.0
+#         # get the value at this data point
+#         value = reference_data[i, j, k]
+
+#         # loop over neighbors and assign weight
+#         for (si, sj, sk), dist in zip(neighbor_transforms, neighbor_dists):
+#             # get upper and lower neighbors
+#             ui, uj, uk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+#             li, lj, lk = wrap_point(i - si, j - sj, k - sk, nx, ny, nz)
+#             # get gradient to each neighbor
+#             upper_value = reference_data[ui, uj, uk]
+#             lower_value = reference_data[li, lj, lk]
+#             upper_grad = (upper_value - value) / dist
+#             lower_grad = (lower_value - value) / dist
+#             # If both grads are lower than the current value, skip
+#             if upper_grad <= 0.0 and lower_grad <= 0.0:
+#                 continue
+#             # if one grad is lower, change its neighbor indices to match the
+#             # other side. We want to assign the absolute value of its gradient
+#             # to the opposite neighbor
+#             if upper_grad <= 0.0:
+#                 ui = li
+#                 uj = lj
+#                 uk = lk
+#             elif lower_grad <= 0.0:
+#                 li = ui
+#                 lj = uj
+#                 lk = uk
+            
+#             for (ni,nj,nk), grad in zip(
+#                     ((ui,uj,uk),(li,lj,lk)),
+#                     (upper_grad,lower_grad)):
+#                 # get a pointer to check if this neighbor is also an edge
+#                 pointer = sorted_edge_indices[ni, nj, nk]
+#                 # check if this neighbor is split
+#                 if pointer != -1:
+#                     # get the weights/labels for this neighbor
+#                     neigh_weights = weight_lists[pointer]
+#                     neigh_labels = label_lists[pointer]
+#                     # we want to remove any labels that don't border our current
+#                     # point.
+#                     reduced_labels = []
+#                     reduced_weights = []
+#                     total_reduced_weight = 0.0
+#                     for label, weight in zip(neigh_labels, neigh_weights):
+#                         if label in current_labels:
+#                             reduced_labels.append(label)
+#                             reduced_weights.append(weight)
+#                             total_reduced_weight += weight
+#                     # Now add the weight to the appropriate label
+#                     for label, weight in zip(reduced_labels, reduced_weights):
+#                         for weight_idx, clabel in enumerate(current_labels):
+#                             if label == clabel:
+#                                 added_weight = abs(grad * weight / total_reduced_weight)
+#                                 current_weights[weight_idx] += added_weight
+#                                 total_weight += added_weight
+#                                 break
+#                 else:
+#                     # we just add the total grad to the appropriate label
+#                     label = labels[ni,nj,nk]
+#                     for idx, clabel in enumerate(current_labels):
+#                         if label == clabel:
+#                             current_weights[idx] += abs(grad)
+#                             total_weight += abs(grad)
+
+#         # get the charge at this point
+#         charge = charge_data[i, j, k]
+        
+#         # check for the case that there are no weights. This could happen
+#         # at a local minimum
+#         if total_weight == 0.0:
+#             label = labels[i, j, k]
+#             charges[label] += charge
+#             volumes[label] += 1.0
+#             weight_lists.append([1.0])
+#             label_lists.append([label])
+#             continue
+        
+#         # normalize weights
+#         for weight_idx in range(len(current_weights)):
+#             current_weights[weight_idx] /= total_weight
+        
+#         # assign charge and volume
+#         for label, weight in zip(current_labels, current_weights):
+#             # update charge and volume
+#             charges[label] += weight * charge
+#             volumes[label] += weight
+#         weight_lists.append(current_weights)
+#         label_lists.append(current_labels)
+#     return charges, volumes
 
 # ! Unsorted using gradients. Converges faster than neargrid-weight
 # @njit(fastmath=True, cache=True)

@@ -140,25 +140,59 @@ class TestMethod(MethodBase):
         # neighbor_weights = facet_areas / neighbor_dists
         # # get edge indices, values, and sort
         edge_indices = np.argwhere(edge_mask)
-        sorted_edge_indices = np.full(grid.shape, -1, dtype=np.int64)
-        # sort data from high to low
-        sorted_data_indices = np.flip(np.argsort(grid.total[edge_mask], kind="stable"))
-        edge_indices = edge_indices[sorted_data_indices]
-        sorted_edge_indices[edge_indices[:,0], edge_indices[:,1], edge_indices[:,2]] = np.arange(len(sorted_data_indices))
+        # sorted_edge_indices = np.full(grid.shape, -1, dtype=np.int64)
+        # # sort data from high to low
+        # sorted_data_indices = np.flip(np.argsort(grid.total[edge_mask], kind="stable"))
+        # edge_indices = edge_indices[sorted_data_indices]
+        # sorted_edge_indices[edge_indices[:,0], edge_indices[:,1], edge_indices[:,2]] = np.arange(len(sorted_data_indices))
+        # get neighbors in sphere
+        radius = grid.max_point_dist
+        # get first neighs
+        # TODO: make this faster
+        first_neighbor_transforms = grid.get_transformation_in_radius(radius)
+        first_neighbor_dists = np.linalg.norm(grid.grid_to_cart(first_neighbor_transforms), axis=1)
+        # get second neighs
+        neighbor_transforms = grid.get_transformation_in_radius(2*radius)
+        # breakpoint()
+        # remove any that are present in the first neighbors
+        # View each row as a single element in a structured dtype
+        dtype = np.dtype((np.void, 
+            neighbor_transforms.dtype.itemsize * neighbor_transforms.shape[1]))
+        
+        A_view = first_neighbor_transforms.view(dtype).ravel()
+        B_view = neighbor_transforms.view(dtype).ravel()
+        
+        # Get mask of rows in B not present in A
+        mask = ~np.isin(B_view, A_view)
+        
+        # Filter B
+        neighbor_transforms = neighbor_transforms[mask]
+        neighbor_dists = np.linalg.norm(grid.grid_to_cart(neighbor_transforms), axis=1)
         # breakpoint()
         # get edge charge/volume
         charges, volumes = get_edge_charges_volumes(
             reference_data=grid.total,
             charge_data=self.charge_grid.total,
             edge_indices=edge_indices,
-            sorted_edge_indices=sorted_edge_indices,
-            labels=labels,
+            labels_array=labels,
             charges=charges,
             volumes=volumes,
-            neighbor_transforms=neighbor_transforms[int(len(neighbor_transforms)/2):],
-            # neighbor_weights=neighbor_weights,  # use voronoi instead?
-            neighbor_dists=neighbor_dists[int(len(neighbor_transforms)/2):],
+            first_neighbor_transforms=first_neighbor_transforms,
+            first_neighbor_dists=first_neighbor_dists,
+            neighbor_transforms=neighbor_transforms,
+            neighbor_dists=neighbor_dists,
         )
+        # charges, volumes = get_edge_charges_volumes(
+        #     reference_data=grid.total,
+        #     charge_data=self.charge_grid.total,
+        #     edge_indices=edge_indices,
+        #     sorted_edge_indices=sorted_edge_indices,
+        #     labels=labels,
+        #     charges=charges,
+        #     volumes=volumes,
+        #     neighbor_transforms=neighbor_transforms[int(len(neighbor_transforms)/2):],
+        #     neighbor_dists=neighbor_dists[int(len(neighbor_transforms)/2):],
+        # )
 
         volumes = volumes * grid.structure.volume / grid.ngridpts
         charges = charges / grid.ngridpts
