@@ -149,10 +149,10 @@ class TestMethod(MethodBase):
         radius = grid.max_point_dist
         # get first neighs
         # TODO: make this faster
-        first_neighbor_transforms = grid.get_transformation_in_radius(radius)
+        first_neighbor_transforms = grid.get_transformation_in_radius(2*radius)
         first_neighbor_dists = np.linalg.norm(grid.grid_to_cart(first_neighbor_transforms), axis=1)
         # get second neighs
-        neighbor_transforms = grid.get_transformation_in_radius(2*radius)
+        neighbor_transforms = grid.get_transformation_in_radius(4*radius)
         # breakpoint()
         # remove any that are present in the first neighbors
         # View each row as a single element in a structured dtype
