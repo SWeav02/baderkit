@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import time
 
 import numpy as np
 
 from baderkit.core.methods.base import MethodBase
 
-from .weight_numba import (  # reduce_weight_maxima,
-    get_multi_weight_voxels,
+from .weight_numba import (
     get_neighbor_flux,
-    get_single_weight_voxels,
     get_weight_assignments,
     reduce_charge_volume,
+    # remove_edge_labels,
+    relabel_edges,
 )
 
 # TODO: Use list of list storage for initial flux calcs. For points that would
@@ -20,6 +21,7 @@ from .weight_numba import (  # reduce_weight_maxima,
 
 
 class WeightMethod(MethodBase):
+    _refine_edges = False
 
     def run(self):
         """
@@ -55,7 +57,6 @@ class WeightMethod(MethodBase):
         sorted_data = sorted_data[sorted_indices]
         sorted_charge = sorted_charge[sorted_indices]
         sorted_coords = sorted_coords[sorted_indices]
-        # breakpoint()
         # remove vaccum coords
         sorted_data = sorted_data[self.num_vacuum:]
         sorted_charge = sorted_charge[self.num_vacuum:]
@@ -80,7 +81,7 @@ class WeightMethod(MethodBase):
         )
         logging.info("Calculating weights, charges, and volumes")
         
-        labels, charges, volumes = get_weight_assignments(
+        labels, to_refine, charges, volumes = get_weight_assignments(
             data,
             sorted_coords,
             sorted_charge,
@@ -89,7 +90,6 @@ class WeightMethod(MethodBase):
             neigh_pointers,
             weight_maxima_mask,
             )
-        
         # NOTE: The maxima found through this method are now the same as those
         # in other methods, without the need to reduce them in an additional step
         # get the voxel coords of the maxima found throught the weight method
@@ -127,6 +127,24 @@ class WeightMethod(MethodBase):
         
         # reduce charges/volumes
         charges, volumes = reduce_charge_volume(label_map, charges, volumes, len(self._maxima_frac))
+        
+        # TODO: Make label edge refinement optional for workflows that don't need
+        # it.
+        # Labels that are exactly split to multiple basins may not be reasonable.
+        # we reassign them here
+        if self._refine_edges:
+            # first, sort from highest to lowest values
+            to_refine = np.flip(to_refine)
+            # now relabel the edges
+            labels = relabel_edges(
+                to_refine,
+                sorted_coords,
+                sorted_charge,
+                labels,
+                fluxes,
+                neigh_pointers,
+                len(self._maxima_frac),
+                    )
         
         # adjust charges from vasp convention
         charges /= shape.prod()
