@@ -277,6 +277,7 @@ class MethodBase:
     def reduce_label_maxima(
         self,
         labels: NDArray[int],
+        return_map: bool = False,
     ) -> (NDArray[int], NDArray[float]):
         """
         Combines maxima/basins that are adjacent to one another.
@@ -323,15 +324,9 @@ class MethodBase:
             # add -1 to the start of our new labels to reassign back to -1
             new_labels = np.insert(new_labels, 0, -1)
         # update_labels
-        # Create a mapping from old to new labels. The initial labels should be
-        # 0 and up
-        # mapping = np.arange(max_label + 1)
-        # mapping[mapping] = new_labels
-        # mapping = new_labels.copy()
-
-        # Apply mapping
-        # labels = mapping[labels]
         labels = new_labels[labels]
+        if return_map:
+            return labels, frac_coords, new_labels
         return labels, frac_coords
 
     def copy(self) -> Self:

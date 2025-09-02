@@ -10,6 +10,8 @@ from .weight_numba import (  # reduce_weight_maxima,
     get_multi_weight_voxels,
     get_neighbor_flux,
     get_single_weight_voxels,
+    get_weight_assignments,
+    reduce_charge_volume,
 )
 
 # TODO: Use list of list storage for initial flux calcs. For points that would
@@ -38,101 +40,94 @@ class WeightMethod(MethodBase):
         neighbor_transforms, neighbor_dists, facet_areas, _ = (
             reference_grid.point_neighbor_voronoi_transforms
         )
+        # get a single alpha corresponding to the area/dist
+        neighbor_alpha = facet_areas / neighbor_dists
         logging.info("Sorting reference data")
         data = reference_grid.total
         shape = reference_grid.shape
-        # flatten data and get initial 1D and 3D voxel indices
-        flat_data = data.ravel()
-        flat_voxel_indices = np.arange(np.prod(shape))
-        flat_voxel_coords = np.indices(shape, dtype=np.int64).reshape(3, -1).T
-        # sort data from high to low
-        sorted_data_indices = np.flip(np.argsort(flat_data, kind="stable"))
-        # create an array that maps original voxel indices to their range in terms
-        # of data
-        flat_sorted_voxel_indices = np.empty_like(flat_voxel_indices)
-        flat_sorted_voxel_indices[sorted_data_indices] = flat_voxel_indices
-        # Get a 3D grid representing this data and the corresponding 3D indices
-        sorted_voxel_indices = flat_sorted_voxel_indices.reshape(shape)
-        sorted_voxel_coords = flat_voxel_coords[sorted_data_indices]
-        # remove vacuum points from our list of voxel indices
-        sorted_voxel_coords = sorted_voxel_coords[
-            : len(sorted_voxel_coords) - self.num_vacuum
-        ]
+        # flatten data and get array of coordinates
+        sorted_data = data.ravel()
+        sorted_charge = self.charge_grid.total.ravel()
+        sorted_coords = np.indices(shape, dtype=np.int64).reshape(3, -1).T
+        # get sorted indices from lowest to highest
+        sorted_indices = np.argsort(sorted_data, kind="stable")
+        # sort data and coords
+        sorted_data = sorted_data[sorted_indices]
+        sorted_charge = sorted_charge[sorted_indices]
+        sorted_coords = sorted_coords[sorted_indices]
+        # breakpoint()
+        # remove vaccum coords
+        sorted_data = sorted_data[self.num_vacuum:]
+        sorted_charge = sorted_charge[self.num_vacuum:]
+        sorted_coords = sorted_coords[self.num_vacuum:]
+        # get pointers from 3D indices to sorted 1D
+        sorted_pointers = np.empty(shape, dtype=np.int64)
+        sorted_pointers[sorted_coords[:,0],sorted_coords[:,1],sorted_coords[:,2]] = np.arange(len(sorted_coords), dtype=np.int64)
+        
         # Get the flux of volume from each voxel to its neighbor.
         logging.info("Calculating voxel flux contributions")
         all_neighbor_transforms, all_neighbor_dists = (
             reference_grid.point_neighbor_transforms
         )
-        flux_array, neigh_indices_array, weight_maxima_mask = get_neighbor_flux(
+        fluxes, neigh_pointers, weight_maxima_mask = get_neighbor_flux(
             data=data,
-            sorted_voxel_coords=sorted_voxel_coords.copy(),
-            voxel_indices=sorted_voxel_indices,
+            sorted_coords=sorted_coords.copy(),
+            sorted_pointers=sorted_pointers,
             neighbor_transforms=neighbor_transforms,
-            neighbor_dists=neighbor_dists,
-            facet_areas=facet_areas,
+            neighbor_alpha=neighbor_alpha,
             all_neighbor_transforms=all_neighbor_transforms,
             all_neighbor_dists=all_neighbor_dists,
         )
+        logging.info("Calculating weights, charges, and volumes")
+        
+        labels, charges, volumes = get_weight_assignments(
+            data,
+            sorted_coords,
+            sorted_charge,
+            reference_grid.flat_grid_indices,
+            fluxes,
+            neigh_pointers,
+            weight_maxima_mask,
+            )
+        
         # NOTE: The maxima found through this method are now the same as those
         # in other methods, without the need to reduce them in an additional step
         # get the voxel coords of the maxima found throught the weight method
-        weight_maxima_vox = sorted_voxel_coords[weight_maxima_mask]
+        maxima_vox = sorted_coords[weight_maxima_mask]
+        maxima_labels = reference_grid.flat_grid_indices[maxima_vox[:,0],maxima_vox[:,1],maxima_vox[:,2]]
+        # reorganize charges/volumes to match properly ordered maxima labels
+        sorted_maxima = np.argsort(maxima_labels, kind="stable")
+        charges = charges[sorted_maxima]
+        volumes = volumes[sorted_maxima]
+        # our current labels are pointers like the ongrid/neargrid methods. We
+        # need to get the roots
+        labels = labels.ravel()
+        logging.info("Finding roots")
+        labels = self.get_roots(labels)
+        # We now have our roots. Relabel so that they go from 0 to the length of our
+        # roots
+        unique_roots, labels = np.unique(labels, return_inverse=True)
+        # If we had at least one vacuum point, we need to subtract our labels by
+        # 1 to recover the vacuum label.
+        if -1 in unique_roots:
+            labels -= 1
+        # reconstruct a 3D array with our labels
+        labels = labels.reshape(shape)
+        
         # create the maxima mask
         self._maxima_mask = np.zeros(data.shape, dtype=np.bool_)
         self._maxima_mask[
-            weight_maxima_vox[:, 0],
-            weight_maxima_vox[:, 1],
-            weight_maxima_vox[:, 2],
+            maxima_vox[:, 0],
+            maxima_vox[:, 1],
+            maxima_vox[:, 2],
         ] = True
-
-        # get charge and volume info
-        charge_data = self.charge_grid.total
-        flat_charge_data = charge_data.ravel()
-        sorted_flat_charge_data = flat_charge_data[sorted_data_indices]
-        # remove vacuum from charge data
-        sorted_flat_charge_data = sorted_flat_charge_data[: len(sorted_voxel_coords)]
-        # create a labels array and label maxima
-        labels = np.full(data.shape, -1, dtype=np.int64)
-        labels[self._maxima_mask] = np.arange(len(weight_maxima_vox))
-        # reduce maxima/labels and save frac coords.
-        # NOTE: reduction algorithm returns with unlabeled values as -1
-        labels, self._maxima_frac = self.reduce_label_maxima(labels)
-        maxima_num = len(self.maxima_frac)
-
-        # Calculate the weights for each voxel to each basin
-        logging.info("Calculating weights, charges, and volumes")
-        # first get labels for voxels with one weight
-        labels, unassigned_mask, charges, volumes = get_single_weight_voxels(
-            neigh_indices_array=neigh_indices_array,
-            sorted_voxel_coords=sorted_voxel_coords,
-            data=data,
-            maxima_num=maxima_num,
-            sorted_flat_charge_data=sorted_flat_charge_data,
-            labels=labels,
-        )
-        # Now we have the labels for the voxels that have exactly one weight.
-        # We want to get the weights for those that are split. To do this, we
-        # need an array with a (N, maxima_num) shape, where N is the number of
-        # unassigned voxels. Then we also need an array pointing each unassigned
-        # voxel to its point in this array
-        unass_to_vox_pointer = np.where(unassigned_mask)[0]
-        unassigned_num = len(unass_to_vox_pointer)
-
-        vox_to_unass_pointer = np.full(len(neigh_indices_array), -1, dtype=np.int64)
-        vox_to_unass_pointer[unassigned_mask] = np.arange(unassigned_num)
-        # get labels, charges, and volumes
-        labels, charges, volumes = get_multi_weight_voxels(
-            flux_array=flux_array,
-            neigh_indices_array=neigh_indices_array,
-            labels=labels,
-            unass_to_vox_pointer=unass_to_vox_pointer,
-            vox_to_unass_pointer=vox_to_unass_pointer,
-            sorted_voxel_coords=sorted_voxel_coords,
-            charge_array=charges,
-            volume_array=volumes,
-            sorted_flat_charge_data=sorted_flat_charge_data,
-            maxima_num=maxima_num,
-        )
+        
+        # reduce maxima/basins
+        labels, self._maxima_frac, label_map = self.reduce_label_maxima(labels, True)
+        
+        # reduce charges/volumes
+        charges, volumes = reduce_charge_volume(label_map, charges, volumes, len(self._maxima_frac))
+        
         # adjust charges from vasp convention
         charges /= shape.prod()
         # adjust volumes from voxel count
@@ -142,7 +137,7 @@ class WeightMethod(MethodBase):
             "basin_labels": labels,
             "basin_charges": charges,
             "basin_volumes": volumes,
-            "vacuum_charge": charge_data[self.vacuum_mask].sum() / shape.prod(),
+            "vacuum_charge": self.charge_grid.total[self.vacuum_mask].sum() / shape.prod(),
             "vacuum_volume": (self.num_vacuum / reference_grid.ngridpts)
             * reference_grid.structure.volume,
         }

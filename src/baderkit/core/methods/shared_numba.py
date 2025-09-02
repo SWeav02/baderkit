@@ -328,7 +328,7 @@ def combine_neigh_maxima(
     nx, ny, nz = labels.shape
     initial_labels = np.arange(len(maxima_vox), dtype=np.int64)
     new_labels = np.zeros(len(maxima_vox), dtype=np.int64)
-    # check each neighbor and it its a max with a lower index, update the index
+    # check each neighbor and if its a max with a lower index, update the index
     for max_idx in prange(len(maxima_vox)):
         i, j, k = maxima_vox[max_idx]
         best_label = initial_labels[max_idx]
