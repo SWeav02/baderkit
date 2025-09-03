@@ -75,9 +75,8 @@ def get_neighbor_flux(
         # create a counter for the total flux
         total_flux = 0.0
         # iterate over each neighbor sharing a voronoi facet
-        for shift_index, ((si, sj, sk), alpha) in enumerate(
-            zip(neighbor_transforms, neighbor_alpha)
-        ):
+        neigh_n = 0
+        for (si, sj, sk), alpha in zip(neighbor_transforms, neighbor_alpha):
             # get neighbor and wrap around periodic boundary
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             # get the neighbors value
@@ -88,10 +87,12 @@ def get_neighbor_flux(
             # calculate the flux flowing to this voxel
             flux = (neigh_value - base_value) * alpha
             # assign flux
-            flux_array[coord_index, shift_index] = flux
+            flux_array[coord_index, neigh_n] = flux
             total_flux += flux
             # add the pointer to this neighbor
-            neigh_array[coord_index, shift_index] = sorted_pointers[ii, jj, kk]
+            neigh_array[coord_index, neigh_n] = sorted_pointers[ii, jj, kk]
+            # add to our neighbor count
+            neigh_n += 1
 
         # Check that we had at least one assignment. If not, this might be a
         # local maximum
@@ -127,15 +128,14 @@ def get_weight_assignments(
     sorted_coords,
     sorted_charge,
     original_indices,
-    fluxes,
+    neigh_fluxes,
     neigh_pointers,
     weight_maxima_mask,
         ):
-    # create arrays to store charges, volumes, and labels
+    # create arrays to store charges, volumes, and pointers
     charges = []
     volumes = []
-    multi_assignments = []
-    labels = np.full(data.shape, -1, dtype=np.int64)
+    basin_pointers = np.full(data.shape, -1, dtype=np.int64)
     # create array to store volume
     sorted_volume = np.full(len(sorted_charge),1.0, dtype=np.float64)
     # now iterate over coords from lowest to highest
@@ -149,46 +149,51 @@ def get_weight_assignments(
         if is_max:
             charges.append(charge)
             volumes.append(volume)
-            labels[i,j,k] = original_indices[i,j,k]
+            basin_pointers[i,j,k] = original_indices[i,j,k]
             continue
         
         # get neighbor/flux info
         pointers = neigh_pointers[idx]
-        neigh_fluxes = fluxes[idx]
+        fluxes = neigh_fluxes[idx]
         # otherwise, add charge and volume to neighbors, and get best neighbor
         highest_flux = 0.0
-        tol = 1e-12
         best_neighbor = -1
-        multiple_neighs = False
-        for pointer, flux in zip(pointers, neigh_fluxes):
+        for pointer, flux in zip(pointers, fluxes):
             if pointer == -1:
-                continue
+                # We have reached the last neighbor and break
+                break
             sorted_charge[pointer] += charge * flux
             sorted_volume[pointer] += volume * flux
             # check if flux is greater than or equal than the current max flux
             # within a tolerance
-            flux_diff = flux - highest_flux
-            if flux_diff < -tol:
-                continue
-            elif flux_diff > tol:
+            if flux > highest_flux:
                 highest_flux = flux
-                tol = flux * 0.01
                 best_neighbor = pointer
-                multiple_neighs = False
-            else:
-                multiple_neighs = True
-        # assign this points neighbor
+
+        # assign this point to the best neighbor
         ni,nj,nk = sorted_coords[best_neighbor]
-        labels[i,j,k] = original_indices[ni,nj,nk]
-        if multiple_neighs:
-            multi_assignments.append(idx)
+        basin_pointers[i,j,k] = original_indices[ni,nj,nk]
         
     return (
-        labels, 
-        np.array(multi_assignments, dtype=np.int64),
+        basin_pointers, 
         np.array(charges, dtype=np.float64), 
         np.array(volumes, dtype=np.float64),
         )
+
+@njit(fastmath=True)
+def get_labels(
+    pointers,
+    sorted_indices,
+        ):
+    # Assuming sorted_pointers is from high to low, we only need to loop over
+    # the values once to assign all of them.
+    for idx in sorted_indices:
+        # skip vacuum assignments
+        if pointers[idx] == -1:
+            continue
+        # assign to parent
+        pointers[idx] = pointers[pointers[idx]]
+    return pointers
 
 @njit(fastmath=True, cache=True)
 def reduce_charge_volume(
@@ -205,66 +210,167 @@ def reduce_charge_volume(
         new_charges[basin] += charges[i]
         new_volumes[basin] += volumes[i]            
     return new_charges, new_volumes
-       
 
-@njit(fastmath=True, cache=True)
-def relabel_edges(
-    to_refine,
-    sorted_coords,
-    sorted_charge,
-    labels,
-    fluxes,
+###############################################################################
+# For better labeling
+###############################################################################
+
+@njit(fastmath=True)
+def get_labels_fine(
+    label_array,
+    maxima_labels,
+    flat_grid_indices,
+    sorted_indices,
     neigh_pointers,
-    basin_num,
-    use_charge = False,
+    # neigh_fluxes,
+    true_volumes,
+    sorted_coords,
         ):
-    # create tracker for volumes
-    volumes = np.zeros(basin_num, dtype=np.float64)
-    approx_volumes = np.zeros(basin_num, dtype=np.int64)
-    for idx in to_refine:
-        # get fluxes/pointers and charge for this point
-        neigh_fluxes = fluxes[idx]
-        pointers = neigh_pointers[idx]        
-
-        # Now we loop over the labels to determine the one that would improve
-        # the approximate volume the best. 
-        # create tracker for label that gets the best ratio
-        best_label = -1
-        best_improvement = -1.0
-        charge = sorted_charge[idx]
-        # for flux, label in zip(reduced_fluxes, reduced_labels):
-        for pointer, flux in zip(pointers, neigh_fluxes):
-            if pointer == -1:
-                continue
-            # get this neighbors label
-            ni,nj,nk = sorted_coords[pointer]
-            label = labels[ni,nj,nk]
-            # assign volume
-            if use_charge:
-                volumes[label] += flux * charge
-            else:
-                volumes[label] += flux
-            # calculate how much the approximate volume would improve if we add
-            # the full voxel to the volume. Added volume is always 1
-            diff = volumes[label] - approx_volumes[label]
-            if use_charge:
-                improvement = (abs(diff) - abs(diff - charge)) / abs(volumes[label])
-            else:
-                improvement = (abs(diff) - abs(diff - 1)) / abs(volumes[label])
-
-            # if adding this volume would improve the approximate charge more
-            # than the other labels checked so far, update to use this label
-            if improvement > best_improvement:
-                best_label = label
-                best_improvement = improvement
-        # update label for this point
+    # create an array to store approximate volumes
+    # approx_volumes = np.zeros(len(volumes), dtype=np.int64)
+    # Create an array to store the reorganized volumes (likely to be different)
+    volumes = np.empty(len(true_volumes), dtype=np.float64)
+    # Create an array to store the difference from the ideal volume
+    volume_diff = np.ones(len(true_volumes), dtype=np.float64)
+    # Create an array to store the ratio by which the volume_diff changes when
+    # a new voxe is added to the corresponding basin
+    volume_ratios = np.empty(len(true_volumes), dtype=np.float64)
+    # create an array to note if a voxel is split
+    # split_voxels = np.zeros(len(pointers), dtype=np.bool_)
+    # loop over points from high to low
+    maxima_num = 0
+    for idx in np.arange(len(sorted_coords)-1, -1, -1):
+        # get the pointers/flux
+        pointers = neigh_pointers[idx]
+        # fluxes = neigh_fluxes[idx]
         i,j,k = sorted_coords[idx]
-        labels[i,j,k] = best_label
-        # update approximate volume
-        if use_charge:
-            approx_volumes[best_label] += charge
+        # reduce to labels/weights
+        labels = []
+        # weights = []
+        # for pointer, flux in zip(pointers, fluxes):
+        for pointer in pointers:
+            # if the pointer is -1 we've reached the end of our list
+            if pointer == -1:
+                break
+            # otherwise, get the label at this point
+            ni, nj, nk = sorted_coords[pointer]
+            label = label_array[ni,nj,nk]
+            # check if the label exists. If not, add it
+            found = False
+            for lidx, rlabel in enumerate(labels):
+                if label == rlabel:
+                    found = True
+                    # weights[lidx] += flux
+            if not found:
+                # add the new label/weight
+                labels.append(label)
+                # weights.append(flux)
+        
+        # If there are 0 labels, this is a maximum. We assign a new basin
+        if len(labels) == 0:
+            # label the voxel
+            label_array[i,j,k] = maxima_num
+            # get the true volume for this voxel
+            voxel_index = flat_grid_indices[i,j,k]
+            for maxima_label, true_volume in zip(maxima_labels, true_volumes):
+                if maxima_label == voxel_index:
+                    volumes[maxima_num] = true_volume
+                    volume_ratios[maxima_num] = 1.0 / true_volume
+                    break
+            # approx_volumes[maxima_num] += 1
+            volume_diff[maxima_num] -= volume_ratios[maxima_num]
+            maxima_num += 1
+        # If there is 1 label, assign this label
+        elif len(labels) == 1:
+            label_array[i,j,k] = labels[0]
+            # approx_volumes[labels[0]] += 1
+            volume_diff[labels[0]] -= volume_ratios[labels[0]]
+        # if there is more than 1 label, we have a split voxel. As an approximation,
+        # we check how far from the true volume each possible basin is and add
+        # the voxel to the farthest one.
         else:
-            approx_volumes[best_label] += 1
-    return labels
+            best_label = -1
+            best_diff = -1.0
+            for label in labels:
+                if volume_diff[label] > best_diff:
+                    best_label = label
+                    best_diff = volume_diff[label]
+            # update label
+            label_array[i,j,k] = best_label
+            # update diff
+            volume_diff[best_label] -= volume_ratios[best_label]
+            
+            # best_label = -1
+            # best_improvement = -1.0
+            # for label, weight in zip(labels, weights):
+            #     diff = volumes[label] - approx_volumes[label]
+            #     improvement = (abs(diff) - abs(diff - 1)) / abs(volumes[label])
+            #     if improvement > best_improvement:
+            #         best_label = label
+            #         best_improvement = improvement       
+            # # update label
+            # label_array[i,j,k] = best_label
+            # approx_volumes[best_label] += 1
+    return label_array
+
+# @njit(fastmath=True, cache=True)
+# def relabel_edges(
+#     to_refine,
+#     sorted_coords,
+#     sorted_charge,
+#     labels,
+#     fluxes,
+#     neigh_pointers,
+#     basin_num,
+#     use_charge = False,
+#         ):
+#     # create tracker for volumes
+#     volumes = np.zeros(basin_num, dtype=np.float64)
+#     approx_volumes = np.zeros(basin_num, dtype=np.int64)
+#     for idx in to_refine:
+#         # get fluxes/pointers and charge for this point
+#         neigh_fluxes = fluxes[idx]
+#         pointers = neigh_pointers[idx]        
+
+#         # Now we loop over the labels to determine the one that would improve
+#         # the approximate volume the best. 
+#         # create tracker for label that gets the best ratio
+#         best_label = -1
+#         best_improvement = -1.0
+#         charge = sorted_charge[idx]
+#         # for flux, label in zip(reduced_fluxes, reduced_labels):
+#         for pointer, flux in zip(pointers, neigh_fluxes):
+#             if pointer == -1:
+#                 continue
+#             # get this neighbors label
+#             ni,nj,nk = sorted_coords[pointer]
+#             label = labels[ni,nj,nk]
+#             # assign volume
+#             if use_charge:
+#                 volumes[label] += flux * charge
+#             else:
+#                 volumes[label] += flux
+#             # calculate how much the approximate volume would improve if we add
+#             # the full voxel to the volume. Added volume is always 1
+#             diff = volumes[label] - approx_volumes[label]
+#             if use_charge:
+#                 improvement = (abs(diff) - abs(diff - charge)) / abs(volumes[label])
+#             else:
+#                 improvement = (abs(diff) - abs(diff - 1)) / abs(volumes[label])
+
+#             # if adding this volume would improve the approximate charge more
+#             # than the other labels checked so far, update to use this label
+#             if improvement > best_improvement:
+#                 best_label = label
+#                 best_improvement = improvement
+#         # update label for this point
+#         i,j,k = sorted_coords[idx]
+#         labels[i,j,k] = best_label
+#         # update approximate volume
+#         if use_charge:
+#             approx_volumes[best_label] += charge
+#         else:
+#             approx_volumes[best_label] += 1
+#     return labels
             
         
