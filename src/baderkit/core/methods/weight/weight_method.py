@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import logging
-import time
 
 import numpy as np
 
@@ -12,9 +11,6 @@ from .weight_numba import (
     get_weight_assignments,
     reduce_charge_volume,
     get_labels,
-    get_labels_fine,
-    # remove_edge_labels,
-    # relabel_edges,
 )
 
 # TODO: Use list of list storage for initial flux calcs. For points that would
@@ -23,7 +19,6 @@ from .weight_numba import (
 
 
 class WeightMethod(MethodBase):
-    _refine_edges = True
 
     def run(self):
         """
@@ -81,8 +76,8 @@ class WeightMethod(MethodBase):
             all_neighbor_transforms=all_neighbor_transforms,
             all_neighbor_dists=all_neighbor_dists,
         )
-        logging.info("Calculating weights, charges, and volumes")
         
+        logging.info("Assigning charges and volumes")
         labels, charges, volumes = get_weight_assignments(
             data,
             sorted_coords,
@@ -94,42 +89,28 @@ class WeightMethod(MethodBase):
             )
         # NOTE: The maxima found through this method are now the same as those
         # in other methods, without the need to reduce them in an additional step
+        
+        logging.info("Finding labels")
+        # our current labels are pointers like the ongrid/neargrid methods. We
+        # need to get the roots
+        labels = labels.ravel()
+        # get roots
+        labels = get_labels(
+            labels,
+            np.flip(sorted_indices),
+            )
+        # We now have our roots. Relabel so that they go from 0 to the length of our
+        # roots
+        unique_roots, labels = np.unique(labels, return_inverse=True)
+        # If we had at least one vacuum point, we need to subtract our labels by
+        # 1 to recover the vacuum label.
+        if -1 in unique_roots:
+            labels -= 1
+        # reconstruct a 3D array with our labels
+        labels = labels.reshape(shape)
+        # rearrange the charges/volumes to match the labels
         # get the voxel coords of the maxima found throught the weight method
         maxima_vox = sorted_coords[weight_maxima_mask]
-        
-        logging.info("Finding roots")
-        if self._refine_edges:
-            maxima_labels = reference_grid.flat_grid_indices[maxima_vox[:,0], maxima_vox[:,1], maxima_vox[:,2]]
-            labels = get_labels_fine(
-                labels,
-                maxima_labels,
-                reference_grid.flat_grid_indices,
-                sorted_indices,
-                neigh_pointers,
-                # neigh_fluxes,
-                volumes,
-                sorted_coords,
-                    )
-        else:
-            # our current labels are pointers like the ongrid/neargrid methods. We
-            # need to get the roots
-            labels = labels.ravel()
-            # get roots
-            labels = get_labels(
-                labels,
-                np.flip(sorted_indices),
-                )
-            # We now have our roots. Relabel so that they go from 0 to the length of our
-            # roots
-            unique_roots, labels = np.unique(labels, return_inverse=True)
-            # If we had at least one vacuum point, we need to subtract our labels by
-            # 1 to recover the vacuum label.
-            if -1 in unique_roots:
-                labels -= 1
-            # reconstruct a 3D array with our labels
-            labels = labels.reshape(shape)
-        
-        # rearrange the charges/volumes to match the labels
         maxima_labels = labels[maxima_vox[:,0],maxima_vox[:,1],maxima_vox[:,2]]
         # reorganize charges/volumes to match properly ordered maxima labels
         sorted_maxima = np.argsort(maxima_labels, kind="stable")
@@ -149,24 +130,6 @@ class WeightMethod(MethodBase):
         
         # reduce charges/volumes
         charges, volumes = reduce_charge_volume(label_map, charges, volumes, len(self._maxima_frac))
-        
-        # TODO: Make label edge refinement optional for workflows that don't need
-        # it.
-        # Labels that are exactly split to multiple basins may not be reasonable.
-        # we reassign them here
-        # if self._refine_edges:
-        #     # first, sort from highest to lowest values
-        #     to_refine = np.flip(to_refine)
-        #     # now relabel the edges
-        #     labels = relabel_edges(
-        #         to_refine,
-        #         sorted_coords,
-        #         sorted_charge,
-        #         labels,
-        #         fluxes,
-        #         neigh_pointers,
-        #         len(self._maxima_frac),
-        #             )
         
         # adjust charges from vasp convention
         charges /= shape.prod()
