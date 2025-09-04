@@ -233,7 +233,7 @@ class Grid(VolumetricData):
                 np.prod(self.shape), dtype=np.int64
             ).reshape(self.shape)
         return self._flat_grid_indices
-    
+
     # TODO: Do this with numba to reduce memory and probably increase speed
     @property
     def point_dists(self) -> NDArray[float]:

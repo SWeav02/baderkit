@@ -149,22 +149,25 @@ class TestMethod(MethodBase):
         radius = grid.max_point_dist
         # get first neighs
         # TODO: make this faster
-        first_neighbor_transforms = grid.get_transformation_in_radius(2*radius)
-        first_neighbor_dists = np.linalg.norm(grid.grid_to_cart(first_neighbor_transforms), axis=1)
+        first_neighbor_transforms = grid.get_transformation_in_radius(2 * radius)
+        first_neighbor_dists = np.linalg.norm(
+            grid.grid_to_cart(first_neighbor_transforms), axis=1
+        )
         # get second neighs
-        neighbor_transforms = grid.get_transformation_in_radius(6*radius)
+        neighbor_transforms = grid.get_transformation_in_radius(6 * radius)
         # breakpoint()
         # remove any that are present in the first neighbors
         # View each row as a single element in a structured dtype
-        dtype = np.dtype((np.void, 
-            neighbor_transforms.dtype.itemsize * neighbor_transforms.shape[1]))
-        
+        dtype = np.dtype(
+            (np.void, neighbor_transforms.dtype.itemsize * neighbor_transforms.shape[1])
+        )
+
         A_view = first_neighbor_transforms.view(dtype).ravel()
         B_view = neighbor_transforms.view(dtype).ravel()
-        
+
         # Get mask of rows in B not present in A
         mask = ~np.isin(B_view, A_view)
-        
+
         # Filter B
         neighbor_transforms = neighbor_transforms[mask]
         neighbor_dists = np.linalg.norm(grid.grid_to_cart(neighbor_transforms), axis=1)

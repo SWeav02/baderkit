@@ -313,6 +313,10 @@ class MethodBase:
             maxima_vox / self.reference_grid.shape,
             self.maxima_mask,
         )
+        # TODO: The fractional coordinates can still be off. It would be nice to
+        # interpolate the actual maximum in the grid. Ideally I would do this
+        # by optimizing them all at once because the RegularGridInterpolater is
+        # much faster when you provide it multiple points rather than just one.
         # get the highest label
         max_label = maxima_labels.max()
         # if there are any unlabeled points in our label array, they will be

@@ -8,6 +8,16 @@ from numpy.typing import NDArray
 # General methods
 ###############################################################################
 
+@njit(fastmath=True, cache=True, inline='always')
+def flat_to_coords(idx, nx, ny, nz):
+    i = idx // (ny * nz)
+    j = (idx % (ny * nz)) // nz
+    k = idx % nz
+    return i, j, k
+
+@njit(fastmath=True, cache=True, inline='always')
+def coords_to_flat(i, j, k, nx, ny, nz):
+    return i * (ny * nz) + j * nz + k
 
 @njit(parallel=True, cache=True)
 def get_edges(
@@ -155,7 +165,7 @@ def get_basin_charges_and_volumes(
     return charges, volumes, vacuum_charge, vacuum_volume
 
 
-@njit(cache=True)
+@njit(cache=True, inline='always')
 def wrap_point(
     i: np.int64, j: np.int64, k: np.int64, nx: np.int64, ny: np.int64, nz: np.int64
 ) -> tuple[np.int64, np.int64, np.int64]:
@@ -200,7 +210,7 @@ def wrap_point(
     return i, j, k
 
 
-@njit(cache=True)
+@njit(cache=True, inline='always')
 def get_gradient_simple(
     data: NDArray[np.float64],
     voxel_coord: NDArray[np.int64],
@@ -261,7 +271,7 @@ def get_gradient_simple(
 # This is an alternative method for calculating the gradient that uses all of
 # the neighbors for each grid point to get an overdetermined system with improved
 # sampling. I didn't find it made a big difference.
-@njit(cache=True)
+@njit(cache=True, inline='always')
 def get_gradient_overdetermined(
     data,
     i,
@@ -425,7 +435,7 @@ def combine_neigh_maxima(
     return reduced_new_labels, frac_coords
 
 
-@njit(cache=True)
+@njit(cache=True, inline='always')
 def get_best_neighbor(
     data: NDArray[np.float64],
     i: np.int64,
@@ -557,3 +567,43 @@ def climb_to_max(
         # otherwise, update coord
         i, j, k = (mi, mj, mk)
     return mi, mj, mk
+
+
+@njit(cache=True, fastmath=True)
+def get_min_dists(
+    labels,
+    frac_coords,
+    edge_indices,
+    matrix,
+    max_value,
+):
+    nx, ny, nz = labels.shape
+    # create array to store best dists
+    dists = np.full(len(frac_coords), max_value, dtype=np.float64)
+    for i, j, k in edge_indices:
+        # get label at edge
+        label = labels[i, j, k]
+        # convert from voxel indices to frac
+        fi = i / nx
+        fj = j / ny
+        fk = k / nz
+        # calculate the distance to the appropriate frac coord
+        ni, nj, nk = frac_coords[label]
+        # get differences between each index
+        di = ni - fi
+        dj = nj - fj
+        dk = nk - fk
+        # wrap at edges to be as close as possible
+        di -= round(di)
+        dj -= round(dj)
+        dk -= round(dk)
+        # convert to cartesian coordinates
+        ci = di * matrix[0, 0] + dj * matrix[1, 0] + dk * matrix[2, 0]
+        cj = di * matrix[0, 1] + dj * matrix[1, 1] + dk * matrix[2, 1]
+        ck = di * matrix[0, 2] + dj * matrix[1, 2] + dk * matrix[2, 2]
+        # calculate distance
+        dist = np.linalg.norm(np.array((ci, cj, ck), dtype=np.float64))
+        # if this is the lowest distance, update radius
+        if dist < dists[label]:
+            dists[label] = dist
+    return dists
