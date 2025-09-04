@@ -39,9 +39,16 @@ class WeightMethod(MethodBase):
         shape = reference_grid.shape
         
         logging.info("Sorting reference data")
-        # get sorted indices from lowest to highest and remove vacuum
-        sorted_indices = np.flip(np.argsort(reference_data.ravel(), kind="stable")[self.num_vacuum:])
-        sorted_charge = charge_data.ravel()[sorted_indices]
+        # # get sorted indices from highest to lowest
+        # sorted_indices = np.flip(np.argsort(reference_data.ravel(), kind="stable"))
+        sorted_indices = np.argsort(reference_data.ravel(), kind="stable")[::-1]
+        # get a map from index to sorted index
+        indices_to_sorted = np.empty_like(sorted_indices)
+        indices_to_sorted[sorted_indices] = np.arange(reference_grid.ngridpts)
+
+        # remove vacuum from sorted indices
+        sorted_indices = sorted_indices[:reference_grid.ngridpts-self.num_vacuum]
+
         # get the voronoi neighbors, their distances, and the area of the corresponding
         # facets. This is used to calculate the volume flux from each voxel
         neighbor_transforms, neighbor_dists, facet_areas, _ = (
@@ -57,13 +64,8 @@ class WeightMethod(MethodBase):
             neighbor_transforms=neighbor_transforms,
             neighbor_alpha=neighbor_alpha,
             sorted_indices=sorted_indices,
+            indices_to_sorted=indices_to_sorted,
         )
-        # reorder flux/pointers
-        neigh_fluxes = neigh_fluxes[sorted_indices]
-        neigh_pointers = neigh_pointers[sorted_indices]
-        maxima_mask = maxima_mask[sorted_indices]
-        # breakpoint()
-        # breakpoint()
         # calculate charges/volumes
         logging.info("Calculating charges and volumes")
         # get full 26 neighbors for ongrid steps
@@ -73,7 +75,7 @@ class WeightMethod(MethodBase):
         charges, volumes, labels, maxima_labels = get_weight_assignments(
             reference_data,
             labels,
-            sorted_charge,
+            charge_data,
             sorted_indices,
             neigh_fluxes,
             neigh_pointers,
@@ -109,7 +111,6 @@ class WeightMethod(MethodBase):
             volumes,
             basin_num,
             )
-
         # adjust charges from vasp convention
         charges /= shape.prod()
         # adjust volumes from voxel count
