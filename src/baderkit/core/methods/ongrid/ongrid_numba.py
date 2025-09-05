@@ -4,7 +4,7 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.methods.shared_numba import get_best_neighbor, coords_to_flat
+from baderkit.core.methods.shared_numba import coords_to_flat, get_best_neighbor
 
 
 @njit(parallel=True, cache=True)
@@ -41,7 +41,7 @@ def get_steepest_pointers(
     nx, ny, nz = data.shape
     # create array to store the label of the neighboring voxel with the greatest
     # elf value
-    pointers = np.empty(nx*ny*nz, dtype=np.int64)
+    pointers = np.empty(nx * ny * nz, dtype=np.int64)
     # create an array to store maxima
     maxima_mask = np.zeros(data.shape, dtype=np.bool_)
     # loop over each voxel in parallel
@@ -49,7 +49,7 @@ def get_steepest_pointers(
         for j in range(ny):
             for k in range(nz):
                 # get the flat index of this point
-                flat_idx = coords_to_flat(i,j,k,nx,ny,nz)
+                flat_idx = coords_to_flat(i, j, k, nx, ny, nz)
                 # check if this is a vacuum point. If so, we don't even bother
                 # with the label.
                 if vacuum_mask[i, j, k]:
@@ -64,7 +64,7 @@ def get_steepest_pointers(
                     neighbor_transforms=neighbor_transforms,
                     neighbor_dists=neighbor_dists,
                 )
-                pointers[flat_idx] = coords_to_flat(x,y,z,nx,ny,nz)
+                pointers[flat_idx] = coords_to_flat(x, y, z, nx, ny, nz)
                 if is_max:
                     maxima_mask[i, j, k] = True
     return pointers, maxima_mask

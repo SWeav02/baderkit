@@ -5,11 +5,11 @@ from numba import njit, prange
 from numpy.typing import NDArray
 
 from baderkit.core.methods.shared_numba import (
+    coords_to_flat,
     get_best_neighbor,
     get_gradient_overdetermined,
     get_gradient_simple,
     wrap_point,
-    coords_to_flat,
 )
 
 # NOTE: I used to calculate and store the ongrid steps and delta rs in this first
@@ -61,13 +61,13 @@ def get_gradient_pointers_simple(
     gradients = np.zeros((nx, ny, nz, 3), dtype=np.float32)
     # create array to store the label of the neighboring voxel with the greatest
     # value
-    pointers = np.empty(nx*ny*nz, dtype=np.int64)
+    pointers = np.empty(nx * ny * nz, dtype=np.int64)
     # loop over each grid point in parallel
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
                 # get the flat index of this point
-                flat_idx = coords_to_flat(i,j,k,nx,ny,nz)
+                flat_idx = coords_to_flat(i, j, k, nx, ny, nz)
                 # check if this point is part of the vacuum. If it is, we can
                 # ignore this point.
                 if vacuum_mask[i, j, k]:
@@ -98,7 +98,7 @@ def get_gradient_pointers_simple(
                     # set gradient and point. Note gradient is exactly ongrid in
                     # this instance
                     gradients[i, j, k] = (si, sj, sk)
-                    pointers[flat_idx] = coords_to_flat(ni,nj,nk,nx,ny,nz)
+                    pointers[flat_idx] = coords_to_flat(ni, nj, nk, nx, ny, nz)
                     if is_max:
                         maxima_mask[i, j, k] = True
                     continue
@@ -126,7 +126,7 @@ def get_gradient_pointers_simple(
                         maxima_mask[i, j, k] = True
                 # save neighbor, dr, and pointer
                 gradients[i, j, k] = (gi, gj, gk)
-                pointers[flat_idx] = coords_to_flat(ni,nj,nk,nx,ny,nz)
+                pointers[flat_idx] = coords_to_flat(ni, nj, nk, nx, ny, nz)
     return pointers, gradients, maxima_mask
 
 
@@ -182,7 +182,7 @@ def get_gradient_pointers_overdetermined(
     gradients = np.zeros((nx, ny, nz, 3), dtype=np.float32)
     # create array to store the label of the neighboring voxel with the greatest
     # value
-    pointers = np.empty(nx*ny*nz, dtype=np.int64)
+    pointers = np.empty(nx * ny * nz, dtype=np.int64)
     # get half the transforms for overdetermined gradient
     half_trans = neighbor_transforms[:13]
     half_dists = neighbor_dists[:13]
@@ -191,7 +191,7 @@ def get_gradient_pointers_overdetermined(
         for j in range(ny):
             for k in range(nz):
                 # get the flat index of this point
-                flat_idx = coords_to_flat(i,j,k,nx,ny,nz)
+                flat_idx = coords_to_flat(i, j, k, nx, ny, nz)
                 # check if this point is part of the vacuum. If it is, we can
                 # ignore this point.
                 if vacuum_mask[i, j, k]:
@@ -227,7 +227,7 @@ def get_gradient_pointers_overdetermined(
                     # set gradient and point. Note gradient is exactly ongrid in
                     # this instance
                     gradients[i, j, k] = (si, sj, sk)
-                    pointers[flat_idx] = coords_to_flat(ni,nj,nk,nx,ny,nz)
+                    pointers[flat_idx] = coords_to_flat(ni, nj, nk, nx, ny, nz)
                     if is_max:
                         maxima_mask[i, j, k] = True
                     continue
@@ -255,7 +255,7 @@ def get_gradient_pointers_overdetermined(
                         maxima_mask[i, j, k] = True
                 # save neighbor, dr, and pointer
                 gradients[i, j, k] = (gi, gj, gk)
-                pointers[flat_idx] = coords_to_flat(ni,nj,nk,nx,ny,nz)
+                pointers[flat_idx] = coords_to_flat(ni, nj, nk, nx, ny, nz)
     return pointers, gradients, maxima_mask
 
 
@@ -352,7 +352,7 @@ def refine_fast_neargrid(
                 # Otherwise, we have not reached a maximum and want to continue
                 # climbing
                 # add this point to our path
-                current_index = coords_to_flat(ii,jj,kk,nx,ny,nz)
+                current_index = coords_to_flat(ii, jj, kk, nx, ny, nz)
                 path.append(current_index)
                 # make a neargrid step
                 # 1. get gradient
@@ -379,7 +379,7 @@ def refine_fast_neargrid(
                 # 5. wrap coord
                 ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
                 # 6. Get flat index
-                new_idx = coords_to_flat(ni,nj,nk,nx,ny,nz)
+                new_idx = coords_to_flat(ni, nj, nk, nx, ny, nz)
                 # check if we've hit a point in the path or a vacuum point
                 if new_idx in path or not labels[ni, nj, nk]:
                     _, (ni, nj, nk), _ = get_best_neighbor(

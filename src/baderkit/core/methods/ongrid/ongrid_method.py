@@ -64,7 +64,7 @@ class OngridMethod(MethodBase):
             labels,
             self.maxima_vox,
             maxima_frac,
-            )
+        )
         # labels, self._maxima_frac = self.reduce_label_maxima(labels)
         # assign all results
         results = {

@@ -5,7 +5,7 @@ import logging
 import numpy as np
 
 from baderkit.core.methods.base import MethodBase
-from baderkit.core.methods.shared_numba import get_edges, combine_maxima_frac
+from baderkit.core.methods.shared_numba import combine_maxima_frac, get_edges
 
 from .neargrid_numba import (
     get_gradient_pointers_overdetermined,
@@ -83,7 +83,7 @@ class NeargridMethod(MethodBase):
             labels,
             self.maxima_vox,
             maxima_frac,
-            )
+        )
         # reduce maxima/basins
         # labels, self._maxima_frac = self.reduce_label_maxima(labels)
         # shift to vacuum at 0

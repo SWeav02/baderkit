@@ -8,16 +8,19 @@ from numpy.typing import NDArray
 # General methods
 ###############################################################################
 
-@njit(fastmath=True, cache=True, inline='always')
+
+@njit(fastmath=True, cache=True, inline="always")
 def flat_to_coords(idx, nx, ny, nz):
     i = idx // (ny * nz)
     j = (idx % (ny * nz)) // nz
     k = idx % nz
     return i, j, k
 
-@njit(fastmath=True, cache=True, inline='always')
+
+@njit(fastmath=True, cache=True, inline="always")
 def coords_to_flat(i, j, k, nx, ny, nz):
     return i * (ny * nz) + j * nz + k
+
 
 @njit(parallel=True, cache=True)
 def get_edges(
@@ -165,7 +168,7 @@ def get_basin_charges_and_volumes(
     return charges, volumes, vacuum_charge, vacuum_volume
 
 
-@njit(cache=True, inline='always')
+@njit(cache=True, inline="always")
 def wrap_point(
     i: np.int64, j: np.int64, k: np.int64, nx: np.int64, ny: np.int64, nz: np.int64
 ) -> tuple[np.int64, np.int64, np.int64]:
@@ -210,7 +213,7 @@ def wrap_point(
     return i, j, k
 
 
-@njit(cache=True, inline='always')
+@njit(cache=True, inline="always")
 def get_gradient_simple(
     data: NDArray[np.float64],
     voxel_coord: NDArray[np.int64],
@@ -271,7 +274,7 @@ def get_gradient_simple(
 # This is an alternative method for calculating the gradient that uses all of
 # the neighbors for each grid point to get an overdetermined system with improved
 # sampling. I didn't find it made a big difference.
-@njit(cache=True, inline='always')
+@njit(cache=True, inline="always")
 def get_gradient_overdetermined(
     data,
     i,
@@ -326,11 +329,12 @@ def get_gradient_overdetermined(
     ti, tj, tk = ti_new, tj_new, tk_new
     return ti, tj, tk
 
+
 @njit(fastmath=True, cache=True)
 def merge_frac_coords(
     frac_coords,
-        ):
-    
+):
+
     # We'll accumulate (unwrapped) coordinates into total
     total0 = 0.0
     total1 = 0.0
@@ -357,37 +361,37 @@ def merge_frac_coords(
         un0 = c0 - round(c0 - ref0)
         un1 = c1 - round(c1 - ref1)
         un2 = c2 - round(c2 - ref2)
-        
+
         # add to total
         total0 += un0
         total1 += un1
         total2 += un2
         count += 1
-    
+
     if count == 1:
         # return original point wrapped to [0,1)
-        return np.array((ref0%1.0, ref1%1.0, ref2%1.0), dtype=np.float64)
-    
+        return np.array((ref0 % 1.0, ref1 % 1.0, ref2 % 1.0), dtype=np.float64)
+
     else:
         # return average of points
         avg0 = (total0 / count) % 1.0
         avg1 = (total1 / count) % 1.0
         avg2 = (total2 / count) % 1.0
         return np.array((avg0, avg1, avg2), dtype=np.float64)
-    
-    
+
+
 @njit(cache=True, fastmath=True)
 def combine_maxima_frac(
     labels,
     maxima_vox,
     maxima_frac,
-        ):
+):
     # get the labels at each maximum
     maxima_labels = np.empty(len(maxima_vox), dtype=np.int64)
     for max_idx in prange(len(maxima_vox)):
-        i,j,k = maxima_vox[max_idx]
-        maxima_labels[max_idx] = labels[i,j,k]
-        
+        i, j, k = maxima_vox[max_idx]
+        maxima_labels[max_idx] = labels[i, j, k]
+
     # find unique labels
     unique_labels = np.unique(maxima_labels)
     n_unique = len(unique_labels)
@@ -407,7 +411,7 @@ def combine_maxima_frac(
         # get average frac coords and assign
         all_frac_coords[u_idx] = merge_frac_coords(frac_coords)
     return all_frac_coords
-    
+
 
 @njit(cache=True, parallel=True)
 def combine_neigh_maxima(
@@ -465,7 +469,7 @@ def combine_neigh_maxima(
     return reduced_new_labels, all_frac_coords
 
 
-@njit(cache=True, inline='always')
+@njit(cache=True, inline="always")
 def get_best_neighbor(
     data: NDArray[np.float64],
     i: np.int64,
@@ -535,7 +539,7 @@ def get_best_neighbor(
         # current point, we use it as our pointer
         elif diff == 0.0:
             # get the flat idx of the current best neighbor and this neighbor
-            flat_idx = coords_to_flat(bni, bnj, bnk ,nx,ny,nz)
+            flat_idx = coords_to_flat(bni, bnj, bnk, nx, ny, nz)
             flat_neigh = coords_to_flat(ii, jj, kk, nx, ny, nz)
             # if the neighbors index is lower, update our best neigh/transform
             if flat_neigh < flat_idx:
