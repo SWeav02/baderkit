@@ -41,15 +41,11 @@ class WeightMethod(MethodBase):
         shape = reference_grid.shape
         
         logging.info("Sorting reference data")
-        # # get sorted indices from highest to lowest
-        # sorted_indices = np.flip(np.argsort(reference_data.ravel(), kind="stable"))
+        # sort data from lowest to highest
         sorted_indices = np.argsort(reference_data.ravel(), kind="stable")
-        # get a map from index to sorted index
-        # indices_to_sorted = np.empty_like(sorted_indices)
-        # indices_to_sorted[sorted_indices] = np.arange(reference_grid.ngridpts)
 
         # remove vacuum from sorted indices
-        sorted_indices = sorted_indices[:reference_grid.ngridpts-self.num_vacuum]
+        sorted_indices = sorted_indices[self.num_vacuum:]
         # get the voronoi neighbors, their distances, and the area of the corresponding
         # facets. This is used to calculate the volume flux from each voxel
         neighbor_transforms, neighbor_dists, facet_areas, _ = (
@@ -57,24 +53,6 @@ class WeightMethod(MethodBase):
         )
         # # get a single alpha corresponding to the area/dist
         neighbor_alpha = facet_areas / neighbor_dists
-        # logging.info("Sorting reference data")
-        # data = reference_grid.total
-        # shape = reference_grid.shape
-        # # flatten data and get array of coordinates
-        # sorted_data = data.ravel()
-        # sorted_charge = self.charge_grid.total.ravel()
-        # sorted_coords = np.indices(shape, dtype=np.int64).reshape(3, -1).T
-        # # get sorted indices from lowest to highest and remove vacuum
-        # sorted_indices = np.argsort(sorted_data, kind="stable")[self.num_vacuum :]
-        # # get sorted data
-        # sorted_data = sorted_data[sorted_indices]
-        # sorted_charge = sorted_charge[sorted_indices]
-        # sorted_coords = sorted_coords[sorted_indices]
-        # # get pointers from 3D indices to sorted 1D
-        # sorted_pointers = np.empty(shape, dtype=np.int64)
-        # sorted_pointers[
-        #     sorted_coords[:, 0], sorted_coords[:, 1], sorted_coords[:, 2]
-        # ] = np.arange(len(sorted_coords), dtype=np.int64)
 
         # Get the flux of volume from each voxel to its neighbor.
         logging.info("Calculating voxel flux contributions")
@@ -83,7 +61,7 @@ class WeightMethod(MethodBase):
         )
         labels, charges, volumes, self._maxima_mask = get_weight_assignments(
             reference_data,
-            charge_data.copy(),
+            charge_data.ravel(),
             sorted_indices,
             neighbor_transforms,
             neighbor_alpha,

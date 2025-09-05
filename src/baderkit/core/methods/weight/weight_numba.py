@@ -28,7 +28,7 @@ def get_weight_assignments(
     
     # create scratch arrays to store neighbors/fluxes
     num_neighs = len(neighbor_transforms)
-    neighs = np.empty((num_neighs, 3), dtype=np.int64)
+    neighs = np.empty(num_neighs, dtype=np.int64)
     fluxes = np.empty(num_neighs, dtype=np.float64)
     
     # create lists to store charges/volumes
@@ -40,8 +40,8 @@ def get_weight_assignments(
         i, j, k = flat_to_coords(idx, nx, ny, nz)
         # get the reference and charge data
         base_value = reference_data[i, j, k]
-        charge = charge_data[i,j,k]
-        volume = volume_data[i,j,k]
+        charge = charge_data[idx]
+        volume = volume_data[idx]
         # calculate the flux going to each neighbor
         for trans_idx in prange(num_neighs):
             si, sj, sk = neighbor_transforms[trans_idx]
@@ -53,27 +53,27 @@ def get_weight_assignments(
             neigh_value = reference_data[ii, jj, kk]
             # if this value is below the current points value, continue
             if neigh_value <= base_value:
-                neighs[trans_idx, 0] = -1
-                fluxes[trans_idx] = 0.0
+                neighs[trans_idx] = -1
                 continue
             # neigh_sorted = indices_to_sorted[neigh_index]
             # calculate the flux flowing to this voxel
             flux = (neigh_value - base_value) * alpha
             # assign flux
             fluxes[trans_idx] = flux
-            # total_flux += flux
             # add the pointer to this neighbor
-            # neigh_index = coords_to_flat(ii,jj,kk,nx,ny,nz)
-            neighs[trans_idx] = (ii,jj,kk)
+            neigh_idx = coords_to_flat(ii,jj,kk,nx,ny,nz)
+            neighs[trans_idx] = neigh_idx
         
         # normalize the flux and assign label
         total_flux = 0.0
-        best_index = -1
+        best_label = -1
         best_flux = 0.0
-        for neigh_idx, flux in enumerate(fluxes):
+        for neigh_idx, flux in zip(neighs, fluxes):
+            if neigh_idx == -1:
+                continue
             total_flux += flux
             if flux > best_flux:
-                best_index = neigh_idx
+                best_label = neigh_idx
                 best_flux = flux
         
         # check that there is flux
@@ -96,26 +96,25 @@ def get_weight_assignments(
                 volumes.append(volume)
                 continue
             # otherwise, add all of the charge/volume to the best neigh
-            charge_data[ni,nj,nk] += charge
-            volume_data[ni,nj,nk] += volume
+            neigh_idx = coords_to_flat(ni,nj,nk,nx,ny,nz)
+            charge_data[neigh_idx] += charge
+            volume_data[neigh_idx] += volume
             continue
         
         # otherwise normalize and assign label
         fluxes /= total_flux
-        ni,nj,nk = neighs[best_index]
-        best_label = coords_to_flat(ni,nj,nk, nx,ny,nz)
         labels[i,j,k] = best_label
         
         # loop over neighbors and assign
         for trans_idx in prange(num_neighs):
             # get neigh and flux
-            ni,nj,nk = neighs[trans_idx]
-            if ni == -1:
+            neigh_idx = neighs[trans_idx]
+            if neigh_idx == -1:
                 continue
             # otherwise, add charge/volume
             flux = fluxes[trans_idx]
-            charge_data[ni,nj,nk] += charge*flux
-            volume_data[ni,nj,nk] += volume*flux
+            charge_data[neigh_idx] += charge*flux
+            volume_data[neigh_idx] += volume*flux
     return (
         labels,
         np.array(charges, dtype=np.float64),
