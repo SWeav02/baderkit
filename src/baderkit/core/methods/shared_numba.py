@@ -530,6 +530,17 @@ def get_best_neighbor(
             best = diff
             bti, btj, btk = (si, sj, sk)
             bni, bnj, bnk = (ii, jj, kk)
+        # if the neighbor has the same value as the current point, we likely
+        # have adjacent maxima. If the neighbor has a lower flat index than the
+        # current point, we use it as our pointer
+        elif diff == 0.0:
+            # get the flat idx of the current best neighbor and this neighbor
+            flat_idx = coords_to_flat(bni, bnj, bnk ,nx,ny,nz)
+            flat_neigh = coords_to_flat(ii, jj, kk, nx, ny, nz)
+            # if the neighbors index is lower, update our best neigh/transform
+            if flat_neigh < flat_idx:
+                bti, btj, btk = (si, sj, sk)
+                bni, bnj, bnk = (ii, jj, kk)
     # We've finished our loop. return the best shift, neighbor, and whether this
     # is a max
     # NOTE: Can't do is_max = best == 0.0 for older numba

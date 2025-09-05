@@ -5,7 +5,7 @@ import logging
 import numpy as np
 
 from baderkit.core.methods.base import MethodBase
-from baderkit.core.methods.shared_numba import get_edges
+from baderkit.core.methods.shared_numba import get_edges, combine_maxima_frac
 
 from .neargrid_numba import (
     get_gradient_pointers_overdetermined,
@@ -43,7 +43,6 @@ class NeargridMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                initial_labels=grid.flat_grid_indices,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system
@@ -64,10 +63,7 @@ class NeargridMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                initial_labels=grid.flat_grid_indices,
             )
-        # Convert to 1D. We use the same name for minimal memory
-        labels = labels.ravel()
         # Find roots
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
@@ -81,8 +77,15 @@ class NeargridMethod(MethodBase):
             labels -= 1
         # reconstruct a 3D array with our labels
         labels = labels.reshape(grid.shape)
+        # get frac coords
+        maxima_frac = grid.grid_to_frac(self.maxima_vox)
+        self._maxima_frac = combine_maxima_frac(
+            labels,
+            self.maxima_vox,
+            maxima_frac,
+            )
         # reduce maxima/basins
-        labels, self._maxima_frac = self.reduce_label_maxima(labels)
+        # labels, self._maxima_frac = self.reduce_label_maxima(labels)
         # shift to vacuum at 0
         labels += 1
 
@@ -105,7 +108,6 @@ class NeargridMethod(MethodBase):
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
-            initial_labels=grid.flat_grid_indices,
         )
 
         # switch negative labels back to positive and subtract by 1 to get to
