@@ -326,6 +326,88 @@ def get_gradient_overdetermined(
     ti, tj, tk = ti_new, tj_new, tk_new
     return ti, tj, tk
 
+@njit(fastmath=True, cache=True)
+def merge_frac_coords(
+    frac_coords,
+        ):
+    
+    # We'll accumulate (unwrapped) coordinates into total
+    total0 = 0.0
+    total1 = 0.0
+    total2 = 0.0
+    count = 0
+
+    # reference coord used for unwrapping
+    ref0 = 0.0
+    ref1 = 0.0
+    ref2 = 0.0
+    ref_set = False
+
+    # scan all maxima and pick those that belong to this target_group
+    for c0, c1, c2 in frac_coords:
+
+        # first seen -> set reference for unwrapping
+        if not ref_set:
+            ref0, ref1, ref2 = c0, c1, c2
+            ref_set = True
+
+        # unwrap coordinate relative to reference: unwrapped = coord - round(coord - ref)
+        # Using np.round via float -> use built-in round for numba compatibility
+        # but call round(x) (returns float)
+        un0 = c0 - round(c0 - ref0)
+        un1 = c1 - round(c1 - ref1)
+        un2 = c2 - round(c2 - ref2)
+        
+        # add to total
+        total0 += un0
+        total1 += un1
+        total2 += un2
+        count += 1
+    
+    if count == 1:
+        # return original point wrapped to [0,1)
+        return np.array((ref0%1.0, ref1%1.0, ref2%1.0), dtype=np.float64)
+    
+    else:
+        # return average of points
+        avg0 = (total0 / count) % 1.0
+        avg1 = (total1 / count) % 1.0
+        avg2 = (total2 / count) % 1.0
+        return np.array((avg0, avg1, avg2), dtype=np.float64)
+    
+    
+@njit(cache=True, fastmath=True)
+def combine_maxima_frac(
+    labels,
+    maxima_vox,
+    maxima_frac,
+        ):
+    # get the labels at each maximum
+    maxima_labels = np.empty(len(maxima_vox), dtype=np.int64)
+    for max_idx in prange(len(maxima_vox)):
+        i,j,k = maxima_vox[max_idx]
+        maxima_labels[max_idx] = labels[i,j,k]
+        
+    # find unique labels
+    unique_labels = np.unique(maxima_labels)
+    n_unique = len(unique_labels)
+
+    # Prepare result arrays
+    all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
+
+    # Parallel loop: for each unique label, scan new_labels and compute the average
+    # frac coords
+    for u_idx in prange(n_unique):
+        target_label = unique_labels[u_idx]
+        # get the frac coords for maxima with this label
+        frac_coords = []
+        for max_idx, label in enumerate(maxima_labels):
+            if label == target_label:
+                frac_coords.append(maxima_frac[max_idx])
+        # get average frac coords and assign
+        all_frac_coords[u_idx] = merge_frac_coords(frac_coords)
+    return all_frac_coords
+    
 
 @njit(cache=True, parallel=True)
 def combine_neigh_maxima(
@@ -366,73 +448,21 @@ def combine_neigh_maxima(
 
     # Prepare result arrays
     reduced_new_labels = np.empty(len(new_labels), dtype=np.int64)
-    frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
+    all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
 
-    # Parallel loop: for each unique label, scan new_labels and compute the average
+    # Parallel loop: for each unique label, scan new_labels and get average
+    # frac coords
     for u_idx in prange(n_unique):
         target_label = unique_labels[u_idx]
+        frac_coords = []
+        for max_idx, label in enumerate(new_labels):
+            if label == target_label:
+                frac_coords.append(maxima_frac[max_idx])
+                reduced_new_labels[max_idx] = u_idx
+        # combine frac coords
+        all_frac_coords[u_idx] = merge_frac_coords(frac_coords)
 
-        # We'll accumulate (unwrapped) coordinates into total
-        total0 = 0.0
-        total1 = 0.0
-        total2 = 0.0
-        count = 0
-
-        # reference coord used for unwrapping
-        ref0 = 0.0
-        ref1 = 0.0
-        ref2 = 0.0
-        ref_set = False
-
-        # scan all maxima and pick those that belong to this target_group
-        for m in range(len(new_labels)):
-            lab = new_labels[m]
-            # skip if not part of this group
-            if lab != target_label:
-                continue
-
-            # assign reduced label (sequential index u_idx)
-            reduced_new_labels[m] = u_idx
-
-            # first seen -> set reference for unwrapping
-            c0 = maxima_frac[m, 0]
-            c1 = maxima_frac[m, 1]
-            c2 = maxima_frac[m, 2]
-            if not ref_set:
-                ref0, ref1, ref2 = c0, c1, c2
-                ref_set = True
-
-            # unwrap coordinate relative to reference: unwrapped = coord - round(coord - ref)
-            # Using np.round via float -> use built-in round for numba compatibility
-            # but call round(x) (returns float)
-            un0 = c0 - round(c0 - ref0)
-            un1 = c1 - round(c1 - ref1)
-            un2 = c2 - round(c2 - ref2)
-
-            total0 += un0
-            total1 += un1
-            total2 += un2
-            count += 1
-
-        # if no members (shouldn't happen) skip
-        if count == 0:
-            # mark nothing (for safety)
-            continue
-
-        if count == 1:
-            # only one member -> use it directly (and ensure in [0,1))
-            frac_coords[u_idx, 0] = ref0 % 1.0
-            frac_coords[u_idx, 1] = ref1 % 1.0
-            frac_coords[u_idx, 2] = ref2 % 1.0
-        else:
-            avg0 = (total0 / count) % 1.0
-            avg1 = (total1 / count) % 1.0
-            avg2 = (total2 / count) % 1.0
-            frac_coords[u_idx, 0] = avg0
-            frac_coords[u_idx, 1] = avg1
-            frac_coords[u_idx, 2] = avg2
-
-    return reduced_new_labels, frac_coords
+    return reduced_new_labels, all_frac_coords
 
 
 @njit(cache=True, inline='always')
