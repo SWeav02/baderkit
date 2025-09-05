@@ -6,9 +6,10 @@ import numpy as np
 
 from baderkit.core.methods.base import MethodBase
 
-from .weight_numba import (  # reduce_charge_volume,
+from .weight_numba import (
+    reduce_charge_volume,
     get_labels,
-    get_neighbor_flux,
+    # get_neighbor_flux,
     get_weight_assignments,
     relabel_reduced_maxima,
 )
@@ -44,8 +45,8 @@ class WeightMethod(MethodBase):
         # sorted_indices = np.flip(np.argsort(reference_data.ravel(), kind="stable"))
         sorted_indices = np.argsort(reference_data.ravel(), kind="stable")
         # get a map from index to sorted index
-        indices_to_sorted = np.empty_like(sorted_indices)
-        indices_to_sorted[sorted_indices] = np.arange(reference_grid.ngridpts)
+        # indices_to_sorted = np.empty_like(sorted_indices)
+        # indices_to_sorted[sorted_indices] = np.arange(reference_grid.ngridpts)
 
         # remove vacuum from sorted indices
         sorted_indices = sorted_indices[:reference_grid.ngridpts-self.num_vacuum]
@@ -80,53 +81,20 @@ class WeightMethod(MethodBase):
         all_neighbor_transforms, all_neighbor_dists = (
             reference_grid.point_neighbor_transforms
         )
-        neigh_fluxes, neigh_pointers, self._maxima_mask = get_neighbor_flux(
-            data=charge_data,
-            sorted_indices=sorted_indices,
-            indices_to_sorted=indices_to_sorted,
-            # sorted_coords=sorted_coords.copy(),
-            # sorted_pointers=sorted_pointers,
-            neighbor_transforms=neighbor_transforms,
-            neighbor_alpha=neighbor_alpha,
-            all_neighbor_transforms=all_neighbor_transforms,
-            all_neighbor_dists=all_neighbor_dists,
-        )
-        # get labels
-        labels = np.full(shape, -1, dtype=np.int64)
-        labels[self._maxima_mask] = np.arange(len(self.maxima_vox))
-        # reduce maxima/labels and save frac coords.
-        # NOTE: reduction algorithm returns with unlabeled values as -1
-        labels, self._maxima_frac, label_map = self.reduce_label_maxima(labels, True)
-        maxima_num = len(self.maxima_frac)
-        # Our label grid goes from 0 (or -1 with vac) upward. We need to relabel
-        # the maxima with an actual maximum index so that our pointers work.
-        labels, label_map = relabel_reduced_maxima(
-            labels,
-            maxima_num,
-            self.maxima_vox,
-            reference_grid.flat_grid_indices,
-        )
-
-        logging.info("Assigning charges and volumes")
-        labels, charges, volumes = get_weight_assignments(
-            labels,
-            label_map,
+        labels, charges, volumes, self._maxima_mask = get_weight_assignments(
+            reference_data,
             charge_data.copy(),
             sorted_indices,
-            indices_to_sorted,
-            neigh_fluxes,
-            neigh_pointers,
-            self._maxima_mask,
-            maxima_num,
+            neighbor_transforms,
+            neighbor_alpha,
+            all_neighbor_transforms,
+            all_neighbor_dists,
         )
-        # NOTE: The maxima found through this method are now the same as those
-        # in other methods, without the need to reduce them in an additional step
-
-        logging.info("Finding labels")
-        # our current labels are pointers like the ongrid/neargrid methods. We
-        # need to get the roots
+        # flip charges to go from high to low
+        charges = np.flip(charges)
+        volumes = np.flip(volumes)
+        # get actual labels
         labels = labels.ravel()
-        # get roots
         labels = get_labels(
             labels,
             np.flip(sorted_indices),
@@ -140,18 +108,17 @@ class WeightMethod(MethodBase):
             labels -= 1
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)
-        # rearrange the charges/volumes to match the labels
-        # get the voxel coords of the maxima found throught the weight method
-        maxima_vox = (
-            np.round(reference_grid.frac_to_grid(self._maxima_frac))
-            / reference_grid.shape
-        ).astype(int)
-        maxima_labels = labels[maxima_vox[:, 0], maxima_vox[:, 1], maxima_vox[:, 2]]
-        # reorganize charges/volumes to match properly ordered maxima labels
-        sorted_maxima = np.argsort(maxima_labels, kind="stable")
-        charges = charges[sorted_maxima]
-        volumes = volumes[sorted_maxima]
-
+        
+        # reduce maxima/labels and save frac coords.
+        # NOTE: reduction algorithm returns with unlabeled values as -1
+        labels, self._maxima_frac, label_map = self.reduce_label_maxima(labels, True)
+        basin_num = len(self._maxima_frac)
+        charges, volumes = reduce_charge_volume(
+            label_map,
+            charges,
+            volumes,
+            basin_num,
+                )
         # adjust charges from vasp convention
         charges /= shape.prod()
         # adjust volumes from voxel count
