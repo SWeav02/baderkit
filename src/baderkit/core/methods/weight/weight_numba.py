@@ -7,7 +7,7 @@ from numpy.typing import NDArray
 from baderkit.core.methods.shared_numba import get_best_neighbor, wrap_point, flat_to_coords, coords_to_flat
 
 
-@njit(parallel=True, cache=True)
+@njit(fastmath=True, cache=True)
 def get_weight_assignments(
     reference_data,
     charge_data,
@@ -42,11 +42,11 @@ def get_weight_assignments(
         base_value = reference_data[i, j, k]
         charge = charge_data[idx]
         volume = volume_data[idx]
+        total_flux = 0.0
+        best_label = -1
+        best_flux = 0.0
         # calculate the flux going to each neighbor
-        for trans_idx in prange(num_neighs):
-            si, sj, sk = neighbor_transforms[trans_idx]
-            alpha = neighbor_alpha[trans_idx]
-        # for (si, sj, sk), alpha in zip(neighbor_transforms, neighbor_alpha):
+        for trans_idx, ((si, sj, sk), alpha) in enumerate(zip(neighbor_transforms, neighbor_alpha)):
             # get neighbor and wrap around periodic boundary
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             # get the neighbors value
@@ -60,18 +60,11 @@ def get_weight_assignments(
             flux = (neigh_value - base_value) * alpha
             # assign flux
             fluxes[trans_idx] = flux
+            total_flux += flux
             # add the pointer to this neighbor
             neigh_idx = coords_to_flat(ii,jj,kk,nx,ny,nz)
             neighs[trans_idx] = neigh_idx
-        
-        # normalize the flux and assign label
-        total_flux = 0.0
-        best_label = -1
-        best_flux = 0.0
-        for neigh_idx, flux in zip(neighs, fluxes):
-            if neigh_idx == -1:
-                continue
-            total_flux += flux
+            # update label
             if flux > best_flux:
                 best_label = neigh_idx
                 best_flux = flux
@@ -106,15 +99,12 @@ def get_weight_assignments(
         labels[i,j,k] = best_label
         
         # loop over neighbors and assign
-        for trans_idx in prange(num_neighs):
-            # get neigh and flux
-            neigh_idx = neighs[trans_idx]
-            if neigh_idx == -1:
+        for neigh, flux in zip(neighs, fluxes):
+            if neigh == -1:
                 continue
             # otherwise, add charge/volume
-            flux = fluxes[trans_idx]
-            charge_data[neigh_idx] += charge*flux
-            volume_data[neigh_idx] += volume*flux
+            charge_data[neigh] += charge*flux
+            volume_data[neigh] += volume*flux
     return (
         labels,
         np.array(charges, dtype=np.float64),
