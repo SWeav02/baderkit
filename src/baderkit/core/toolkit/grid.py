@@ -1716,6 +1716,8 @@ class Grid(VolumetricData):
 
         """
         logging.info(f"Loading {grid_file} from file")
+        # make sure path is a Path object
+        grid_file = Path(grid_file)
         structure, data, ion_charges, origin = read_cube(grid_file)
         # TODO: Also save the ion charges/origin for writing later
 
@@ -1756,6 +1758,8 @@ class Grid(VolumetricData):
 
         """
         logging.info(f"Loading {grid_file} from file")
+        # make sure path is a Path object
+        grid_file = Path(grid_file)
         # Create string to add structure to.
         poscar, data, data_aug = cls.parse_file(grid_file)
         # guess data type
