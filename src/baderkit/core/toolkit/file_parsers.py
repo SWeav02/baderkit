@@ -81,6 +81,7 @@ def read_vasp(filename):
         data_start_offset = f.tell()
         # Also get a single line of data
         data_line = f.readline()
+        # data_line_bytes = data_line.encode("latin1")
 
         lattice = Lattice(lattice_matrix)
         atom_list = [
@@ -92,17 +93,9 @@ def read_vasp(filename):
 
         nx, ny, nz = map(int, fft_dim_str.split())
 
-    # calculate the number of bytes per grid
+    # Get the number of entries and how many there are per line
     nvals = nx * ny * nz
     vals_per_line = len(data_line.split())
-    # get the number of bytes per entry. Our example line should have a complete
-    # row plus the line break, so we just subtract the line break and divide by
-    # the number of entries per line
-    bytes_per_entry = (len(data_line) - 1) / vals_per_line
-    # calculate the number of bytes for line breaks
-    line_breaks = math.ceil((nvals) / 5) * 2
-    # sum the number of entries and line breaks
-    nbytes_per_block = int((bytes_per_entry * nvals) + line_breaks)
     ###########################################################################
     # Read FFT Grids. Use byte read mode and mmap for faster read and lower memory
     ###########################################################################
@@ -111,6 +104,19 @@ def read_vasp(filename):
     with open(path, "rb") as fb:
         mm = mmap.mmap(fb.fileno(), 0, access=mmap.ACCESS_READ)
         pos = data_start_offset
+
+        # move to the first line of data
+        mm.seek(pos)
+        # read a single line
+        data_line = mm.readline()
+        # determine how many extra bytes there are per line
+        extra_bytes = len(data_line) % vals_per_line
+        # get bytes per entry
+        bytes_per_entry = (len(data_line) - extra_bytes) / vals_per_line
+        # get total number of extra bytes
+        line_bytes = math.ceil((nvals) / 5) * extra_bytes
+        # get the total number of bytes per block
+        nbytes_per_block = int((bytes_per_entry * nvals) + line_bytes)
 
         while pos < mm.size():
             # 1. slice exact byte window for this data set
@@ -121,7 +127,6 @@ def read_vasp(filename):
             # latin1 is the fastest 1:1 mapping decode
             text = block_bytes.decode("latin1")
             arr = np.fromstring(text, sep=" ", count=nvals, dtype=np.float64)
-
             if arr.size < nvals:
                 # incomplete block or EOF
                 logging.warn("End of file reached before expected")
