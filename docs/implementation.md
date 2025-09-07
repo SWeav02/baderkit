@@ -13,15 +13,15 @@ code.
 ## Methods
 
 Below is a summary of the benchmarks and suggested use cases for each method.
-Values are based on a computer with 12 cores and 32 GB of memory. We suggest
-doing your own tests for your computer and system.
+Values are based on a computer with 16 cores and 32 GB of memory. We suggest
+doing your own tests for your system.
 
 | Method | Speed (s/atom)<small><sup>1</sup></small> | Converged Grid<br> Density (pts/Å<sup>3</sup>)<small><sup>2</sup></small> | Max Atoms<small><sup>1</sup></small>  | Orientation Error (e<sup>-</sup>)<small><sup>3</sup></small> |
 |:-------------:|:--------------------------------------:|:---------------------------------:|:------------------------------------:|:----------------:|
-| neargrid      | <span style="color:green;">0.22</span> | <span style="color:orange;">63000</span> | <span style="color:green;">160</span>  | <span style="color:green;">0.0001</span> |
-| weight        | <span style="color:orange;">0.28</span>   | <span style="color:green;">8300</span> | <span style="color:red;">90</span> | <span style="color:orange;">0.001</span> |
-| neargrid-weight | <span style="color:green;">0.22</span> | <span style="color:orange;">56000</span> | <span style="color:green;">160</span> | <span style="color:green;">0.0001</span> |
-| ongrid        | <span style="color:green;">0.22</span> | <span style="color:red;">>150000</span> | <span style="color:green;">177</span>  | <span style="color:red;">0.04</span> |
+| neargrid      | <span style="color:green;">0.33</span> | <span style="color:orange;">63000</span> | <span style="color:green;">950</span>  | <span style="color:green;">0.0001</span> |
+| weight        | <span style="color:green;">0.39</span>   | <span style="color:green;">8300</span> | <span style="color:orange;">700</span> | <span style="color:green;">0.0009</span> |
+| neargrid-weight | <span style="color:green;">0.34</span> | <span style="color:green;">8700</span> | <span style="color:green;">1000</span> | <span style="color:green;">0.0006</span> |
+| ongrid        | <span style="color:green;">0.32</span> | <span style="color:red;">>150000</span> | <span style="color:green;">1000</span>  | <span style="color:red;">0.04</span> |
 
 <small>1. Assuming ~30 Å<sup>3</sup> per atom and a resolution of 10000 pts/Å<sup>3</sup></small>
 
@@ -57,8 +57,8 @@ doing your own tests for your computer and system.
 
 === "weight"
     
-    **Key Takeaways:** *Converges at rough grid densities, but is
-    slower and requires more memory.*
+    **Key Takeaways:** *Converges at rough grid densities. Not suitable for
+    workflows that rely on grid point basin assignments.*
     
     This method converges quickly with grid density by allowing each point to
     be partially assigned to multiple basins. To reduce orientation errors, a
@@ -74,7 +74,13 @@ doing your own tests for your computer and system.
     creating a 'weight' corresponding to the portion of each point flowing to a
     given basin. The ordering from highest to lowest ensures that the higher neighbors have
     already received their assignment.
-    
+
+    !!! Warning
+        Each method returns a 3D array representing the basins each point is assigned to
+        which can be accessed with the `basin_labels` and `atom_labels` properties. For
+        the `weight` method, these assignments are only about as accurate as the `ongrid`
+        method. If you need these properties we recommend the `neargrid-weight` or `neargrid`
+        methods..
     
     **Reference**
     
@@ -83,7 +89,7 @@ doing your own tests for your computer and system.
 === "neargrid-weight"
 
     **Key Takeaways:** *Similar to the original neargrid method,
-    but converges at lower grid densities. Still in testing.*
+    but uses the weight method at the edges to converge charges at lower grid densities.*
     
     This method is a hybrid of the neargrid and weight methods. It first runs the
     neargrid exactly, then uses the fractional assignment of the weight method
@@ -121,7 +127,9 @@ doing your own tests for your computer and system.
     ![baderkit_vs_henk_time](images/time_vs_grid_baderkit_henk_subplots.png)
     
     BaderKit shows comparable or improved speeds for all methods. The `neargrid-weight`
-    method adds very little additional time over the original `neargrid` method.
+    method adds very little additional time over the original `neargrid` method. In all
+    cases, loading the charge density from file makes up a bulk of the calculation, resulting
+    in relatively small differences in each methods speed.
     
 === "Convergence"    
     
@@ -130,22 +138,21 @@ doing your own tests for your computer and system.
     As expected from their original papers, the `weight` method converges first
     followed by the `neargrid` method. The `ongrid` method does not converge even
     at a resolution >150000 pts/Å<sup>3</sup>. Our own `neargrid-weight` method
-    converges faster than the original `ongrid` method.
+    converges at a similar resolution as the `weight` method.
     
 === "Memory"
 
-    ![baderkit_conv](images/memory_vs_grid_baderkit.png)
+    ![baderkit_conv](images/memory_vs_grid_baderkit_henk_subplots.png)
     
-    The `weight` method uses considerably more memory than other methods. However,
-    this is offset by the significantly lower grid density needed to reach
-    convergence.
+    BaderKit uses more memory than the original Fortran code in all cases.
+    We hope to improve this in the future.
     
 === "Orientation"
     
     ![baderkit_orient](images/oxygen_charge_vs_angle.png)
     
     The `neargrid`, `weight`, and `neargrid-weight` methods
-    show minimal variance with orientation, while the `ongrid` method shows
+    show minimal variance with orientation (<0.001 e<sup>-</sup>), while the `ongrid` method shows
     a large bias.
     
 === "Calculation Details"
@@ -161,8 +168,8 @@ doing your own tests for your computer and system.
     using VASP, PBE GGA density functional, an energy cutoff of 400 eV, a 2x2x2
     Monkhorst–Pack *k*-point mesh, and VASP's default PBE pseudo-potentials.
     
-    All bader calculations were performed using an Intel Core i9-9940X CPU with
-    14 cores (2 threads per core).
+    All bader calculations were performed using a AMD Ryzen™ Threadripper™ 1950X CPU with
+    16 cores (2 threads per core).
     
     Speed benchmarks were run 10 times and the average taken to account for minor
     fluctuations in computational time. Speed tests were run through the command
@@ -237,6 +244,17 @@ doing your own tests for your computer and system.
     flux in parallel. This comes at the cost of storing the 
     information in memory using an array that is several times the size of the 
     original grid.
+
+    - **Reversed Assignment:** Calculating the weight from high to low requires one to
+    track the partial basin assignments of each point for reference later. We instead
+    move over the data from low to high, adding the weighted charge of each point to
+    its higher neighbors. In this way, the charge/volume is accumulated without the
+    need to track each points partial assignments.
+
+    - **Basin Labels:** Because the weight method provides fractional assignments, it
+    is difficult to represent each points basin assignment. We opt to assign each point
+    to its neighbor with the highest flux. This results in basin labels for each point,
+    but they are only about as accurate as the `ongrid` method.
     
     - **Unknown Bug-fix:** We have found that in some cases, particularly in non-cubic
     systems, the results of our method vary from the original. In particular we often
