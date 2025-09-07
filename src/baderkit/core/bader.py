@@ -52,7 +52,7 @@ class Bader:
         self,
         charge_grid: Grid,
         reference_grid: Grid | None = None,
-        method: str | Method = Method.neargrid,
+        method: str | Method = Method.neargrid_weight,
         vacuum_tol: float | bool = 1.0e-3,
         normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
@@ -722,14 +722,14 @@ class Bader:
         None.
 
         """
-        t0 = time.time()
-        logging.info("Assigning Atom Properties")
         # Default structure
         structure = structure or self.structure
         self._structure = structure
 
         # Shorthand access
         basins = self.basin_maxima_frac  # (N_basins, 3)
+        t0 = time.time()
+        logging.info("Assigning Atom Properties")
         atoms = structure.frac_coords  # (N_atoms, 3)
         L = structure.lattice.matrix  # (3, 3)
         N_basins, N_atoms = len(basins), len(atoms)

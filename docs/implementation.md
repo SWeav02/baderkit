@@ -18,9 +18,9 @@ doing your own tests for your system.
 
 | Method | Speed (s/atom)<small><sup>1</sup></small> | Converged Grid<br> Density (pts/Å<sup>3</sup>)<small><sup>2</sup></small> | Max Atoms<small><sup>1</sup></small>  | Orientation Error (e<sup>-</sup>)<small><sup>3</sup></small> |
 |:-------------:|:--------------------------------------:|:---------------------------------:|:------------------------------------:|:----------------:|
+| neargrid-weight | <span style="color:green;">0.34</span> | <span style="color:green;">8700</span> | <span style="color:green;">1000</span> | <span style="color:green;">0.0006</span> |
 | neargrid      | <span style="color:green;">0.33</span> | <span style="color:orange;">63000</span> | <span style="color:green;">950</span>  | <span style="color:green;">0.0001</span> |
 | weight        | <span style="color:green;">0.39</span>   | <span style="color:green;">8300</span> | <span style="color:orange;">700</span> | <span style="color:green;">0.0009</span> |
-| neargrid-weight | <span style="color:green;">0.34</span> | <span style="color:green;">8700</span> | <span style="color:green;">1000</span> | <span style="color:green;">0.0006</span> |
 | ongrid        | <span style="color:green;">0.32</span> | <span style="color:red;">>150000</span> | <span style="color:green;">1000</span>  | <span style="color:red;">0.04</span> |
 
 <small>1. Assuming ~30 Å<sup>3</sup> per atom and a resolution of 10000 pts/Å<sup>3</sup></small>
@@ -29,7 +29,18 @@ doing your own tests for your system.
 
 <small>3. Standard deviation of orientation benchmarks</small>
     
-=== "neargrid (default)"
+=== "neargrid-weight (default)"
+
+    **Key Takeaways:** *A hybrid method with the speed of the `neargrid` method
+    and accuracy of the `weight` method.*
+    
+    This method is a hybrid of the neargrid and weight methods. It first runs the
+    neargrid exactly, then uses the fractional assignment of the weight method
+    to split the grid points at basin edges. The result is a method that requires
+    minimal additional time over the original neargrid method, but with a
+    convergence rate approaching that of the weight method.
+    
+=== "neargrid"
 
     **Key Takeaway:** *Very fast and memory efficient, but requires a fine grid.*
     
@@ -85,17 +96,6 @@ doing your own tests for your system.
     **Reference**
     
     M. Yu and D. R. Trinkle, Accurate and efficient algorithm for Bader charge integration, [J. Chem. Phys. 134, 064111 (2011)](https://theory.cm.utexas.edu/henkelman/code/bader/download/yu11_064111.pdf)   
-
-=== "neargrid-weight"
-
-    **Key Takeaways:** *Similar to the original neargrid method,
-    but uses the weight method at the edges to converge charges at lower grid densities.*
-    
-    This method is a hybrid of the neargrid and weight methods. It first runs the
-    neargrid exactly, then uses the fractional assignment of the weight method
-    to split the grid points at basin edges. The result is a method that requires
-    minimal additional time over the original neargrid method, but with a
-    convergence rate approaching that of the weight method.
 
 === "ongrid"
     
