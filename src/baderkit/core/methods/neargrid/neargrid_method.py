@@ -34,7 +34,7 @@ class NeargridMethod(MethodBase):
         grid = self.reference_grid.copy()
         # get neigbhor transforms
         neighbor_transforms, neighbor_dists = grid.point_neighbor_transforms
-        logging.info("Calculating gradients")
+        logging.info("Calculating Gradients")
         if not self._use_overdetermined:
             # calculate gradients and pointers to best neighbors
             labels, gradients, self._maxima_mask = get_gradient_pointers_simple(
@@ -67,7 +67,7 @@ class NeargridMethod(MethodBase):
         # Find roots
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
-        logging.info("Finding roots")
+        logging.info("Finding Roots")
         labels = self.get_roots(labels)
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
@@ -84,6 +84,7 @@ class NeargridMethod(MethodBase):
             self.maxima_vox,
             maxima_frac,
         )
+        logging.info("Starting Edge Refinement")
         # reduce maxima/basins
         # labels, self._maxima_frac = self.reduce_label_maxima(labels)
         # shift to vacuum at 0
@@ -118,6 +119,7 @@ class NeargridMethod(MethodBase):
             "basin_labels": labels,
         }
         # assign charges/volumes, etc.
+        logging.info("Assigning Charges and Volumes")
         results.update(self.get_basin_charges_and_volumes(labels))
         results.update(self.get_extras())
         return results

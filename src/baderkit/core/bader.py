@@ -3,6 +3,7 @@
 import copy
 import importlib
 import logging
+import time
 from pathlib import Path
 from typing import Literal, TypeVar
 
@@ -675,6 +676,8 @@ class Bader:
         None
 
         """
+        t0 = time.time()
+        logging.info(f"Beginning Bader Algorithm Using '{self.method}' Method")
         # Normalize the method name to a module and class name
         module_name = self.method.replace(
             "-", "_"
@@ -700,6 +703,9 @@ class Bader:
 
         for key, value in results.items():
             setattr(self, f"_{key}", value)
+        t1 = time.time()
+        logging.info("Bader Algorithm Complete")
+        logging.info(f"Time: {round(t1-t0,2)}")
 
     def run_atom_assignment(self, structure: Structure = None):
         """
@@ -716,6 +722,8 @@ class Bader:
         None.
 
         """
+        t0 = time.time()
+        logging.info("Assigning Atom Properties")
         # Default structure
         structure = structure or self.structure
         self._structure = structure
@@ -725,8 +733,6 @@ class Bader:
         atoms = structure.frac_coords  # (N_atoms, 3)
         L = structure.lattice.matrix  # (3, 3)
         N_basins, N_atoms = len(basins), len(atoms)
-
-        logging.info("Assigning atom properties")
 
         # Vectorized deltas, minimum‑image wrapping
         diffs = atoms[None, :, :] - basins[:, None, :]
@@ -764,6 +770,9 @@ class Bader:
         self._atom_labels = atom_labels
         self._atom_charges = atom_charges
         self._atom_volumes = atom_volumes
+        logging.info("Atom Assignment Finished")
+        t1 = time.time()
+        logging.info(f"Time: {round(t1-t0, 2)}")
 
     # def _get_atom_surface_distances(self):
     #     """
@@ -1348,9 +1357,9 @@ class Bader:
         ):
             # Note what we're writing in log
             if "atom" in name:
-                logging.info(f"Writing atom summary to {name}")
+                logging.info(f"Writing Atom Summary to {name}")
             else:
-                logging.info(f"Writing basin summary to {name}")
+                logging.info(f"Writing Basin Summary to {name}")
 
             # write output summaries
             with open(directory / name, "w") as f:

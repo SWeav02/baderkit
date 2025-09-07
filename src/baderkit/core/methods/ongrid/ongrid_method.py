@@ -32,7 +32,7 @@ class OngridMethod(MethodBase):
         neighbor_transforms, neighbor_dists = grid.point_neighbor_transforms
         # For each voxel, get the label of the surrounding voxel that has the highest
         # density
-        logging.info("Calculating steepest neighbors")
+        logging.info("Calculating Steepest Neighbors")
         pointers, self._maxima_mask = get_steepest_pointers(
             data=data,
             neighbor_transforms=neighbor_transforms,
@@ -46,7 +46,7 @@ class OngridMethod(MethodBase):
         # the index that its parent was pointing at.
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
-        logging.info("Finding roots")
+        logging.info("Finding Roots")
         pointers = self.get_roots(pointers)
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
@@ -71,6 +71,7 @@ class OngridMethod(MethodBase):
             "basin_labels": labels,
         }
         # assign charges/volumes, etc.
+        logging.info("Assigning Charges and Volumes")
         results.update(self.get_basin_charges_and_volumes(labels))
         results.update(self.get_extras())
         return results

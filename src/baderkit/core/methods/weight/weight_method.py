@@ -35,7 +35,7 @@ class WeightMethod(MethodBase):
         charge_data = charge_grid.total
         shape = reference_grid.shape
 
-        logging.info("Sorting reference data")
+        logging.info("Sorting Reference Data")
         # sort data from lowest to highest
         sorted_indices = np.argsort(reference_data.ravel(), kind="stable")
 
@@ -50,7 +50,7 @@ class WeightMethod(MethodBase):
         neighbor_alpha = facet_areas / neighbor_dists
 
         # Get the flux of volume from each voxel to its neighbor.
-        logging.info("Assigning Charges/Volumes")
+        logging.info("Assigning Charges and Volumes")
         all_neighbor_transforms, all_neighbor_dists = (
             reference_grid.point_neighbor_transforms
         )

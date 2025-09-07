@@ -1684,7 +1684,7 @@ class Grid(VolumetricData):
         if data_type is None:
             data_type = cls._guess_file_format(grid_file.name, data["total"])
         t1 = time.time()
-        logging.info(f"Time: {t1-t0}")
+        logging.info(f"Time: {round(t1-t0,2)}")
         return cls(
             structure=structure,
             data=data,
@@ -1729,7 +1729,7 @@ class Grid(VolumetricData):
         if data_type is None:
             data_type = cls._guess_file_format(grid_file.name, data["total"])
         t1 = time.time()
-        logging.info(f"Time: {t1-t0}")
+        logging.info(f"Time: {round(t1-t0,2)}")
         return cls(
             structure=structure,
             data=data,
@@ -1773,7 +1773,7 @@ class Grid(VolumetricData):
         if data_type is None:
             data_type = cls._guess_file_format(grid_file.name, data["total"])
         t1 = time.time()
-        logging.info(f"Time: {t1-t0}")
+        logging.info(f"Time: {round(t1-t0,2)}")
         return cls(structure=poscar.structure, data=data, data_aug=data_aug)
 
     @classmethod

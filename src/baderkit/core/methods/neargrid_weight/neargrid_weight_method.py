@@ -42,7 +42,7 @@ class NeargridWeightMethod(MethodBase):
         shape = reference_grid.shape
         # get neigbhor transforms
         neighbor_transforms, neighbor_dists = reference_grid.point_neighbor_transforms
-        logging.info("Calculating gradients")
+        logging.info("Calculating Gradients")
         if not self._use_overdetermined:
             # calculate gradients and pointers to best neighbors
             labels, gradients, self._maxima_mask = get_gradient_pointers_simple(
@@ -75,7 +75,7 @@ class NeargridWeightMethod(MethodBase):
         # Find roots
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
-        logging.info("Finding roots")
+        logging.info("Finding Roots")
         labels = self.get_roots(labels)
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
@@ -92,7 +92,7 @@ class NeargridWeightMethod(MethodBase):
             self.maxima_vox,
             maxima_frac,
         )
-
+        logging.info("Starting Edge Refinement")
         # shift to vacuum at 0
         labels += 1
 
@@ -121,14 +121,13 @@ class NeargridWeightMethod(MethodBase):
         # correct indices
         labels = np.abs(labels) - 1
 
-        logging.info("Refining charges and volumes")
         # get final edges
         edge_mask = get_edges(
             labels,
             neighbor_transforms,
             self.vacuum_mask,
         )
-
+        logging.info("Assigning Interior Charge and Volume")
         # get interior charge/volume
         charges, volumes, vacuum_charge, vacuum_volume = (
             get_interior_basin_charges_and_volumes(
@@ -140,6 +139,7 @@ class NeargridWeightMethod(MethodBase):
             )
         )
 
+        logging.info("Assigning Edge Charges and Volumes")
         # Now we want to split the charge of the edges using the weight method.
         # get voronoi neighbors/weights
         voronoi_neighbor_transforms, voronoi_neighbor_dists, facet_areas, _ = (
@@ -152,7 +152,6 @@ class NeargridWeightMethod(MethodBase):
         edge_data = charge_data[edge_mask]
         # sort the data
         sorted_indices = np.argsort(edge_data, kind="stable")
-
         # get edge charge/volume
         charges, volumes = get_edge_charges_volumes(
             reference_data=reference_data,
