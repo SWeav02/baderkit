@@ -6,7 +6,7 @@ Fortran code within the Python ecosystem. It is built on
 top of the [PyMatGen](https://pymatgen.org/) package, allowing for
 easy extension to other projects. Under the hood, BaderKit runs on [Numba](https://numba.pydata.org/numba-doc/dev/index.html) 
 and [NumPy](https://numpy.org/doc/stable/index.html) to parallelize and vectorize
-calculations. This allows BaderKit to reach speeds [comparable or faster](/baderkit/implementation/#speed-convergence-and-orientation-benchmarks)
+calculations. This allows BaderKit to reach speeds [comparable or faster](/baderkit/implementation/#__tabbed_2_1)
 than the original code.
 
 ---

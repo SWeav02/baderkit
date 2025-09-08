@@ -5,7 +5,7 @@ import logging
 import numpy as np
 
 from baderkit.core.methods.base import MethodBase
-from baderkit.core.methods.shared_numba import get_edges
+from baderkit.core.methods.shared_numba import combine_maxima_frac, get_edges
 
 from .neargrid_numba import (
     get_gradient_pointers_overdetermined,
@@ -34,7 +34,7 @@ class NeargridMethod(MethodBase):
         grid = self.reference_grid.copy()
         # get neigbhor transforms
         neighbor_transforms, neighbor_dists = grid.point_neighbor_transforms
-        logging.info("Calculating gradients")
+        logging.info("Calculating Gradients")
         if not self._use_overdetermined:
             # calculate gradients and pointers to best neighbors
             labels, gradients, self._maxima_mask = get_gradient_pointers_simple(
@@ -43,7 +43,6 @@ class NeargridMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                initial_labels=grid.flat_grid_indices,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system
@@ -64,14 +63,11 @@ class NeargridMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                initial_labels=grid.flat_grid_indices,
             )
-        # Convert to 1D. We use the same name for minimal memory
-        labels = labels.ravel()
         # Find roots
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
-        logging.info("Finding roots")
+        logging.info("Finding Roots")
         labels = self.get_roots(labels)
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
@@ -81,8 +77,16 @@ class NeargridMethod(MethodBase):
             labels -= 1
         # reconstruct a 3D array with our labels
         labels = labels.reshape(grid.shape)
+        # get frac coords
+        maxima_frac = grid.grid_to_frac(self.maxima_vox)
+        self._maxima_frac = combine_maxima_frac(
+            labels,
+            self.maxima_vox,
+            maxima_frac,
+        )
+        logging.info("Starting Edge Refinement")
         # reduce maxima/basins
-        labels, self._maxima_frac = self.reduce_label_maxima(labels)
+        # labels, self._maxima_frac = self.reduce_label_maxima(labels)
         # shift to vacuum at 0
         labels += 1
 
@@ -105,7 +109,6 @@ class NeargridMethod(MethodBase):
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
-            initial_labels=grid.flat_grid_indices,
         )
 
         # switch negative labels back to positive and subtract by 1 to get to
@@ -116,6 +119,7 @@ class NeargridMethod(MethodBase):
             "basin_labels": labels,
         }
         # assign charges/volumes, etc.
+        logging.info("Assigning Charges and Volumes")
         results.update(self.get_basin_charges_and_volumes(labels))
         results.update(self.get_extras())
         return results

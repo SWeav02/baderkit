@@ -3,6 +3,7 @@
 import itertools
 import logging
 import math
+import time
 from copy import deepcopy
 from enum import Enum
 from functools import cached_property
@@ -234,6 +235,7 @@ class Grid(VolumetricData):
             ).reshape(self.shape)
         return self._flat_grid_indices
 
+    # TODO: Do this with numba to reduce memory and probably increase speed
     @property
     def point_dists(self) -> NDArray[float]:
         """
@@ -1673,14 +1675,16 @@ class Grid(VolumetricData):
             Grid from the specified file.
 
         """
-        logging.info(f"Loading {grid_file} from file")
+        logging.info(f"Loading {grid_file}")
+        t0 = time.time()
         # get structure and data from file
         grid_file = Path(grid_file)
         structure, data, data_aug = read_vasp(grid_file)
         # guess data type
         if data_type is None:
             data_type = cls._guess_file_format(grid_file.name, data["total"])
-
+        t1 = time.time()
+        logging.info(f"Time: {round(t1-t0,2)}")
         return cls(
             structure=structure,
             data=data,
@@ -1714,13 +1718,18 @@ class Grid(VolumetricData):
             Grid from the specified file.
 
         """
-        logging.info(f"Loading {grid_file} from file")
+        logging.info(f"Loading {grid_file}")
+        t0 = time.time()
+        # make sure path is a Path object
+        grid_file = Path(grid_file)
         structure, data, ion_charges, origin = read_cube(grid_file)
         # TODO: Also save the ion charges/origin for writing later
 
         # guess data type
         if data_type is None:
             data_type = cls._guess_file_format(grid_file.name, data["total"])
+        t1 = time.time()
+        logging.info(f"Time: {round(t1-t0,2)}")
         return cls(
             structure=structure,
             data=data,
@@ -1754,13 +1763,17 @@ class Grid(VolumetricData):
             Grid from the specified file.
 
         """
-        logging.info(f"Loading {grid_file} from file")
+        logging.info(f"Loading {grid_file}")
+        t0 = time.time()
+        # make sure path is a Path object
+        grid_file = Path(grid_file)
         # Create string to add structure to.
         poscar, data, data_aug = cls.parse_file(grid_file)
         # guess data type
         if data_type is None:
             data_type = cls._guess_file_format(grid_file.name, data["total"])
-
+        t1 = time.time()
+        logging.info(f"Time: {round(t1-t0,2)}")
         return cls(structure=poscar.structure, data=data, data_aug=data_aug)
 
     @classmethod

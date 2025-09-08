@@ -5,6 +5,7 @@ import logging
 import numpy as np
 
 from baderkit.core.methods.base import MethodBase
+from baderkit.core.methods.shared_numba import combine_maxima_frac
 
 from .ongrid_numba import get_steepest_pointers
 
@@ -31,17 +32,13 @@ class OngridMethod(MethodBase):
         neighbor_transforms, neighbor_dists = grid.point_neighbor_transforms
         # For each voxel, get the label of the surrounding voxel that has the highest
         # density
-        logging.info("Calculating steepest neighbors")
-        pointers_3d, self._maxima_mask = get_steepest_pointers(
+        logging.info("Calculating Steepest Neighbors")
+        pointers, self._maxima_mask = get_steepest_pointers(
             data=data,
-            initial_labels=grid.flat_grid_indices,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             vacuum_mask=self.vacuum_mask,
         )
-        # ravel the best labels to get a 1D array pointing from each voxel to its steepest
-        # neighbor
-        pointers = pointers_3d.ravel()
         # Our pointers object is a 1D array pointing each voxel to its parent voxel. We
         # essentially have a classic forest of trees problem where each maxima is
         # a root and we want to point all of our voxels to their respective root.
@@ -49,7 +46,7 @@ class OngridMethod(MethodBase):
         # the index that its parent was pointing at.
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
-        logging.info("Finding roots")
+        logging.info("Finding Roots")
         pointers = self.get_roots(pointers)
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
@@ -60,13 +57,21 @@ class OngridMethod(MethodBase):
             labels_flat -= 1
         # reconstruct a 3D array with our labels
         labels = labels_flat.reshape(shape)
-        # reduce maxima/basins
-        labels, self._maxima_frac = self.reduce_label_maxima(labels)
+        # Get the frac coords of each maximum, including averaging of neighboring
+        # local maxima
+        maxima_frac = grid.grid_to_frac(self.maxima_vox)
+        self._maxima_frac = combine_maxima_frac(
+            labels,
+            self.maxima_vox,
+            maxima_frac,
+        )
+        # labels, self._maxima_frac = self.reduce_label_maxima(labels)
         # assign all results
         results = {
             "basin_labels": labels,
         }
         # assign charges/volumes, etc.
+        logging.info("Assigning Charges and Volumes")
         results.update(self.get_basin_charges_and_volumes(labels))
         results.update(self.get_extras())
         return results

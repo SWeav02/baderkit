@@ -9,6 +9,19 @@ from numpy.typing import NDArray
 ###############################################################################
 
 
+@njit(fastmath=True, cache=True, inline="always")
+def flat_to_coords(idx, nx, ny, nz):
+    i = idx // (ny * nz)
+    j = (idx % (ny * nz)) // nz
+    k = idx % nz
+    return i, j, k
+
+
+@njit(fastmath=True, cache=True, inline="always")
+def coords_to_flat(i, j, k, nx, ny, nz):
+    return i * (ny * nz) + j * nz + k
+
+
 @njit(parallel=True, cache=True)
 def get_edges(
     labeled_array: NDArray[np.int64],
@@ -155,7 +168,7 @@ def get_basin_charges_and_volumes(
     return charges, volumes, vacuum_charge, vacuum_volume
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def wrap_point(
     i: np.int64, j: np.int64, k: np.int64, nx: np.int64, ny: np.int64, nz: np.int64
 ) -> tuple[np.int64, np.int64, np.int64]:
@@ -200,7 +213,7 @@ def wrap_point(
     return i, j, k
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def get_gradient_simple(
     data: NDArray[np.float64],
     voxel_coord: NDArray[np.int64],
@@ -261,7 +274,7 @@ def get_gradient_simple(
 # This is an alternative method for calculating the gradient that uses all of
 # the neighbors for each grid point to get an overdetermined system with improved
 # sampling. I didn't find it made a big difference.
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def get_gradient_overdetermined(
     data,
     i,
@@ -317,6 +330,89 @@ def get_gradient_overdetermined(
     return ti, tj, tk
 
 
+@njit(fastmath=True, cache=True)
+def merge_frac_coords(
+    frac_coords,
+):
+
+    # We'll accumulate (unwrapped) coordinates into total
+    total0 = 0.0
+    total1 = 0.0
+    total2 = 0.0
+    count = 0
+
+    # reference coord used for unwrapping
+    ref0 = 0.0
+    ref1 = 0.0
+    ref2 = 0.0
+    ref_set = False
+
+    # scan all maxima and pick those that belong to this target_group
+    for c0, c1, c2 in frac_coords:
+
+        # first seen -> set reference for unwrapping
+        if not ref_set:
+            ref0, ref1, ref2 = c0, c1, c2
+            ref_set = True
+
+        # unwrap coordinate relative to reference: unwrapped = coord - round(coord - ref)
+        # Using np.round via float -> use built-in round for numba compatibility
+        # but call round(x) (returns float)
+        un0 = c0 - round(c0 - ref0)
+        un1 = c1 - round(c1 - ref1)
+        un2 = c2 - round(c2 - ref2)
+
+        # add to total
+        total0 += un0
+        total1 += un1
+        total2 += un2
+        count += 1
+
+    if count == 1:
+        # return original point wrapped to [0,1)
+        return np.array((ref0 % 1.0, ref1 % 1.0, ref2 % 1.0), dtype=np.float64)
+
+    else:
+        # return average of points
+        avg0 = (total0 / count) % 1.0
+        avg1 = (total1 / count) % 1.0
+        avg2 = (total2 / count) % 1.0
+        return np.array((avg0, avg1, avg2), dtype=np.float64)
+
+
+@njit(cache=True, fastmath=True)
+def combine_maxima_frac(
+    labels,
+    maxima_vox,
+    maxima_frac,
+):
+    # get the labels at each maximum
+    maxima_labels = np.empty(len(maxima_vox), dtype=np.int64)
+    for max_idx in prange(len(maxima_vox)):
+        i, j, k = maxima_vox[max_idx]
+        maxima_labels[max_idx] = labels[i, j, k]
+
+    # find unique labels
+    unique_labels = np.unique(maxima_labels)
+    n_unique = len(unique_labels)
+
+    # Prepare result arrays
+    all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
+
+    # Parallel loop: for each unique label, scan new_labels and compute the average
+    # frac coords
+    for u_idx in prange(n_unique):
+        target_label = unique_labels[u_idx]
+        # get the frac coords for maxima with this label
+        frac_coords = []
+        for max_idx, label in enumerate(maxima_labels):
+            if label == target_label:
+                frac_coords.append(maxima_frac[max_idx])
+        # get average frac coords and assign
+        all_frac_coords[u_idx] = merge_frac_coords(frac_coords)
+    return all_frac_coords
+
+
 @njit(cache=True, parallel=True)
 def combine_neigh_maxima(
     labels,
@@ -328,7 +424,7 @@ def combine_neigh_maxima(
     nx, ny, nz = labels.shape
     initial_labels = np.arange(len(maxima_vox), dtype=np.int64)
     new_labels = np.zeros(len(maxima_vox), dtype=np.int64)
-    # check each neighbor and it its a max with a lower index, update the index
+    # check each neighbor and if its a max with a lower index, update the index
     for max_idx in prange(len(maxima_vox)):
         i, j, k = maxima_vox[max_idx]
         best_label = initial_labels[max_idx]
@@ -356,76 +452,24 @@ def combine_neigh_maxima(
 
     # Prepare result arrays
     reduced_new_labels = np.empty(len(new_labels), dtype=np.int64)
-    frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
+    all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
 
-    # Parallel loop: for each unique label, scan new_labels and compute the average
+    # Parallel loop: for each unique label, scan new_labels and get average
+    # frac coords
     for u_idx in prange(n_unique):
         target_label = unique_labels[u_idx]
+        frac_coords = []
+        for max_idx, label in enumerate(new_labels):
+            if label == target_label:
+                frac_coords.append(maxima_frac[max_idx])
+                reduced_new_labels[max_idx] = u_idx
+        # combine frac coords
+        all_frac_coords[u_idx] = merge_frac_coords(frac_coords)
 
-        # We'll accumulate (unwrapped) coordinates into total
-        total0 = 0.0
-        total1 = 0.0
-        total2 = 0.0
-        count = 0
-
-        # reference coord used for unwrapping
-        ref0 = 0.0
-        ref1 = 0.0
-        ref2 = 0.0
-        ref_set = False
-
-        # scan all maxima and pick those that belong to this target_group
-        for m in range(len(new_labels)):
-            lab = new_labels[m]
-            # skip if not part of this group
-            if lab != target_label:
-                continue
-
-            # assign reduced label (sequential index u_idx)
-            reduced_new_labels[m] = u_idx
-
-            # first seen -> set reference for unwrapping
-            c0 = maxima_frac[m, 0]
-            c1 = maxima_frac[m, 1]
-            c2 = maxima_frac[m, 2]
-            if not ref_set:
-                ref0, ref1, ref2 = c0, c1, c2
-                ref_set = True
-
-            # unwrap coordinate relative to reference: unwrapped = coord - round(coord - ref)
-            # Using np.round via float -> use built-in round for numba compatibility
-            # but call round(x) (returns float)
-            un0 = c0 - round(c0 - ref0)
-            un1 = c1 - round(c1 - ref1)
-            un2 = c2 - round(c2 - ref2)
-
-            total0 += un0
-            total1 += un1
-            total2 += un2
-            count += 1
-
-        # if no members (shouldn't happen) skip
-        if count == 0:
-            # mark nothing (for safety)
-            continue
-
-        if count == 1:
-            # only one member -> use it directly (and ensure in [0,1))
-            frac_coords[u_idx, 0] = ref0 % 1.0
-            frac_coords[u_idx, 1] = ref1 % 1.0
-            frac_coords[u_idx, 2] = ref2 % 1.0
-        else:
-            avg0 = (total0 / count) % 1.0
-            avg1 = (total1 / count) % 1.0
-            avg2 = (total2 / count) % 1.0
-            frac_coords[u_idx, 0] = avg0
-            frac_coords[u_idx, 1] = avg1
-            frac_coords[u_idx, 2] = avg2
-
-    return reduced_new_labels, frac_coords
+    return reduced_new_labels, all_frac_coords
 
 
-@njit(cache=True)
+@njit(cache=True, inline="always")
 def get_best_neighbor(
     data: NDArray[np.float64],
     i: np.int64,
@@ -490,6 +534,17 @@ def get_best_neighbor(
             best = diff
             bti, btj, btk = (si, sj, sk)
             bni, bnj, bnk = (ii, jj, kk)
+        # if the neighbor has the same value as the current point, we likely
+        # have adjacent maxima. If the neighbor has a lower flat index than the
+        # current point, we use it as our pointer
+        elif diff == 0.0:
+            # get the flat idx of the current best neighbor and this neighbor
+            flat_idx = coords_to_flat(bni, bnj, bnk, nx, ny, nz)
+            flat_neigh = coords_to_flat(ii, jj, kk, nx, ny, nz)
+            # if the neighbors index is lower, update our best neigh/transform
+            if flat_neigh < flat_idx:
+                bti, btj, btk = (si, sj, sk)
+                bni, bnj, bnk = (ii, jj, kk)
     # We've finished our loop. return the best shift, neighbor, and whether this
     # is a max
     # NOTE: Can't do is_max = best == 0.0 for older numba
@@ -557,3 +612,43 @@ def climb_to_max(
         # otherwise, update coord
         i, j, k = (mi, mj, mk)
     return mi, mj, mk
+
+
+@njit(cache=True, fastmath=True)
+def get_min_dists(
+    labels,
+    frac_coords,
+    edge_indices,
+    matrix,
+    max_value,
+):
+    nx, ny, nz = labels.shape
+    # create array to store best dists
+    dists = np.full(len(frac_coords), max_value, dtype=np.float64)
+    for i, j, k in edge_indices:
+        # get label at edge
+        label = labels[i, j, k]
+        # convert from voxel indices to frac
+        fi = i / nx
+        fj = j / ny
+        fk = k / nz
+        # calculate the distance to the appropriate frac coord
+        ni, nj, nk = frac_coords[label]
+        # get differences between each index
+        di = ni - fi
+        dj = nj - fj
+        dk = nk - fk
+        # wrap at edges to be as close as possible
+        di -= round(di)
+        dj -= round(dj)
+        dk -= round(dk)
+        # convert to cartesian coordinates
+        ci = di * matrix[0, 0] + dj * matrix[1, 0] + dk * matrix[2, 0]
+        cj = di * matrix[0, 1] + dj * matrix[1, 1] + dk * matrix[2, 1]
+        ck = di * matrix[0, 2] + dj * matrix[1, 2] + dk * matrix[2, 2]
+        # calculate distance
+        dist = np.linalg.norm(np.array((ci, cj, ck), dtype=np.float64))
+        # if this is the lowest distance, update radius
+        if dist < dists[label]:
+            dists[label] = dist
+    return dists

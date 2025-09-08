@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import logging
 import math
+import mmap
 from enum import Enum
 from pathlib import Path
 
@@ -44,30 +46,42 @@ def detect_format(filename: str | Path):
             raise ValueError("File format not recognized.")
 
 
-def read_vasp(filename: str | Path):
-    filename = Path(filename)
-    with open(filename, "r") as f:
-        ###########################################################################
-        # Read Structure
-        ###########################################################################
+def read_vasp(filename):
+    path = Path(filename)
+    ###########################################################################
+    # Read Structure. Open in string read mode
+    ###########################################################################
+    with open(path, "r") as f:
         # Read header lines first
-        next(f)  # line 0
-        scale = float(next(f).strip())  # line 1
+        f.readline()  # line 0
+        scale = float(f.readline().strip())  # line 1
 
         lattice_matrix = (
-            np.array([[float(x) for x in next(f).split()] for _ in range(3)]) * scale
+            np.array([[float(x) for x in f.readline().split()] for _ in range(3)])
+            * scale
         )
 
-        atom_types = next(f).split()
-        atom_counts = list(map(int, next(f).split()))
+        atom_types = f.readline().split()
+        atom_counts = list(map(int, f.readline().split()))
         total_atoms = sum(atom_counts)
 
         # Skip the 'Direct' or 'Cartesian' line
-        next(f)
+        f.readline()
 
         coords = np.array(
-            [list(map(float, next(f).split())) for _ in range(total_atoms)]
+            [list(map(float, f.readline().split())) for _ in range(total_atoms)]
         )
+
+        # Skip empty line
+        f.readline()
+        # get dimensions
+        fft_dim_str = f.readline()
+        fft_dim_bytes = fft_dim_str.encode("latin1").strip()
+        # The next line is the start of the data. Record this point
+        data_start_offset = f.tell()
+        # Also get a single line of data
+        data_line = f.readline()
+        # data_line_bytes = data_line.encode("latin1")
 
         lattice = Lattice(lattice_matrix)
         atom_list = [
@@ -77,69 +91,92 @@ def read_vasp(filename: str | Path):
         ]
         structure = Structure(lattice=lattice, species=atom_list, coords=coords)
 
-        ###########################################################################
-        # Read FFT
-        ###########################################################################
-        # skip empty line
-        next(f)
-        # Read the rest of the file to avoid loop overhead
-        rest = f.readlines()
+        nx, ny, nz = map(int, fft_dim_str.split())
 
-    # get the dimensions of the grid
-    fft_dim_str = rest[0]
-    nx, ny, nz = map(int, fft_dim_str.split())
-    ngrid = nx * ny * nz
+    # Get the number of entries and how many there are per line
+    nvals = nx * ny * nz
+    vals_per_line = len(data_line.split())
+    ###########################################################################
+    # Read FFT Grids. Use byte read mode and mmap for faster read and lower memory
+    ###########################################################################
+    all_datasets = []
+    all_datasets_aug = []
+    with open(path, "rb") as fb:
+        mm = mmap.mmap(fb.fileno(), 0, access=mmap.ACCESS_READ)
+        pos = data_start_offset
 
-    # get the number of lines that should exist for each set of data
-    vals_per_line = len(rest[0].split())
-    nlines = math.ceil(ngrid / vals_per_line)
+        # move to the first line of data
+        mm.seek(pos)
+        # read a single line
+        data_line = mm.readline()
+        # determine how many extra bytes there are per line
+        extra_bytes = len(data_line) % vals_per_line
+        # get bytes per entry
+        bytes_per_entry = (len(data_line) - extra_bytes) / vals_per_line
+        # get total number of extra bytes
+        line_bytes = math.ceil((nvals) / 5) * extra_bytes
+        # get the total number of bytes per block
+        nbytes_per_block = int((bytes_per_entry * nvals) + line_bytes)
 
-    # Read datasets until end of file is reached
-    all_dataset = []
-    all_dataset_aug = {}
-    i = 0
-    n = 0
-    while True:
-        # get the remaining info without the dimension line
-        rest = rest[i + 1 :]
-        grid_lines = rest[:nlines]
-        # add the data
-        all_dataset.append(
-            np.fromstring("".join(grid_lines), sep=" ", dtype=np.float64)
-            .ravel()
-            .reshape((nx, ny, nz), order="F")
-        )
-        # loop until the next line that lists grid dimensions or
-        # the end of the file
-        i = -1
-        fft_dim_ints = tuple(map(int, fft_dim_str.split()))
-        while i < len(rest):
-            try:
-                if tuple(map(int, rest[i].split())) == fft_dim_ints:
+        while pos < mm.size():
+            # 1. slice exact byte window for this data set
+            block_bytes = mm[pos : pos + nbytes_per_block]  # returns bytes (one copy)
+            pos_block_end = pos + nbytes_per_block
+
+            # 2) decode and parse with numpy
+            # latin1 is the fastest 1:1 mapping decode
+            text = block_bytes.decode("latin1")
+            arr = np.fromstring(text, sep=" ", count=nvals, dtype=np.float64)
+            if arr.size < nvals:
+                # incomplete block or EOF
+                logging.warn("End of file reached before expected")
+                break
+
+            # 3) reshape noting VASP's Fortran ordering
+            grid = arr.reshape((nx, ny, nz), order="F")
+
+            # Optional: make C-contiguous if you want to index in C-order quickly
+            grid = np.ascontiguousarray(grid)
+
+            # move pos to end of block
+            pos = pos_block_end
+
+            # 4) collect augmentation bytes (lines) until next numeric start
+            aug_lines = []
+            mm.seek(pos)
+            while True:
+                line = mm.readline()  # returns bytes (fast)
+                if not line:
+                    # End of file
+                    pos = mm.size()
                     break
-            except:
-                pass
-            i += 1
-        # get data aug
-        if i > 0:
-            all_dataset_aug[n] = rest[:i]
-        if len(rest[i:]) == 0:
-            break
-        n += 1
+                # the end of the augment data is marked by a repeat of the grid shape
+                if line.strip() == fft_dim_bytes:
+                    pos = mm.tell()
+                    break
+                # otherwise, append line
+                else:
+                    aug_lines.append(line)
+                    pos = mm.tell()
+            augment = b"".join(aug_lines).decode("latin1")
+            all_datasets.append(grid)
+            all_datasets_aug.append(augment)
+
+        mm.close()
 
     # Check for magnetized density. Copied directly from PyMatGen
-    if len(all_dataset) == 4:
+    if len(all_datasets) == 4:
         data = {
-            "total": all_dataset[0],
-            "diff_x": all_dataset[1],
-            "diff_y": all_dataset[2],
-            "diff_z": all_dataset[3],
+            "total": all_datasets[0],
+            "diff_x": all_datasets[1],
+            "diff_y": all_datasets[2],
+            "diff_z": all_datasets[3],
         }
         data_aug = {
-            "total": all_dataset_aug.get(0),
-            "diff_x": all_dataset_aug.get(1),
-            "diff_y": all_dataset_aug.get(2),
-            "diff_z": all_dataset_aug.get(3),
+            "total": all_datasets_aug[0],
+            "diff_x": all_datasets_aug[1],
+            "diff_y": all_datasets_aug[2],
+            "diff_z": all_datasets_aug[3],
         }
 
         # Construct a "diff" dict for scalar-like magnetization density,
@@ -156,15 +193,16 @@ def read_vasp(filename: str | Path):
         diff = np.multiply(np.linalg.norm(diff_xyz, axis=0), ref_sign)
         data["diff"] = diff.reshape((nx, ny, nz))
 
-    elif len(all_dataset) == 2:
-        data = {"total": all_dataset[0], "diff": all_dataset[1]}
+    elif len(all_datasets) == 2:
+        data = {"total": all_datasets[0], "diff": all_datasets[1]}
         data_aug = {
-            "total": all_dataset_aug.get(0),
-            "diff": all_dataset_aug.get(1),
+            "total": all_datasets_aug[0],
+            "diff": all_datasets_aug[1],
         }
     else:
-        data = {"total": all_dataset[0]}
-        data_aug = {"total": all_dataset_aug.get(0)}
+        data = {"total": all_datasets[0]}
+        data_aug = {"total": all_datasets[0]}
+
     return structure, data, data_aug
 
 
@@ -289,11 +327,15 @@ def write_vasp(
 def read_cube(
     filename: str | Path,
 ):
+    # make sure file is a path object
     filename = Path(filename)
+    ###########################################################################
+    # Read Structure. Open file in string reading mode
+    ###########################################################################
     with open(filename, "r") as f:
         # Skip first two comment lines
-        next(f)
-        next(f)
+        f.readline()
+        f.readline()
 
         # Get number of ions and origin
         line = f.readline().split()
@@ -327,37 +369,56 @@ def read_cube(
             ion_charges[i] = float(line[1])
             atom_coords[i] = np.array(line[2:], dtype=float)
 
-        # convert to Angstrom
-        if bohr_units:
-            lattice_matrix /= 1.88973
-            origin /= 1.88973
-            atom_coords /= 1.88973
-        # Adjust atom positions based on origin
-        atom_coords -= origin
+        # The next line is the start of the data. Get the exact byte position
+        data_start_offset = f.tell()
 
-        # Create Structure object
-        lattice = Lattice(lattice_matrix)
-        structure = Structure(
-            lattice=lattice,
-            species=atomic_nums,
-            coords=atom_coords,
-            coords_are_cartesian=True,
-        )
+    # convert to Angstrom
+    if bohr_units:
+        lattice_matrix /= 1.88973
+        origin /= 1.88973
+        atom_coords /= 1.88973
+    # Adjust atom positions based on origin
+    atom_coords -= origin
 
-        # Read charge density
-        ngrid = shape.prod()
-        # Read all remaining numbers at once for efficiency
-        rest = f.read()
-    # get data from remaining lines
+    # Create Structure object
+    lattice = Lattice(lattice_matrix)
+    structure = Structure(
+        lattice=lattice,
+        species=atomic_nums,
+        coords=atom_coords,
+        coords_are_cartesian=True,
+    )
+
+    # Read charge density
+    ngrid = shape.prod()
+
+    ###########################################################################
+    # Read FFT Grids. Use byte read mode and mmap for faster read and lower memory
+    ###########################################################################
+    with open(filename, "rb") as fb:
+        mm = mmap.mmap(fb.fileno(), 0, access=mmap.ACCESS_READ)
+        # read the rest of the file
+        block_bytes = mm[data_start_offset:]  # returns bytes (one copy)
+        # decode and parse with numpy
+        # latin1 is the fastest 1:1 mapping decode
+        text = block_bytes.decode("latin1")
+        arr = np.fromstring(text, sep=" ", count=ngrid, dtype=np.float64)
+
+        if arr.size < ngrid:
+            # incomplete block or EOF
+            logging.warn("End of file reached before expected")
+        # reshape noting VASP's Fortran ordering
+        arr = arr.reshape(shape, order="F")
+        arr = np.ascontiguousarray(arr)
+
+        mm.close()
+
+    # adjust data to vasp conventions and store in data dict
     volume = structure.volume
     if bohr_units:
         volume *= 1.88973**3
     data = {}
-    data["total"] = (
-        np.fromstring(rest, sep=" ", dtype=np.float64, count=ngrid)
-        .ravel()
-        .reshape(shape, order="F")
-    ) * volume
+    data["total"] = arr * volume
 
     return structure, data, ion_charges, origin
 
@@ -423,6 +484,7 @@ def write_cube(
     # number of atoms and origin
     header += f"{natoms:5d}{origin[0]:12.6f}{origin[1]:12.6f}{origin[2]:12.6f}\n"
     # grid lines: npts and voxel vectors
+    # TODO: update formatting to remove leading 0s.
     for i in range(3):
         header += f"{grid.shape[i]:5d}{voxel[i,0]:12.6f}{voxel[i,1]:12.6f}{voxel[i,2]:12.6f}\n"
     # atom lines

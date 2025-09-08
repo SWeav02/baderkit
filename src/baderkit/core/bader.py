@@ -3,16 +3,16 @@
 import copy
 import importlib
 import logging
+import time
 from pathlib import Path
 from typing import Literal, TypeVar
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
-from rich.progress import track
 
 from baderkit.core.methods import Method
-from baderkit.core.methods.shared_numba import get_edges
+from baderkit.core.methods.shared_numba import get_edges, get_min_dists
 from baderkit.core.toolkit import Format, Grid, Structure
 
 # This allows for Self typing and is compatible with python 3.10
@@ -52,7 +52,7 @@ class Bader:
         self,
         charge_grid: Grid,
         reference_grid: Grid | None = None,
-        method: str | Method = Method.neargrid,
+        method: str | Method = Method.neargrid_weight,
         vacuum_tol: float | bool = 1.0e-3,
         normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
@@ -381,7 +381,7 @@ class Bader:
 
         """
         if self._basin_surface_distances is None:
-            self._get_basin_surface_distances()
+            self._basin_surface_distances = self._get_basin_surface_distances()
         return self._basin_surface_distances
 
     @property
@@ -485,7 +485,7 @@ class Bader:
 
         """
         if self._atom_surface_distances is None:
-            self._get_atom_surface_distances()
+            self._atom_surface_distances = self._get_atom_surface_distances()
         return self._atom_surface_distances
 
     @property
@@ -676,6 +676,8 @@ class Bader:
         None
 
         """
+        t0 = time.time()
+        logging.info(f"Beginning Bader Algorithm Using '{self.method}' Method")
         # Normalize the method name to a module and class name
         module_name = self.method.replace(
             "-", "_"
@@ -701,6 +703,9 @@ class Bader:
 
         for key, value in results.items():
             setattr(self, f"_{key}", value)
+        t1 = time.time()
+        logging.info("Bader Algorithm Complete")
+        logging.info(f"Time: {round(t1-t0,2)}")
 
     def run_atom_assignment(self, structure: Structure = None):
         """
@@ -723,11 +728,11 @@ class Bader:
 
         # Shorthand access
         basins = self.basin_maxima_frac  # (N_basins, 3)
+        t0 = time.time()
+        logging.info("Assigning Atom Properties")
         atoms = structure.frac_coords  # (N_atoms, 3)
         L = structure.lattice.matrix  # (3, 3)
         N_basins, N_atoms = len(basins), len(atoms)
-
-        logging.info("Assigning atom properties")
 
         # Vectorized deltas, minimum‑image wrapping
         diffs = atoms[None, :, :] - basins[:, None, :]
@@ -765,6 +770,50 @@ class Bader:
         self._atom_labels = atom_labels
         self._atom_charges = atom_charges
         self._atom_volumes = atom_volumes
+        logging.info("Atom Assignment Finished")
+        t1 = time.time()
+        logging.info(f"Time: {round(t1-t0, 2)}")
+
+    # def _get_atom_surface_distances(self):
+    #     """
+    #     Calculates the distance from each atom to the nearest surface. This is
+    #     automatically called during the atom assignment and generally should
+    #     not be called manually.
+
+    #     Returns
+    #     -------
+    #     None.
+
+    #     """
+    #     atom_labeled_voxels = self.atom_labels
+    #     atom_radii = []
+    #     # NOTE: We don't use the atom_edges property because its usually not
+    #     # needed by users and takes up more space in memory
+    #     edge_mask = self.atom_edges
+    #     for atom_index in track(
+    #         range(len(self.structure)), description="Calculating atom radii"
+    #     ):
+    #         # get the voxels corresponding to the interior edge of this basin
+    #         atom_edge_mask = (atom_labeled_voxels == atom_index) & edge_mask
+    #         edge_vox_coords = np.argwhere(atom_edge_mask)
+    #         # convert to frac coords
+    #         edge_frac_coords = self.reference_grid.grid_to_frac(edge_vox_coords)
+    #         atom_frac_coord = self.structure.frac_coords[atom_index]
+    #         # Get the difference in coords between atom and edges
+    #         coord_diff = atom_frac_coord - edge_frac_coords
+    #         # Wrap any coords that are more than 0.5 or less than -0.5
+    #         coord_diff -= np.round(coord_diff)
+    #         # Convert to cartesian coordinates
+    #         cart_coords = self.reference_grid.frac_to_cart(coord_diff)
+    #         # Calculate distance of each
+    #         norm = np.linalg.norm(cart_coords, axis=1)
+    #         if len(norm) == 0:
+    #             logging.warning(f"No volume assigned to atom at site {atom_index}.")
+    #             atom_radii.append(0)
+    #         else:
+    #             atom_radii.append(norm.min())
+    #     atom_radii = np.array(atom_radii)
+    #     self._atom_surface_distances = atom_radii
 
     def _get_atom_surface_distances(self):
         """
@@ -777,35 +826,13 @@ class Bader:
         None.
 
         """
-        atom_labeled_voxels = self.atom_labels
-        atom_radii = []
-        # NOTE: We don't use the atom_edges property because its usually not
-        # needed by users and takes up more space in memory
-        edge_mask = self.atom_edges
-        for atom_index in track(
-            range(len(self.structure)), description="Calculating atom radii"
-        ):
-            # get the voxels corresponding to the interior edge of this basin
-            atom_edge_mask = (atom_labeled_voxels == atom_index) & edge_mask
-            edge_vox_coords = np.argwhere(atom_edge_mask)
-            # convert to frac coords
-            edge_frac_coords = self.reference_grid.grid_to_frac(edge_vox_coords)
-            atom_frac_coord = self.structure.frac_coords[atom_index]
-            # Get the difference in coords between atom and edges
-            coord_diff = atom_frac_coord - edge_frac_coords
-            # Wrap any coords that are more than 0.5 or less than -0.5
-            coord_diff -= np.round(coord_diff)
-            # Convert to cartesian coordinates
-            cart_coords = self.reference_grid.frac_to_cart(coord_diff)
-            # Calculate distance of each
-            norm = np.linalg.norm(cart_coords, axis=1)
-            if len(norm) == 0:
-                logging.warning(f"No volume assigned to atom at site {atom_index}.")
-                atom_radii.append(0)
-            else:
-                atom_radii.append(norm.min())
-        atom_radii = np.array(atom_radii)
-        self._atom_surface_distances = atom_radii
+        return get_min_dists(
+            labels=self.atom_labels,
+            frac_coords=self.structure.frac_coords,
+            edge_indices=np.argwhere(self.atom_edges),
+            matrix=self.reference_grid.matrix,
+            max_value=np.max(self.structure.lattice.abc) * 2,
+        )
 
     def _get_basin_surface_distances(self):
         """
@@ -818,30 +845,14 @@ class Bader:
         None.
 
         """
-        basin_labeled_voxels = self.basin_labels
-        basin_radii = []
-        # NOTE: We don't use the basin_edges property because its usually not
-        # needed by users and takes up more space in memory
-        edge_mask = self.basin_edges
-        for basin in track(
-            range(len(self.basin_maxima_frac)), description="Calculating feature radii"
-        ):
-            # We only calculate the edges for significant basins
-            if not self.significant_basins[basin]:
-                basin_radii.append(0.0)
-                continue
-            basin_edge_mask = (basin_labeled_voxels == basin) & edge_mask
-            edge_vox_coords = np.argwhere(basin_edge_mask)
-            edge_frac_coords = self.reference_grid.grid_to_frac(edge_vox_coords)
-            basin_frac_coord = self.basin_maxima_frac[basin]
-
-            coord_diff = basin_frac_coord - edge_frac_coords
-            coord_diff -= np.round(coord_diff)
-            cart_coords = self.reference_grid.frac_to_cart(coord_diff)
-            norm = np.linalg.norm(cart_coords, axis=1)
-            basin_radii.append(norm.min())
-        basin_radii = np.array(basin_radii)
-        self._basin_surface_distances = basin_radii
+        # get the minimum distances
+        return get_min_dists(
+            labels=self.basin_labels,
+            frac_coords=self.basin_maxima_frac,
+            edge_indices=np.argwhere(self.basin_edges),
+            matrix=self.reference_grid.matrix,
+            max_value=np.max(self.structure.lattice.abc) * 2,
+        )
 
     @classmethod
     def from_vasp(
@@ -1346,9 +1357,9 @@ class Bader:
         ):
             # Note what we're writing in log
             if "atom" in name:
-                logging.info(f"Writing atom summary to {name}")
+                logging.info(f"Writing Atom Summary to {name}")
             else:
-                logging.info(f"Writing basin summary to {name}")
+                logging.info(f"Writing Basin Summary to {name}")
 
             # write output summaries
             with open(directory / name, "w") as f:
