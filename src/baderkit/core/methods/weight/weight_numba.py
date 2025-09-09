@@ -25,7 +25,8 @@ def get_weight_assignments(
     num_coords = len(sorted_indices)
     full_num_coords = nx * ny * nz
     # create arrays to store neighs. Don't store flux yet
-    neigh_array = np.empty((num_coords, len(neighbor_transforms)), dtype=np.uint32)
+    num_transforms = len(neighbor_transforms)
+    neigh_array = np.empty((num_coords, num_transforms), dtype=np.uint32)
     neigh_nums = np.empty(num_coords, dtype=np.uint8)
     # Create a 1D array to store labels
     labels = np.full(full_num_coords, -1, dtype=np.int64)
@@ -67,7 +68,6 @@ def get_weight_assignments(
             neigh_idx = coords_to_flat(ii, jj, kk, nx, ny, nz)
             neigh_array[sorted_idx, neigh_num] = neigh_idx
             neigh_num += 1
-        # set neighbor num
         neigh_nums[sorted_idx] = neigh_num
 
         # Check if we had any higher neighbors
@@ -112,7 +112,7 @@ def get_weight_assignments(
             if neigh_num != len(neighbor_transforms):
                 neigh_array[sorted_idx, neigh_num] = full_num_coords
             continue        
-        
+
     ###########################################################################
     # Assign interior
     ###########################################################################
@@ -127,8 +127,10 @@ def get_weight_assignments(
         if neigh_num > 0:
             # This is not a maximum. Check if interior point (single basin)
             best_label = -1
-            for neigh_idx in range(neigh_num):
-                label = labels[neighs[neigh_idx]]
+            for neigh_idx, neigh in enumerate(neighs):
+                if neigh_idx == neigh_num:
+                    break
+                label = labels[neigh]
                 if label == -1:
                     # This neighbor is not an interior and this one can't be either
                     best_label = -1
@@ -149,7 +151,7 @@ def get_weight_assignments(
             # to multiple basins. We add it to our list.
             else:
                 edge_sorted_indices.append(sorted_idx)
-        elif neigh_num == 0:
+        else:
             # This is a local maximum. Add it to our list of indices
             maxima_vox.append((flat_to_coords(idx, nx, ny, nz)))
             # Check if there are any neighboring maxima that have already been assigned
@@ -174,17 +176,22 @@ def get_weight_assignments(
                 labels[idx] = best_label
                 charges[best_label] += flat_charge[idx]
                 volumes[best_label] += 1
+    
+    # convert charges/volumes to arrays
+    charges = np.array(charges, dtype=np.float64)
+    volumes = np.array(volumes, dtype=np.float64)
 
     ###########################################################################
     # Fluxes
     ###########################################################################
     # We only need to calculate the flux for each exterior point. Create an array
     # to store these.
-    flux_array = np.empty((len(edge_sorted_indices), len(neighbor_transforms)), dtype=np.float64)
+    num_edges = len(edge_sorted_indices)
+    flux_array = np.empty((num_edges, num_transforms), dtype=np.float64)
     neigh_array = np.empty_like(flux_array, dtype=np.int64)
-    neigh_nums = np.empty(len(edge_sorted_indices), dtype=np.uint8)
+    neigh_nums = np.empty(num_edges, dtype=np.uint8)
     # create mask to note if this point has neighbors that are also exterior
-    only_interor_neighs = np.zeros(len(edge_sorted_indices), dtype=np.bool_)
+    only_interor_neighs = np.zeros(num_edges, dtype=np.bool_)
     # create an array to store pointers from idx to edge idx
     idx_to_edge = np.empty(full_num_coords, dtype=np.uint32)
     # calculate fluxes in parallel. If possible, we will immediately calculate the
@@ -244,15 +251,15 @@ def get_weight_assignments(
         if no_exterior_neighs:
             only_interor_neighs[edge_idx] = True
         # normalize fluxes
-        for neigh_idx in range(neigh_num):
-            neigh_fluxes[neigh_idx] /= total_flux
-            
+        neigh_fluxes /= total_flux
+
     ###########################################################################
     # Edge assignments
     ###########################################################################
     # Now we have the fluxes (and some weights) at each edge point. We loop over
     # them from high to low and assign charges, volumes, and labels
     scratch_weights = np.zeros(len(charges), dtype=np.float64)
+    approx_charges = charges.copy()
     all_weights = []
     all_labels = []
     for edge_idx, (fluxes, neighs, neigh_num, only_interior) in enumerate(zip(flux_array, neigh_array, neigh_nums, only_interor_neighs)):
@@ -260,72 +267,87 @@ def get_weight_assignments(
         idx = sorted_indices[sorted_idx]
         charge = flat_charge[idx]
         
+        current_labels = []
+        current_weights = []
+        # Loop over neighbors and calculate weights for this point
+        for neigh_idx, (flux, label) in enumerate(zip(fluxes, neighs)):
+            if neigh_idx == neigh_num:
+                break
+        # NOTE: I was looping over neigh_num here, but sometimes this caused a
+        # crash. Maybe numba is trying to us prange even though I didn't ask it to?
+        # for neigh_idx in range(neigh_num):
+        #     flux = fluxes[neigh_idx]
+        #     label = neighs[neigh_idx]
+            if label >= 0:
+                # This is actually a basin rather than another edge index.
+                if scratch_weights[label] == 0.0:
+                    current_labels.append(label)
+                scratch_weights[label] += flux
+                continue
+            # otherwise, this is another edge index. Get its weight
+            label = -label - 1 # convert back to actual neighbor index
+            neigh_edge_idx = idx_to_edge[label]
+            neigh_labels = all_labels[neigh_edge_idx]
+            neigh_weights = all_weights[neigh_edge_idx]
+            # loop over neighbors weights and add the portion assigned to this
+            # voxel
+            for label, weight in zip(neigh_labels, neigh_weights):
+                # if there is no weight at this label yet, its new. Add it to our list
+                if scratch_weights[label] == 0.0:
+                    current_labels.append(label)
+                scratch_weights[label] += flux*weight
+                continue
+            
+        # Now loop over each label and assign charges, volumes, and labels
         best_label = -1
         best_weight = 0.0
         tied_labels = False
-        current_labels = []
-        current_weights = []
-        
-        if only_interior:
-            # We've already calculated weights for this point. Just assign charge, volume, and label
-            for neigh_idx in range(neigh_num):
-                weight = fluxes[neigh_idx]
-                label = neighs[neigh_idx]
-                charges[label] += charge * weight
-                volumes[label] += weight
-                if weight > best_weight:
-                    best_label = label
-                    best_weight = weight
-                    tied_labels = False
-                elif weight == best_weight:
-                    tied_labels == True
-                # add weights/labels to list for later points
-                current_weights.append(weight)
-                current_labels.append(label)
-        
-        else:
-            # otherwise, at least one label is also an edge. We need to calculate
-            # weights
-            for neigh_idx in range(neigh_num):
-                flux = fluxes[neigh_idx]
-                label = neighs[neigh_idx]
-                if label >= 0:
-                    # This is actually a basin rather than another edge index.
-                    if scratch_weights[label] == 0.0:
-                        current_labels.append(label)
-                    scratch_weights[label] += flux
-                    continue
-                # otherwise, this is another edge index. Get its weight
-                label = -label - 1 # convert back to actual neighbor index
-                neigh_edge_idx = idx_to_edge[label]
-                neigh_labels = all_labels[neigh_edge_idx]
-                neigh_weights = all_weights[neigh_edge_idx]
-                for label, weight in zip(neigh_labels, neigh_weights):
-                    if scratch_weights[label] == 0.0:
-                        current_labels.append(label)
-                    scratch_weights[label] += flux*weight
-                    continue
-            # Now we loop over each label and assign charges, volumes, and labels
-            for label in current_labels:
-                weight = scratch_weights[label]
-                charges[label] += charge * weight
-                volumes[label] += weight
-                if weight > best_weight:
-                    best_label = label
-                    best_weight = weight
-                    tied_labels = False
-                elif weight == best_weight:
-                    tied_labels == True
-                # add weight to current weights and reset scratch
-                current_weights.append(weight)
-                scratch_weights[label] = 0.0
-        labels[idx] = best_label
+        tol = 1e-6 # for floating point errors
+        for label in current_labels:
+            weight = scratch_weights[label]
+            charges[label] += charge * weight
+            volumes[label] += weight
+            if weight > best_weight + tol: # greater than with a tolerance
+                best_label = label
+                best_weight = weight
+                tied_labels = False
+            elif weight > best_weight - tol: # equal to with a tolerance
+                tied_labels == True
+            # add weight to current weights and reset scratch
+            current_weights.append(weight)
+            scratch_weights[label] = 0.0
+        # add weights/labels for this point to our list
         all_weights.append(current_weights)
         all_labels.append(current_labels)
+        
+        # Now we want to assign our label. If there wasn't a tie in our labels,
+        # we assign to highest weight
+        if not tied_labels:
+            labels[idx] = best_label
+            approx_charges[best_label] += charge
+        else:
+            # we have a tie. We assign to the basin where the added charge will
+            # most improve the approximate charge
+            best_improvement = -1.0
+            for label, weight in zip(current_labels, current_weights):
+                if weight < best_weight-tol:
+                    continue
+                # calculate the difference from the current charge before and
+                # after adding this point
+                diff = approx_charges[label] - charges[label]
+                before = abs(diff)
+                after =  abs(diff + charge)
+                improvement = (before - after) / charges[label]
+                if improvement > best_improvement:
+                    best_improvement = improvement
+                    best_label = label
+            labels[idx] = best_label
+            approx_charges[best_label] += charge
+
     return (
         labels,
-        np.array(charges, dtype=np.float64),
-        np.array(volumes, dtype=np.float64),
+        charges,
+        volumes,
         np.array(maxima_vox, dtype=np.int64),
     )
 
