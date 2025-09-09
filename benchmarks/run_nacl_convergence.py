@@ -15,7 +15,6 @@ from baderkit.core import Bader, Grid
 methods = Bader.all_methods()
 
 directory = Path(".")
-test_num = 10
 grid_nums = [60, 120, 180, 240, 300]
 charges = {method: [] for method in methods}
 
