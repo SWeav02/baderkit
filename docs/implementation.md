@@ -18,10 +18,10 @@ doing your own tests for your system.
 
 | Method | Speed (s/atom)<small><sup>1</sup></small> | Converged Grid<br> Density (pts/Å<sup>3</sup>)<small><sup>2</sup></small> | Max Atoms<small><sup>1</sup></small>  | Orientation Error (e<sup>-</sup>)<small><sup>3</sup></small> |
 |:-------------:|:--------------------------------------:|:---------------------------------:|:------------------------------------:|:----------------:|
-| neargrid-weight | <span style="color:green;">0.34</span> | <span style="color:green;">8700</span> | <span style="color:green;">1000</span> | <span style="color:green;">0.0006</span> |
-| neargrid      | <span style="color:green;">0.33</span> | <span style="color:orange;">63000</span> | <span style="color:green;">950</span>  | <span style="color:green;">0.0001</span> |
-| weight        | <span style="color:green;">0.39</span>   | <span style="color:green;">8300</span> | <span style="color:orange;">700</span> | <span style="color:green;">0.0009</span> |
-| ongrid        | <span style="color:green;">0.32</span> | <span style="color:red;">>150000</span> | <span style="color:green;">1000</span>  | <span style="color:red;">0.04</span> |
+| neargrid-weight | <span style="color:green;">0.27</span> | <span style="color:green;">8700</span> | <span style="color:green;">950</span> | <span style="color:green;">0.0006</span> |
+| neargrid      | <span style="color:green;">0.26</span> | <span style="color:orange;">63000</span> | <span style="color:green;">950</span>  | <span style="color:green;">0.0001</span> |
+| weight        | <span style="color:orange;">0.32</span>   | <span style="color:green;">8300</span> | <span style="color:orange;">880</span> | <span style="color:green;">0.0009</span> |
+| ongrid        | <span style="color:green;">0.25</span> | <span style="color:red;">>150000</span> | <span style="color:green;">1000</span>  | <span style="color:red;">0.04</span> |
 
 <small>1. Assuming ~30 Å<sup>3</sup> per atom and a resolution of 10000 pts/Å<sup>3</sup></small>
 
@@ -35,10 +35,10 @@ doing your own tests for your system.
     and accuracy of the `weight` method.*
     
     This method is a hybrid of the neargrid and weight methods. It first runs the
-    neargrid exactly, then uses the fractional assignment of the weight method
+    neargrid method, then uses the fractional assignment of the weight method
     to split the grid points at basin edges. The result is a method that requires
     minimal additional time over the original neargrid method, but with a
-    convergence rate approaching that of the weight method.
+    convergence rate like that of the weight method.
     
 === "neargrid"
 
@@ -68,8 +68,8 @@ doing your own tests for your system.
 
 === "weight"
     
-    **Key Takeaways:** *Converges at rough grid densities. Not suitable for
-    workflows that rely on grid point basin assignments.*
+    **Key Takeaways:** *Converges at rough grid densities. Slightly slower and
+    less memory efficient than other methods.*
     
     This method converges quickly with grid density by allowing each point to
     be partially assigned to multiple basins. To reduce orientation errors, a
@@ -85,13 +85,6 @@ doing your own tests for your system.
     creating a 'weight' corresponding to the portion of each point flowing to a
     given basin. The ordering from highest to lowest ensures that the higher neighbors have
     already received their assignment.
-
-    !!! Warning
-        Each method returns a 3D array representing the basins each point is assigned to
-        which can be accessed with the `basin_labels` and `atom_labels` properties. For
-        the `weight` method, these assignments are only about as accurate as the `ongrid`
-        method. If you need these properties we recommend the `neargrid-weight` or `neargrid`
-        methods..
     
     **Reference**
     
@@ -126,7 +119,7 @@ doing your own tests for your system.
     
     ![baderkit_vs_henk_time](images/time_vs_grid_baderkit_henk_subplots.png)
     
-    BaderKit shows comparable or improved speeds for all methods. The `neargrid-weight`
+    BaderKit shows improved speeds for all methods. The `neargrid-weight`
     method adds very little additional time over the original `neargrid` method. In all
     cases, loading the charge density from file makes up a bulk of the calculation, resulting
     in relatively small differences in each methods speed.
@@ -144,7 +137,8 @@ doing your own tests for your system.
 
     ![baderkit_conv](images/memory_vs_grid_baderkit_henk_subplots.png)
     
-    BaderKit uses more memory than the original Fortran code in all cases.
+    BaderKit uses more memory than the original Fortran code in all cases. This
+    is largely due the need to store chunks of data for parallelization.
     We hope to improve this in the future.
     
 === "Orientation"
@@ -168,6 +162,11 @@ doing your own tests for your system.
     using VASP, PBE GGA density functional, an energy cutoff of 400 eV, a 2x2x2
     Monkhorst–Pack *k*-point mesh, and VASP's default PBE pseudo-potentials.
     
+    In all cases, the total charge density including the frozen atomic cores was
+    used as the reference grid as suggested in [our documentation](/baderkit/#warning-for-vasp-and-other-pseudopotential-codes).
+    This is necessary for accuracy, but results in increased runtme due to the
+    need to load two, possibly very large, files.
+    
     All bader calculations were performed using a AMD Ryzen™ Threadripper™ 1950X CPU with
     16 cores (2 threads per core).
     
@@ -186,13 +185,13 @@ doing your own tests for your system.
     - **Maxima/Basin Reduction:** In highly symmetric systems it is common for
     local maxima to be positioned exactly between two or more grid points. This
     results in adjacent grid points with the same value. The Henkelman group's code
-    treats these as individual maxima/basins, while we combine them to a single maximum/basin
-    which we believe is more physically accurate.
+    treats these as individual maxima/basins, while we combine them to the correct
+    single maximum/basin.
     
     - **Pointers Over Paths:** Except for in the `weight` method, the Henkelman code
     starts at an arbitrary point and climbs a path to a maximum, assigning
-    points along the way. This is extremely fast as a serial operation, but is difficult
-    to parallelize due to the reliance on knowledge of previous traversed paths. We
+    points along the way. This is fast as a serial operation, but is difficult
+    to parallelize due to the reliance on knowledge of previously traversed paths. We
     instead prefer to assign pointers from each point to its highest neighbor in parallel, 
     effectively constructing a forest of trees with roots corresponding to basins. 
     We then utilize a [pointer jumping](https://en.wikipedia.org/wiki/Pointer_jumping)

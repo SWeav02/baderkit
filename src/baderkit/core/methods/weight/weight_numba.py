@@ -11,6 +11,7 @@ from baderkit.core.methods.shared_numba import (
     wrap_point,
 )
 
+
 @njit(parallel=True, cache=True)
 def get_weight_assignments(
     reference_data,
@@ -35,11 +36,11 @@ def get_weight_assignments(
     # Create lists to store basin charges/volumes
     charges = []
     volumes = []
-    
+
     ###########################################################################
     # Get neighbors
     ###########################################################################
-    
+
     # loop over points in parallel and calculate neighbors
     for sorted_idx in prange(num_coords):
         idx = sorted_indices[sorted_idx]
@@ -84,10 +85,10 @@ def get_weight_assignments(
             if not is_max:
                 # this is not a real maximum. Assign it to the highest neighbor
                 neigh_idx = coords_to_flat(ni, nj, nk, nx, ny, nz)
-                neigh_nums[sorted_idx] = 1 # overwrite 0 entry
+                neigh_nums[sorted_idx] = 1  # overwrite 0 entry
                 neigh_array[sorted_idx, 0] = neigh_idx
                 continue
-            
+
             # Check if we border another maximum
             if not equal_neighs:
                 # Note this maximum doesn't border any others by labeling it above the max label
@@ -111,7 +112,7 @@ def get_weight_assignments(
             # have reached the end of our neighboring maxima.
             if neigh_num != len(neighbor_transforms):
                 neigh_array[sorted_idx, neigh_num] = full_num_coords
-            continue        
+            continue
 
     ###########################################################################
     # Assign interior
@@ -123,7 +124,9 @@ def get_weight_assignments(
     # Now we have the neighbors for each point. Loop over them from highest to
     # lowest and assign single basin points
     maxima_num = 0
-    for sorted_idx, (idx, neighs, neigh_num) in enumerate(zip(sorted_indices, neigh_array, neigh_nums)):
+    for sorted_idx, (idx, neighs, neigh_num) in enumerate(
+        zip(sorted_indices, neigh_array, neigh_nums)
+    ):
         if neigh_num > 0:
             # This is not a maximum. Check if interior point (single basin)
             best_label = -1
@@ -141,7 +144,7 @@ def get_weight_assignments(
                     best_label = -1
                     break
                 best_label = label
-            
+
             # If the best label isn't -1, this is an interior point and we assign
             if best_label != -1:
                 labels[idx] = label
@@ -176,7 +179,7 @@ def get_weight_assignments(
                 labels[idx] = best_label
                 charges[best_label] += flat_charge[idx]
                 volumes[best_label] += 1
-    
+
     # convert charges/volumes to arrays
     charges = np.array(charges, dtype=np.float64)
     volumes = np.array(volumes, dtype=np.float64)
@@ -262,22 +265,24 @@ def get_weight_assignments(
     approx_charges = charges.copy()
     all_weights = []
     all_labels = []
-    for edge_idx, (fluxes, neighs, neigh_num, only_interior) in enumerate(zip(flux_array, neigh_array, neigh_nums, only_interor_neighs)):
+    for edge_idx, (fluxes, neighs, neigh_num, only_interior) in enumerate(
+        zip(flux_array, neigh_array, neigh_nums, only_interor_neighs)
+    ):
         sorted_idx = edge_sorted_indices[edge_idx]
         idx = sorted_indices[sorted_idx]
         charge = flat_charge[idx]
-        
+
         current_labels = []
         current_weights = []
         # Loop over neighbors and calculate weights for this point
         for neigh_idx, (flux, label) in enumerate(zip(fluxes, neighs)):
             if neigh_idx == neigh_num:
                 break
-        # NOTE: I was looping over neigh_num here, but sometimes this caused a
-        # crash. Maybe numba is trying to us prange even though I didn't ask it to?
-        # for neigh_idx in range(neigh_num):
-        #     flux = fluxes[neigh_idx]
-        #     label = neighs[neigh_idx]
+            # NOTE: I was looping over neigh_num here, but sometimes this caused a
+            # crash. Maybe numba is trying to us prange even though I didn't ask it to?
+            # for neigh_idx in range(neigh_num):
+            #     flux = fluxes[neigh_idx]
+            #     label = neighs[neigh_idx]
             if label >= 0:
                 # This is actually a basin rather than another edge index.
                 if scratch_weights[label] == 0.0:
@@ -285,7 +290,7 @@ def get_weight_assignments(
                 scratch_weights[label] += flux
                 continue
             # otherwise, this is another edge index. Get its weight
-            label = -label - 1 # convert back to actual neighbor index
+            label = -label - 1  # convert back to actual neighbor index
             neigh_edge_idx = idx_to_edge[label]
             neigh_labels = all_labels[neigh_edge_idx]
             neigh_weights = all_weights[neigh_edge_idx]
@@ -295,23 +300,23 @@ def get_weight_assignments(
                 # if there is no weight at this label yet, its new. Add it to our list
                 if scratch_weights[label] == 0.0:
                     current_labels.append(label)
-                scratch_weights[label] += flux*weight
+                scratch_weights[label] += flux * weight
                 continue
-            
+
         # Now loop over each label and assign charges, volumes, and labels
         best_label = -1
         best_weight = 0.0
         tied_labels = False
-        tol = 1e-6 # for floating point errors
+        tol = 1e-6  # for floating point errors
         for label in current_labels:
             weight = scratch_weights[label]
             charges[label] += charge * weight
             volumes[label] += weight
-            if weight > best_weight + tol: # greater than with a tolerance
+            if weight > best_weight + tol:  # greater than with a tolerance
                 best_label = label
                 best_weight = weight
                 tied_labels = False
-            elif weight > best_weight - tol: # equal to with a tolerance
+            elif weight > best_weight - tol:  # equal to with a tolerance
                 tied_labels == True
             # add weight to current weights and reset scratch
             current_weights.append(weight)
@@ -319,7 +324,7 @@ def get_weight_assignments(
         # add weights/labels for this point to our list
         all_weights.append(current_weights)
         all_labels.append(current_labels)
-        
+
         # Now we want to assign our label. If there wasn't a tie in our labels,
         # we assign to highest weight
         if not tied_labels:
@@ -330,13 +335,13 @@ def get_weight_assignments(
             # most improve the approximate charge
             best_improvement = -1.0
             for label, weight in zip(current_labels, current_weights):
-                if weight < best_weight-tol:
+                if weight < best_weight - tol:
                     continue
                 # calculate the difference from the current charge before and
                 # after adding this point
                 diff = approx_charges[label] - charges[label]
                 before = abs(diff)
-                after =  abs(diff + charge)
+                after = abs(diff + charge)
                 improvement = (before - after) / charges[label]
                 if improvement > best_improvement:
                     best_improvement = improvement
@@ -351,6 +356,7 @@ def get_weight_assignments(
         np.array(maxima_vox, dtype=np.int64),
     )
 
+
 @njit(parallel=True, cache=True)
 def sort_maxima_vox(
     maxima_vox,
@@ -358,7 +364,7 @@ def sort_maxima_vox(
     ny,
     nz,
 ):
-    flat_indices = np.empty(len(maxima_vox), dtype=np.int64)
+    flat_indices = np.zeros(len(maxima_vox), dtype=np.int64)
     for idx in prange(len(flat_indices)):
         i, j, k = maxima_vox[idx]
         flat_indices[idx] = coords_to_flat(i, j, k, nx, ny, nz)
@@ -367,7 +373,6 @@ def sort_maxima_vox(
     sorted_indices = np.argsort(flat_indices)
     # sort maxima from lowest index to highest
     return maxima_vox[sorted_indices]
-
 
 
 ###############################################################################

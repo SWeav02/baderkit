@@ -7,8 +7,7 @@ import numpy as np
 from baderkit.core.methods.base import MethodBase
 from baderkit.core.methods.shared_numba import combine_maxima_frac
 
-from .weight_numba import (  # reduce_charge_volume,
-    # get_labels,
+from .weight_numba import (  # reduce_charge_volume,; get_labels,
     get_weight_assignments,
     sort_maxima_vox,
 )
@@ -56,18 +55,15 @@ class WeightMethod(MethodBase):
         all_neighbor_transforms, all_neighbor_dists = (
             reference_grid.point_neighbor_transforms
         )
-        labels, charges, volumes, maxima_vox = (
-            get_weight_assignments(
-                reference_data,
-                charge_data,
-                sorted_indices,
-                neighbor_transforms,
-                neighbor_alpha,
-                all_neighbor_transforms,
-                all_neighbor_dists,
-            )
+        labels, charges, volumes, maxima_vox = get_weight_assignments(
+            reference_data,
+            charge_data,
+            sorted_indices,
+            neighbor_transforms,
+            neighbor_alpha,
+            all_neighbor_transforms,
+            all_neighbor_dists,
         )
-
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)
         # our maxima are already fully reduced by the current method, but we need
