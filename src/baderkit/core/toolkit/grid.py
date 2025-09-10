@@ -1655,6 +1655,7 @@ class Grid(VolumetricData):
         cls,
         grid_file: str | Path,
         data_type: str | DataType = None,
+        **kwargs,
     ) -> Self:
         """
         Create a grid instance using a CHGCAR or ELFCAR file.
@@ -1691,6 +1692,7 @@ class Grid(VolumetricData):
             data_aug=data_aug,
             data_type=data_type,
             source_format=Format.vasp,
+            **kwargs,
         )
 
     @classmethod
@@ -1698,6 +1700,7 @@ class Grid(VolumetricData):
         cls,
         grid_file: str | Path,
         data_type: str | DataType = None,
+        **kwargs,
     ) -> Self:
         """
         Create a grid instance using a gaussian cube file.
@@ -1735,6 +1738,7 @@ class Grid(VolumetricData):
             data=data,
             data_type=data_type,
             source_format=Format.cube,
+            **kwargs,
         )
 
     @classmethod
@@ -1742,6 +1746,7 @@ class Grid(VolumetricData):
         cls,
         grid_file: str | Path,
         data_type: str | DataType = None,
+        **kwargs,
     ) -> Self:
         """
         Create a grid instance using a CHGCAR or ELFCAR file. Uses pymatgen's
@@ -1774,13 +1779,14 @@ class Grid(VolumetricData):
             data_type = cls._guess_file_format(grid_file.name, data["total"])
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
-        return cls(structure=poscar.structure, data=data, data_aug=data_aug)
+        return cls(structure=poscar.structure, data=data, data_aug=data_aug, **kwargs)
 
     @classmethod
     def from_dynamic(
         cls,
         grid_file: str | Path,
         format: str | Format = None,
+        **kwargs,
     ) -> Self:
         """
         Create a grid instance using a VASP or .cube file. If no format is provided
@@ -1807,9 +1813,9 @@ class Grid(VolumetricData):
             format = detect_format(grid_file)
 
         if format == Format.cube:
-            return cls.from_cube(grid_file)
+            return cls.from_cube(grid_file, **kwargs)
         elif format == Format.vasp:
-            return cls.from_vasp(grid_file)
+            return cls.from_vasp(grid_file, **kwargs)
         else:
             raise ValueError(
                 "Provided format '{format}'. Options are: {[i.value for i in Format]}"
