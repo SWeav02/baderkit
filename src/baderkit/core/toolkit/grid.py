@@ -14,7 +14,6 @@ import numpy as np
 from numpy.typing import NDArray
 from pymatgen.io.vasp import VolumetricData
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
@@ -27,6 +26,7 @@ from baderkit.core.toolkit.file_parsers import (
 from baderkit.core.toolkit.file_parsers import write_cube as write_cube_file
 from baderkit.core.toolkit.file_parsers import write_vasp as write_vasp_file
 from baderkit.core.toolkit.structure import Structure
+from baderkit.core.toolkit.grid_numba import Interpolator, get_offgrid_maxima
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Grid")
@@ -75,10 +75,6 @@ class Grid(VolumetricData):
         A pre-computed distance matrix if available.
         Useful so pass distance_matrices between sums,
         short-circuiting an otherwise expensive operation.
-    interpolation_method : str, optional
-        The method of interpolation for methods that require it. See SciPy's
-        [RegularGridInterpolator](https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.RegularGridInterpolator.html).
-
     """
 
     def __init__(
@@ -89,7 +85,6 @@ class Grid(VolumetricData):
         source_format: Format = None,
         data_type: DataType = DataType.charge,
         distance_matrix: NDArray[float] = None,
-        interpolation_method: str = "linear",
     ):
         super().__init__(
             structure=structure,
@@ -109,23 +104,6 @@ class Grid(VolumetricData):
                 data_type = DataType.charge
             logging.info(f"Data type set as {data_type.value} from data range")
         self.data_type = data_type
-
-        # pymatgen always sets their RegularGridInterpolator with linear interpolation
-        # but that isn't always what we want. Additionally, I have found some
-        # padding of the grid is usually required to get accurate interpolation
-        # near the edges.
-        x, y, z = self.dim
-        pad = 10
-        padded_total = np.pad(self.data["total"], pad, mode="wrap")
-        xpoints_pad = np.linspace(-pad, x + pad - 1, x + pad * 2) / x
-        ypoints_pad = np.linspace(-pad, y + pad - 1, y + pad * 2) / y
-        zpoints_pad = np.linspace(-pad, z + pad - 1, z + pad * 2) / z
-        self.interpolator = RegularGridInterpolator(
-            (xpoints_pad, ypoints_pad, zpoints_pad),
-            padded_total,
-            method=interpolation_method,
-            bounds_error=True,
-        )
 
         # assign cached properties
         self._reset_cache()
@@ -234,6 +212,39 @@ class Grid(VolumetricData):
                 np.prod(self.shape), dtype=np.int64
             ).reshape(self.shape)
         return self._flat_grid_indices
+    
+    # @property
+    # def interpolator(self) -> RegularGridInterpolator:
+    #     if self._interpolator is None:
+    #         t0 = time.time()
+    #         if self.interpolator_method == "linear":
+    #             pad = 1
+    #         elif self.interpolator_method == "cubic":
+    #             pad = 2
+    #         else: # cubic or other
+    #             pad = 3
+    #         # pymatgen always sets their RegularGridInterpolator with linear interpolation
+    #         # but that isn't always what we want. Additionally, I have found some
+    #         # padding of the grid is usually required to get accurate interpolation
+    #         # near the edges.
+    #         x, y, z = self.dim
+    #         padded_total = np.pad(self.data["total"], pad, mode="wrap")
+    #         xpoints_pad = np.linspace(-pad, x + pad - 1, x + pad * 2) / x
+    #         ypoints_pad = np.linspace(-pad, y + pad - 1, y + pad * 2) / y
+    #         zpoints_pad = np.linspace(-pad, z + pad - 1, z + pad * 2) / z
+    #         self._interpolator = RegularGridInterpolator(
+    #             (xpoints_pad, ypoints_pad, zpoints_pad),
+    #             padded_total,
+    #             method=self.interpolator_method,
+    #             bounds_error=True,
+    #         )
+    #         t1 = time.time()
+    #         breakpoint()
+    #     return self._interpolator
+    
+    # @interpolator.setter
+    # def interpolator(self, value):
+    #     self._interpolator = value
 
     # TODO: Do this with numba to reduce memory and probably increase speed
     @property
@@ -558,10 +569,11 @@ class Grid(VolumetricData):
         x: float,
         y: float,
         z: float,
+        method: str = "cubic"
     ):
         """Get a data value from self.data at a given point (x, y, z) in terms
         of fractional lattice parameters. Will be interpolated using a
-        RegularGridInterpolator on self.data if (x, y, z) is not in the original
+        cubic spline on self.data if (x, y, z) is not in the original
         set of data points.
 
         Parameters
@@ -579,16 +591,15 @@ class Grid(VolumetricData):
             Value from self.data (potentially interpolated) corresponding to
             the point (x, y, z).
         """
-        # wrap point
-        x %= 1
-        y %= 1
-        z %= 1
+        # create interpolator
+        interpolator = Interpolator(self.total, method)
         # interpolate value
-        return self.interpolator([x, y, z])[0]
+        return interpolator([x, y, z])[0]
 
     def values_at(
         self,
         frac_coords: NDArray[float],
+        method: str = "cubic",
     ) -> list[float]:
         """
         Interpolates the value of the data at each fractional coordinate in a
@@ -606,14 +617,10 @@ class Grid(VolumetricData):
             The interpolated value at each fractional coordinate.
 
         """
-        # make sure we have an array
-        frac_coords = np.array(frac_coords)
-
-        # wrap coords
-        frac_coords %= 1
-
+        # create interpolator
+        interpolator = Interpolator(self.total, method)
         # interpolate values
-        return self.interpolator(frac_coords)
+        return interpolator(frac_coords)
 
     def linear_slice(self, p1: NDArray[float], p2: NDArray[float], n: int = 100):
         """
@@ -701,7 +708,7 @@ class Grid(VolumetricData):
         i, j, k = coords
 
         # import numba function to avoid circular import
-        from baderkit.core.methods.shared_numba import climb_to_max
+        from baderkit.core.toolkit.grid_numba import climb_to_max
 
         # get neighbors and dists
         neighbor_transforms, neighbor_dists = self.point_neighbor_transforms
