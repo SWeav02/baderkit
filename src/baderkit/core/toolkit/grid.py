@@ -1672,6 +1672,7 @@ class Grid(VolumetricData):
         cls,
         grid_file: str | Path,
         data_type: str | DataType = None,
+        total_only: bool = True,
         **kwargs,
     ) -> Self:
         """
@@ -1686,6 +1687,11 @@ class Grid(VolumetricData):
             The type of data loaded from the file, either charge or elf. If
             None, the type will be guessed from the filename then the data range.
             Defaults to None.
+        total_only: bool
+            If true, only the first set of data in the file will be read. This
+            increases speed and reduced memory usage for methods that do not
+            use the spin data.
+            Defaults to True.
 
         Returns
         -------
@@ -1697,7 +1703,7 @@ class Grid(VolumetricData):
         t0 = time.time()
         # get structure and data from file
         grid_file = Path(grid_file)
-        structure, data, data_aug = read_vasp(grid_file)
+        structure, data, data_aug = read_vasp(grid_file, total_only=total_only)
         # guess data type
         if data_type is None:
             data_type = cls._guess_file_format(grid_file.name, data["total"])
@@ -1802,6 +1808,7 @@ class Grid(VolumetricData):
     def from_dynamic(
         cls,
         grid_file: str | Path,
+        total_only: bool = True,
         format: str | Format = None,
         **kwargs,
     ) -> Self:
@@ -1817,6 +1824,11 @@ class Grid(VolumetricData):
             The format of the provided file. If None, a guess will be made based
             on the name of the file. Setting this is identical to calling the
             from methods for the corresponding file type. The default is None.
+        total_only: bool
+            If true, only the first set of data in the file will be read. This
+            increases speed and reduced memory usage for methods that do not
+            use the spin data.
+            Defaults to True.
 
         Returns
         -------
@@ -1832,7 +1844,7 @@ class Grid(VolumetricData):
         if format == Format.cube:
             return cls.from_cube(grid_file, **kwargs)
         elif format == Format.vasp:
-            return cls.from_vasp(grid_file, **kwargs)
+            return cls.from_vasp(grid_file, total_only=total_only, **kwargs)
         else:
             raise ValueError(
                 "Provided format '{format}'. Options are: {[i.value for i in Format]}"

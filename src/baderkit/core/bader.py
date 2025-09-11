@@ -874,6 +874,7 @@ class Bader:
         cls,
         charge_filename: Path | str = "CHGCAR",
         reference_filename: Path | None | str = None,
+        total_only: bool = True,
         **kwargs,
     ) -> Self:
         """
@@ -887,6 +888,11 @@ class Bader:
         reference_filename : Path | None | str, optional
             The path to CHGCAR like file that will be used for partitioning.
             If None, the charge file will be used for partitioning.
+        total_only: bool
+            If true, only the first set of data in the file will be read. This
+            increases speed and reduced memory usage as the other data is typically
+            not used.
+            Defaults to True.
         **kwargs : dict
             Keyword arguments to pass to the Bader class.
 
@@ -896,13 +902,11 @@ class Bader:
             A Bader class object.
 
         """
-        charge_grid = Grid.from_vasp(charge_filename)
+        charge_grid = Grid.from_vasp(charge_filename, total_only=total_only)
         if reference_filename is None:
             reference_grid = None
         else:
-            reference_grid = Grid.from_vasp(reference_filename)
-
-        # If a flag for
+            reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
 
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
 
@@ -945,6 +949,7 @@ class Bader:
         charge_filename: Path | str,
         reference_filename: Path | None | str = None,
         format: Literal["vasp", "cube", None] = None,
+        total_only: bool = True,
         **kwargs,
     ) -> Self:
         """
@@ -963,6 +968,12 @@ class Bader:
         format : Literal["vasp", "cube", None], optional
             The format of the grids to read in. If None, the formats will be
             guessed from the file names.
+        total_only: bool
+            If true, only the first set of data in the file will be read. This
+            increases speed and reduced memory usage as the other data is typically
+            not used. This is only used if the file format is determined to be
+            VASP, as cube files are assumed to contain only one set of data.
+            Defaults to True.
         **kwargs : dict
             Keyword arguments to pass to the Bader class.
 
@@ -973,11 +984,15 @@ class Bader:
 
         """
 
-        charge_grid = Grid.from_dynamic(charge_filename, format=format)
+        charge_grid = Grid.from_dynamic(
+            charge_filename, format=format, total_only=total_only
+        )
         if reference_filename is None:
             reference_grid = None
         else:
-            reference_grid = Grid.from_dynamic(reference_filename, format=format)
+            reference_grid = Grid.from_dynamic(
+                reference_filename, format=format, total_only=total_only
+            )
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
 
     def copy(self) -> Self:

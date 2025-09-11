@@ -46,7 +46,7 @@ def detect_format(filename: str | Path):
             raise ValueError("File format not recognized.")
 
 
-def read_vasp(filename):
+def read_vasp(filename, total_only: bool):
     path = Path(filename)
     ###########################################################################
     # Read Structure. Open in string read mode
@@ -119,6 +119,11 @@ def read_vasp(filename):
         nbytes_per_block = int((bytes_per_entry * nvals) + line_bytes)
 
         while pos < mm.size():
+            # if only 'total' data is requested, we cancel after we've loaded
+            # one data set
+            if total_only and len(all_datasets) == 1:
+                break
+
             # 1. slice exact byte window for this data set
             block_bytes = mm[pos : pos + nbytes_per_block]  # returns bytes (one copy)
             pos_block_end = pos + nbytes_per_block

@@ -21,8 +21,9 @@ Bader analysis on the separate spin-up and spin-down systems by creating two
 # import 
 from baderkit.core import Bader, Grid
 
-# load the spin polarized charge grid
-polarized_grid = Grid.from_vasp("CHGCAR")
+# load the spin polarized charge grid. Make sure the `total_only` tag is set to
+# false to indicate that we want to load all sets of data.
+polarized_grid = Grid.from_vasp("CHGCAR", total_only=False)
 
 # split the polarized grid to the spin up and spin down components
 grid_up, grid_down = polarized_grid.split_to_spin()
