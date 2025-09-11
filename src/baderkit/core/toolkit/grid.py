@@ -12,6 +12,7 @@ from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
+from pymatgen.electronic_structure.core import Spin
 from pymatgen.io.vasp import VolumetricData
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from scipy.ndimage import binary_dilation, label, zoom
@@ -25,8 +26,8 @@ from baderkit.core.toolkit.file_parsers import (
 )
 from baderkit.core.toolkit.file_parsers import write_cube as write_cube_file
 from baderkit.core.toolkit.file_parsers import write_vasp as write_vasp_file
+from baderkit.core.toolkit.grid_numba import Interpolator
 from baderkit.core.toolkit.structure import Structure
-from baderkit.core.toolkit.grid_numba import Interpolator, get_offgrid_maxima
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Grid")
@@ -86,14 +87,29 @@ class Grid(VolumetricData):
         data_type: DataType = DataType.charge,
         distance_matrix: NDArray[float] = None,
     ):
-        super().__init__(
-            structure=structure,
-            data=data,
-            data_aug=data_aug,
-            distance_matrix=distance_matrix,
-        )
+        # The following is copied directly from pymatgen, but replaces their
+        # creation of a RegularGridInterpolator to avoid some overhead
+        self.structure = Structure.from_dict(
+            structure.as_dict()
+        )  # convert to baderkit structure
+        self.is_spin_polarized = len(data) >= 2
+        self.is_soc = len(data) >= 4
+        # convert data to numpy arrays in case they were jsanitized as lists
+        self.data = {k: np.array(v) for k, v in data.items()}
+        self.dim = self.data["total"].shape
+        self.data_aug = data_aug or {}
+        self.ngridpts = self.dim[0] * self.dim[1] * self.dim[2]
+        # lazy init the spin data since this is not always needed.
+        self._spin_data: dict[Spin, float] = {}
+        self._distance_matrix = distance_matrix or {}
+        self.xpoints = np.linspace(0.0, 1.0, num=self.dim[0])
+        self.ypoints = np.linspace(0.0, 1.0, num=self.dim[1])
+        self.zpoints = np.linspace(0.0, 1.0, num=self.dim[2])
+        self.interpolator = Interpolator(self.data["total"])
+        self.name = "VolumetricData"
+
+        # The rest of this is new for BaderKit methods
         # convert structure to baderkit utility version
-        self.structure = Structure.from_dict(self.structure.as_dict())
         self.format = source_format
 
         if data_type is None:
@@ -212,7 +228,7 @@ class Grid(VolumetricData):
                 np.prod(self.shape), dtype=np.int64
             ).reshape(self.shape)
         return self._flat_grid_indices
-    
+
     # @property
     # def interpolator(self) -> RegularGridInterpolator:
     #     if self._interpolator is None:
@@ -241,7 +257,7 @@ class Grid(VolumetricData):
     #         t1 = time.time()
     #         breakpoint()
     #     return self._interpolator
-    
+
     # @interpolator.setter
     # def interpolator(self, value):
     #     self._interpolator = value
@@ -569,7 +585,6 @@ class Grid(VolumetricData):
         x: float,
         y: float,
         z: float,
-        method: str = "cubic"
     ):
         """Get a data value from self.data at a given point (x, y, z) in terms
         of fractional lattice parameters. Will be interpolated using a
@@ -591,15 +606,12 @@ class Grid(VolumetricData):
             Value from self.data (potentially interpolated) corresponding to
             the point (x, y, z).
         """
-        # create interpolator
-        interpolator = Interpolator(self.total, method)
         # interpolate value
-        return interpolator([x, y, z])[0]
+        return self.interpolator([x, y, z])[0]
 
     def values_at(
         self,
         frac_coords: NDArray[float],
-        method: str = "cubic",
     ) -> list[float]:
         """
         Interpolates the value of the data at each fractional coordinate in a
@@ -617,10 +629,8 @@ class Grid(VolumetricData):
             The interpolated value at each fractional coordinate.
 
         """
-        # create interpolator
-        interpolator = Interpolator(self.total, method)
         # interpolate values
-        return interpolator(frac_coords)
+        return self.interpolator(frac_coords)
 
     def linear_slice(self, p1: NDArray[float], p2: NDArray[float], n: int = 100):
         """

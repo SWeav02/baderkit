@@ -108,6 +108,7 @@ class Bader:
                 # assigned by run_bader
                 "basin_labels",
                 "basin_maxima_frac",
+                "basin_maxima_values",
                 "basin_maxima_vox",
                 "basin_charges",
                 "basin_volumes",
@@ -286,6 +287,20 @@ class Bader:
         if self._basin_maxima_frac is None:
             self.run_bader()
         return self._basin_maxima_frac
+
+    @property
+    def basin_maxima_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The fractional coordinates of each attractor.
+
+        """
+        if self._basin_maxima_values is None:
+            self.run_bader()
+        return self._basin_maxima_values
 
     @property
     def basin_maxima_charge_values(self) -> NDArray[float]:
