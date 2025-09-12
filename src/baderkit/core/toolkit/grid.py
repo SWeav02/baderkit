@@ -1840,7 +1840,7 @@ class Grid(VolumetricData):
             raise ImportError(
                 """
                 The `h5py` package is required to read/write to the hdf5 format.
-                Please install with `conda install hdf5` or `pip install hdf5`.
+                Please install with `conda install h5py` or `pip install h5py`.
                 """
             )
 
@@ -1962,7 +1962,7 @@ class Grid(VolumetricData):
             raise ImportError(
                 """
                 The `h5py` package is required to read/write to the hdf5 format.
-                Please install with `conda install hdf5` or `pip install hdf5`.
+                Please install with `conda install h5py` or `pip install h5py`.
                 """
             )
         filename = Path(filename)
