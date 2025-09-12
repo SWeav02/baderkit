@@ -19,17 +19,35 @@ from pymatgen.io.vasp import Poscar
 class Format(str, Enum):
     vasp = "vasp"
     cube = "cube"
+    hdf5 = "hdf5"
 
     @property
     def writer(self):
         return {
             Format.vasp: "write_vasp",
             Format.cube: "write_cube",
+            Format.hdf5: "to_hdf5",
+        }[self]
+
+    @property
+    def reader(self):
+        return {
+            Format.vasp: "from_vasp",
+            Format.cube: "from_cube",
+            Format.hdf5: "from_hdf5",
         }[self]
 
 
 def detect_format(filename: str | Path):
     filename = Path(filename)
+    # check for hdf5
+    with open(filename, "rb") as f:
+        # read first 8 bytes
+        sig = f.read(8)
+        if sig == b"\x89HDF\r\n\x1a\n":
+            return Format.hdf5
+
+    # check for vasp or cube
     with open(filename, "r") as f:
         # skip the first two lines
         next(f)

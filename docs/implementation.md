@@ -18,10 +18,10 @@ doing your own tests for your system.
 
 | Method | Speed (s/atom)<small><sup>1</sup></small> | Converged Grid<br> Density (pts/Å<sup>3</sup>)<small><sup>2</sup></small> | Max Atoms<small><sup>1</sup></small>  | Orientation Error (e<sup>-</sup>)<small><sup>3</sup></small> |
 |:-------------:|:--------------------------------------:|:---------------------------------:|:------------------------------------:|:----------------:|
-| neargrid-weight | <span style="color:green;">0.27</span> | <span style="color:green;">8700</span> | <span style="color:green;">950</span> | <span style="color:green;">0.0006</span> |
-| neargrid      | <span style="color:green;">0.26</span> | <span style="color:orange;">63000</span> | <span style="color:green;">950</span>  | <span style="color:green;">0.0001</span> |
-| weight        | <span style="color:orange;">0.32</span>   | <span style="color:green;">8300</span> | <span style="color:orange;">880</span> | <span style="color:green;">0.0009</span> |
-| ongrid        | <span style="color:green;">0.25</span> | <span style="color:red;">>150000</span> | <span style="color:green;">1000</span>  | <span style="color:red;">0.04</span> |
+| neargrid-weight | <span style="color:green;">0.21</span> | <span style="color:green;">8700</span> | <span style="color:green;">1140</span> | <span style="color:green;">0.0006</span> |
+| neargrid      | <span style="color:green;">0.20</span> | <span style="color:orange;">63000</span> | <span style="color:green;">1140</span>  | <span style="color:green;">0.0001</span> |
+| weight        | <span style="color:orange;">0.26</span>   | <span style="color:green;">8300</span> | <span style="color:orange;">1000</span> | <span style="color:green;">0.0009</span> |
+| ongrid        | <span style="color:green;">0.19</span> | <span style="color:red;">>150000</span> | <span style="color:green;">1250</span>  | <span style="color:red;">0.04</span> |
 
 <small>1. Assuming ~30 Å<sup>3</sup> per atom and a resolution of 10000 pts/Å<sup>3</sup></small>
 

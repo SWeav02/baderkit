@@ -1006,21 +1006,12 @@ class Bader:
         """
         return copy.deepcopy(self)
 
-    @staticmethod
-    def _write_output(grid: Grid, output_format: Format, file_path: Path, **kwargs):
-        # Make sure format is a Format object not a string
-        output_format = Format(output_format)
-        # get the writing method corresponding to this output format
-        method_name = output_format.writer
-        # write the
-        getattr(grid, method_name)(file_path, **kwargs)
-
     def write_basin_volumes(
         self,
         basin_indices: NDArray,
         directory: str | Path = None,
-        source_grid: Literal["charge", "reference"] = "charge",
-        output_format: str | Format = Format.vasp,
+        write_reference: bool = False,
+        output_format: str | Format = None,
         **writer_kwargs,
     ):
         """
@@ -1035,40 +1026,43 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        source_grid : Literal["charge", "reference"], optional
-            Which file to write from. The default is "charge".
-        output_format: str | Format, optional
-            The file format to write with. Defaults to vasp.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is False.
+        output_format : str | Format, optional
+            The format to write with. If None, writes to source format stored in
+            the Grid objects metadata.
+            Defaults to None.
 
         Returns
         -------
         None.
 
         """
-        # get the grid to use
-        if source_grid == "charge":
-            grid = self.charge_grid.copy()
-        elif source_grid == "reference":
-            grid = self.reference_grid.copy()
+        # get the data to use
+        if write_reference:
+            data_array = self.reference_grid.total
+        else:
+            data_array = self.charge_grid.total
 
-        data_array = grid.total
         if directory is None:
             directory = Path(".")
         for basin in basin_indices:
-            mask = self.basin_labels == basin
+            # get a mask everywhere but the requested basin
+            mask = self.basin_labels != basin
+            # copy data to avoid overwriting. Set data off of basin to 0
             data_array_copy = data_array.copy()
-            data_array_copy[~mask] = 0
-            data = {"total": data_array_copy}
-            grid = Grid(structure=self.structure, data=data)
+            data_array_copy[mask] = 0.0
+            grid = Grid(structure=self.structure, data={"total": data_array_copy})
             file_path = directory / f"{grid.data_type.prefix}_b{basin}"
             # write file
-            self._write_output(grid, output_format, file_path, **writer_kwargs)
+            grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
 
     def write_all_basin_volumes(
         self,
         directory: str | Path = None,
-        source_grid: Literal["charge", "reference"] = "charge",
-        output_format: str | Format = Format.vasp,
+        write_reference: bool = False,
+        output_format: str | Format = None,
         **writer_kwargs,
     ):
         """
@@ -1081,10 +1075,13 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        source_grid : Literal["charge", "reference"], optional
-            Which file to write from. The default is "charge".
-        output_format: str | Format, optional
-            The file format to write with. Defaults to vasp.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is False.
+        output_format : str | Format, optional
+            The format to write with. If None, writes to source format stored in
+            the Grid objects metadata.
+            Defaults to None.
 
         Returns
         -------
@@ -1095,7 +1092,7 @@ class Bader:
         self.write_basin_volumes(
             basin_indices=basin_indices,
             directory=directory,
-            source_grid=source_grid,
+            write_reference=write_reference,
             output_format=output_format,
             **writer_kwargs,
         )
@@ -1104,8 +1101,8 @@ class Bader:
         self,
         basin_indices: NDArray,
         directory: str | Path = None,
-        source_grid: Literal["charge", "reference"] = "charge",
-        output_format: str | Format = Format.vasp,
+        write_reference: bool = False,
+        output_format: str | Format = None,
         **writer_kwargs,
     ):
         """
@@ -1120,39 +1117,43 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        source_grid : Literal["charge", "reference"], optional
-            Which file to write from. The default is "charge".
-        output_format: str | Format, optional
-            The file format to write with. Defaults to vasp.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is False.
+        output_format : str | Format, optional
+            The format to write with. If None, writes to source format stored in
+            the Grid objects metadata.
+            Defaults to None.
 
         Returns
         -------
         None.
 
         """
-        if source_grid == "charge":
-            grid = self.charge_grid.copy()
-        elif source_grid == "reference":
-            grid = self.reference_grid.copy()
+        # get the data to use
+        if write_reference:
+            data_array = self.reference_grid.total
+        else:
+            data_array = self.charge_grid.total
 
-        data_array = grid.total
         if directory is None:
             directory = Path(".")
+        # create a mask including each of the requested basins
         mask = np.isin(self.basin_labels, basin_indices)
+        # copy data to avoid overwriting. Set data off of basin to 0
         data_array_copy = data_array.copy()
-        data_array_copy[~mask] = 0
-        data = {"total": data_array_copy}
-        grid = Grid(structure=self.structure, data=data)
+        data_array_copy[~mask] = 0.0
+        grid = Grid(structure=self.structure, data={"total": data_array_copy})
         file_path = directory / f"{grid.data_type.prefix}_bsum"
         # write file
-        self._write_output(grid, output_format, file_path, **writer_kwargs)
+        grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
 
     def write_atom_volumes(
         self,
         atom_indices: NDArray,
         directory: str | Path = None,
-        source_grid: Literal["charge", "reference"] = "charge",
-        output_format: str | Format = Format.vasp,
+        write_reference: bool = False,
+        output_format: str | Format = None,
         **writer_kwargs,
     ):
         """
@@ -1167,39 +1168,43 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        source_grid : Literal["charge", "reference"], optional
-            Which file to write from. The default is "charge".
-        output_format: str | Format, optional
-            The file format to write with. Defaults to vasp.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is False.
+        output_format : str | Format, optional
+            The format to write with. If None, writes to source format stored in
+            the Grid objects metadata.
+            Defaults to None.
 
         Returns
         -------
         None.
 
         """
-        if source_grid == "charge":
-            grid = self.charge_grid.copy()
-        elif source_grid == "reference":
-            grid = self.reference_grid.copy()
+        # get the data to use
+        if write_reference:
+            data_array = self.reference_grid.total
+        else:
+            data_array = self.charge_grid.total
 
-        data_array = grid.total
         if directory is None:
             directory = Path(".")
         for atom_index in atom_indices:
-            mask = self.atom_labels == atom_index
+            # get a mask everywhere but the requested basin
+            mask = self.atom_labels != atom_index
+            # copy data to avoid overwriting. Set data off of basin to 0
             data_array_copy = data_array.copy()
-            data_array_copy[~mask] = 0
-            data = {"total": data_array_copy}
-            grid = Grid(structure=self.structure, data=data)
+            data_array_copy[mask] = 0.0
+            grid = Grid(structure=self.structure, data={"total": data_array_copy})
             file_path = directory / f"{grid.data_type.prefix}_a{atom_index}"
             # write file
-            self._write_output(grid, output_format, file_path, **writer_kwargs)
+            grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
 
     def write_all_atom_volumes(
         self,
         directory: str | Path = None,
-        source_grid: Literal["charge", "reference"] = "charge",
-        output_format: str | Format = Format.vasp,
+        write_reference: bool = False,
+        output_format: str | Format = None,
         **writer_kwargs,
     ):
         """
@@ -1215,10 +1220,13 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        source_grid : Literal["charge", "reference"], optional
-            Which file to write from. The default is "charge".
-        output_format: str | Format, optional
-            The file format to write with. Defaults to vasp.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is False.
+        output_format : str | Format, optional
+            The format to write with. If None, writes to source format stored in
+            the Grid objects metadata.
+            Defaults to None.
 
         Returns
         -------
@@ -1229,7 +1237,7 @@ class Bader:
         self.write_atom_volumes(
             atom_indices=atom_indices,
             directory=directory,
-            source_grid=source_grid,
+            write_reference=write_reference,
             output_format=output_format,
             **writer_kwargs,
         )
@@ -1238,8 +1246,8 @@ class Bader:
         self,
         atom_indices: NDArray,
         directory: str | Path = None,
-        source_grid: Literal["charge", "reference"] = "charge",
-        output_format: str | Format = Format.vasp,
+        write_reference: bool = False,
+        output_format: str | Format = None,
         **writer_kwargs,
     ):
         """
@@ -1254,32 +1262,34 @@ class Bader:
         directory : str | Path
             The directory to write the files in. If None, the active directory
             is used.
-        source_grid : Literal["charge", "reference"], optional
-            Which file to write from. The default is "charge".
-        output_format: str | Format, optional
-            The file format to write with. Defaults to vasp.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is False.
+        output_format : str | Format, optional
+            The format to write with. If None, writes to source format stored in
+            the Grid objects metadata.
+            Defaults to None.
 
         Returns
         -------
         None.
 
         """
-        if source_grid == "charge":
-            grid = self.charge_grid.copy()
-        elif source_grid == "reference":
-            grid = self.reference_grid.copy()
+        # get the data to use
+        if write_reference:
+            data_array = self.reference_grid.total
+        else:
+            data_array = self.charge_grid.total
 
-        data_array = grid.total
         if directory is None:
             directory = Path(".")
         mask = np.isin(self.atom_labels, atom_indices)
         data_array_copy = data_array.copy()
-        data_array_copy[~mask] = 0
-        data = {"total": data_array_copy}
-        grid = Grid(structure=self.structure, data=data)
+        data_array_copy[~mask] = 0.0
+        grid = Grid(structure=self.structure, data={"total": data_array_copy})
         file_path = directory / f"{grid.data_type.prefix}_asum"
         # write file
-        self._write_output(grid, output_format, file_path, **writer_kwargs)
+        grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """

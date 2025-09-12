@@ -11,14 +11,16 @@ from baderkit.core.methods import Method
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"
+TEST_CHGCAR_CUBE = TEST_FOLDER / "CHGCAR.cube"
+TEST_CHGCAR_HDF5 = TEST_FOLDER / "CHGCAR.hdf5"
 
 
 def test_instance_bader_from_grid():
     # try reading the grid with vasp method
-    grid = Grid.from_vasp(TEST_CHGCAR)
+    grid = Grid.from_vasp(TEST_CHGCAR, total_only=False)
     assert grid.diff is not None
     # try reading the grid with dynamic method
-    grid = Grid.from_dynamic(TEST_CHGCAR)
+    grid = Grid.from_dynamic(TEST_CHGCAR, total_only=False)
     assert grid.diff is not None
     # try to make bader object
     bader = Bader(charge_grid=grid, reference_grid=grid)
@@ -27,15 +29,20 @@ def test_instance_bader_from_grid():
 
 def test_read_bader_from_file():
     # test default read ins
-    bader = Bader.from_vasp(TEST_CHGCAR)
+    # vasp
+    bader = Bader.from_dynamic(TEST_CHGCAR, total_only=False)
     assert bader.charge_grid.diff is not None
-    bader = Bader.from_dynamic(TEST_CHGCAR)
+    # cube
+    bader = Bader.from_dynamic(TEST_CHGCAR_CUBE)
+    assert bader.charge_grid.total is not None
+    # hdf5
+    bader = Bader.from_dynamic(TEST_CHGCAR_HDF5)
     assert bader.charge_grid.diff is not None
     # test reading in reference file
     bader = Bader.from_dynamic(
         charge_filename=TEST_CHGCAR, reference_filename=TEST_CHGCAR
     )
-    assert bader.reference_grid.diff is not None
+    assert bader.reference_grid.total is not None
 
 
 def test_writing_bader(tmp_path):

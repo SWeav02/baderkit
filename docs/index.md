@@ -238,6 +238,6 @@ is much more accurate for partitioning. **We highly recommend doing this**.
 
 !!! Warning
     A fine grid is needed to accurately reproduce the core charge density. We
-    have found that a grid density of ~22 pts/Å along each lattice vector is
+    have found that a grid density of ~22 pts/Å along each lattice vector (~10000 pts / Å<sup>3</sup>) is
     fine enough in most cases, but we generally recommend testing an
     increasing set of grid densities until convergence is reached.

@@ -26,6 +26,7 @@ dependencies:
   - streamlit>=1.40.0,<1.46.1
 
   # Testing and pip
+  - h5py
   - pytest
   - pip
 
