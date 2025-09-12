@@ -256,7 +256,7 @@ class Interpolator:
 ###############################################################################
 
 
-@njit(parallel=True, fastmath=True, cache=True)
+# @njit(parallel=True, fastmath=True, cache=True)
 def refine_maxima(
     maxima_coords,
     data,
@@ -311,8 +311,7 @@ def refine_maxima(
                     fsj = sj / ny
                     fsk = sk / nz
                     delta_mag = (fsi * fsi + fsj * fsj + fsk * fsk) ** 0.5
-
-    dec = -int(math.log(tol))
+    dec = -int(math.log10(tol))
     if is_frac:
         # convert to frac, round, and wrap
         for max_idx, (i, j, k) in enumerate(maxima_coords):
