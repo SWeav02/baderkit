@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 from baderkit.core.toolkit import Grid
+from baderkit.core.toolkit.grid_numba import refine_maxima
 
 from .shared_numba import combine_neigh_maxima, get_basin_charges_and_volumes
 
@@ -179,9 +180,17 @@ class MethodBase:
         """
         # TODO: This has to be called in every method currently. This should be
         # moved to a method in this abstract class to avoid repeat code/forgetting
+
+        # refine frac coords
+        neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
+        refined_maxima_frac, maxima_values = refine_maxima(
+            self.maxima_frac, self.reference_grid.total, neighbor_transforms
+        )
+
         return {
             "basin_maxima_vox": self.maxima_vox,
-            "basin_maxima_frac": self.maxima_frac,
+            "basin_maxima_frac": refined_maxima_frac,
+            "basin_maxima_values": maxima_values,
         }
 
     def get_basin_charges_and_volumes(

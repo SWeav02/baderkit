@@ -7,8 +7,7 @@ import numpy as np
 from baderkit.core.methods.base import MethodBase
 from baderkit.core.methods.shared_numba import combine_maxima_frac
 
-from .weight_numba import (  # reduce_charge_volume,
-    get_labels,
+from .weight_numba import (  # reduce_charge_volume,; get_labels,
     get_weight_assignments,
     sort_maxima_vox,
 )
@@ -41,6 +40,8 @@ class WeightMethod(MethodBase):
 
         # remove vacuum from sorted indices
         sorted_indices = sorted_indices[self.num_vacuum :]
+        # flip to move from high to low
+        sorted_indices = np.flip(sorted_indices)
         # get the voronoi neighbors, their distances, and the area of the corresponding
         # facets. This is used to calculate the volume flux from each voxel
         neighbor_transforms, neighbor_dists, facet_areas, _ = (
@@ -54,27 +55,14 @@ class WeightMethod(MethodBase):
         all_neighbor_transforms, all_neighbor_dists = (
             reference_grid.point_neighbor_transforms
         )
-        labels, charges, volumes, maxima_vox, sorted_maxima_mask = (
-            get_weight_assignments(
-                reference_data,
-                charge_data,
-                sorted_indices,
-                neighbor_transforms,
-                neighbor_alpha,
-                all_neighbor_transforms,
-                all_neighbor_dists,
-            )
-        )
-
-        logging.info("Assigning Labels")
-        # flip charges to go from high to low
-        charges = np.flip(charges)
-        volumes = np.flip(volumes)
-        # get actual labels
-        labels = get_labels(
-            labels,
-            np.flip(sorted_indices),
-            np.flip(sorted_maxima_mask),
+        labels, charges, volumes, maxima_vox = get_weight_assignments(
+            reference_data,
+            charge_data,
+            sorted_indices,
+            neighbor_transforms,
+            neighbor_alpha,
+            all_neighbor_transforms,
+            all_neighbor_dists,
         )
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)

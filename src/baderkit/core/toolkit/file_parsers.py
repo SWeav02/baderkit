@@ -19,34 +19,65 @@ from pymatgen.io.vasp import Poscar
 class Format(str, Enum):
     vasp = "vasp"
     cube = "cube"
+    hdf5 = "hdf5"
 
     @property
     def writer(self):
         return {
             Format.vasp: "write_vasp",
             Format.cube: "write_cube",
+            Format.hdf5: "to_hdf5",
+        }[self]
+
+    @property
+    def reader(self):
+        return {
+            Format.vasp: "from_vasp",
+            Format.cube: "from_cube",
+            Format.hdf5: "from_hdf5",
         }[self]
 
 
 def detect_format(filename: str | Path):
     filename = Path(filename)
-    with open(filename, "r") as f:
-        # skip the first two lines
-        next(f)
-        next(f)
-        # The third line of a VASP CHGCAR/ELFCAR will have 3 values
-        # corresponding to the first lattice vector. .cube files will
-        # have 4 corresponding to the number of atoms and origin coords
-        line_len = len(next(f).split())
-        if line_len == 3:
-            return Format.vasp
-        elif line_len == 4:
-            return Format.cube
-        else:
-            raise ValueError("File format not recognized.")
+    source_format = None
+
+    # check for vasp or cube
+    try:
+        with open(filename, "r") as f:
+            # skip the first two lines
+            next(f)
+            next(f)
+            # The third line of a VASP CHGCAR/ELFCAR will have 3 values
+            # corresponding to the first lattice vector. .cube files will
+            # have 4 corresponding to the number of atoms and origin coords
+            line_len = len(next(f).split())
+            if line_len == 3:
+                source_format = Format.vasp
+            elif line_len == 4:
+                source_format = Format.cube
+    except:
+        try:
+            # check for hdf5
+            with open(filename, "rb") as f:
+                # read first 8 bytes
+                sig = f.read(8)
+                if sig == b"\x89HDF\r\n\x1a\n":
+                    source_format = Format.hdf5
+        except:
+            logging.warning(
+                """
+            Tried to detect HDF5 format, but h5py is not installed.
+            To read HDF5 files, install with `conda install h5py` or `pip install h5py`
+            """
+            )
+
+    if source_format is None:
+        raise ValueError("File format not recognized.")
+    return source_format
 
 
-def read_vasp(filename):
+def read_vasp(filename, total_only: bool):
     path = Path(filename)
     ###########################################################################
     # Read Structure. Open in string read mode
@@ -119,6 +150,11 @@ def read_vasp(filename):
         nbytes_per_block = int((bytes_per_entry * nvals) + line_bytes)
 
         while pos < mm.size():
+            # if only 'total' data is requested, we cancel after we've loaded
+            # one data set
+            if total_only and len(all_datasets) == 1:
+                break
+
             # 1. slice exact byte window for this data set
             block_bytes = mm[pos : pos + nbytes_per_block]  # returns bytes (one copy)
             pos_block_end = pos + nbytes_per_block

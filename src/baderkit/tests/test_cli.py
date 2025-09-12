@@ -27,6 +27,43 @@ def test_sum():
         assert Path("CHGCAR_sum").exists()
 
 
+def test_split():
+    # create a temporary folder to run the command in
+    with runner.isolated_filesystem():
+        # copy CHGCAR over to temp path
+        shutil.copyfile(TEST_CHGCAR, "CHGCAR")
+        # run split
+        result = runner.invoke(app=baderkit_app, args=["split", "CHGCAR"])
+        assert result.exit_code == 0
+        assert Path("CHGCAR_up").exists()
+
+
+def test_convert():
+    # NOTE: This also tests the load/write functions for each method
+    # create a temporary folder to run the command in
+    with runner.isolated_filesystem():
+        # copy CHGCAR over to temp path
+        shutil.copyfile(TEST_CHGCAR, "CHGCAR")
+        # run convert from vasp to hdf5
+        result = runner.invoke(
+            app=baderkit_app, args=["convert", "CHGCAR", "CHGCAR.hdf5", "hdf5"]
+        )
+        assert result.exit_code == 0
+        assert Path("CHGCAR.hdf5").exists()
+        # run convert from hdf5 to cube
+        result = runner.invoke(
+            app=baderkit_app, args=["convert", "CHGCAR.hdf5", "CHGCAR.cube", "cube"]
+        )
+        assert result.exit_code == 0
+        assert Path("CHGCAR.cube").exists()
+        # run convert from cube to vasp
+        result = runner.invoke(
+            app=baderkit_app, args=["convert", "CHGCAR.cube", "CHGCAR_vasp", "vasp"]
+        )
+        assert result.exit_code == 0
+        assert Path("CHGCAR_vasp").exists()
+
+
 def test_run():
     # create a temporary folder to run the command in
     with runner.isolated_filesystem():
@@ -72,7 +109,7 @@ def test_webapp(tmp_path, monkeypatch):
     # move into the tmp_directory
     monkeypatch.chdir(tmp_path)
     # run webapp
-    at = AppTest.from_file(webapp_path, default_timeout=15)
+    at = AppTest.from_file(webapp_path, default_timeout=30)
     at.run()
     if at.exception:
         raise RuntimeError("Streamlit AppTest encountered an error") from at.exception

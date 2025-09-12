@@ -12,9 +12,9 @@ from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
+from pymatgen.electronic_structure.core import Spin
 from pymatgen.io.vasp import VolumetricData
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from scipy.interpolate import RegularGridInterpolator
 from scipy.ndimage import binary_dilation, label, zoom
 from scipy.spatial import Voronoi
 
@@ -26,6 +26,7 @@ from baderkit.core.toolkit.file_parsers import (
 )
 from baderkit.core.toolkit.file_parsers import write_cube as write_cube_file
 from baderkit.core.toolkit.file_parsers import write_vasp as write_vasp_file
+from baderkit.core.toolkit.grid_numba import Interpolator
 from baderkit.core.toolkit.structure import Structure
 
 # This allows for Self typing and is compatible with python versions before 3.11
@@ -67,7 +68,7 @@ class Grid(VolumetricData):
         Any extra information associated with volumetric data
         (typically augmentation charges)
     source_format : Format, optional
-        The file format this grid was created from, either 'vasp' or 'cube'.
+        The file format this grid was created from, 'vasp', 'cube', 'hdf5', or None.
     data_type : DataType, optional
         The type of data stored in the Grid object, either 'charge' or 'elf'. If
         None, the data type will be guessed from the data range.
@@ -75,10 +76,6 @@ class Grid(VolumetricData):
         A pre-computed distance matrix if available.
         Useful so pass distance_matrices between sums,
         short-circuiting an otherwise expensive operation.
-    interpolation_method : str, optional
-        The method of interpolation for methods that require it. See SciPy's
-        [RegularGridInterpolator](https://docs.scipy.org/doc/scipy/reference/generated/scipy.interpolate.RegularGridInterpolator.html).
-
     """
 
     def __init__(
@@ -89,17 +86,33 @@ class Grid(VolumetricData):
         source_format: Format = None,
         data_type: DataType = DataType.charge,
         distance_matrix: NDArray[float] = None,
-        interpolation_method: str = "linear",
+        **kwargs,
     ):
-        super().__init__(
-            structure=structure,
-            data=data,
-            data_aug=data_aug,
-            distance_matrix=distance_matrix,
-        )
-        # convert structure to baderkit utility version
-        self.structure = Structure.from_dict(self.structure.as_dict())
-        self.format = source_format
+        # The following is copied directly from pymatgen, but replaces their
+        # creation of a RegularGridInterpolator to avoid some overhead
+        self.structure = Structure.from_dict(
+            structure.as_dict()
+        )  # convert to baderkit structure
+        self.is_spin_polarized = len(data) >= 2
+        self.is_soc = len(data) >= 4
+        # convert data to numpy arrays in case they were jsanitized as lists
+        self.data = {k: np.array(v) for k, v in data.items()}
+        self.dim = self.data["total"].shape
+        self.data_aug = data_aug or {}
+        self.ngridpts = self.dim[0] * self.dim[1] * self.dim[2]
+        # lazy init the spin data since this is not always needed.
+        self._spin_data: dict[Spin, float] = {}
+        self._distance_matrix = distance_matrix or {}
+        self.xpoints = np.linspace(0.0, 1.0, num=self.dim[0])
+        self.ypoints = np.linspace(0.0, 1.0, num=self.dim[1])
+        self.zpoints = np.linspace(0.0, 1.0, num=self.dim[2])
+        self.interpolator = Interpolator(self.data["total"])
+        self.name = "VolumetricData"
+
+        # The rest of this is new for BaderKit methods
+        if source_format is None:
+            source_format = Format.vasp
+        self.source_format = Format(source_format)
 
         if data_type is None:
             # attempt to guess data type from data range
@@ -109,23 +122,6 @@ class Grid(VolumetricData):
                 data_type = DataType.charge
             logging.info(f"Data type set as {data_type.value} from data range")
         self.data_type = data_type
-
-        # pymatgen always sets their RegularGridInterpolator with linear interpolation
-        # but that isn't always what we want. Additionally, I have found some
-        # padding of the grid is usually required to get accurate interpolation
-        # near the edges.
-        x, y, z = self.dim
-        pad = 10
-        padded_total = np.pad(self.data["total"], pad, mode="wrap")
-        xpoints_pad = np.linspace(-pad, x + pad - 1, x + pad * 2) / x
-        ypoints_pad = np.linspace(-pad, y + pad - 1, y + pad * 2) / y
-        zpoints_pad = np.linspace(-pad, z + pad - 1, z + pad * 2) / z
-        self.interpolator = RegularGridInterpolator(
-            (xpoints_pad, ypoints_pad, zpoints_pad),
-            padded_total,
-            method=interpolation_method,
-            bounds_error=True,
-        )
 
         # assign cached properties
         self._reset_cache()
@@ -234,6 +230,39 @@ class Grid(VolumetricData):
                 np.prod(self.shape), dtype=np.int64
             ).reshape(self.shape)
         return self._flat_grid_indices
+
+    # @property
+    # def interpolator(self) -> RegularGridInterpolator:
+    #     if self._interpolator is None:
+    #         t0 = time.time()
+    #         if self.interpolator_method == "linear":
+    #             pad = 1
+    #         elif self.interpolator_method == "cubic":
+    #             pad = 2
+    #         else: # cubic or other
+    #             pad = 3
+    #         # pymatgen always sets their RegularGridInterpolator with linear interpolation
+    #         # but that isn't always what we want. Additionally, I have found some
+    #         # padding of the grid is usually required to get accurate interpolation
+    #         # near the edges.
+    #         x, y, z = self.dim
+    #         padded_total = np.pad(self.data["total"], pad, mode="wrap")
+    #         xpoints_pad = np.linspace(-pad, x + pad - 1, x + pad * 2) / x
+    #         ypoints_pad = np.linspace(-pad, y + pad - 1, y + pad * 2) / y
+    #         zpoints_pad = np.linspace(-pad, z + pad - 1, z + pad * 2) / z
+    #         self._interpolator = RegularGridInterpolator(
+    #             (xpoints_pad, ypoints_pad, zpoints_pad),
+    #             padded_total,
+    #             method=self.interpolator_method,
+    #             bounds_error=True,
+    #         )
+    #         t1 = time.time()
+    #         breakpoint()
+    #     return self._interpolator
+
+    # @interpolator.setter
+    # def interpolator(self, value):
+    #     self._interpolator = value
 
     # TODO: Do this with numba to reduce memory and probably increase speed
     @property
@@ -561,7 +590,7 @@ class Grid(VolumetricData):
     ):
         """Get a data value from self.data at a given point (x, y, z) in terms
         of fractional lattice parameters. Will be interpolated using a
-        RegularGridInterpolator on self.data if (x, y, z) is not in the original
+        cubic spline on self.data if (x, y, z) is not in the original
         set of data points.
 
         Parameters
@@ -579,10 +608,6 @@ class Grid(VolumetricData):
             Value from self.data (potentially interpolated) corresponding to
             the point (x, y, z).
         """
-        # wrap point
-        x %= 1
-        y %= 1
-        z %= 1
         # interpolate value
         return self.interpolator([x, y, z])[0]
 
@@ -606,12 +631,6 @@ class Grid(VolumetricData):
             The interpolated value at each fractional coordinate.
 
         """
-        # make sure we have an array
-        frac_coords = np.array(frac_coords)
-
-        # wrap coords
-        frac_coords %= 1
-
         # interpolate values
         return self.interpolator(frac_coords)
 
@@ -701,7 +720,7 @@ class Grid(VolumetricData):
         i, j, k = coords
 
         # import numba function to avoid circular import
-        from baderkit.core.methods.shared_numba import climb_to_max
+        from baderkit.core.toolkit.grid_numba import climb_to_max
 
         # get neighbors and dists
         neighbor_transforms, neighbor_dists = self.point_neighbor_transforms
@@ -870,7 +889,10 @@ class Grid(VolumetricData):
         return Grid(
             structure=self.structure.copy(),
             data=self.data.copy(),
-            data_aug=self.data_aug,
+            data_aug=self.data_aug.copy(),
+            source_format=self.source_format,
+            data_type=self.data_type,
+            distance_matrix=self._distance_matrix.copy(),
         )
 
     def get_atoms_in_volume(self, volume_mask: NDArray[bool]) -> NDArray[int]:
@@ -1149,12 +1171,14 @@ class Grid(VolumetricData):
             data=spin_up_data,
             data_aug=aug_up_data,
             data_type=self.data_type,
+            source_format=self.source_format,
         )
         spin_down_grid = Grid(
             structure=self.structure.copy(),
             data=spin_down_data,
             data_aug=aug_down_data,
             data_type=self.data_type,
+            source_format=self.source_format,
         )
 
         return spin_up_grid, spin_down_grid
@@ -1288,8 +1312,8 @@ class Grid(VolumetricData):
             data[k] = self.data[k] + scale_factor * other.data[k]
 
         new = deepcopy(self)
-        new.data = data
-        new.data_aug = {}
+        new.data = data.copy()
+        new.data_aug = {}  # TODO: Can this be added somehow?
         return new
 
     # @staticmethod
@@ -1635,26 +1659,28 @@ class Grid(VolumetricData):
     ###########################################################################
     # Functions for loading from files or strings
     ###########################################################################
-    @staticmethod
-    def _guess_file_format(
-        filename: str,
-        data: NDArray[np.float64],
-    ):
-        # guess from filename
-        data_type = None
-        if "elf" in filename.lower():
-            data_type = DataType.elf
-        elif any(i in filename.lower() for i in ["chg", "charge"]):
-            data_type = DataType.charge
-        if data_type is not None:
-            logging.info(f"Data type set as {data_type.value} from file name")
-        return data_type
+    # @staticmethod
+    # def _guess_file_format(
+    #     filename: str,
+    #     data: NDArray[np.float64],
+    # ):
+    #     # guess from filename
+    #     data_type = None
+    #     if "elf" in filename.lower():
+    #         data_type = DataType.elf
+    #     elif any(i in filename.lower() for i in ["chg", "charge"]):
+    #         data_type = DataType.charge
+    #     if data_type is not None:
+    #         logging.info(f"Data type set as {data_type.value} from file name")
+    #     return data_type
 
     @classmethod
     def from_vasp(
         cls,
         grid_file: str | Path,
         data_type: str | DataType = None,
+        total_only: bool = True,
+        **kwargs,
     ) -> Self:
         """
         Create a grid instance using a CHGCAR or ELFCAR file.
@@ -1666,8 +1692,13 @@ class Grid(VolumetricData):
             CHGCAR or ELFCAR type file.
         data_type: str | DataType
             The type of data loaded from the file, either charge or elf. If
-            None, the type will be guessed from the filename then the data range.
+            None, the type will be guessed from the data range.
             Defaults to None.
+        total_only: bool
+            If true, only the first set of data in the file will be read. This
+            increases speed and reduced memory usage for methods that do not
+            use the spin data.
+            Defaults to True.
 
         Returns
         -------
@@ -1679,10 +1710,7 @@ class Grid(VolumetricData):
         t0 = time.time()
         # get structure and data from file
         grid_file = Path(grid_file)
-        structure, data, data_aug = read_vasp(grid_file)
-        # guess data type
-        if data_type is None:
-            data_type = cls._guess_file_format(grid_file.name, data["total"])
+        structure, data, data_aug = read_vasp(grid_file, total_only=total_only)
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
         return cls(
@@ -1691,6 +1719,7 @@ class Grid(VolumetricData):
             data_aug=data_aug,
             data_type=data_type,
             source_format=Format.vasp,
+            **kwargs,
         )
 
     @classmethod
@@ -1698,6 +1727,7 @@ class Grid(VolumetricData):
         cls,
         grid_file: str | Path,
         data_type: str | DataType = None,
+        **kwargs,
     ) -> Self:
         """
         Create a grid instance using a gaussian cube file.
@@ -1709,7 +1739,7 @@ class Grid(VolumetricData):
             cube file.
         data_type: str | DataType
             The type of data loaded from the file, either charge or elf. If
-            None, the type will be guessed from the filename then the data range.
+            None, the type will be guessed from the data range.
             Defaults to None.
 
         Returns
@@ -1724,10 +1754,6 @@ class Grid(VolumetricData):
         grid_file = Path(grid_file)
         structure, data, ion_charges, origin = read_cube(grid_file)
         # TODO: Also save the ion charges/origin for writing later
-
-        # guess data type
-        if data_type is None:
-            data_type = cls._guess_file_format(grid_file.name, data["total"])
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
         return cls(
@@ -1735,6 +1761,7 @@ class Grid(VolumetricData):
             data=data,
             data_type=data_type,
             source_format=Format.cube,
+            **kwargs,
         )
 
     @classmethod
@@ -1742,6 +1769,7 @@ class Grid(VolumetricData):
         cls,
         grid_file: str | Path,
         data_type: str | DataType = None,
+        **kwargs,
     ) -> Self:
         """
         Create a grid instance using a CHGCAR or ELFCAR file. Uses pymatgen's
@@ -1754,7 +1782,7 @@ class Grid(VolumetricData):
             CHGCAR or ELFCAR type file.
         data_type: str | DataType
             The type of data loaded from the file, either charge or elf. If
-            None, the type will be guessed from the filename then the data range.
+            None, the type will be guessed from the data range.
             Defaults to None.
 
         Returns
@@ -1769,18 +1797,76 @@ class Grid(VolumetricData):
         grid_file = Path(grid_file)
         # Create string to add structure to.
         poscar, data, data_aug = cls.parse_file(grid_file)
-        # guess data type
-        if data_type is None:
-            data_type = cls._guess_file_format(grid_file.name, data["total"])
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
-        return cls(structure=poscar.structure, data=data, data_aug=data_aug)
+        return cls(
+            structure=poscar.structure,
+            data=data,
+            data_aug=data_aug,
+            source_format=Format.vasp,
+            data_type=data_type,
+            **kwargs,
+        )
+
+    @classmethod
+    def from_hdf5(
+        cls,
+        grid_file: str | Path,
+        data_type: str | DataType = None,
+        **kwargs,
+    ) -> Self:
+        """
+        Create a grid instance using an hdf5 file.
+
+        Parameters
+        ----------
+        grid_file : str | Path
+            The file the instance should be made from. Should be a binary hdf5
+            file.
+        data_type: str | DataType
+            The type of data loaded from the file, either charge or elf. If
+            None, the type will be guessed from the data range.
+            Defaults to None.
+
+        Returns
+        -------
+        Self
+            Grid from the specified file.
+
+        """
+        try:
+            import h5py
+        except:
+            raise ImportError(
+                """
+                The `h5py` package is required to read/write to the hdf5 format.
+                Please install with `conda install h5py` or `pip install h5py`.
+                """
+            )
+
+        logging.info(f"Loading {grid_file}")
+        t0 = time.time()
+        # make sure path is a Path object
+        grid_file = Path(grid_file)
+        # load the file
+        pymatgen_grid = super().from_hdf5(filename=grid_file)
+        t1 = time.time()
+        logging.info(f"Time: {round(t1-t0,2)}")
+        return cls(
+            structure=pymatgen_grid.structure,
+            data=pymatgen_grid.data,
+            data_aug=pymatgen_grid.data_aug,
+            source_format=Format.hdf5,
+            data_type=data_type,
+            **kwargs,
+        )
 
     @classmethod
     def from_dynamic(
         cls,
         grid_file: str | Path,
         format: str | Format = None,
+        **kwargs,
     ) -> Self:
         """
         Create a grid instance using a VASP or .cube file. If no format is provided
@@ -1806,14 +1892,16 @@ class Grid(VolumetricData):
             # guess format from file
             format = detect_format(grid_file)
 
-        if format == Format.cube:
-            return cls.from_cube(grid_file)
-        elif format == Format.vasp:
-            return cls.from_vasp(grid_file)
-        else:
-            raise ValueError(
-                "Provided format '{format}'. Options are: {[i.value for i in Format]}"
-            )
+        # make sure format is an available option
+        assert (
+            format in Format
+        ), "Provided format '{format}'. Options are: {[i.value for i in Format]}"
+
+        # get the reading method corresponding to this output format
+        method_name = format.reader
+
+        # load from file
+        return getattr(cls, method_name)(grid_file, **kwargs)
 
     def write_vasp(
         self,
@@ -1862,3 +1950,55 @@ class Grid(VolumetricData):
             grid=self,
             **kwargs,
         )
+
+    def to_hdf5(
+        self,
+        filename: Path | str,
+        **kwargs,
+    ):
+        try:
+            import h5py
+        except:
+            raise ImportError(
+                """
+                The `h5py` package is required to read/write to the hdf5 format.
+                Please install with `conda install h5py` or `pip install h5py`.
+                """
+            )
+        filename = Path(filename)
+        logging.info(f"Writing {filename.name}")
+        super().to_hdf5(filename)
+
+    def write(
+        self,
+        filename: Path | str,
+        output_format: Format | str = None,
+        **kwargs,
+    ):
+        """
+        Writes the Grid to the requested format file at the provided path. If no
+        format is provided, uses this Grid objects stored format.
+
+        Parameters
+        ----------
+        filename : Path | str
+            The name of the file to write to.
+        output_format : Format | str
+            The format to write with. If None, writes to source format stored in
+            this Grid objects metadata.
+            Defaults to None.
+
+        Returns
+        -------
+        None.
+
+        """
+        # If no provided format, get from metadata
+        if output_format is None:
+            output_format = self.source_format
+        # Make sure format is a Format object not a string
+        output_format = Format(output_format)
+        # get the writing method corresponding to this output format
+        method_name = output_format.writer
+        # write the grid
+        getattr(self, method_name)(filename, **kwargs)

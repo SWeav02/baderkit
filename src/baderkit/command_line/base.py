@@ -165,25 +165,25 @@ def sum(
         ...,
         help="The path to the second file to sum",
     ),
-    output_name: Path = typer.Option(
-        None,
+    output_path: Path = typer.Option(
+        "CHGCAR_sum",
         "--output-path",
         "-o",
-        help="The path to write the summed grids to",
+        help="The path to write the converted grid to",
         case_sensitive=True,
     ),
     input_format: Format = typer.Option(
-        Format.vasp,
+        None,
         "--input-format",
         "-if",
-        help="The input format of the files",
+        help="The input format of the file. If None, this will be guessed from the file.",
         case_sensitive=False,
     ),
     output_format: Format = typer.Option(
-        Format.vasp,
+        None,
         "--output-format",
         "-of",
-        help="The output format of the files",
+        help="The output format of the files. If None, the input format will be used.",
         case_sensitive=False,
     ),
 ):
@@ -197,12 +197,9 @@ def sum(
     file2 = Path(file2)
     logging.info(f"Summing files {file1.name} and {file2.name}")
 
-    if input_format == "vasp":
-        grid1 = Grid.from_vasp(file1)
-        grid2 = Grid.from_vasp(file2)
-    elif input_format == "cube":
-        grid1 = Grid.from_cube(file1)
-        grid2 = Grid.from_cube(file2)
+    # load grids dynamically
+    grid1 = Grid.from_dynamic(file1, format=input_format, total_only=False)
+    grid2 = Grid.from_dynamic(file2, format=input_format, total_only=False)
 
     shape1 = tuple(grid1.shape)
     shape2 = tuple(grid2.shape)
@@ -213,22 +210,126 @@ def sum(
     """
     # sum grids
     summed_grid = grid1.linear_add(grid2)
-    # get name to use
-    if output_name is None:
-        if "elf" in file1.name.lower():
-            file_pre = "ELFCAR"
-        else:
-            file_pre = "CHGCAR"
-        output_name = f"{file_pre}_sum"
-        if output_format == "cube":
-            output_name += ".cube"
     # convert output to path
-    output_name = Path(output_name)
+    output_path = Path(output_path)
     # write to file
-    if output_format == "vasp":
-        summed_grid.write_vasp(output_name)
-    elif output_format == "cube":
-        summed_grid.write_cube(output_name)
+    summed_grid.write(filename=output_path, output_format=output_format)
+
+
+@baderkit_app.command(no_args_is_help=True)
+def split(
+    file: Path = typer.Argument(
+        ...,
+        help="The path to the file to split",
+    ),
+    output_up: Path = typer.Option(
+        None,
+        "--output-up",
+        "-ou",
+        help="The path to write the spin-up data to. If None, will append '_up' to the original file name.",
+        case_sensitive=True,
+    ),
+    output_down: Path = typer.Option(
+        None,
+        "--output-down",
+        "-od",
+        help="The path to write the spin-down data to. If None, will append '_down' to the original file name.",
+        case_sensitive=True,
+    ),
+    input_format: Format = typer.Option(
+        None,
+        "--input-format",
+        "-if",
+        help="The input format of the file. If None, this will be guessed from the file.",
+        case_sensitive=False,
+    ),
+    output_format: Format = typer.Option(
+        None,
+        "--output-format",
+        "-of",
+        help="The output format of the files. If None, the input format will be used.",
+        case_sensitive=False,
+    ),
+):
+    """
+    A helper function for splitting a spin polarized charge density or ELF to its
+    spin-up and spin-down components.
+    """
+    from baderkit.core import Grid
+
+    # make sure files are paths
+    file = Path(file)
+    logging.info(f"Splitting file {file.name}")
+
+    # load grid dynamically
+    grid = Grid.from_dynamic(file, format=input_format, total_only=False)
+
+    if not grid.is_spin_polarized:
+        raise Exception(
+            """
+            This method only splits files that contain both the total and difference
+            charge densities like VASP's CHGCAR format.
+            If you need help splitting a charge density or ELF in a different format, please
+            open a discussion on our [github](https://github.com/SWeav02/baderkit/discussions) and
+            we will try and add an example to our documentation.
+            """
+        )
+
+    # split grid. raises errors internally
+    spin_up, spin_down = grid.split_to_spin()
+    # get name to use
+    suffix = file.suffix
+    filename = file.name.strip(suffix)
+    if output_up is None:
+        output_up = f"{filename}_up{suffix}"
+    if output_down is None:
+        output_down = f"{filename}_down{suffix}"
+    # convert outputs to path objects
+    output_up = Path(output_up)
+    output_down = Path(output_down)
+    # write to file
+    spin_up.write(filename=output_up, output_format=output_format)
+    spin_down.write(filename=output_down, output_format=output_format)
+
+
+@baderkit_app.command(no_args_is_help=True)
+def convert(
+    file: Path = typer.Argument(
+        ...,
+        help="The path to the file to convert",
+    ),
+    output_path: Path = typer.Argument(
+        ...,
+        help="The path to write the summed grids to",
+        case_sensitive=True,
+    ),
+    output_format: Format = typer.Argument(
+        ...,
+        help="The output format of the files",
+        case_sensitive=False,
+    ),
+    input_format: Format = typer.Option(
+        None,
+        "--input-format",
+        "-if",
+        help="The input format of the file. If None, this will be guessed from the file.",
+        case_sensitive=False,
+    ),
+):
+    """
+    Converts the provided file to another format.
+    """
+    from baderkit.core import Grid
+
+    # make sure files are paths
+    file = Path(file)
+    logging.info(f"Converting file {file.name}")
+
+    # load grid dynamically
+    grid = Grid.from_dynamic(file, format=input_format)
+
+    # write file
+    grid.write(output_path, output_format)
 
 
 @baderkit_app.command(no_args_is_help=True)
