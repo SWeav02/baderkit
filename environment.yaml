@@ -13,6 +13,8 @@ dependencies:
   - numba>=0.59.0,<=0.61.2
   - typer>=0.6.1,<=0.16.0
   - rich>=11.0,<=14.0
+  - pyvista>=0.44.0,<0.45.2
+  - pyvistaqt
 
   # Preferred IDE
   - spyder
@@ -22,14 +24,6 @@ dependencies:
   - mkdocstrings>=0.25.2
   - mkdocstrings-python>=1.10.9
 
-  # Web UI
-  - streamlit>=1.40.0,<1.46.1
-
   # Testing and pip
   - h5py
   - pytest
-  - pip
-
-  # pip-only dependencies
-  - pip:
-      - pyvista[jupyter]>=0.44.0,<0.45.2

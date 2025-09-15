@@ -5,22 +5,21 @@ Created on Sat Sep 13 08:09:10 2025
 @author: sammw
 """
 
-import sys
 import importlib.resources
+
 # Setting the Qt bindings for QtPy
 import os
+import sys
+
 os.environ["QT_API"] = "pyqt5"
 
+from pyvistaqt import MainWindow as pvMainWindow
 from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
-import numpy as np
-
-import pyvista as pv
-from pyvistaqt import QtInteractor, MainWindow as pvMainWindow
-
-from baderkit.plotting.web_gui.pyqt.tabs import BaderTab, BasinTab, SurfaceTab, AtomsTab
 from baderkit.plotting.core import BaderPlotter
+from baderkit.plotting.web_gui.pyqt.tabs import BaderTab, BasinTab, ExportTab, StyleTab
+
 
 class MainWindow(pvMainWindow):
 
@@ -41,39 +40,34 @@ class MainWindow(pvMainWindow):
         # set layout
         self.viewport.setLayout(self.viewport_layout)
 
-        
         # Sidebar (left)
         self.sidebar = qw.QTabWidget()
-        for tab in [BaderTab, BasinTab, SurfaceTab, AtomsTab]:
+        for tab in [BaderTab, BasinTab, StyleTab, ExportTab]:
             new_tab = tab(self)
             self.sidebar.addTab(new_tab, new_tab.name)
-        
+        # prevent sidebar from disappearing completely
+        self.sidebar.setMinimumWidth(400)
+
         self.splitter = qw.QSplitter(Qt.Horizontal)
         self.splitter.addWidget(self.sidebar)
         self.splitter.addWidget(self.viewport)
-        
-        # # Optional: set initial sizes
-        self.splitter.setSizes([150, 450])  # sidebar width, main area width
+        # let right side take all remaining space
+        self.splitter.setStretchFactor(0, 0)  # sidebar doesn't stretch
+        self.splitter.setStretchFactor(1, 1)  # viewport stretches
+
+        self.splitter.setSizes([400, 1])
+        # self.splitter.setSizes([self.sidebar.minimumSizeHint().width(), 1])
 
         self.setWindowTitle("BaderKit")
-        # self.resize(600, 400)
 
         self.setCentralWidget(self.splitter)
 
         if show:
             self.show()
-            
-        # TODO:
-            # Summary tab. List results for basins/atoms somewhere.
-            
-            # View tab. Lattice border. Camera angle.
-            
-            # Export tab. Update export methods?
 
-        
     def set_bader(self, bader):
         self.bader = bader
-    
+
         # --- remove all children of the viewport layout safely ---
         while self.viewport_layout.count():
             item = self.viewport_layout.takeAt(0)
@@ -84,43 +78,43 @@ class MainWindow(pvMainWindow):
                 # detach then delete
                 w.setParent(None)
                 w.deleteLater()
-    
+
         # --- create container that the interactor will live in ---
-        container = qw.QWidget(self.viewport)   # parent to viewport to ensure proper stacking
+        container = qw.QWidget(
+            self.viewport
+        )  # parent to viewport to ensure proper stacking
         container.setContentsMargins(0, 0, 0, 0)
         cont_layout = qw.QVBoxLayout(container)
         cont_layout.setContentsMargins(0, 0, 0, 0)
         cont_layout.setSpacing(0)
-    
-        container.setSizePolicy(qw.QSizePolicy.Expanding,
-                                qw.QSizePolicy.Expanding)
-    
+
+        container.setSizePolicy(qw.QSizePolicy.Expanding, qw.QSizePolicy.Expanding)
+
         # --- create plotter, ask it to attach to the container ---
         # otherwise reparent the interactor widget below.
         self.bader_plotter = BaderPlotter(bader, qt_plotter=True, qt_frame=container)
-    
+
         # get the actual QWidget that must be inserted
         plot_widget = self.bader_plotter.plotter.interactor
-    
+
         # sometimes pyvistaqt creates it with a different parent; force parent to container
         plot_widget.setParent(container)
         plot_widget.setContentsMargins(0, 0, 0, 0)
-        plot_widget.setSizePolicy(qw.QSizePolicy.Expanding,
-                                  qw.QSizePolicy.Expanding)
-    
+        plot_widget.setSizePolicy(qw.QSizePolicy.Expanding, qw.QSizePolicy.Expanding)
+
         # add the interactor to the container layout
         cont_layout.addWidget(plot_widget)
-    
+
         # add the container into your viewport layout
         self.viewport_layout.addWidget(container)
-    
+
         # tell layouts and widgets to recalculate sizes
         container.show()
         plot_widget.show()
         container.updateGeometry()
         self.viewport_layout.invalidate()
         self.viewport.update()
-    
+
         # ensure proper stretching (make the container take available space)
         idx = self.viewport_layout.indexOf(container)
         if idx != -1:
@@ -129,22 +123,15 @@ class MainWindow(pvMainWindow):
             except Exception:
                 # some layout types use setStretch / setStretchFactor; ignore if not available
                 pass
-    
-        # final render / camera reset if you want
-        try:
-            self.bader_plotter.plotter.reset_camera()
-            self.bader_plotter.plotter.render()
-        except Exception:
-            pass
-        
+
         # connect close signal
         self.signal_close.connect(self.bader_plotter.plotter.close)
-    
+
         # update sidebar tabs
         for i in range(self.sidebar.count()):
             page = self.sidebar.widget(i)
             page.set_bader()
-    
+
     def set_property(self, new_value, prop: str = None, **kwargs):
         if prop is None:
             sender = self.sender()
@@ -154,9 +141,12 @@ class MainWindow(pvMainWindow):
         setattr(self.bader_plotter, prop, new_value)
         self.bader_plotter.plotter.suppress_rendering = False
 
+
 def run_app():
     app = qw.QApplication(sys.argv)
-    with importlib.resources.open_text("baderkit.plotting.web_gui.pyqt","stylesheet.qss") as f:
+    with importlib.resources.open_text(
+        "baderkit.plotting.web_gui.pyqt", "stylesheet.qss"
+    ) as f:
         app.setStyleSheet(f.read())
     window = MainWindow()
     window.showMaximized()

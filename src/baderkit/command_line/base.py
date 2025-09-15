@@ -332,12 +332,14 @@ def convert(
     # write file
     grid.write(output_path, output_format)
 
+
 @baderkit_app.command()
 def gui():
     """
     Launches the BaderKit GUI application
     """
     run_app()
+
 
 # @baderkit_app.command(no_args_is_help=True)
 # def webapp(

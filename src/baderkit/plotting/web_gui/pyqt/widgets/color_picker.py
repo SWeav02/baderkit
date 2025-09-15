@@ -1,26 +1,30 @@
 # -*- coding: utf-8 -*-
 
-from qtpy import QtWidgets as qw, QtGui, QtCore
+from qtpy import QtCore, QtGui
+from qtpy import QtWidgets as qw
+
 
 class ColorPicker(qw.QWidget):
     colorChanged = QtCore.Signal(str)  # custom signal
 
     def __init__(
-            self,
-            initial="#BA8E23",
-            parent=None,
-            plot_prop: str = None,
-            main: object = None,
+        self,
+        initial="#BA8E23",
+        parent=None,
+        plot_prop: str = None,
+        main: object = None,
     ):
         super().__init__(parent)
 
         # button with background showing current color
         self.button = qw.QPushButton()
         self.button.setSizePolicy(qw.QSizePolicy.Expanding, qw.QSizePolicy.Preferred)
-        self.button.setMinimumHeight(24)
+        self.button.setMinimumHeight(16)
         self.button.clicked.connect(self.choose_color)
 
         self.set_color(initial)
+
+        self.setSizePolicy(qw.QSizePolicy.Expanding, qw.QSizePolicy.Preferred)
 
         layout = qw.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -59,5 +63,3 @@ class ColorPicker(qw.QWidget):
             self.set_color(self._color.name())
         else:
             self.button.setStyleSheet("")  # reset -> Qt greys out
-
-

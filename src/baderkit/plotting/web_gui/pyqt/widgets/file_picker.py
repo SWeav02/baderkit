@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
-from qtpy import QtWidgets as qw, QtCore as qc
+from qtpy import QtCore as qc
+from qtpy import QtWidgets as qw
+
 
 class FilePicker(qw.QWidget):
     def __init__(self, parent=None):
@@ -40,4 +42,3 @@ class FilePicker(qw.QWidget):
     def sizeHint(self):
         sh = super().sizeHint()
         return sh.expandedTo(qc.QSize(sh.width(), self._single_line_height))
-

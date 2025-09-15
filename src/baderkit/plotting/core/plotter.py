@@ -37,7 +37,7 @@ class StructurePlotter:
         structure: Structure,
         off_screen: bool = False,
         qt_plotter: bool = False,
-        qt_frame = None,
+        qt_frame=None,
         **kwargs,
     ):
         """
@@ -54,7 +54,7 @@ class StructurePlotter:
             Whether or not the plotter will use pyvistaqt for qt applications
         qt_frame
             If using pyvistaqt, the QFrame to link the plotter to.
-        
+
 
         Returns
         -------
@@ -661,7 +661,7 @@ class StructurePlotter:
         # set camera perspective type
         if self.parallel_projection:
             plotter.renderer.enable_parallel_projection()
-            
+
         # reset camera to fit well
         plotter.reset_camera()
 
@@ -774,8 +774,15 @@ class StructurePlotter:
             [Window height x Window width x 4] if transparent_background is set to True.
 
         """
-        plotter = self.rebuild()
-        plotter.camera = self.plotter.camera.copy()
+
+        if not self.qt_plotter:
+            plotter = self.rebuild()
+            plotter.camera = self.plotter.camera.copy()
+        else:
+            plotter = self.plotter
+
+        # enable off screen rendering momentarily
+        plotter.ren_win.SetOffScreenRendering(True)
         screenshot = plotter.screenshot(
             filename=filename,
             transparent_background=transparent_background,
@@ -783,7 +790,9 @@ class StructurePlotter:
             window_size=window_size,
             scale=scale,
         )
-        plotter.close()
+        plotter.ren_win.SetOffScreenRendering(False)
+        if not self.qt_plotter:
+            plotter.close()
         return screenshot
 
 
@@ -810,7 +819,6 @@ class GridPlotter(StructurePlotter):
 
         """
         # apply StructurePlotter kwargs
-        structure = grid.structure
         super().__init__(structure=grid.structure, **structure_kwargs)
 
         # Grid specific items
@@ -1247,12 +1255,15 @@ class BaderPlotter(GridPlotter):
         self.flat_atom_basins = padded_atoms.ravel(order="F")
 
         # get the initial empty list of visible atom labels and visible basin labels
-        self._visible_bader_basins = set()
-        self._visible_atom_basins = set([0])
-        self.visible_bader_basins = []
-        self.visible_atom_basins = [0]
+        self._visible_bader_basins = set(
+            [i for i, ai in enumerate(bader.basin_atoms) if ai == 0]
+        )
+        self._visible_atom_basins = set()
+        self.visible_bader_basins = [
+            i for i, ai in enumerate(bader.basin_atoms) if ai == 0
+        ]
+        self.visible_atom_basins = []
         self._hidden_mask = np.zeros(len(self.flat_bader_basins), dtype=bool)
-        
 
     @property
     def visible_bader_basins(self) -> list[int]:
