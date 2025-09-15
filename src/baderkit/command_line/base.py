@@ -14,6 +14,7 @@ import typer
 
 from baderkit.core.methods import Method
 from baderkit.core.toolkit import Format
+from baderkit.plotting.web_gui.pyqt.main import run_app
 
 baderkit_app = typer.Typer(rich_markup_mode="markdown")
 
@@ -331,83 +332,89 @@ def convert(
     # write file
     grid.write(output_path, output_format)
 
-
-@baderkit_app.command(no_args_is_help=True)
-def webapp(
-    charge_file: Path = typer.Argument(
-        ...,
-        help="The path to the charge density file",
-    ),
-    reference_file: Path = typer.Option(
-        None,
-        "--reference-file",
-        "-ref",
-        help="The path to the reference file",
-    ),
-    method: Method = typer.Option(
-        Method.neargrid,
-        "--method",
-        "-m",
-        help="The method to use for separating bader basins",
-        case_sensitive=False,
-    ),
-    vacuum_tolerance: str = typer.Option(
-        "1.0e-03",
-        "--vacuum-tolerance",
-        "-vtol",
-        help="The value below which a point will be considered part of the vacuum. By default the grid points are normalized by the structure's volume to accomodate VASP's charge format. This can be turned of with the --normalize-vacuum tag. The vacuum can be ignored by setting this to `False`",
-        callback=float_or_bool,
-    ),
-    normalize_vacuum: bool = typer.Option(
-        True,
-        "--normalize-vacuum",
-        "-nvac",
-        help="Whether or not to normalize charge to the structure's volume when finding vacuum points.",
-    ),
-    basin_tolerance: float = typer.Option(
-        1.0e-03,
-        "--basin-tolerance",
-        "-btol",
-        help="The charge below which a basin won't be considered significant. Only significant basins will be written to the output file, but the charges and volumes are still assigned to the atoms.",
-    ),
-):
+@baderkit_app.command()
+def gui():
     """
-    Starts the web interface
+    Launches the BaderKit GUI application
     """
-    # get this files path
-    current_file = Path(__file__).resolve()
-    # get relative path to streamlit app
-    webapp_path = (
-        current_file.parent.parent / "plotting" / "web_gui" / "streamlit" / "webapp.py"
-    )
-    # set environmental variables
-    os.environ["CHARGE_FILE"] = str(charge_file)
-    os.environ["BADER_METHOD"] = method
-    os.environ["VACUUM_TOL"] = str(vacuum_tolerance)
-    os.environ["NORMALIZE_VAC"] = str(normalize_vacuum)
-    os.environ["BASIN_TOL"] = str(basin_tolerance)
+    run_app()
 
-    if reference_file is not None:
-        os.environ["REFERENCE_FILE"] = str(reference_file)
+# @baderkit_app.command(no_args_is_help=True)
+# def webapp(
+#     charge_file: Path = typer.Argument(
+#         ...,
+#         help="The path to the charge density file",
+#     ),
+#     reference_file: Path = typer.Option(
+#         None,
+#         "--reference-file",
+#         "-ref",
+#         help="The path to the reference file",
+#     ),
+#     method: Method = typer.Option(
+#         Method.neargrid,
+#         "--method",
+#         "-m",
+#         help="The method to use for separating bader basins",
+#         case_sensitive=False,
+#     ),
+#     vacuum_tolerance: str = typer.Option(
+#         "1.0e-03",
+#         "--vacuum-tolerance",
+#         "-vtol",
+#         help="The value below which a point will be considered part of the vacuum. By default the grid points are normalized by the structure's volume to accomodate VASP's charge format. This can be turned of with the --normalize-vacuum tag. The vacuum can be ignored by setting this to `False`",
+#         callback=float_or_bool,
+#     ),
+#     normalize_vacuum: bool = typer.Option(
+#         True,
+#         "--normalize-vacuum",
+#         "-nvac",
+#         help="Whether or not to normalize charge to the structure's volume when finding vacuum points.",
+#     ),
+#     basin_tolerance: float = typer.Option(
+#         1.0e-03,
+#         "--basin-tolerance",
+#         "-btol",
+#         help="The charge below which a basin won't be considered significant. Only significant basins will be written to the output file, but the charges and volumes are still assigned to the atoms.",
+#     ),
+# ):
+#     """
+#     Starts the web interface
+#     """
+#     # get this files path
+#     current_file = Path(__file__).resolve()
+#     # get relative path to streamlit app
+#     webapp_path = (
+#         current_file.parent.parent / "plotting" / "web_gui" / "streamlit" / "webapp.py"
+#     )
+#     # set environmental variables
+#     os.environ["CHARGE_FILE"] = str(charge_file)
+#     os.environ["BADER_METHOD"] = method
+#     os.environ["VACUUM_TOL"] = str(vacuum_tolerance)
+#     os.environ["NORMALIZE_VAC"] = str(normalize_vacuum)
+#     os.environ["BASIN_TOL"] = str(basin_tolerance)
 
-    args = [
-        "streamlit",
-        "run",
-        str(webapp_path),
-    ]
+#     if reference_file is not None:
+#         os.environ["REFERENCE_FILE"] = str(reference_file)
 
-    process = subprocess.Popen(
-        args=args,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-    # Look for prompt and send blank input if needed
-    for line in process.stdout:
-        print(line, end="")  # Optional: show Streamlit output
-        if "email" in line:
-            process.stdin.write("\n")
-            process.stdin.flush()
-            break  # After this, Streamlit should proceed normally
+#     args = [
+#         "streamlit",
+#         "run",
+#         str(webapp_path),
+#     ]
+
+#     process = subprocess.Popen(
+#         args=args,
+#         stdin=subprocess.PIPE,
+#         stdout=subprocess.PIPE,
+#         stderr=subprocess.STDOUT,
+#         text=True,
+#         bufsize=1,
+#     )
+#     # Look for prompt and send blank input if needed
+#     for line in process.stdout:
+#         print(line, end="")  # Optional: show Streamlit output
+#         if "email" in line:
+#             process.stdin.write("\n")
+#             process.stdin.flush()
+#             break  # After this, Streamlit should proceed normally

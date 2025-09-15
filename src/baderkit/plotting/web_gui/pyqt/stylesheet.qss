@@ -1,0 +1,16 @@
+QPushButton {
+    background-color: lightgray;
+    border: 1px solid gray;
+    padding: 6px;
+}
+QPushButton:checked {
+    background-color: darkgray;
+}
+QLineEdit {
+    border: 1px solid gray;
+    padding: 4px;
+}
+QTreeWidget {
+    background-color: white;
+    alternate-background-color: #f0f0f0;  /* lighter gray for alternate rows */
+}

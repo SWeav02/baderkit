@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pyvista as pv
 from numpy.typing import NDArray
+from pyvistaqt import QtInteractor
 
 from baderkit.core import Bader, Grid, Structure
 from baderkit.plotting.core.defaults import ATOM_COLORS
@@ -35,6 +36,9 @@ class StructurePlotter:
         self,
         structure: Structure,
         off_screen: bool = False,
+        qt_plotter: bool = False,
+        qt_frame = None,
+        **kwargs,
     ):
         """
         A convenience class for creating plots of crystal structures using
@@ -46,6 +50,11 @@ class StructurePlotter:
             The pymatgen Structure object to plot.
         off_screen : bool, optional
             Whether or not the plotter should be in offline mode. The default is False.
+        qt_plotter : bool, optional
+            Whether or not the plotter will use pyvistaqt for qt applications
+        qt_frame
+            If using pyvistaqt, the QFrame to link the plotter to.
+        
 
         Returns
         -------
@@ -58,7 +67,9 @@ class StructurePlotter:
         structure.relabel_sites()
         # create initial class variables
         self.structure = structure
-        self._off_screen = off_screen
+        self.off_screen = off_screen
+        self.qt_plotter = qt_plotter
+        self.qt_frame = qt_frame
         self._visible_atoms = [i for i in range(len(self.structure))]
         self._show_lattice = True
         self._wrap_atoms = True
@@ -72,7 +83,7 @@ class StructurePlotter:
         self._radii = [s.specie.atomic_radius for s in structure]
         self._colors = [ATOM_COLORS.get(s.specie.symbol, "#FFFFFF") for s in structure]
         # generate initial plotter
-        self.plotter = self._create_structure_plot(off_screen)
+        self.plotter = self._create_structure_plot()
         self.view_indices = [1, 0, 0]
         self.up_indices = [0, 0, 1]
 
@@ -604,16 +615,11 @@ class StructurePlotter:
         # combine and return
         return pv.merge(lines)
 
-    def _create_structure_plot(self, off_screen: bool) -> pv.Plotter:
+    def _create_structure_plot(self) -> pv.Plotter:
         """
         Generates a pyvista.Plotter object from the current class variables.
         This is called when the class is first instanced and generally shouldn't
         be called again.
-
-        Parameters
-        ----------
-        off_screen : bool
-            Whether or not the plotter should run in off_screen mode.
 
         Returns
         -------
@@ -621,7 +627,11 @@ class StructurePlotter:
             A pyvista Plotter object representing the provided Structure object.
 
         """
-        plotter = pv.Plotter(off_screen=off_screen)
+        if self.qt_plotter:
+            assert self.qt_frame is not None, "A frame must be set to use qt"
+            plotter = QtInteractor(self.qt_frame)
+        else:
+            plotter = pv.Plotter(off_screen=self.off_screen)
         # set background
         plotter.set_background(self.background)
         # add atoms
@@ -648,12 +658,12 @@ class StructurePlotter:
             name="lattice",
         )
 
-        # # set camera direction
-        # plotter.camera_position = self.get_camera_position()
-
         # set camera perspective type
         if self.parallel_projection:
             plotter.renderer.enable_parallel_projection()
+            
+        # reset camera to fit well
+        plotter.reset_camera()
 
         return plotter
 
@@ -694,7 +704,7 @@ class StructurePlotter:
             StructurePlotter class.
 
         """
-        return self._create_structure_plot(self._off_screen)
+        return self._create_structure_plot()
 
     def get_plot_html(self) -> str:
         """
@@ -721,20 +731,6 @@ class StructurePlotter:
         html_plotter = queue.get().read()
         process.join()
         return html_plotter
-
-    # def get_plot_vtksz(self):
-    #     # Create temp file path manually
-    #     with tempfile.NamedTemporaryFile(suffix=".vtkjs", delete=False) as f:
-    #         temp_path = f.name  # Just get the path, don't use the open file
-    #     # Now write to it
-    #     self.plotter.export_vtksz(temp_path)
-    #     # Read the contents
-    #     with open(temp_path, "rb") as f:
-    #         content = f.read()
-    #     # Clean up
-    #     os.remove(temp_path)
-
-    #     return content
 
     def get_plot_screenshot(
         self,
@@ -795,7 +791,7 @@ class GridPlotter(StructurePlotter):
     def __init__(
         self,
         grid: Grid,
-        off_screen: bool = False,
+        **structure_kwargs,
         # downscale: int | None = 400,
     ):
         """
@@ -807,8 +803,6 @@ class GridPlotter(StructurePlotter):
         grid : Grid
             The Grid object to use for isosurfaces. The structure will be pulled
             from this grid.
-        off_screen : bool, optional
-            Whether or not the plotter should be in offline mode. The default is False.
 
         Returns
         -------
@@ -817,7 +811,7 @@ class GridPlotter(StructurePlotter):
         """
         # apply StructurePlotter kwargs
         structure = grid.structure
-        super().__init__(structure=structure, off_screen=off_screen)
+        super().__init__(structure=grid.structure, **structure_kwargs)
 
         # Grid specific items
         # if downscale is not None:
@@ -828,8 +822,8 @@ class GridPlotter(StructurePlotter):
         self.grid = grid
         self._show_surface = True
         self._show_caps = True
-        self._surface_opacity = 0.5
-        self._cap_opacity = 0.5
+        self._surface_opacity = 0.8
+        self._cap_opacity = 0.8
         self._colormap = "viridis"
         self._use_solid_surface_color = False
         self._use_solid_cap_color = False
@@ -853,7 +847,7 @@ class GridPlotter(StructurePlotter):
         # generate the surface
         self.surface = self.structured_grid.extract_surface()
         # update plotter
-        self.plotter = self._create_grid_plot(off_screen)
+        self.plotter = self._create_grid_plot()
 
     def _make_structured_grid(self, values: NDArray[float]) -> pv.StructuredGrid:
         """
@@ -1068,6 +1062,7 @@ class GridPlotter(StructurePlotter):
     def iso_val(self, iso_val: float):
         # make sure iso value is within range
         iso_val = max(self.min_val, min(iso_val, self.max_val))
+        self._iso_val = iso_val
         self._update_surface_mesh(iso_val)
         self._add_iso_mesh()
         self._add_cap_mesh()
@@ -1174,16 +1169,11 @@ class GridPlotter(StructurePlotter):
             if len(self.iso["values"]) > 0:
                 self.plotter.add_mesh(self.cap, **self._get_cap_kwargs())
 
-    def _create_grid_plot(self, off_screen) -> pv.Plotter():
+    def _create_grid_plot(self) -> pv.Plotter():
         """
         Generates a pyvista.Plotter object from the current class variables.
         This is called when the class is first instanced and generally shouldn't
         be called again.
-
-        Parameters
-        ----------
-        off_screen : bool
-            Whether or not the plotter should run in off_screen mode.
 
         Returns
         -------
@@ -1192,7 +1182,7 @@ class GridPlotter(StructurePlotter):
 
         """
         # get initial plotter with structure
-        plotter = self._create_structure_plot(off_screen=off_screen)
+        plotter = self._create_structure_plot()
         # generate initial surface meshes
         self._update_surface_mesh(self.iso_val)
         # Add iso mesh
@@ -1215,14 +1205,14 @@ class GridPlotter(StructurePlotter):
             GridPlotter class.
 
         """
-        return self._create_grid_plot(self._off_screen)
+        return self._create_grid_plot()
 
 
 class BaderPlotter(GridPlotter):
     def __init__(
         self,
         bader: Bader,
-        off_screen: bool = False,
+        **grid_kwargs,
     ):
         """
         A convenience class for creating plots of individual Bader basins
@@ -1233,8 +1223,6 @@ class BaderPlotter(GridPlotter):
         bader : Bader
             The Bader object to use for isolating basins and creating isosurfaces.
             The structure will be pulled from the charge grid.
-        off_screen : bool, optional
-            Whether or not the plotter should be in offline mode. The default is False.
 
         Returns
         -------
@@ -1243,7 +1231,7 @@ class BaderPlotter(GridPlotter):
         """
         # apply StructurePlotter kwargs
         grid = bader.charge_grid
-        super().__init__(grid=grid, off_screen=off_screen)
+        super().__init__(grid=grid, **grid_kwargs)
         self.bader = bader
 
         # pad the label arrays then flatten them
@@ -1260,10 +1248,11 @@ class BaderPlotter(GridPlotter):
 
         # get the initial empty list of visible atom labels and visible basin labels
         self._visible_bader_basins = set()
-        self._visible_atom_basins = set()
+        self._visible_atom_basins = set([0])
         self.visible_bader_basins = []
-        self.visible_atom_basins = []
+        self.visible_atom_basins = [0]
         self._hidden_mask = np.zeros(len(self.flat_bader_basins), dtype=bool)
+        
 
     @property
     def visible_bader_basins(self) -> list[int]:
@@ -1333,4 +1322,4 @@ class BaderPlotter(GridPlotter):
         # update the surface
         self.surface = self.structured_grid.extract_surface()
         # update plotter
-        self.iso_val = self.iso_val
+        self.iso_val = self._iso_val

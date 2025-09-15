@@ -52,7 +52,7 @@ class Bader:
         self,
         charge_grid: Grid,
         reference_grid: Grid | None = None,
-        method: str | Method = Method.neargrid_weight,
+        method: str | Method = Method.weight,
         vacuum_tol: float | bool = 1.0e-3,
         normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
