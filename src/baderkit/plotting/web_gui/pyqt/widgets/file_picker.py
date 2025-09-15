@@ -27,7 +27,7 @@ class FilePicker(qw.QWidget):
         # Compute a single-line height based on children size hints (keeps baseline alignment)
         h = max(self.line_edit.sizeHint().height(), self.browse_btn.sizeHint().height())
         # add some small padding to be safe
-        self._single_line_height = h + 4
+        self._single_line_height = h
         self.setFixedHeight(self._single_line_height)
 
     def browse(self):
