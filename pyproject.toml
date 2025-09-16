@@ -24,7 +24,7 @@ name="baderkit"
 # Versions should comply with PEP 440:
 # https://www.python.org/dev/peps/pep-0440/
 # https://semver.org/
-version="0.5.6"
+version="0.6.0"
 
 # Maintainer info
 authors = [{name = "Sam M. Weaver", email = "sammweaver@gmail.com"}]
@@ -58,28 +58,28 @@ dependencies = [
     "numba>=0.59.0,<=0.61.2",
     "typer>=0.6.1,<=0.16.0",
     "rich>=11.0,<=14.0",
-    "pyvista>=0.44.0,<0.45.2",
-    "pyvistaqt"
 ]
 
 
 [project.optional-dependencies]
-webapp = [
-    "streamlit>=1.40.0,<1.46.1",
-    "pyvista[jupyter]>=0.44.0,<0.45.2"
+gui = [
+    "pyvista>=0.44.0,<=0.46.3",
+    "pyvistaqt>=0.6.0,<=0.11.3",
+    "qtpy>=2.0.0,<3.0",
 ]
 
 # For development and testing. Taken straight from simmate
 DEV = [
-    "streamlit>=1.40.0,<1.46.1", # for web GUI
-    "pyvista[jupyter]>=0.44.0,<0.45.2",
+    "pyvista>=0.44.0,<0.45.2",
+    "pyvistaqt>=0.6.0,<=0.11.3",
+    "qtpy>=2.0.0,<3.0",
     "pytest",
     "black",
     "isort",
     "mkdocs",
     "mkdocs-material",
     "mkdocstrings-python",
-    "h5py",
+    "h5py>=3.6.0,<4",
 #    "mkdocs_autorefs",
 ]
 

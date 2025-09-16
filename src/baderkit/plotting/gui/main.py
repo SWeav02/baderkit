@@ -14,10 +14,12 @@ import sys
 os.environ["QT_API"] = "pyqt5"
 
 from pyvistaqt import MainWindow as pvMainWindow
+from qtpy import QtCore as qc
 from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
 from baderkit.plotting.core import BaderPlotter
+
 from .tabs import BaderTab, BasinTab, ExportTab, StyleTab
 
 
@@ -150,4 +152,5 @@ def run_app():
         app.setStyleSheet(f.read())
     window = MainWindow()
     window.showMaximized()
+
     sys.exit(app.exec())

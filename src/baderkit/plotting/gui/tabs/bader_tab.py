@@ -5,11 +5,7 @@ from qtpy import QtCore as qc
 from qtpy import QtWidgets as qw
 
 from baderkit.core import Bader, Grid
-from baderkit.plotting.gui.widgets import (
-    DoubleSpinBox,
-    ErrorWindow,
-    FilePicker,
-)
+from baderkit.plotting.gui.widgets import DoubleSpinBox, ErrorWindow, FilePicker
 
 
 class BaderTab(qw.QWidget):

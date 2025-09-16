@@ -5,11 +5,7 @@ from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
 from baderkit.plotting.core.defaults import ATOM_COLORS
-from baderkit.plotting.gui.widgets import (
-    ColorPicker,
-    DoubleSpinBox,
-    centered_widget,
-)
+from baderkit.plotting.gui.widgets import ColorPicker, DoubleSpinBox, centered_widget
 
 
 class AtomsTab(qw.QWidget):
