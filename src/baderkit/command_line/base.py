@@ -341,7 +341,7 @@ def gui():
         import qtpy
     except:
         logging.warning(
-            "Baderkits GUI requires additional dependencies. Please run `pip install baderkit[gui]`"
+            "Baderkits GUI requires additional dependencies. Please run 'pip install baderkit\[gui]'"
         )
         return
 

@@ -145,7 +145,9 @@ class MainWindow(pvMainWindow):
 
 
 def run_app():
+
     app = qw.QApplication(sys.argv)
+
     with importlib.resources.open_text(
         "baderkit.plotting.gui.stylesheets", "custom.qss"
     ) as f:
