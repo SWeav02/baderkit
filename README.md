@@ -1,6 +1,6 @@
 <!-- This displays the BaderKit Logo -->
 <p align="center" href=https://github.com/SWeav02/baderkit>
-   <img src="https://github.com/SWeav02/baderkit/tree/main/docs/images/full_title.svg?raw=true" width="700" style="max-width: 700px;">
+   <img src="https://github.com/SWeav02/baderkit/blob/main/docs/images/full_title.svg?raw=true" width="700" style="max-width: 700px;">
 </p>
 
 ## About
