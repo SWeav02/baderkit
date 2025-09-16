@@ -49,19 +49,19 @@ than the original code.
     baderkit --help
     ```
         
-=== "Web App (Optional)"
+=== "GUI App (Optional)"
 
-    In addition to the core package, there is an optional web app feature which allows
+    In addition to the core package, there is an optional GUI feature which allows
     for easy viewing and plotting of results. This requires extra dependencies which
     can be installed through pip.
     
     ```bash
-    pip install baderkit[webapp]
+    pip install baderkit[gui]
     ```
     
     !!! Note
-        This is kept as optional because the web app requires significantly more
-        dependencies than the base app. Unfortunately, this means conda cannot
+        This is kept as optional as the GUI requires significantly more dependencies
+        than the base app. Unfortunately, this means conda cannot
         be used, as it does not allow for optional dependencies.
 
 ---
@@ -153,7 +153,7 @@ and [Examples](/baderkit/examples) pages.
         you call properties, summaries, or write methods in. BaderKit calculates
         properties/results only when they are needed and caches them.
 
-=== "Web App"
+=== "GUI App"
 
     1. Activate your environment with BaderKit installed. If you are not using an
     environment manager, skip to step 2.
@@ -162,31 +162,15 @@ and [Examples](/baderkit/examples) pages.
         conda activate my_env
         ```
     
-    2. Navigate to the directory with your charge density file.
-    
+    2. Run the BaderKit GUI.
         ```bash
-        cd /path/to/directory
-        ```
-    
-    3. Run the bader analysis. Replace 'chargefile' with the name of your file.
-        ```bash
-        baderkit webapp chargefile
+        baderkit gui
         ```
         
-        This will run the Bader analysis and launch the webapp in your default
-        browser:
-        ![streamlit_app](images/streamlit_screenshot.png)
-        Most of the options available in the `baderkit run` command are also availabe
-        for the webapp. You can run the help command to view them.
-        
-        ```bash
-        baderkit webapp --help
-        ```
-    !!! Warning
-        Currently the viewport is made by converting the plot to 
-        html each time the Apply button is clicked. changes made after hitting
-        apply (e.g. rotation, zoom) will not show up in exported images. Additionally,
-        the viewport may flicker while the html is being exported.
+        This will launch a new window:
+        ![streamlit_app](images/pyqt_screenshot.png)
+
+    3. Browse to find you charge density file, select your method, and run!
 
 ---
 

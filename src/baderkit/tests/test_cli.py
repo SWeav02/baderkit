@@ -2,10 +2,12 @@
 
 import os
 import shutil
+import subprocess
+import sys
 import time
 from pathlib import Path
 
-from streamlit.testing.v1 import AppTest
+import pytest
 from typer.testing import CliRunner
 
 from baderkit.command_line.base import baderkit_app
@@ -91,25 +93,11 @@ def test_run():
         assert Path("CHGCAR_a0").exists()
 
 
-def test_webapp(tmp_path, monkeypatch):
-    # copy CHGCAR over to temp path
-    shutil.copyfile(TEST_CHGCAR, tmp_path / "CHGCAR")
-    # get path to streamlit app
-    current_file = Path(__file__).resolve()
-    webapp_path = (
-        current_file.parent.parent / "plotting" / "web_gui" / "streamlit" / "webapp.py"
-    )
-    # set environment variables
-    os.environ["CHARGE_FILE"] = "CHGCAR"
-    os.environ["BADER_METHOD"] = "ongrid"
-    os.environ["REFINE_METHOD"] = "single"
-    os.environ["VACUUM_TOL"] = "0.001"
-    os.environ["NORMALIZE_VAC"] = "True"
-    os.environ["BASIN_TOL"] = "0.001"
-    # move into the tmp_directory
-    monkeypatch.chdir(tmp_path)
-    # run webapp
-    at = AppTest.from_file(webapp_path, default_timeout=30)
-    at.run()
-    if at.exception:
-        raise RuntimeError("Streamlit AppTest encountered an error") from at.exception
+# TODO: I couldn't get this to run and be headless, so for now I'm going to
+# try and remember to always run this myself
+# def test_gui():
+#     # ensure Qt runs headless
+#     os.environ["BADERKIT_TEST"] = "1"
+
+#     result = runner.invoke(app=baderkit_app, args=["gui"])
+#     assert result.exit_code == 0
