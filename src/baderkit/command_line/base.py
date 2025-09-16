@@ -14,7 +14,7 @@ import typer
 
 from baderkit.core.methods import Method
 from baderkit.core.toolkit import Format
-from baderkit.plotting.web_gui.pyqt.main import run_app
+from baderkit.plotting.gui.main import run_app
 
 baderkit_app = typer.Typer(rich_markup_mode="markdown")
 

@@ -75,7 +75,7 @@ class StructurePlotter:
         self._wrap_atoms = True
         self._lattice_thickness = 0.1
         self._atom_metallicness = 0.0
-        self._background = "#FDFBFF"
+        self._background = "#FFFFFF"
         self._view_indices = [1, 0, 0]
         self._camera_rotation = (0.0,)
         self._show_axes = True

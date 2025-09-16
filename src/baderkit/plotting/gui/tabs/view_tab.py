@@ -3,7 +3,7 @@
 from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
-from baderkit.plotting.web_gui.pyqt.widgets import ColorPicker, DoubleSpinBox, SpinBox
+from baderkit.plotting.gui.widgets import ColorPicker, DoubleSpinBox, SpinBox
 
 
 class ViewTab(qw.QWidget):
@@ -53,8 +53,7 @@ class ViewTab(qw.QWidget):
         self.basic_layout.addRow("Lattice Thickness", self.lattice_thickness)
 
         # background color
-        background_color = ColorPicker("#FDFBFF", plot_prop="background", main=main)
-        background_color.colorChanged.connect(self.set_gui_background)
+        background_color = ColorPicker("#FFFFFF", plot_prop="background", main=main)
         self.basic_layout.addRow("Background Color", background_color)
 
         # parallel perspective
@@ -137,6 +136,3 @@ class ViewTab(qw.QWidget):
         )
 
         self.main.set_property(camera_position, "camera_position")
-
-    def set_gui_background(self, color):
-        self.main.setStyleSheet(f"QMainWindow {{ background-color: {color}; }}")

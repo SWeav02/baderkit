@@ -8,7 +8,7 @@ from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
 from baderkit.core import Grid
-from baderkit.plotting.web_gui.pyqt.widgets import SpinBox
+from baderkit.plotting.gui.widgets import SpinBox
 
 
 class ExportTab(qw.QWidget):

@@ -1,1 +1,0 @@
-This folder contains code for creating a panel app for viewing bader/atom basins. It is currently not used because I had issues with slow downs and crashing the more changes were made to the rendered window.

@@ -5,7 +5,7 @@ from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
 from baderkit.plotting.core.defaults import ATOM_COLORS
-from baderkit.plotting.web_gui.pyqt.widgets import (
+from baderkit.plotting.gui.widgets import (
     ColorPicker,
     DoubleSpinBox,
     centered_widget,

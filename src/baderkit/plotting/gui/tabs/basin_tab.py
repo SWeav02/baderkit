@@ -3,7 +3,7 @@
 from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
-from baderkit.plotting.web_gui.pyqt.widgets import centered_widget
+from baderkit.plotting.gui.widgets import centered_widget
 
 
 class BasinTab(qw.QWidget):

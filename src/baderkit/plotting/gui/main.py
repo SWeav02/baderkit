@@ -18,7 +18,7 @@ from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
 from baderkit.plotting.core import BaderPlotter
-from baderkit.plotting.web_gui.pyqt.tabs import BaderTab, BasinTab, ExportTab, StyleTab
+from .tabs import BaderTab, BasinTab, ExportTab, StyleTab
 
 
 class MainWindow(pvMainWindow):
@@ -145,7 +145,7 @@ class MainWindow(pvMainWindow):
 def run_app():
     app = qw.QApplication(sys.argv)
     with importlib.resources.open_text(
-        "baderkit.plotting.web_gui.pyqt.stylesheets", "custom.qss"
+        "baderkit.plotting.gui.stylesheets", "custom.qss"
     ) as f:
         app.setStyleSheet(f.read())
     window = MainWindow()

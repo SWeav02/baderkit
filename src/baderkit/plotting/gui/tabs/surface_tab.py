@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
-from baderkit.plotting.web_gui.pyqt.widgets import ColorPicker, DoubleSpinBox
+from baderkit.plotting.gui.widgets import ColorPicker, DoubleSpinBox
 
 
 class SurfaceTab(qw.QWidget):
@@ -63,8 +63,8 @@ class SurfaceTab(qw.QWidget):
         # -----------------------
         # surfaces
         # -----------------------
-        surface_group = qw.QGroupBox("Show surfaces")
-        surface_group.plot_prop = "show_surfaces"
+        surface_group = qw.QGroupBox("Show surface")
+        surface_group.plot_prop = "show_surface"
         surface_group.setCheckable(True)
         surface_group.clicked.connect(main.set_property)
         self.settings_layout.addWidget(surface_group)

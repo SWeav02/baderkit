@@ -5,7 +5,7 @@ from qtpy import QtCore as qc
 from qtpy import QtWidgets as qw
 
 from baderkit.core import Bader, Grid
-from baderkit.plotting.web_gui.pyqt.widgets import (
+from baderkit.plotting.gui.widgets import (
     DoubleSpinBox,
     ErrorWindow,
     FilePicker,
