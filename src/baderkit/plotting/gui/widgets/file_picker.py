@@ -9,7 +9,7 @@ class FilePicker(qw.QWidget):
         super().__init__(parent)
 
         self.line_edit = qw.QLineEdit()
-        self.browse_btn = qw.QPushButton("Browse...")
+        self.browse_btn = qw.QPushButton("Browse")
 
         self.browse_btn.clicked.connect(self.browse)
 

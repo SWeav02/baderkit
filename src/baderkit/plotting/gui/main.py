@@ -13,6 +13,7 @@ import sys
 
 os.environ["QT_API"] = "pyqt5"
 
+from PyQt5.QtGui import QIcon
 from pyvistaqt import MainWindow as pvMainWindow
 from qtpy import QtCore as qc
 from qtpy import QtWidgets as qw
@@ -152,7 +153,15 @@ def run_app():
         "baderkit.plotting.gui.stylesheets", "custom.qss"
     ) as f:
         app.setStyleSheet(f.read())
+
+    with importlib.resources.path(
+        "baderkit.plotting.gui.stylesheets", "logo.svg"
+    ) as icon_path:
+        icon = QIcon(str(icon_path))
+    app.setWindowIcon(icon)
+
     window = MainWindow()
+    window.setWindowIcon(icon)
     window.showMaximized()
 
     sys.exit(app.exec())

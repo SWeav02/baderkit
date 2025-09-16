@@ -5,9 +5,8 @@ repo_url: https://github.com/SWeav02/baderkit
 theme:
   name: material
   language: en
-   
-#  logo: images/simmate-icon.svg
-#  favicon: images/simmate-icon.svg
+  logo: images/logo_icon.svg
+  favicon: images/logo.svg
   icon:
     repo: fontawesome/brands/github
   

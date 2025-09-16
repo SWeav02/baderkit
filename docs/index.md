@@ -1,3 +1,5 @@
+![title](images/full_title.svg)
+
 # Quick Start
 
 BaderKit reproduces the methods for Bader charge analysis available in the 
