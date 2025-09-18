@@ -336,6 +336,8 @@ class Bader:
         voxel_coords = np.round(
             self.reference_grid.frac_to_grid(self.basin_maxima_frac)
         ).astype(int)
+        # wrap
+        voxel_coords %= self.reference_grid.shape
         return self.reference_grid.total[
             voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]
         ]
