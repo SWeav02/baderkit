@@ -130,6 +130,7 @@ def read_vasp(filename, total_only: bool):
     ###########################################################################
     # Read FFT Grids. Use byte read mode and mmap for faster read and lower memory
     ###########################################################################
+
     all_datasets = []
     all_datasets_aug = []
     with open(path, "rb") as fb:
@@ -145,7 +146,7 @@ def read_vasp(filename, total_only: bool):
         # get bytes per entry
         bytes_per_entry = (len(data_line) - extra_bytes) / vals_per_line
         # get total number of extra bytes
-        line_bytes = math.ceil((nvals) / 5) * extra_bytes
+        line_bytes = math.ceil((nvals) / vals_per_line) * extra_bytes
         # get the total number of bytes per block
         nbytes_per_block = int((bytes_per_entry * nvals) + line_bytes)
 
@@ -352,12 +353,15 @@ def write_vasp(
             write_vasp_data(file, arr)
 
             # augmentation info (raw text lines) - write all at once
-            if key in data_aug and data_aug[key]:
-                # ensure augmentation lines end with newline
-                aug_lines = [
-                    ln if ln.endswith("\n") else ln + "\n" for ln in data_aug[key]
-                ]
-                file.writelines(aug_lines)
+            try:
+                if key in data_aug and data_aug[key]:
+                    # ensure augmentation lines end with newline
+                    aug_lines = [
+                        ln if ln.endswith("\n") else ln + "\n" for ln in data_aug[key]
+                    ]
+                    file.writelines(aug_lines)
+            except:
+                breakpoint()
 
 
 def read_cube(

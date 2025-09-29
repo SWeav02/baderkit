@@ -724,32 +724,15 @@ class Bader:
         logging.info("Bader Algorithm Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
 
-    def run_atom_assignment(self, structure: Structure = None):
-        """
-        Assigns bader basins to the atoms in the provided structure.
+    def assign_basins_to_structure(self, structure: Structure):
 
-        Parameters
-        ----------
-        structure : Structure, optional
-            If provided, basins will be assigned to the atoms in this structure.
-            The default is None.
-
-        Returns
-        -------
-        None.
-
-        """
-        # Default structure
-        structure = structure or self.structure
-        self._structure = structure
-
-        # Shorthand access
+        # Get basin and atom frac coords
         basins = self.basin_maxima_frac  # (N_basins, 3)
-        t0 = time.time()
-        logging.info("Assigning Atom Properties")
         atoms = structure.frac_coords  # (N_atoms, 3)
+
+        # get lattice matrix and number of atoms/basins
         L = structure.lattice.matrix  # (3, 3)
-        N_basins, N_atoms = len(basins), len(atoms)
+        N_basins = len(basins)
 
         # Vectorized deltas, minimum‑image wrapping
         diffs = atoms[None, :, :] - basins[:, None, :]
@@ -770,14 +753,35 @@ class Bader:
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
         atom_labels = basin_atoms[self.basin_labels]
 
+        return basin_atoms, basin_atom_dists, atom_labels
+
+    def run_atom_assignment(self):
+        """
+        Assigns bader basins to this Bader objects structure.
+
+        Returns
+        -------
+        None.
+
+        """
+        # Default structure
+        structure = self.structure
+
+        t0 = time.time()
+        logging.info("Assigning Atom Properties")
+        # get basin assignments for this bader objects structure
+        basin_atoms, basin_atom_dists, atom_labels = self.assign_basins_to_structure(
+            structure
+        )
+
         # Sum up charges/volumes per atom in one shot. slice with -1 is necessary
         # to prevent no negative value error
         try:
             atom_charges = np.bincount(
-                basin_atoms[:-1], weights=self.basin_charges, minlength=N_atoms
+                basin_atoms[:-1], weights=self.basin_charges, minlength=len(structure)
             )
             atom_volumes = np.bincount(
-                basin_atoms[:-1], weights=self.basin_volumes, minlength=N_atoms
+                basin_atoms[:-1], weights=self.basin_volumes, minlength=len(structure)
             )
         except:
             breakpoint()
@@ -790,47 +794,6 @@ class Bader:
         logging.info("Atom Assignment Finished")
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0, 2)}")
-
-    # def _get_atom_surface_distances(self):
-    #     """
-    #     Calculates the distance from each atom to the nearest surface. This is
-    #     automatically called during the atom assignment and generally should
-    #     not be called manually.
-
-    #     Returns
-    #     -------
-    #     None.
-
-    #     """
-    #     atom_labeled_voxels = self.atom_labels
-    #     atom_radii = []
-    #     # NOTE: We don't use the atom_edges property because its usually not
-    #     # needed by users and takes up more space in memory
-    #     edge_mask = self.atom_edges
-    #     for atom_index in track(
-    #         range(len(self.structure)), description="Calculating atom radii"
-    #     ):
-    #         # get the voxels corresponding to the interior edge of this basin
-    #         atom_edge_mask = (atom_labeled_voxels == atom_index) & edge_mask
-    #         edge_vox_coords = np.argwhere(atom_edge_mask)
-    #         # convert to frac coords
-    #         edge_frac_coords = self.reference_grid.grid_to_frac(edge_vox_coords)
-    #         atom_frac_coord = self.structure.frac_coords[atom_index]
-    #         # Get the difference in coords between atom and edges
-    #         coord_diff = atom_frac_coord - edge_frac_coords
-    #         # Wrap any coords that are more than 0.5 or less than -0.5
-    #         coord_diff -= np.round(coord_diff)
-    #         # Convert to cartesian coordinates
-    #         cart_coords = self.reference_grid.frac_to_cart(coord_diff)
-    #         # Calculate distance of each
-    #         norm = np.linalg.norm(cart_coords, axis=1)
-    #         if len(norm) == 0:
-    #             logging.warning(f"No volume assigned to atom at site {atom_index}.")
-    #             atom_radii.append(0)
-    #         else:
-    #             atom_radii.append(norm.min())
-    #     atom_radii = np.array(atom_radii)
-    #     self._atom_surface_distances = atom_radii
 
     def _get_atom_surface_distances(self):
         """
