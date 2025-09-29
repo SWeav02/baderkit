@@ -238,7 +238,7 @@ def read_vasp(filename, total_only: bool):
         }
     else:
         data = {"total": all_datasets[0]}
-        data_aug = {"total": all_datasets[0]}
+        data_aug = {"total": all_datasets_aug[0]}
 
     return structure, data, data_aug
 
@@ -353,15 +353,12 @@ def write_vasp(
             write_vasp_data(file, arr)
 
             # augmentation info (raw text lines) - write all at once
-            try:
-                if key in data_aug and data_aug[key]:
-                    # ensure augmentation lines end with newline
-                    aug_lines = [
-                        ln if ln.endswith("\n") else ln + "\n" for ln in data_aug[key]
-                    ]
-                    file.writelines(aug_lines)
-            except:
-                breakpoint()
+            if key in data_aug and data_aug[key]:
+                # ensure augmentation lines end with newline
+                aug_lines = [
+                    ln if ln.endswith("\n") else ln + "\n" for ln in data_aug[key]
+                ]
+                file.writelines(aug_lines)
 
 
 def read_cube(
