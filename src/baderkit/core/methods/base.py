@@ -190,7 +190,7 @@ class MethodBase:
         return {
             "basin_maxima_vox": self.maxima_vox,
             "basin_maxima_frac": refined_maxima_frac,
-            "basin_maxima_values": maxima_values,
+            "basin_maxima_ref_values": maxima_values,
         }
 
     def get_basin_charges_and_volumes(

@@ -108,7 +108,8 @@ class Bader:
                 # assigned by run_bader
                 "basin_labels",
                 "basin_maxima_frac",
-                "basin_maxima_values",
+                "basin_maxima_charge_values",
+                "basin_maxima_ref_values",
                 "basin_maxima_vox",
                 "basin_charges",
                 "basin_volumes",
@@ -289,37 +290,21 @@ class Bader:
         return self._basin_maxima_frac
 
     @property
-    def basin_maxima_values(self) -> NDArray[float]:
-        """
-
-        Returns
-        -------
-        NDArray[float]
-            The fractional coordinates of each attractor.
-
-        """
-        if self._basin_maxima_values is None:
-            self.run_bader()
-        return self._basin_maxima_values
-
-    @property
     def basin_maxima_charge_values(self) -> NDArray[float]:
         """
 
         Returns
         -------
         NDArray[float]
-            The charge data value at each maximum
+            The charge data value at each maximum. If the maximum is
+            off grid, this value will be interpolated.
 
         """
-
-        # get the voxel coordinates for reduced maxima
-        voxel_coords = np.round(
-            self.charge_grid.frac_to_grid(self.basin_maxima_frac)
-        ).astype(int)
-        return self.charge_grid.total[
-            voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]
-        ]
+        if self._basin_maxima_charge_values is None:
+            self._basin_maxima_charge_values = self.charge_grid.values_at(
+                self.basin_maxima_frac
+            )
+        return self._basin_maxima_charge_values
 
     @property
     def basin_maxima_ref_values(self) -> NDArray[float]:
@@ -328,19 +313,15 @@ class Bader:
         Returns
         -------
         NDArray[float]
-            The reference data value at each maximum
+            The reference data value at each maximum. If the maximum is
+            off grid, this value will be interpolated.
 
         """
-
-        # get the voxel coordinates for reduced maxima
-        voxel_coords = np.round(
-            self.reference_grid.frac_to_grid(self.basin_maxima_frac)
-        ).astype(int)
-        # wrap
-        voxel_coords %= self.reference_grid.shape
-        return self.reference_grid.total[
-            voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]
-        ]
+        if self._basin_maxima_ref_values is None:
+            # we get these values during each bader method anyways, so
+            # we run this here.
+            self.run_bader()
+        return self._basin_maxima_ref_values
 
     @property
     def basin_maxima_vox(self) -> NDArray[int]:
