@@ -244,12 +244,39 @@ def get_weight_assignments(
             # otherwise, check if this label already exists in our neighbors
             found = False
             for nidx, nlabel in enumerate(neigh_labels):
+                if nidx == neigh_num:
+                    # we've reached the end of our assigned labels so we break
+                    break
                 if label == nlabel:
                     neigh_fluxes[nidx] += flux
+                    found = True
+                    break
             if not found:
                 neigh_fluxes[neigh_num] = flux
                 neigh_labels[neigh_num] = neigh_label
                 neigh_num += 1
+
+        # BUG-FIX
+        # in rare cases, we may find no neighbors. This means we found a false
+        # maximum earlier and assigned it to an ongrid neighbor that itself
+        # ended up being an edge point. To correct for this, we can assign
+        # a full flux of 1 to the best ongrid neighbor
+        if neigh_num == 0:
+            shift, (ni, nj, nk), is_max = get_best_neighbor(
+                data=reference_data,
+                i=i,
+                j=j,
+                k=k,
+                neighbor_transforms=all_neighbor_transforms,
+                neighbor_dists=all_neighbor_dists,
+            )
+            neigh_idx = coords_to_flat(ni, nj, nk, nx, ny, nz)
+            neigh_fluxes[0] = 1.0
+            neigh_labels[0] = -neigh_idx - 1
+            total_flux = 1.0
+            no_exterior_neighs = False
+            neigh_num = 1
+
         neigh_nums[edge_idx] = neigh_num
         if no_exterior_neighs:
             only_interor_neighs[edge_idx] = True
@@ -280,9 +307,7 @@ def get_weight_assignments(
                 break
             # NOTE: I was looping over neigh_num here, but sometimes this caused a
             # crash. Maybe numba is trying to us prange even though I didn't ask it to?
-            # for neigh_idx in range(neigh_num):
-            #     flux = fluxes[neigh_idx]
-            #     label = neighs[neigh_idx]
+
             if label >= 0:
                 # This is actually a basin rather than another edge index.
                 if scratch_weights[label] == 0.0:

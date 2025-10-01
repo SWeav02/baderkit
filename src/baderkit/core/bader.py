@@ -988,8 +988,10 @@ class Bader:
         # get the data to use
         if write_reference:
             data_array = self.reference_grid.total
+            data_type = self.reference_grid.data_type
         else:
             data_array = self.charge_grid.total
+            data_type = self.charge_grid.data_type
 
         if directory is None:
             directory = Path(".")
@@ -999,7 +1001,11 @@ class Bader:
             # copy data to avoid overwriting. Set data off of basin to 0
             data_array_copy = data_array.copy()
             data_array_copy[mask] = 0.0
-            grid = Grid(structure=self.structure, data={"total": data_array_copy})
+            grid = Grid(
+                structure=self.structure,
+                data={"total": data_array_copy},
+                data_type=data_type,
+            )
             file_path = directory / f"{grid.data_type.prefix}_b{basin}"
             # write file
             grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
@@ -1079,8 +1085,10 @@ class Bader:
         # get the data to use
         if write_reference:
             data_array = self.reference_grid.total
+            data_type = self.reference_grid.data_type
         else:
             data_array = self.charge_grid.total
+            data_type = self.charge_grid.data_type
 
         if directory is None:
             directory = Path(".")
@@ -1089,7 +1097,11 @@ class Bader:
         # copy data to avoid overwriting. Set data off of basin to 0
         data_array_copy = data_array.copy()
         data_array_copy[~mask] = 0.0
-        grid = Grid(structure=self.structure, data={"total": data_array_copy})
+        grid = Grid(
+            structure=self.structure,
+            data={"total": data_array_copy},
+            data_type=data_type,
+        )
         file_path = directory / f"{grid.data_type.prefix}_bsum"
         # write file
         grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
@@ -1130,8 +1142,10 @@ class Bader:
         # get the data to use
         if write_reference:
             data_array = self.reference_grid.total
+            data_type = self.reference_grid.data_type
         else:
             data_array = self.charge_grid.total
+            data_type = self.charge_grid.data_type
 
         if directory is None:
             directory = Path(".")
@@ -1141,7 +1155,11 @@ class Bader:
             # copy data to avoid overwriting. Set data off of basin to 0
             data_array_copy = data_array.copy()
             data_array_copy[mask] = 0.0
-            grid = Grid(structure=self.structure, data={"total": data_array_copy})
+            grid = Grid(
+                structure=self.structure,
+                data={"total": data_array_copy},
+                data_type=data_type,
+            )
             file_path = directory / f"{grid.data_type.prefix}_a{atom_index}"
             # write file
             grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
@@ -1224,15 +1242,21 @@ class Bader:
         # get the data to use
         if write_reference:
             data_array = self.reference_grid.total
+            data_type = self.reference_grid.data_type
         else:
             data_array = self.charge_grid.total
+            data_type = self.charge_grid.data_type
 
         if directory is None:
             directory = Path(".")
         mask = np.isin(self.atom_labels, atom_indices)
         data_array_copy = data_array.copy()
         data_array_copy[~mask] = 0.0
-        grid = Grid(structure=self.structure, data={"total": data_array_copy})
+        grid = Grid(
+            structure=self.structure,
+            data={"total": data_array_copy},
+            data_type=data_type,
+        )
         file_path = directory / f"{grid.data_type.prefix}_asum"
         # write file
         grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
