@@ -15,7 +15,7 @@ from numpy.typing import NDArray
 from pymatgen.electronic_structure.core import Spin
 from pymatgen.io.vasp import VolumetricData
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from scipy.ndimage import binary_dilation, label, zoom
+from scipy.ndimage import label, zoom
 from scipy.spatial import Voronoi
 
 from baderkit.core.toolkit.file_parsers import (

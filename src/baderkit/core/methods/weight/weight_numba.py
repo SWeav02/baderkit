@@ -164,9 +164,11 @@ def get_weight_assignments(
                 if not label in maxima_indices:
                     maxima_indices.append(label)
                     labels[label] = maxima_num
-                    maxima_num += 1
                     charges.append(flat_charge[label])
+                    # set our label to match its new index
+                    label = maxima_num
                     volumes.append(1)
+                    maxima_num += 1
                 # now assign the current points charge/volume to this maximum
                 labels[idx] = label
                 charges[label] += flat_charge[idx]
