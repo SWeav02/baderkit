@@ -46,7 +46,7 @@ class NeargridMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                maxima_mask = self.maxima_mask
+                maxima_mask=self.maxima_mask,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system
@@ -68,7 +68,7 @@ class NeargridMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                maxima_mask = self.maxima_mask
+                maxima_mask=self.maxima_mask,
             )
         # Find roots
         # NOTE: Vacuum points are indicated by a value of -1 and we want to

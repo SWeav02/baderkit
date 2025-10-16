@@ -45,7 +45,7 @@ def get_steepest_pointers(
 
     """
     nx, ny, nz = data.shape
-    ny_nz = ny*nz
+    ny_nz = ny * nz
     # loop over each voxel in parallel
     for i in prange(nx):
         for j in range(ny):

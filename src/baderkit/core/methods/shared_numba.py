@@ -21,6 +21,7 @@ def flat_to_coords(idx, ny_nz, nz):
 def coords_to_flat(i, j, k, ny_nz, nz):
     return i * (ny_nz) + j * nz + k
 
+
 @njit(cache=True, inline="always")
 def get_best_neighbor(
     data: NDArray[np.float64],
@@ -83,7 +84,7 @@ def get_best_neighbor(
             best = diff
             bti, btj, btk = (si, sj, sk)
             bni, bnj, bnk = (ii, jj, kk)
-    
+
     # return the best shift and neighbor
     return (
         np.array((bti, btj, btk), dtype=np.int64),
@@ -448,6 +449,7 @@ def merge_frac_coords(
         avg2 = (total2 / count) % 1.0
         return np.array((avg0, avg1, avg2), dtype=np.float64)
 
+
 @njit(cache=True)
 def find_root(parent, x):
     """Find root with partial path compression"""
@@ -456,18 +458,21 @@ def find_root(parent, x):
         x = parent[x]
     return x
 
+
 @njit(cache=True)
 def find_root_no_compression(parent, x):
     while x != parent[x]:
         x = parent[x]
     return x
 
+
 @njit(cache=True, inline="always")
-def union(parents, x, y):        
+def union(parents, x, y):
     rx = find_root(parents, x)
     ry = find_root(parents, y)
-    
+
     parents[ry] = rx
+
 
 @njit(cache=True, parallel=True)
 def initialize_labels_from_maxima(
@@ -476,15 +481,14 @@ def initialize_labels_from_maxima(
     maxima_mask,
 ):
     nx, ny, nz = maxima_mask.shape
-    ny_nz = ny*nz
-    
+    ny_nz = ny * nz
+
     # get the fractional representation of each maximum
     maxima_frac = maxima_vox / np.array(maxima_mask.shape, dtype=np.int64)
-    
+
     # create a flat array of labels. These will initially all be -1
     labels = np.full(nx * ny * nz, -1, dtype=np.int64)
-    
-    
+
     # Now we initialize the maxima
     maxima_indices = []
     for i, j, k in maxima_vox:
@@ -492,10 +496,9 @@ def initialize_labels_from_maxima(
         labels[max_idx] = max_idx
         maxima_indices.append(max_idx)
 
-    
     # For each maximum, we check its neighbors to see if they are also a maximum
     # if so, we create a union
-    for max_idx, (i,j,k) in zip(maxima_indices, maxima_vox):
+    for max_idx, (i, j, k) in zip(maxima_indices, maxima_vox):
         # get flat index
         for si, sj, sk in neighbor_transforms:
             # get neighbor and wrap
@@ -506,7 +509,7 @@ def initialize_labels_from_maxima(
                 neigh_max_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
                 # make a union
                 union(labels, max_idx, neigh_max_idx)
-    
+
     # get the roots of each maximum
     maxima_roots = []
     for max_idx in maxima_indices:
@@ -540,11 +543,11 @@ def initialize_labels_from_maxima(
         j = merged_coord[1] * ny
         k = merged_coord[2] * nz
         closest_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
-        
+
         if not closest_max_idx in maxima_w_root:
             merged_coord = frac_coords[0]
             closest_max_idx = maxima_w_root[0]
-        
+
         # add our frac coords
         all_frac_coords[u_idx] = merged_coord
         # relabel all maxima to point to the root maximum
@@ -552,6 +555,7 @@ def initialize_labels_from_maxima(
             labels[max_idx] = closest_max_idx
 
     return labels, all_frac_coords
+
 
 @njit(cache=True, fastmath=True)
 def get_min_dists(

@@ -60,7 +60,7 @@ def get_edge_charges_volumes(
     all_neighbor_dists,
 ):
     nx, ny, nz = reference_data.shape
-    ny_nz = ny*nz
+    ny_nz = ny * nz
     # create an array to store neighbors and fluxes
     num_coords = len(sorted_indices)
     full_num_coords = nx * ny * nz

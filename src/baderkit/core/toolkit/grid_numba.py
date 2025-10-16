@@ -14,12 +14,13 @@ from baderkit.core.methods.shared_numba import wrap_point
 # Sig Fig Management
 ###############################################################################
 
+
 @njit(cache=True)
 def round_sig(value, num_sig_figs):
-        if value == 0:
-            return 0.0
-        return round(value, int(num_sig_figs - np.floor(np.log10(abs(value))) - 1))
-    
+    if value == 0:
+        return 0.0
+    return round(value, int(num_sig_figs - np.floor(np.log10(abs(value))) - 1))
+
 
 ###############################################################################
 # Nearest point interpolation
@@ -80,16 +81,19 @@ def interp_linear(i, j, k, data, is_frac=True, sig_figs=12):
     v111 = data[(ri + 1) % nx, (rj + 1) % ny, (rk + 1) % nz]
 
     # interpolate value from linear approximation
-    return round_sig((
-        (1 - di) * (1 - dj) * (1 - dk) * v000
-        + di * (1 - dj) * (1 - dk) * v100
-        + (1 - di) * dj * (1 - dk) * v010
-        + (1 - di) * (1 - dj) * dk * v001
-        + di * dj * (1 - dk) * v110
-        + di * (1 - dj) * dk * v101
-        + (1 - di) * dj * dk * v011
-        + di * dj * dk * v111
-    ), sig_figs)
+    return round_sig(
+        (
+            (1 - di) * (1 - dj) * (1 - dk) * v000
+            + di * (1 - dj) * (1 - dk) * v100
+            + (1 - di) * dj * (1 - dk) * v010
+            + (1 - di) * (1 - dj) * dk * v001
+            + di * dj * (1 - dk) * v110
+            + di * (1 - dj) * dk * v101
+            + (1 - di) * dj * dk * v011
+            + di * dj * dk * v111
+        ),
+        sig_figs,
+    )
 
 
 ###############################################################################
@@ -118,6 +122,7 @@ def interp_linear(i, j, k, data, is_frac=True, sig_figs=12):
 
 #     return np.array([w0, w1, w2, w3, w4, w5])
 
+
 @njit(inline="always", cache=True, fastmath=True)
 def cubic_hermite_weights(t):
     """Return 4 cubic Hermite (Catmull-Rom) weights for fractional part t."""
@@ -130,6 +135,7 @@ def cubic_hermite_weights(t):
     w_p1 = -1.5 * t3 + 2.0 * t2 + 0.5 * t
     w_p2 = 0.5 * t3 - 0.5 * t2
     return np.array([w_m1, w_0, w_p1, w_p2])
+
 
 @njit(cache=True, fastmath=True)
 def interp_spline(i, j, k, data, is_frac=True, sig_figs=12):
@@ -278,7 +284,9 @@ def refine_maxima(
             max_coord[2] *= nz
 
     # get the initial values
-    current_values = interpolate_points(maxima_coords, "cubic", data, False, sig_figs=sig_figs)
+    current_values = interpolate_points(
+        maxima_coords, "cubic", data, False, sig_figs=sig_figs
+    )
     # loop over coords in parallel and optimize positions
     for coord_idx in prange(len(maxima_coords)):
         frac_mult = 1

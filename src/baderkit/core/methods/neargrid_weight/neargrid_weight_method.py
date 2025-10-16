@@ -52,7 +52,7 @@ class NeargridWeightMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                maxima_mask=self.maxima_mask
+                maxima_mask=self.maxima_mask,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system

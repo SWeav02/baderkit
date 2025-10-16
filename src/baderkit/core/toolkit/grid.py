@@ -21,12 +21,12 @@ from scipy.spatial import Voronoi
 from baderkit.core.toolkit.file_parsers import (
     Format,
     detect_format,
+    infer_significant_figures,
     read_cube,
     read_vasp,
 )
 from baderkit.core.toolkit.file_parsers import write_cube as write_cube_file
 from baderkit.core.toolkit.file_parsers import write_vasp as write_vasp_file
-from baderkit.core.toolkit.file_parsers import infer_significant_figures
 from baderkit.core.toolkit.grid_numba import Interpolator
 from baderkit.core.toolkit.structure import Structure
 
@@ -51,7 +51,7 @@ class Grid(VolumetricData):
     A representation of the charge density, ELF, or other volumetric data.
     This class is a wraparound for Pymatgen's VolumetricData class with additional
     properties and methods.
-    
+
     See Also
     --------
     :class:`~pymatgen.io.vasp.outputs.VolumetricData`
@@ -121,11 +121,11 @@ class Grid(VolumetricData):
         if source_format is None:
             source_format = Format.vasp
         self.source_format = Format(source_format)
-        
+
         if sig_figs is None:
             sig_figs = infer_significant_figures(self.data["total"])
         self.sig_figs = sig_figs
-        
+
         self.interpolator = Interpolator(self.data["total"], sig_figs=sig_figs)
 
         if data_type is None:
@@ -1291,7 +1291,9 @@ class Grid(VolumetricData):
         t0 = time.time()
         # get structure and data from file
         grid_file = Path(grid_file)
-        structure, data, data_aug, sig_figs = read_vasp(grid_file, total_only=total_only)
+        structure, data, data_aug, sig_figs = read_vasp(
+            grid_file, total_only=total_only
+        )
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
         return cls(

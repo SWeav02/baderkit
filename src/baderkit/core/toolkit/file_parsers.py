@@ -37,20 +37,30 @@ class Format(str, Enum):
             Format.hdf5: "from_hdf5",
         }[self]
 
+
 def round_to_sig_figs(array, num_sig_figs):
-    arr = np.asarray(array, dtype=float, order='K')  # no copy if already float
+    arr = np.asarray(array, dtype=float, order="K")  # no copy if already float
     out = arr.copy()  # unavoidable, rounding must produce new values
-    with np.errstate(divide='ignore', invalid='ignore'):
-        np.abs(out, out=out)                              # out = |array|
-        np.log10(out, out=out)                            # out = log10(|array|)
-        np.floor(out, out=out)                            # out = floor(log10(|array|))
-        np.subtract(num_sig_figs - 1, out, out=out)        # out = num_sig_figs - floor(log10(|array|)) - 1
-        np.power(10.0, out, out=out)                      # out = 10 ** (num_sig_figs - floor(log10(|array|)) - 1)
-        np.multiply(array, out, out=out)                  # out = array * factor
-        np.round(out, 0, out=out)                         # out = round(array * factor)
-        np.divide(out, np.power(10.0, num_sig_figs - np.floor(np.log10(np.abs(array))) - 1), out=out)  # adjust
+    with np.errstate(divide="ignore", invalid="ignore"):
+        np.abs(out, out=out)  # out = |array|
+        np.log10(out, out=out)  # out = log10(|array|)
+        np.floor(out, out=out)  # out = floor(log10(|array|))
+        np.subtract(
+            num_sig_figs - 1, out, out=out
+        )  # out = num_sig_figs - floor(log10(|array|)) - 1
+        np.power(
+            10.0, out, out=out
+        )  # out = 10 ** (num_sig_figs - floor(log10(|array|)) - 1)
+        np.multiply(array, out, out=out)  # out = array * factor
+        np.round(out, 0, out=out)  # out = round(array * factor)
+        np.divide(
+            out,
+            np.power(10.0, num_sig_figs - np.floor(np.log10(np.abs(array))) - 1),
+            out=out,
+        )  # adjust
     out[array == 0] = 0.0
     return out
+
 
 def infer_significant_figures(values, max_figs=20, sample_size=1000):
     """
@@ -72,7 +82,7 @@ def infer_significant_figures(values, max_figs=20, sample_size=1000):
     """
     # mask values that are equal to zero in case data is sparse
     values = values[values != 0]
-    
+
     if len(values) == 0:
         # we have no way of guessing, so we return the max
         return max_figs
@@ -94,7 +104,6 @@ def infer_significant_figures(values, max_figs=20, sample_size=1000):
 
     # If we never reach tolerance, assume full precision
     return max_figs
-
 
 
 def detect_format(filename: str | Path):
@@ -298,7 +307,7 @@ def read_vasp(filename, total_only: bool):
     else:
         data = {"total": all_datasets[0]}
         data_aug = {"total": all_datasets_aug[0]}
-        
+
     # calculate sig figs from total
     sig_figs = infer_significant_figures(data["total"])
 
@@ -521,7 +530,7 @@ def read_cube(
         volume *= 1.88973**3
     data = {}
     data["total"] = arr * volume
-    
+
     # apply sig figs to array
     data["total"] = round_to_sig_figs(data["total"], sig_figs)
 

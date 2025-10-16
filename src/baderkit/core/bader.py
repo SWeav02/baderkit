@@ -747,7 +747,7 @@ class Bader:
         """
         # ensure bader has run (otherwise our time will include the bader time)
         self.basin_maxima_frac
-        
+
         # Default structure
         structure = self.structure
 

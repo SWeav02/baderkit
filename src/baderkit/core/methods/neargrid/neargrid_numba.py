@@ -59,7 +59,7 @@ def get_gradient_pointers_simple(
 
     """
     nx, ny, nz = data.shape
-    ny_nz = ny*nz
+    ny_nz = ny * nz
     # Create a new array for storing gradients
     # NOTE: I would even do a float16 here but numba doesn't support it. I doubt
     # we need the accuracy.
@@ -182,8 +182,8 @@ def get_gradient_pointers_overdetermined(
 
     """
     nx, ny, nz = data.shape
-    ny_nz = ny*nz
-    
+    ny_nz = ny * nz
+
     # Create a new array for storing gradients
     # NOTE: I would even do a float16 here but numba doesn't support it. I doubt
     # we need the accuracy.
@@ -202,7 +202,7 @@ def get_gradient_pointers_overdetermined(
                 # ignore this point.
                 if vacuum_mask[i, j, k]:
                     continue
-                if maxima_mask[i,j,k]:
+                if maxima_mask[i, j, k]:
                     continue
                 # get gradient
                 gi, gj, gk = get_gradient_overdetermined(
@@ -301,7 +301,7 @@ def refine_fast_neargrid(
     """
     # get shape
     nx, ny, nz = data.shape
-    ny_nz = ny*nz
+    ny_nz = ny * nz
     # refine iteratively until no assignments change
     reassignments = 1
     while reassignments > 0:

@@ -26,7 +26,7 @@ def get_weight_assignments(
     maxima_indices,
 ):
     nx, ny, nz = reference_data.shape
-    ny_nz = ny*nz
+    ny_nz = ny * nz
     num_coords = len(sorted_indices)
     full_num_coords = nx * ny * nz
     # create arrays to store neighs. Don't store flux yet
@@ -73,7 +73,7 @@ def get_weight_assignments(
         # Check if we had any higher neighbors
         if neigh_num == 0:
             # this is a local maximum. Check if its a true max
-            if not maxima_mask[i, j, k]:   
+            if not maxima_mask[i, j, k]:
                 # this is not a real maximum. Assign it to the highest neighbor
                 shift, (ni, nj, nk) = get_best_neighbor(
                     data=reference_data,
@@ -93,7 +93,6 @@ def get_weight_assignments(
             # assign the first value to the current label. This will allow us
             # to check if the maximum is the root max in the next section
             neigh_array[sorted_idx, 0] = labels[idx]
-
 
     ###########################################################################
     # Assign interior
@@ -135,20 +134,20 @@ def get_weight_assignments(
             else:
                 edge_sorted_indices.append(sorted_idx)
         else:
-            
+
             # Skip if this maximum was already processed
             if idx in added_maxima:
                 continue
-            
+
             # get this maximas current label
             label = labels[idx]
-            
+
             # Determine the root maximum
             root_idx = label if label != idx else idx
-            
+
             # check if this is a root
             is_root = idx == root_idx
-            
+
             # If this root maximum hasn't been added yet, add it
             if root_idx not in added_maxima:
                 added_maxima.append(root_idx)
@@ -158,7 +157,7 @@ def get_weight_assignments(
                 volumes[max_idx] += 1.0
             else:
                 max_idx = labels[root_idx]
-            
+
             if not is_root:
                 # Assign this point to the correct maximum
                 labels[idx] = max_idx
@@ -238,7 +237,7 @@ def get_weight_assignments(
         # BUG-FIX
         # in rare cases, we may find no neighbors. This means we found a false
         # maximum earlier and assigned it to an ongrid neighbor that itself
-        # ended up being an edge point or another false maximum. To correct for 
+        # ended up being an edge point or another false maximum. To correct for
         # this, we can assign a full flux of 1 to the best ongrid neighbor
         if neigh_num == 0:
             shift, (ni, nj, nk) = get_best_neighbor(
@@ -369,12 +368,12 @@ def sort_maxima_frac(
     grid_shape,
 ):
     nx, ny, nz = grid_shape
-    ny_nz = ny*nz
-    
-    maxima_vox = np.round(maxima_frac*grid_shape).astype(np.int64)
+    ny_nz = ny * nz
+
+    maxima_vox = np.round(maxima_frac * grid_shape).astype(np.int64)
     for maxima_idx in prange(len(maxima_vox)):
         maxima_vox[maxima_idx] %= grid_shape
-    
+
     flat_indices = np.zeros(len(maxima_vox), dtype=np.int64)
     for idx in prange(len(flat_indices)):
         i, j, k = maxima_vox[idx]
