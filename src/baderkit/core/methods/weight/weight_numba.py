@@ -23,6 +23,7 @@ def get_weight_assignments(
     all_neighbor_transforms,
     all_neighbor_dists,
     maxima_mask,
+    maxima_indices,
 ):
     nx, ny, nz = reference_data.shape
     ny_nz = ny*nz
@@ -35,8 +36,8 @@ def get_weight_assignments(
     # Create 1D arrays to store flattened charge
     flat_charge = np.empty(full_num_coords, dtype=np.float64)
     # Create lists to store basin charges/volumes
-    charges = []
-    volumes = []
+    charges = np.zeros(len(maxima_indices), dtype=np.float64)
+    volumes = np.zeros(len(maxima_indices), dtype=np.float64)
 
     ###########################################################################
     # Get neighbors
@@ -51,7 +52,7 @@ def get_weight_assignments(
         base_value = reference_data[i, j, k]
         # set flat charge
         flat_charge[idx] = charge_data[i, j, k]
-        # equal_neighs = False
+
         # get higher neighbors at each point
         neigh_num = 0
         for si, sj, sk in neighbor_transforms:
@@ -62,10 +63,7 @@ def get_weight_assignments(
             # if this value is below the current points value, continue
             if neigh_value <= base_value:
                 continue
-            # Note if this neighbor has an equal value
-            # if neigh_value == base_value:
-                # equal_neighs = True
-                # continue
+
             # get this neighbors index and add it to our array
             neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
             neigh_array[sorted_idx, neigh_num] = neigh_idx
@@ -89,10 +87,7 @@ def get_weight_assignments(
                 neigh_nums[sorted_idx] = 1  # overwrite 0 entry
                 neigh_array[sorted_idx, 0] = neigh_idx
                 continue
-            
-            # We labeled our maxima prior to this function. Check if this maximum
-            # is assigned to itself. If not, it borders another maximum and was
-            # assigned to that maximum instead
+
             # Note this is a maximum
             neigh_nums[sorted_idx] = 0
             # assign the first value to the current label. This will allow us
@@ -105,11 +100,10 @@ def get_weight_assignments(
     ###########################################################################
     # create list to store edge indices
     edge_sorted_indices = []
-    maxima_indices = []
+    added_maxima = []
 
     # Now we have the neighbors for each point. Loop over them from highest to
     # lowest and assign single basin points
-    maxima_num = 0
     for sorted_idx, (idx, neighs, neigh_num) in enumerate(
         zip(sorted_indices, neigh_array, neigh_nums)
     ):
@@ -135,48 +129,41 @@ def get_weight_assignments(
             if best_label != -1:
                 labels[idx] = label
                 charges[label] += flat_charge[idx]
-                volumes[label] += 1
+                volumes[label] += 1.0
             # Otherwise, this point is an exterior point that is partially assigned
             # to multiple basins. We add it to our list.
             else:
                 edge_sorted_indices.append(sorted_idx)
         else:
             
-            # check if we've already added this maximum (e.g. if a previous "maximum"
-            # labeled this one)
-            if idx in maxima_indices:
+            # Skip if this maximum was already processed
+            if idx in added_maxima:
                 continue
             
-            # otherwise, get the label of this maximum
+            # get this maximas current label
             label = labels[idx]
             
-            # if the label matches the current idx, this is a root maximum
-            if label == idx:
-                # assign a new maximum and increase counter
-                maxima_indices.append(idx)
-                labels[idx] = maxima_num
-                maxima_num += 1
-                charges.append(flat_charge[idx])
-                volumes.append(1)
+            # Determine the root maximum
+            root_idx = label if label != idx else idx
+            
+            # check if this is a root
+            is_root = idx == root_idx
+            
+            # If this root maximum hasn't been added yet, add it
+            if root_idx not in added_maxima:
+                added_maxima.append(root_idx)
+                max_idx = np.searchsorted(maxima_indices, root_idx)
+                labels[root_idx] = max_idx
+                charges[max_idx] += flat_charge[root_idx]
+                volumes[max_idx] += 1.0
             else:
-                # otherwise, the label is the root maximas idx. If it hasn't been
-                # added as a maximum, do it now
-                if not label in maxima_indices:
-                    maxima_indices.append(label)
-                    labels[label] = maxima_num
-                    charges.append(flat_charge[label])
-                    # set our label to match its new index
-                    label = maxima_num
-                    volumes.append(1)
-                    maxima_num += 1
-                # now assign the current points charge/volume to this maximum
-                labels[idx] = label
-                charges[label] += flat_charge[idx]
-                volumes[label] += 1
-
-    # convert charges/volumes to arrays
-    charges = np.array(charges, dtype=np.float64)
-    volumes = np.array(volumes, dtype=np.float64)
+                max_idx = labels[root_idx]
+            
+            if not is_root:
+                # Assign this point to the correct maximum
+                labels[idx] = max_idx
+                charges[max_idx] += flat_charge[idx]
+                volumes[max_idx] += 1.0
 
     ###########################################################################
     # Fluxes
@@ -396,7 +383,7 @@ def sort_maxima_frac(
     # sort flat indices from low to high
     sorted_indices = np.argsort(flat_indices)
     # sort maxima from lowest index to highest
-    return maxima_frac[sorted_indices]
+    return maxima_frac[sorted_indices], flat_indices[sorted_indices]
 
 
 ###############################################################################

@@ -32,6 +32,13 @@ class WeightMethod(MethodBase):
         reference_data = reference_grid.total
         charge_data = charge_grid.total
         shape = reference_grid.shape
+        
+        # We need our maxima to follow the same ordering as the other methods.
+        # We want to get this order down before we run our method
+        self._maxima_frac, maxima_indices = sort_maxima_frac(
+            self.maxima_frac,
+            shape
+            )
 
         logging.info("Sorting Reference Data")
         # sort data from lowest to highest
@@ -63,16 +70,11 @@ class WeightMethod(MethodBase):
             neighbor_alpha,
             all_neighbor_transforms,
             all_neighbor_dists,
-            self.maxima_mask
+            self.maxima_mask,
+            maxima_indices,
         )
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)
-        # our frac coords may not be in the correct order. We rearrange them
-        # here
-        self._maxima_frac = sort_maxima_frac(
-            self.maxima_frac,
-            shape
-            )
         
         # adjust charges from vasp convention
         charges /= shape.prod()
