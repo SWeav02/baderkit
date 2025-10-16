@@ -193,8 +193,6 @@ def get_weight_assignments(
     flux_array = np.empty((num_edges, num_transforms), dtype=np.float64)
     neigh_array = np.empty_like(flux_array, dtype=np.int64)
     neigh_nums = np.empty(num_edges, dtype=np.uint8)
-    # create mask to note if this point has neighbors that are also exterior
-    only_interor_neighs = np.zeros(num_edges, dtype=np.bool_)
     # create an array to store pointers from idx to edge idx
     idx_to_edge = np.empty(full_num_coords, dtype=np.uint32)
     # calculate fluxes in parallel. If possible, we will immediately calculate the
@@ -216,7 +214,7 @@ def get_weight_assignments(
         total_flux = 0.0
         neigh_labels = neigh_array[edge_idx]
         neigh_fluxes = flux_array[edge_idx]
-        no_exterior_neighs = True
+        # no_exterior_neighs = True
         neigh_num = 0
         for (si, sj, sk), alpha in zip(neighbor_transforms, neighbor_alpha):
             # get neighbor and wrap around periodic boundary
@@ -239,7 +237,7 @@ def get_weight_assignments(
                 neigh_fluxes[neigh_num] = flux
                 neigh_labels[neigh_num] = -neigh_idx - 1
                 neigh_num += 1
-                no_exterior_neighs = False
+                # no_exterior_neighs = False
                 continue
             # otherwise, check if this label already exists in our neighbors
             found = False
@@ -259,8 +257,8 @@ def get_weight_assignments(
         # BUG-FIX
         # in rare cases, we may find no neighbors. This means we found a false
         # maximum earlier and assigned it to an ongrid neighbor that itself
-        # ended up being an edge point. To correct for this, we can assign
-        # a full flux of 1 to the best ongrid neighbor
+        # ended up being an edge point or another false maximum. To correct for 
+        # this, we can assign a full flux of 1 to the best ongrid neighbor
         if neigh_num == 0:
             shift, (ni, nj, nk), is_max = get_best_neighbor(
                 data=reference_data,
@@ -271,15 +269,18 @@ def get_weight_assignments(
                 neighbor_dists=all_neighbor_dists,
             )
             neigh_idx = coords_to_flat(ni, nj, nk, nx, ny, nz)
+            neigh_label = labels[neigh_idx]
             neigh_fluxes[0] = 1.0
-            neigh_labels[0] = -neigh_idx - 1
+            # If the neighbor belongs to a basin, assign to the same one. Otherwise,
+            # it's an edge and we note the connections
+            if neigh_label >= 0:
+                neigh_labels[0] = neigh_label
+            else:
+                neigh_labels[0] = -neigh_idx - 1
             total_flux = 1.0
-            no_exterior_neighs = False
             neigh_num = 1
 
         neigh_nums[edge_idx] = neigh_num
-        if no_exterior_neighs:
-            only_interor_neighs[edge_idx] = True
         # normalize fluxes
         neigh_fluxes /= total_flux
 
@@ -292,8 +293,8 @@ def get_weight_assignments(
     approx_charges = charges.copy()
     all_weights = []
     all_labels = []
-    for edge_idx, (fluxes, neighs, neigh_num, only_interior) in enumerate(
-        zip(flux_array, neigh_array, neigh_nums, only_interor_neighs)
+    for edge_idx, (fluxes, neighs, neigh_num) in enumerate(
+        zip(flux_array, neigh_array, neigh_nums)
     ):
         sorted_idx = edge_sorted_indices[edge_idx]
         idx = sorted_indices[sorted_idx]
@@ -309,7 +310,7 @@ def get_weight_assignments(
             # crash. Maybe numba is trying to us prange even though I didn't ask it to?
 
             if label >= 0:
-                # This is actually a basin rather than another edge index.
+                # This is a basin rather than another edge index.
                 if scratch_weights[label] == 0.0:
                     current_labels.append(label)
                 scratch_weights[label] += flux

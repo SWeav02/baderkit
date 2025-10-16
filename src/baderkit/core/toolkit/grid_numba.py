@@ -256,7 +256,7 @@ class Interpolator:
 ###############################################################################
 
 
-# @njit(parallel=True, fastmath=True, cache=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def refine_maxima(
     maxima_coords,
     data,

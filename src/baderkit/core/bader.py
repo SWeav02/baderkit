@@ -745,6 +745,9 @@ class Bader:
         None.
 
         """
+        # ensure bader has run (otherwise our time will include the bader time)
+        self.basin_maxima_frac
+        
         # Default structure
         structure = self.structure
 
@@ -757,15 +760,13 @@ class Bader:
 
         # Sum up charges/volumes per atom in one shot. slice with -1 is necessary
         # to prevent no negative value error
-        try:
-            atom_charges = np.bincount(
-                basin_atoms[:-1], weights=self.basin_charges, minlength=len(structure)
-            )
-            atom_volumes = np.bincount(
-                basin_atoms[:-1], weights=self.basin_volumes, minlength=len(structure)
-            )
-        except:
-            breakpoint()
+        atom_charges = np.bincount(
+            basin_atoms[:-1], weights=self.basin_charges, minlength=len(structure)
+        )
+        atom_volumes = np.bincount(
+            basin_atoms[:-1], weights=self.basin_volumes, minlength=len(structure)
+        )
+
         # Store everything
         self._basin_atoms = basin_atoms[:-1]
         self._basin_atom_dists = basin_atom_dists
