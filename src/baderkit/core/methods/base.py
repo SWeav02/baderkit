@@ -109,7 +109,10 @@ class MethodBase:
             )
         # refine our maxima and get their values
         refined_maxima_frac, maxima_values = refine_maxima(
-            basin_maxima_frac, self.reference_grid.total, neighbor_transforms
+            basin_maxima_frac, 
+            self.reference_grid.total, 
+            neighbor_transforms, 
+            sig_figs=self.reference_grid.sig_figs
         )
         self._maxima_frac = refined_maxima_frac
         

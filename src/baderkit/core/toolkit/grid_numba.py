@@ -11,12 +11,23 @@ from numba import njit, prange
 from baderkit.core.methods.shared_numba import wrap_point
 
 ###############################################################################
+# Sig Fig Management
+###############################################################################
+
+@njit(cache=True)
+def round_sig(value, num_sig_figs):
+        if value == 0:
+            return 0.0
+        return round(value, int(num_sig_figs - np.floor(np.log10(abs(value))) - 1))
+    
+
+###############################################################################
 # Nearest point interpolation
 ###############################################################################
 
 
 @njit(inline="always", cache=True, fastmath=True)
-def interp_nearest(i, j, k, data, is_frac=True):
+def interp_nearest(i, j, k, data, is_frac=True, sig_figs=12):
     nx, ny, nz = data.shape
     if is_frac:
         # convert to voxel coordinates
@@ -29,14 +40,14 @@ def interp_nearest(i, j, k, data, is_frac=True):
     iy = int(round(j)) % ny
     iz = int(round(k)) % nz
 
-    return data[ix, iy, iz]
+    return round_sig(data[ix, iy, iz], sig_figs)
 
 
 ###############################################################################
 # Linear interpolation
 ###############################################################################
 @njit(inline="always", cache=True, fastmath=True)
-def interp_linear(i, j, k, data, is_frac=True):
+def interp_linear(i, j, k, data, is_frac=True, sig_figs=12):
     nx, ny, nz = data.shape
 
     if is_frac:
@@ -69,7 +80,7 @@ def interp_linear(i, j, k, data, is_frac=True):
     v111 = data[(ri + 1) % nx, (rj + 1) % ny, (rk + 1) % nz]
 
     # interpolate value from linear approximation
-    return (
+    return round_sig((
         (1 - di) * (1 - dj) * (1 - dk) * v000
         + di * (1 - dj) * (1 - dk) * v100
         + (1 - di) * dj * (1 - dk) * v010
@@ -78,25 +89,12 @@ def interp_linear(i, j, k, data, is_frac=True):
         + di * (1 - dj) * dk * v101
         + (1 - di) * dj * dk * v011
         + di * dj * dk * v111
-    )
+    ), sig_figs)
 
 
 ###############################################################################
 # Spline interpolation
 ###############################################################################
-@njit(inline="always", cache=True, fastmath=True)
-def cubic_hermite_weights(t):
-    """Return 4 cubic Hermite (Catmull-Rom) weights for fractional part t."""
-    # get t mults to avoid repeat calcs.
-    t2 = t * t
-    t3 = t2 * t
-
-    w_m1 = -0.5 * t3 + t2 - 0.5 * t
-    w_0 = 1.5 * t3 - 2.5 * t2 + 1.0
-    w_p1 = -1.5 * t3 + 2.0 * t2 + 0.5 * t
-    w_p2 = 0.5 * t3 - 0.5 * t2
-    return np.array([w_m1, w_0, w_p1, w_p2])
-
 
 # @njit(inline='always')
 # def quintic_bspline_weights(t):
@@ -120,9 +118,21 @@ def cubic_hermite_weights(t):
 
 #     return np.array([w0, w1, w2, w3, w4, w5])
 
+@njit(inline="always", cache=True, fastmath=True)
+def cubic_hermite_weights(t):
+    """Return 4 cubic Hermite (Catmull-Rom) weights for fractional part t."""
+    # get t mults to avoid repeat calcs.
+    t2 = t * t
+    t3 = t2 * t
 
-@njit(cache=True, fastmath=True, inline="always")
-def interp_spline(i, j, k, data, is_frac=True):
+    w_m1 = -0.5 * t3 + t2 - 0.5 * t
+    w_0 = 1.5 * t3 - 2.5 * t2 + 1.0
+    w_p1 = -1.5 * t3 + 2.0 * t2 + 0.5 * t
+    w_p2 = 0.5 * t3 - 0.5 * t2
+    return np.array([w_m1, w_0, w_p1, w_p2])
+
+@njit(cache=True, fastmath=True)
+def interp_spline(i, j, k, data, is_frac=True, sig_figs=12):
     """
     3D Hermite cubic interpolation with periodic boundary conditions.
     """
@@ -133,8 +143,6 @@ def interp_spline(i, j, k, data, is_frac=True):
         i = i * nx
         j = j * ny
         k = k * nz
-
-    # No need to wrap as we do so later
 
     # get rounded down voxel coords
     ri = int(i // 1.0)
@@ -153,21 +161,6 @@ def interp_spline(i, j, k, data, is_frac=True):
     offset = 1
     size = 4
 
-    # if order == 3:
-    #     wx = cubic_hermite_weights(dx)
-    #     wy = cubic_hermite_weights(dy)
-    #     wz = cubic_hermite_weights(dz)
-    #     offset = 1
-    #     size = 4
-    # elif order == 5:
-    #     wx = quintic_bspline_weights(dx)
-    #     wy = quintic_bspline_weights(dy)
-    #     wz = quintic_bspline_weights(dz)
-    #     offset = 2
-    #     size = 6
-    # else:
-    #     raise ValueError("Order must be 3 (cubic) or 5 (quintic)")
-
     val = 0.0
     for i in range(size):
         xi = (ri - offset + i) % nx
@@ -176,7 +169,7 @@ def interp_spline(i, j, k, data, is_frac=True):
             for k in range(size):
                 zk = (rk - offset + k) % nz
                 val += wx[i] * wy[j] * wz[k] * data[xi, yj, zk]
-    return val
+    return round_sig(val, sig_figs)
 
 
 ###############################################################################
@@ -190,14 +183,15 @@ def interpolate_point(
     method,
     data,
     is_frac=True,
+    sig_figs=12,
 ):
     i, j, k = point
     if method == "nearest":
-        value = interp_nearest(i, j, k, data, is_frac)
+        value = interp_nearest(i, j, k, data, is_frac, sig_figs)
     elif method == "linear":
-        value = interp_linear(i, j, k, data, is_frac)
+        value = interp_linear(i, j, k, data, is_frac, sig_figs)
     elif method == "cubic":
-        value = interp_spline(i, j, k, data, is_frac)
+        value = interp_spline(i, j, k, data, is_frac, sig_figs)
     # elif method == "quintic":
     #     value = interp_spline(i, j, k, data, order=5)
 
@@ -205,20 +199,20 @@ def interpolate_point(
 
 
 @njit(parallel=True, cache=True)
-def interpolate_points(points, method, data, is_frac=True):
+def interpolate_points(points, method, data, is_frac=True, sig_figs=12):
     out = np.empty(len(points))
     if method == "nearest":
         for point_idx in prange(len(points)):
             i, j, k = points[point_idx]
-            out[point_idx] = interp_nearest(i, j, k, data, is_frac)
+            out[point_idx] = interp_nearest(i, j, k, data, is_frac, sig_figs)
     elif method == "linear":
         for point_idx in prange(len(points)):
             i, j, k = points[point_idx]
-            out[point_idx] = interp_linear(i, j, k, data, is_frac)
+            out[point_idx] = interp_linear(i, j, k, data, is_frac, sig_figs)
     elif method == "cubic":
         for point_idx in prange(len(points)):
             i, j, k = points[point_idx]
-            out[point_idx] = interp_spline(i, j, k, data, is_frac)
+            out[point_idx] = interp_spline(i, j, k, data, is_frac, sig_figs)
     # elif method == "quintic":
     #     for i in prange(len(points)):
     #         i, j, k = points[i]
@@ -233,9 +227,10 @@ def interpolate_points(points, method, data, is_frac=True):
 
 
 class Interpolator:
-    def __init__(self, data, method="cubic"):
+    def __init__(self, data, method="cubic", sig_figs=12):
         self.data = np.asarray(data)
         self.method = method
+        self.sig_figs = sig_figs
 
     def __call__(self, points):
         # get points as a numpy array
@@ -248,6 +243,7 @@ class Interpolator:
             points,
             self.method,
             self.data,
+            sig_figs=self.sig_figs,
         )
 
 
@@ -263,6 +259,7 @@ def refine_maxima(
     neighbor_transforms,
     tol=1e-8,
     is_frac=True,
+    sig_figs=12,
 ):
     nx, ny, nz = data.shape
     # copy initial maxima to avoid overwriting them
@@ -281,7 +278,7 @@ def refine_maxima(
             max_coord[2] *= nz
 
     # get the initial values
-    current_values = interpolate_points(maxima_coords, "cubic", data, False)
+    current_values = interpolate_points(maxima_coords, "cubic", data, False, sig_figs=sig_figs)
     # loop over coords in parallel and optimize positions
     for coord_idx in prange(len(maxima_coords)):
         frac_mult = 1
@@ -301,7 +298,7 @@ def refine_maxima(
                 ti = i + si
                 tj = j + sj
                 tk = k + sk
-                value = interp_spline(ti, tj, tk, data, False)
+                value = interp_spline(ti, tj, tk, data, False, sig_figs)
                 # if value is improved, update the best position/value
                 if value > current_values[coord_idx]:
                     current_values[coord_idx] = value

@@ -26,6 +26,7 @@ from baderkit.core.toolkit.file_parsers import (
 )
 from baderkit.core.toolkit.file_parsers import write_cube as write_cube_file
 from baderkit.core.toolkit.file_parsers import write_vasp as write_vasp_file
+from baderkit.core.toolkit.file_parsers import infer_significant_figures
 from baderkit.core.toolkit.grid_numba import Interpolator
 from baderkit.core.toolkit.structure import Structure
 
@@ -50,6 +51,11 @@ class Grid(VolumetricData):
     A representation of the charge density, ELF, or other volumetric data.
     This class is a wraparound for Pymatgen's VolumetricData class with additional
     properties and methods.
+    
+    See Also
+    --------
+    :class:`~pymatgen.io.vasp.outputs.VolumetricData`
+        The parent class that provides basic volumetric data handling.
 
     Parameters
     ----------
@@ -76,6 +82,8 @@ class Grid(VolumetricData):
         A pre-computed distance matrix if available.
         Useful so pass distance_matrices between sums,
         short-circuiting an otherwise expensive operation.
+    sig_figs : int, optional
+        The number of sig figs the data has. If None, this will be guessed.
     """
 
     def __init__(
@@ -86,6 +94,7 @@ class Grid(VolumetricData):
         source_format: Format = None,
         data_type: DataType = DataType.charge,
         distance_matrix: NDArray[float] = None,
+        sig_figs: int = None,
         **kwargs,
     ):
         # The following is copied directly from pymatgen, but replaces their
@@ -106,13 +115,18 @@ class Grid(VolumetricData):
         self.xpoints = np.linspace(0.0, 1.0, num=self.dim[0])
         self.ypoints = np.linspace(0.0, 1.0, num=self.dim[1])
         self.zpoints = np.linspace(0.0, 1.0, num=self.dim[2])
-        self.interpolator = Interpolator(self.data["total"])
         self.name = "VolumetricData"
 
         # The rest of this is new for BaderKit methods
         if source_format is None:
             source_format = Format.vasp
         self.source_format = Format(source_format)
+        
+        if sig_figs is None:
+            sig_figs = infer_significant_figures(self.data["total"])
+        self.sig_figs = sig_figs
+        
+        self.interpolator = Interpolator(self.data["total"], sig_figs=sig_figs)
 
         if data_type is None:
             # attempt to guess data type from data range
@@ -809,181 +823,6 @@ class Grid(VolumetricData):
             distance_matrix=self._distance_matrix.copy(),
         )
 
-    # def get_atoms_in_volume(self, volume_mask: NDArray[bool]) -> NDArray[int]:
-    #     """
-    #     Checks if an atom is within the provided volume. This only checks the
-    #     point write where the atom is located, so a shell around the atom will
-    #     not be caught
-
-    #     Parameters
-    #     ----------
-    #     volume_mask : NDArray[bool]
-    #         A mask of the same shape as the current grid.
-
-    #     Returns
-    #     -------
-    #     NDArray[int]
-    #         A list of atoms in the provided mask.
-
-    #     """
-    #     # Make sure the shape of the mask is the same as the grid
-    #     assert np.all(
-    #         np.equal(self.shape, volume_mask.shape)
-    #     ), "Mask and Grid must be the same shape"
-    #     # Get the voxel coordinates for each atom
-    #     site_voxel_coords = self.frac_to_grid(self.structure.frac_coords).astype(int)
-    #     # Return the indices of the atoms that are in the mask
-    #     atoms_in_volume = volume_mask[
-    #         site_voxel_coords[:, 0], site_voxel_coords[:, 1], site_voxel_coords[:, 2]
-    #     ]
-    #     return np.argwhere(atoms_in_volume)
-
-    # def get_atoms_surrounded_by_volume(
-    #     self, volume_mask: NDArray[bool], return_type: bool = False
-    # ) -> NDArray[int]:
-    #     """
-    #     Checks if a mask completely surrounds any of the atoms
-    #     in the structure. This method uses scipy's ndimage package to
-    #     label features in the grid combined with a supercell to check
-    #     if atoms identical through translation are connected.
-
-    #     Parameters
-    #     ----------
-    #     volume_mask : NDArray[bool]
-    #         A mask of the same shape as the current grid.
-    #     return_type : bool, optional
-    #         Whether or not to return the type of surrounding. 0 indicates that
-    #         the atom sits exactly in the volume. 1 indicates that it is surrounded
-    #         but not directly in it. The default is False.
-
-    #     Returns
-    #     -------
-    #     NDArray[int]
-    #         The atoms that are surrounded by this mask.
-
-    #     """
-    #     # Make sure the shape of the mask is the same as the grid
-    #     assert np.all(
-    #         np.equal(self.shape, volume_mask.shape)
-    #     ), "Mask and Grid must be the same shape"
-    #     # first we get any atoms that are within the mask itself. These won't be
-    #     # found otherwise because they will always sit in unlabeled regions.
-    #     structure = np.ones([3, 3, 3])
-    #     dilated_mask = binary_dilation(volume_mask, structure)
-    #     init_atoms = self.get_atoms_in_volume(dilated_mask)
-    #     # check if we've surrounded all of our atoms. If so, we can return and
-    #     # skip the rest
-    #     if len(init_atoms) == len(self.structure):
-    #         if return_type:
-    #             return init_atoms, np.zeros(len(init_atoms))
-    #         else:
-    #             return init_atoms
-    #     # Now we create a supercell of the mask so we can check connections to
-    #     # neighboring cells. This will be used to check if the feature connects
-    #     # to itself in each direction
-    #     dilated_supercell_mask = self.get_2x_supercell(dilated_mask)
-    #     # We also get an inversion of this mask. This will be used to check if
-    #     # the mask surrounds each atom. To do this, we use the dilated supercell
-    #     # We do this to avoid thin walls being considered connections
-    #     # in the inverted mask
-    #     inverted_mask = dilated_supercell_mask == False
-    #     # Now we use use scipy to label unique features in our masks
-
-    #     inverted_feature_supercell = self.label(inverted_mask, structure)
-
-    #     # if an atom was fully surrounded, it should sit inside one of our labels.
-    #     # The same atom in an adjacent unit cell should have a different label.
-    #     # To check this, we need to look at the atom in each section of the supercell
-    #     # and see if it has a different label in each.
-    #     # Similarly, if the feature is disconnected from itself in each unit cell
-    #     # any voxel in the feature should have different labels in each section.
-    #     # If not, the feature is connected to itself in multiple directions and
-    #     # must surround many atoms.
-    #     transformations = np.array(list(itertools.product([0, 1], repeat=3)))
-    #     transformations = self.frac_to_grid(transformations)
-    #     # Check each atom to determine how many atoms it surrounds
-    #     surrounded_sites = []
-    #     for i, site in enumerate(self.structure):
-    #         # Get the voxel coords of each atom in their equivalent spots in each
-    #         # quadrant of the supercell
-    #         frac_coords = site.frac_coords
-    #         voxel_coords = self.frac_to_grid(frac_coords)
-    #         transformed_coords = (transformations + voxel_coords).astype(int)
-    #         # Get the feature label at each transformation. If the atom is not surrounded
-    #         # by this basin, at least some of these feature labels will be the same
-    #         features = inverted_feature_supercell[
-    #             transformed_coords[:, 0],
-    #             transformed_coords[:, 1],
-    #             transformed_coords[:, 2],
-    #         ]
-    #         if len(np.unique(features)) == 8:
-    #             # The atom is completely surrounded by this basin and the basin belongs
-    #             # to this atom
-    #             surrounded_sites.append(i)
-    #     surrounded_sites.extend(init_atoms)
-    #     surrounded_sites = np.unique(surrounded_sites)
-    #     types = []
-    #     for site in surrounded_sites:
-    #         if site in init_atoms:
-    #             types.append(0)
-    #         else:
-    #             types.append(1)
-    #     if return_type:
-    #         return surrounded_sites, types
-    #     return surrounded_sites
-
-    # def check_if_infinite_feature(self, volume_mask: NDArray[bool]) -> bool:
-    #     """
-    #     Checks if a mask extends infinitely in at least one direction.
-    #     This method uses scipy's ndimage package to label features in the mask
-    #     combined with a supercell to check if the label matches between unit cells.
-
-    #     Parameters
-    #     ----------
-    #     volume_mask : NDArray[bool]
-    #         A mask of the same shape as the current grid.
-
-    #     Returns
-    #     -------
-    #     bool
-    #         Whether or not this is an infinite feature.
-
-    #     """
-    #     # First we check that there is at least one feature in the mask. If not
-    #     # we return False as there is no feature.
-    #     if (~volume_mask).all():
-    #         return False
-
-    #     structure = np.ones([3, 3, 3])
-    #     # Now we create a supercell of the mask so we can check connections to
-    #     # neighboring cells. This will be used to check if the feature connects
-    #     # to itself in each direction
-    #     supercell_mask = self.get_2x_supercell(volume_mask)
-    #     # Now we use use scipy to label unique features in our masks
-    #     feature_supercell = self.label(supercell_mask, structure)
-    #     # Now we check if we have the same label in any of the adjacent unit
-    #     # cells. If yes we have an infinite feature.
-    #     transformations = np.array(list(itertools.product([0, 1], repeat=3)))
-    #     transformations = self.frac_to_grid(transformations)
-    #     initial_coord = np.argwhere(volume_mask)[0]
-    #     transformed_coords = (transformations + initial_coord).astype(int)
-
-    #     # Get the feature label at each transformation. If the atom is not surrounded
-    #     # by this basin, at least some of these feature labels will be the same
-    #     features = feature_supercell[
-    #         transformed_coords[:, 0], transformed_coords[:, 1], transformed_coords[:, 2]
-    #     ]
-
-    #     inf_feature = False
-    #     # If any of the transformed coords have the same feature value, this
-    #     # feature extends between unit cells in at least 1 direction and is
-    #     # infinite. This corresponds to the list of unique features being below
-    #     # 8
-    #     if len(np.unique(features)) < 8:
-    #         inf_feature = True
-
-    #     return inf_feature
-
     def regrid(
         self,
         desired_resolution: int = 1200,
@@ -1233,167 +1072,6 @@ class Grid(VolumetricData):
         new.data_aug = {}  # TODO: Can this be added somehow?
         return new
 
-    # @staticmethod
-    # def periodic_center_of_mass(
-    #     labels: NDArray[int], label_vals: NDArray[int] = None
-    # ) -> NDArray:
-    #     """
-    #     Computes center of mass for each label in a 3D periodic array.
-
-    #     Parameters
-    #     ----------
-    #     labels : NDArray[int]
-    #         3D array of integer labels.
-    #     label_vals : NDArray[int], optional
-    #         list/array of unique labels to compute. None will return all.
-
-    #     Returns
-    #     -------
-    #     NDArray
-    #         A 3xN array of centers of mass in voxel index coordinates.
-    #     """
-
-    #     shape = labels.shape
-    #     if label_vals is None:
-    #         label_vals = np.unique(labels)
-    #         label_vals = label_vals[label_vals != 0]
-
-    #     centers = []
-    #     for val in label_vals:
-    #         # get the voxel coords for each voxel in this label
-    #         coords = np.array(np.where(labels == val)).T  # shape (N, 3)
-    #         # If we have no coords for this label, we skip
-    #         if coords.shape[0] == 0:
-    #             continue
-
-    #         # From chap-gpt: Get center of mass using spherical distance
-    #         center = []
-    #         for i, size in enumerate(shape):
-    #             angles = coords[:, i] * 2 * np.pi / size
-    #             x = np.cos(angles).mean()
-    #             y = np.sin(angles).mean()
-    #             mean_angle = np.arctan2(y, x)
-    #             mean_pos = (mean_angle % (2 * np.pi)) * size / (2 * np.pi)
-    #             center.append(mean_pos)
-    #         centers.append(center)
-    #     centers = np.array(centers)
-    #     centers = centers.round(6)
-
-    #     return centers
-
-    # The following method finds critical points using the gradient. However, this
-    # assumes an orthogonal unit cell and should be improved.
-    # @staticmethod
-    # def get_critical_points(
-    #     array: NDArray, threshold: float = 5e-03, return_hessian_s: bool = True
-    # ) -> tuple[NDArray, NDArray, NDArray]:
-    #     """
-    #     Finds the critical points in the grid. If return_hessians is true,
-    #     the hessian matrices for each critical point will be returned along
-    #     with their type index.
-    #     NOTE: This method is VERY dependent on grid resolution and the provided
-    #     threshold.
-
-    #     Parameters
-    #     ----------
-    #     array : NDArray
-    #         The array to find critical points in.
-    #     threshold : float, optional
-    #         The threshold below which the hessian will be considered 0.
-    #         The default is 5e-03.
-    #     return_hessian_s : bool, optional
-    #         Whether or not to return the hessian signs. The default is True.
-
-    #     Returns
-    #     -------
-    #     tuple[NDArray, NDArray, NDArray]
-    #         The critical points and values.
-
-    #     """
-
-    #     # get gradient using a padded grid to handle periodicity
-    #     padding = 2
-    #     # a = np.linspace(
-    #     #     0,
-    #     #     array.shape[0] + (padding - 1) * 2 + 1,
-    #     #     array.shape[0] + padding * 2,
-    #     # )
-    #     # b = np.linspace(
-    #     #     0,
-    #     #     array.shape[1] + (padding - 1) * 2 + 1,
-    #     #     array.shape[1] + padding * 2,
-    #     # )
-    #     # c = np.linspace(
-    #     #     0,
-    #     #     array.shape[2] + (padding - 1) * 2 + 1,
-    #     #     array.shape[2] + padding * 2,
-    #     # )
-    #     padded_array = np.pad(array, padding, mode="wrap")
-    #     dx, dy, dz = np.gradient(padded_array)
-
-    #     # get magnitude of the gradient
-    #     magnitude = np.sqrt(dx**2 + dy**2 + dz**2)
-
-    #     # unpad the magnitude
-    #     slicer = tuple(slice(padding, -padding) for _ in range(3))
-    #     magnitude = magnitude[slicer]
-
-    #     # now we want to get where the magnitude is close to 0. To do this, we
-    #     # will create a mask where the magnitude is below a threshold. We will
-    #     # then label the regions where this is true using scipy, then combine
-    #     # the regions into one
-    #     magnitude_mask = magnitude < threshold
-    #     # critical_points = np.where(magnitude<threshold)
-    #     # padded_critical_points = np.array(critical_points).T + padding
-
-    #     label_structure = np.ones((3, 3, 3), dtype=int)
-    #     labeled_magnitude_mask = Grid.label(magnitude_mask, label_structure)
-    #     min_indices = []
-    #     for idx in np.unique(labeled_magnitude_mask):
-    #         label_mask = labeled_magnitude_mask == idx
-    #         label_indices = np.where(label_mask)
-    #         min_mag = magnitude[label_indices].min()
-    #         min_indices.append(np.argwhere((magnitude == min_mag) & label_mask)[0])
-    #     min_indices = np.array(min_indices)
-
-    #     critical_points = min_indices[:, 0], min_indices[:, 1], min_indices[:, 2]
-
-    #     # critical_points = self.periodic_center_of_mass(labeled_magnitude_mask)
-    #     padded_critical_points = tuple([i + padding for i in critical_points])
-    #     values = array[critical_points]
-    #     # # get the value at each of these critical points
-    #     # fn_values = RegularGridInterpolator((a, b, c), padded_array , method="linear")
-    #     # values = fn_values(padded_critical_points)
-
-    #     if not return_hessian_s:
-    #         return critical_points, values
-
-    #     # now we want to get the hessian eigenvalues around each of these points
-    #     # using interpolation. First, we get the second derivatives
-    #     d2f_dx2 = np.gradient(dx, axis=0)
-    #     d2f_dy2 = np.gradient(dy, axis=1)
-    #     d2f_dz2 = np.gradient(dz, axis=2)
-    #     # # now create interpolation functions for each
-    #     # fn_dx2 = RegularGridInterpolator((a, b, c), d2f_dx2, method="linear")
-    #     # fn_dy2 = RegularGridInterpolator((a, b, c), d2f_dy2, method="linear")
-    #     # fn_dz2 = RegularGridInterpolator((a, b, c), d2f_dz2, method="linear")
-    #     # and calculate the hessian eigenvalues for each point
-    #     # H00 = fn_dx2(padded_critical_points)
-    #     # H11 = fn_dy2(padded_critical_points)
-    #     # H22 = fn_dz2(padded_critical_points)
-    #     H00 = d2f_dx2[padded_critical_points]
-    #     H11 = d2f_dy2[padded_critical_points]
-    #     H22 = d2f_dz2[padded_critical_points]
-    #     # summarize the hessian eigenvalues by getting the sum of their signs
-    #     hessian_eigs = np.array([H00, H11, H22])
-    #     hessian_eigs = np.moveaxis(hessian_eigs, 1, 0)
-    #     hessian_eigs_signs = np.where(hessian_eigs > 0, 1, hessian_eigs)
-    #     hessian_eigs_signs = np.where(hessian_eigs < 0, -1, hessian_eigs_signs)
-    #     # Now we get the sum of signs for each set of hessian eigenvalues
-    #     s = np.sum(hessian_eigs_signs, axis=1)
-
-    #     return critical_points, values, s
-
     ###########################################################################
     # The following is a series of methods that are useful for converting between
     # voxel coordinates, fractional coordinates, and cartesian coordinates.
@@ -1576,20 +1254,6 @@ class Grid(VolumetricData):
     ###########################################################################
     # Functions for loading from files or strings
     ###########################################################################
-    # @staticmethod
-    # def _guess_file_format(
-    #     filename: str,
-    #     data: NDArray[np.float64],
-    # ):
-    #     # guess from filename
-    #     data_type = None
-    #     if "elf" in filename.lower():
-    #         data_type = DataType.elf
-    #     elif any(i in filename.lower() for i in ["chg", "charge"]):
-    #         data_type = DataType.charge
-    #     if data_type is not None:
-    #         logging.info(f"Data type set as {data_type.value} from file name")
-    #     return data_type
 
     @classmethod
     def from_vasp(
@@ -1627,7 +1291,7 @@ class Grid(VolumetricData):
         t0 = time.time()
         # get structure and data from file
         grid_file = Path(grid_file)
-        structure, data, data_aug = read_vasp(grid_file, total_only=total_only)
+        structure, data, data_aug, sig_figs = read_vasp(grid_file, total_only=total_only)
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
         return cls(
@@ -1636,6 +1300,7 @@ class Grid(VolumetricData):
             data_aug=data_aug,
             data_type=data_type,
             source_format=Format.vasp,
+            sig_figs=sig_figs,
             **kwargs,
         )
 
@@ -1669,7 +1334,7 @@ class Grid(VolumetricData):
         t0 = time.time()
         # make sure path is a Path object
         grid_file = Path(grid_file)
-        structure, data, ion_charges, origin = read_cube(grid_file)
+        structure, data, ion_charges, origin, sig_figs = read_cube(grid_file)
         # TODO: Also save the ion charges/origin for writing later
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -1678,6 +1343,7 @@ class Grid(VolumetricData):
             data=data,
             data_type=data_type,
             source_format=Format.cube,
+            sig_figs=sig_figs,
             **kwargs,
         )
 
