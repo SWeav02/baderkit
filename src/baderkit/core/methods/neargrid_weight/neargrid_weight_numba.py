@@ -60,6 +60,7 @@ def get_edge_charges_volumes(
     all_neighbor_dists,
 ):
     nx, ny, nz = reference_data.shape
+    ny_nz = ny*nz
     # create an array to store neighbors and fluxes
     num_coords = len(sorted_indices)
     full_num_coords = nx * ny * nz
@@ -78,7 +79,7 @@ def get_edge_charges_volumes(
         edge_idx = sorted_indices[sorted_idx]
         # get coordinates of grid point
         i, j, k = edge_indices[edge_idx]
-        voxel_idx = coords_to_flat(i, j, k, nx, ny, nz)
+        voxel_idx = coords_to_flat(i, j, k, ny_nz, nz)
         # get the reference and charge data
         base_value = reference_data[i, j, k]
         # set flat charge for this point
@@ -96,7 +97,7 @@ def get_edge_charges_volumes(
             if neigh_value <= base_value:
                 continue
             # get this neighbors index
-            neigh_idx = coords_to_flat(ii, jj, kk, nx, ny, nz)
+            neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
 
             # calculate the flux flowing to this voxel
             flux = (neigh_value - base_value) * alpha
@@ -111,8 +112,7 @@ def get_edge_charges_volumes(
         # check that there is flux. If not, we have a fake local maximum and
         # revert to an ongrid step
         if total_flux == 0.0:
-            # this is a local maximum. Check if its a true max
-            shift, (ni, nj, nk), is_max = get_best_neighbor(
+            shift, (ni, nj, nk) = get_best_neighbor(
                 data=reference_data,
                 i=i,
                 j=j,
@@ -120,7 +120,7 @@ def get_edge_charges_volumes(
                 neighbor_transforms=all_neighbor_transforms,
                 neighbor_dists=all_neighbor_dists,
             )
-            neigh_idx = coords_to_flat(ni, nj, nk, nx, ny, nz)
+            neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
             neigh_nums[sorted_idx] = 1
             neigh_array[sorted_idx, 0] = neigh_idx
             flux_array[sorted_idx, 0] = 1.0
@@ -138,7 +138,7 @@ def get_edge_charges_volumes(
         edge_idx = sorted_indices[sorted_idx]
         # get coordinates of grid point
         i, j, k = edge_indices[edge_idx]
-        voxel_idx = coords_to_flat(i, j, k, nx, ny, nz)
+        voxel_idx = coords_to_flat(i, j, k, ny_nz, nz)
         # get charge/volume at this point
         charge = flat_charge[voxel_idx]
         volume = flat_volume[voxel_idx]
@@ -148,7 +148,7 @@ def get_edge_charges_volumes(
             flux = fluxes[neigh_idx]
             # if the neighbor has no charge in our flat array, it is not an edge
             if flat_charge[neigh] == 0.0:
-                ni, nj, nk = flat_to_coords(neigh, nx, ny, nz)
+                ni, nj, nk = flat_to_coords(neigh, ny_nz, nz)
                 # get this neighbors label
                 neigh_label = labels[ni, nj, nk]
                 # assign charge/volume to corresponding basin

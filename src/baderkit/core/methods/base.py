@@ -10,7 +10,12 @@ from numpy.typing import NDArray
 from baderkit.core.toolkit import Grid
 from baderkit.core.toolkit.grid_numba import refine_maxima
 
-from .shared_numba import combine_neigh_maxima, get_basin_charges_and_volumes
+from .shared_numba import (
+    # combine_neigh_maxima, 
+    get_basin_charges_and_volumes, 
+    get_maxima, 
+    initialize_labels_from_maxima,
+    )
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="MethodBase")
@@ -76,6 +81,51 @@ class MethodBase:
 
     def run(self) -> dict:
         """
+        Runs the main bader method and returns a dictionary with values for:
+            - basin_maxima_frac
+            - basin_maxima_vox
+            - basin_maxima_ref_values
+            - basin_charges
+            - basin_volumes
+            - vacuum_charges
+            - vacuum_volumes
+            - significant_basins
+        """
+        # all methods require finding maxima. For consistency and to combine
+        # adjacent maxima, I do this the same way for all methods. Because this
+        # step is generally ~400x faster than the rest of the method, I think it's
+        # ok to not try and do it during the actual method
+        
+        # get our initial maxima
+        maxima_mask = self.maxima_mask
+        maxima_vox = self.maxima_vox
+        # get neighbor transforms
+        neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
+        # now merge our maxima and initialize our labels
+        labels, basin_maxima_frac = initialize_labels_from_maxima(
+            neighbor_transforms, 
+            maxima_vox, 
+            maxima_mask,
+            )
+        # refine our maxima and get their values
+        refined_maxima_frac, maxima_values = refine_maxima(
+            basin_maxima_frac, self.reference_grid.total, neighbor_transforms
+        )
+        self._maxima_frac = refined_maxima_frac
+        
+        # now run bader
+        results = self._run_bader(labels)
+        results.update({
+            "basin_maxima_vox": maxima_vox,
+            "basin_maxima_frac": self.maxima_frac,
+            "basin_maxima_ref_values": maxima_values,
+            }
+            )
+        return results
+        
+
+    def _run_bader(self, labels) -> dict:
+        """
         This is the main function that each method must have. It must return a
         dictionary with values for:
             - basin_maxima_frac
@@ -114,7 +164,16 @@ class MethodBase:
             A mask representing the voxels that are local maxima.
 
         """
-        assert self._maxima_mask is not None, "Maxima mask must be set by run method"
+        if self._maxima_mask is None:
+            data = self.reference_grid.total
+            neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
+            vacuum_mask = self.vacuum_mask
+            self._maxima_mask = get_maxima(
+                data=data,
+                neighbor_transforms=neighbor_transforms,
+                vacuum_mask=vacuum_mask,
+                use_minima=False
+                )
         return self._maxima_mask
 
     @property
@@ -168,30 +227,6 @@ class MethodBase:
     ###########################################################################
     # Functions used by most or all methods
     ###########################################################################
-
-    def get_extras(self):
-        """
-
-        Returns
-        -------
-        dict
-            Collects the important class variables.
-
-        """
-        # TODO: This has to be called in every method currently. This should be
-        # moved to a method in this abstract class to avoid repeat code/forgetting
-
-        # refine frac coords
-        neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
-        refined_maxima_frac, maxima_values = refine_maxima(
-            self.maxima_frac, self.reference_grid.total, neighbor_transforms
-        )
-
-        return {
-            "basin_maxima_vox": self.maxima_vox,
-            "basin_maxima_frac": refined_maxima_frac,
-            "basin_maxima_ref_values": maxima_values,
-        }
 
     def get_basin_charges_and_volumes(
         self,
@@ -283,64 +318,6 @@ class MethodBase:
                 pointers = new_parents
         return pointers
 
-    def reduce_label_maxima(
-        self,
-        labels: NDArray[int],
-        return_map: bool = False,
-    ) -> (NDArray[int], NDArray[float]):
-        """
-        Combines maxima/basins that are adjacent to one another.
-
-        Parameters
-        ----------
-        labels : NDArray[int]
-            A 3D array representing current basin assignments.
-
-        Returns
-        -------
-        labels : NDArray[int]
-            A 3D array representing the new basin assignments
-        frac_coords : NDArray[float]
-            The averaged fractional coordinates for each set of adjacent maxima.
-
-        """
-        logging.info("Reducing maxima")
-        # TODO: stop reassignments if no reduction is needed
-        maxima_vox = self.maxima_vox
-        # order maxima voxels from lowest to highest labels
-        # 1. get corresponding basin labels for maxima
-        maxima_labels = labels[maxima_vox[:, 0], maxima_vox[:, 1], maxima_vox[:, 2]]
-        # 2. sort from lowest to highest
-        maxima_sorted_indices = np.argsort(maxima_labels)
-        maxima_vox = maxima_vox[maxima_sorted_indices]
-        # reduce maxima
-        neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
-        new_labels, frac_coords = combine_neigh_maxima(
-            labels,
-            neighbor_transforms,
-            maxima_vox,
-            maxima_vox / self.reference_grid.shape,
-            self.maxima_mask,
-        )
-        # TODO: The fractional coordinates can still be off. It would be nice to
-        # interpolate the actual maximum in the grid. Ideally I would do this
-        # by optimizing them all at once because the RegularGridInterpolater is
-        # much faster when you provide it multiple points rather than just one.
-        # get the highest label
-        max_label = maxima_labels.max()
-        # if there are any unlabeled points in our label array, they will be
-        # marked as -1. np.choose requires values to be 0, 1, 2, ...
-        if -1 in labels:
-            # shift to start at 0
-            labels += 1
-            max_label += 1
-            # add -1 to the start of our new labels to reassign back to -1
-            new_labels = np.insert(new_labels, 0, -1)
-        # update_labels
-        labels = new_labels[labels]
-        if return_map:
-            return labels, frac_coords, new_labels
-        return labels, frac_coords
 
     def copy(self) -> Self:
         """

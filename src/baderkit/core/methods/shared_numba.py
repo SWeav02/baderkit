@@ -10,16 +10,85 @@ from numpy.typing import NDArray
 
 
 @njit(fastmath=True, cache=True, inline="always")
-def flat_to_coords(idx, nx, ny, nz):
-    i = idx // (ny * nz)
-    j = (idx % (ny * nz)) // nz
+def flat_to_coords(idx, ny_nz, nz):
+    i = idx // (ny_nz)
+    j = (idx % (ny_nz)) // nz
     k = idx % nz
     return i, j, k
 
 
 @njit(fastmath=True, cache=True, inline="always")
-def coords_to_flat(i, j, k, nx, ny, nz):
-    return i * (ny * nz) + j * nz + k
+def coords_to_flat(i, j, k, ny_nz, nz):
+    return i * (ny_nz) + j * nz + k
+
+@njit(cache=True, inline="always")
+def get_best_neighbor(
+    data: NDArray[np.float64],
+    i: np.int64,
+    j: np.int64,
+    k: np.int64,
+    neighbor_transforms: NDArray[np.int64],
+    neighbor_dists: NDArray[np.int64],
+):
+    """
+    For a given coordinate (i,j,k) in a grid (data), finds the neighbor with
+    the largest gradient.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        The data for each voxel.
+    i : np.int64
+        First coordinate
+    j : np.int64
+        Second coordinate
+    k : np.int64
+        Third coordinate
+    neighbor_transforms : NDArray[np.int64]
+        Transformations to apply to get to the voxels neighbors
+    neighbor_dists : NDArray[np.int64]
+        The distance to each voxels neighbor
+
+    Returns
+    -------
+    best_transform : NDArray[np.int64]
+        The transformation to the best neighbor
+    best_neigh : NDArray[np.int64]
+        The coordinates of the best neigbhor
+
+    """
+    nx, ny, nz = data.shape
+    # get the value at this point
+    base = data[i, j, k]
+    # create a tracker for the best increase in value
+    best = 0.0
+    # create initial best transform. Default to this point
+    bti = 0
+    btj = 0
+    btk = 0
+    # create initial best neighbor
+    bni = i
+    bnj = j
+    bnk = k
+    # For each neighbor get the difference in value and if its better
+    # than any previous, replace the current best
+    for (si, sj, sk), dist in zip(neighbor_transforms, neighbor_dists):
+        # loop
+        ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+        # calculate the difference in value taking into account distance
+        diff = (data[ii, jj, kk] - base) / dist
+        # if better than the current best, note the best and the
+        # current label
+        if diff > best:
+            best = diff
+            bti, btj, btk = (si, sj, sk)
+            bni, bnj, bnk = (ii, jj, kk)
+    
+    # return the best shift and neighbor
+    return (
+        np.array((bti, btj, btk), dtype=np.int64),
+        np.array((bni, bnj, bnk), dtype=np.int64),
+    )
 
 
 @njit(parallel=True, cache=True)
@@ -379,240 +448,110 @@ def merge_frac_coords(
         avg2 = (total2 / count) % 1.0
         return np.array((avg0, avg1, avg2), dtype=np.float64)
 
+@njit(cache=True)
+def find_root(parent, x):
+    """Find root with partial path compression"""
+    while x != parent[x]:
+        parent[x] = parent[parent[x]]
+        x = parent[x]
+    return x
 
-@njit(cache=True, fastmath=True)
-def combine_maxima_frac(
-    labels,
-    maxima_vox,
-    maxima_frac,
-):
-    # get the labels at each maximum
-    maxima_labels = np.empty(len(maxima_vox), dtype=np.int64)
-    for max_idx in prange(len(maxima_vox)):
-        i, j, k = maxima_vox[max_idx]
-        maxima_labels[max_idx] = labels[i, j, k]
+@njit(cache=True)
+def find_root_no_compression(parent, x):
+    while x != parent[x]:
+        x = parent[x]
+    return x
 
-    # find unique labels
-    unique_labels = np.unique(maxima_labels)
-    n_unique = len(unique_labels)
-
-    # Prepare result arrays
-    all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
-
-    # Parallel loop: for each unique label, scan new_labels and compute the average
-    # frac coords
-    for u_idx in prange(n_unique):
-        target_label = unique_labels[u_idx]
-        # get the frac coords for maxima with this label
-        frac_coords = []
-        for max_idx, label in enumerate(maxima_labels):
-            if label == target_label:
-                frac_coords.append(maxima_frac[max_idx])
-        # get average frac coords and assign
-        all_frac_coords[u_idx] = merge_frac_coords(frac_coords)
-    return all_frac_coords
-
+@njit(cache=True, inline="always")
+def union(parents, x, y):        
+    rx = find_root(parents, x)
+    ry = find_root(parents, y)
+    
+    parents[ry] = rx
 
 @njit(cache=True, parallel=True)
-def combine_neigh_maxima(
-    labels,
+def initialize_labels_from_maxima(
     neighbor_transforms,
     maxima_vox,
-    maxima_frac,
     maxima_mask,
 ):
-    nx, ny, nz = labels.shape
-    initial_labels = np.arange(len(maxima_vox), dtype=np.int64)
-    new_labels = np.zeros(len(maxima_vox), dtype=np.int64)
-    # check each neighbor and if its a max with a lower index, update the index
-    for max_idx in prange(len(maxima_vox)):
-        i, j, k = maxima_vox[max_idx]
-        best_label = initial_labels[max_idx]
+    nx, ny, nz = maxima_mask.shape
+    ny_nz = ny*nz
+    
+    # get the fractional representation of each maximum
+    maxima_frac = maxima_vox / np.array(maxima_mask.shape, dtype=np.int64)
+    
+    # create a flat array of labels. These will initially all be -1
+    labels = np.full(nx * ny * nz, -1, dtype=np.int64)
+    
+    
+    # Now we initialize the maxima
+    maxima_indices = []
+    for i, j, k in maxima_vox:
+        max_idx = coords_to_flat(i, j, k, ny_nz, nz)
+        labels[max_idx] = max_idx
+        maxima_indices.append(max_idx)
+
+    
+    # For each maximum, we check its neighbors to see if they are also a maximum
+    # if so, we create a union
+    for max_idx, (i,j,k) in zip(maxima_indices, maxima_vox):
+        # get flat index
         for si, sj, sk in neighbor_transforms:
             # get neighbor and wrap
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             # check if new point is also a maximum
-            if maxima_mask[ii, jj, kk] and labels[ii, jj, kk] < best_label:
-                best_label = labels[ii, jj, kk]
-        new_labels[max_idx] = best_label
-    # TODO:
-    # This may not fully reduce maxima. It may be possible for several voxels
-    # in a row to all be maxima. If we had for example four voxels in a line
-    # that are all maxima, the first two may be relabeld to the first and the
-    # other two may be relabeld to the second or some other configuration. I
-    # need to decide if these are physically reasonable situations where an
-    # average should be taken.
+            if maxima_mask[ii, jj, kk]:
+                # get flat index
+                neigh_max_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
+                # make a union
+                union(labels, max_idx, neigh_max_idx)
+    
+    # get the roots of each maximum
+    maxima_roots = []
+    for max_idx in maxima_indices:
+        maxima_roots.append(find_root_no_compression(labels, max_idx))
+    maxima_roots = np.array(maxima_roots, dtype=np.int64)
 
-    # Now we want to calculate the new frac coords for each group. We also want
-    # to make sure the labels go from 0, 1, 2, ... so on, while currently they
-    # may skip some (e.g. 0,2,3,5,...)
+    # Now we want to calculate the new frac coords for each group
     # find unique labels and their count
-    unique_labels = np.unique(new_labels)
-    n_unique = len(unique_labels)
+    unique_roots = np.unique(maxima_roots)
+    n_unique = len(unique_roots)
 
-    # Prepare result arrays
-    reduced_new_labels = np.empty(len(new_labels), dtype=np.int64)
+    # Prepare result array to store frac coords
     all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
 
     # Parallel loop: for each unique label, scan new_labels and get average
     # frac coords
     for u_idx in prange(n_unique):
-        target_label = unique_labels[u_idx]
+        target_root = unique_roots[u_idx]
         frac_coords = []
-        for max_idx, label in enumerate(new_labels):
-            if label == target_label:
+        maxima_w_root = []
+        for max_idx, root in enumerate(maxima_roots):
+            if root == target_root:
                 frac_coords.append(maxima_frac[max_idx])
-                reduced_new_labels[max_idx] = u_idx
+                maxima_w_root.append(maxima_indices[max_idx])
         # combine frac coords
-        all_frac_coords[u_idx] = merge_frac_coords(frac_coords)
+        merged_coord = merge_frac_coords(frac_coords)
+        # now we make sure the combined coords resulted in a value that's
+        # actually near one of the maxima. If not, we default back to the
+        # first maximum with this root
+        i = merged_coord[0] * nx
+        j = merged_coord[1] * ny
+        k = merged_coord[2] * nz
+        closest_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
+        
+        if not closest_max_idx in maxima_w_root:
+            merged_coord = frac_coords[0]
+            closest_max_idx = maxima_w_root[0]
+        
+        # add our frac coords
+        all_frac_coords[u_idx] = merged_coord
+        # relabel all maxima to point to the root maximum
+        for max_idx in maxima_w_root:
+            labels[max_idx] = closest_max_idx
 
-    return reduced_new_labels, all_frac_coords
-
-
-@njit(cache=True, inline="always")
-def get_best_neighbor(
-    data: NDArray[np.float64],
-    i: np.int64,
-    j: np.int64,
-    k: np.int64,
-    neighbor_transforms: NDArray[np.int64],
-    neighbor_dists: NDArray[np.int64],
-):
-    """
-    For a given coordinate (i,j,k) in a grid (data), finds the neighbor with
-    the largest gradient.
-
-    Parameters
-    ----------
-    data : NDArray[np.float64]
-        The data for each voxel.
-    i : np.int64
-        First coordinate
-    j : np.int64
-        Second coordinate
-    k : np.int64
-        Third coordinate
-    neighbor_transforms : NDArray[np.int64]
-        Transformations to apply to get to the voxels neighbors
-    neighbor_dists : NDArray[np.int64]
-        The distance to each voxels neighbor
-
-    Returns
-    -------
-    best_transform : NDArray[np.int64]
-        The transformation to the best neighbor
-    best_neigh : NDArray[np.int64]
-        The coordinates of the best neigbhor
-    is_max: bool
-        Whether or not this voxel is a local maximum
-
-    """
-    nx, ny, nz = data.shape
-    # get the elf value and initial label for this voxel. This defaults
-    # to the voxel pointing to itself
-    base = data[i, j, k]
-    best = 0.0
-    # create initial best transform. Default to this point
-    bti = 0
-    btj = 0
-    btk = 0
-    # create initial best neighbor
-    bni = i
-    bnj = j
-    bnk = k
-    # best_neigh = np.array([i, j, k], dtype=np.int64)
-    # For each neighbor get the difference in value and if its better
-    # than any previous, replace the current best
-    for (si, sj, sk), dist in zip(neighbor_transforms, neighbor_dists):
-        # loop
-        ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-        # calculate the difference in value taking into account distance
-        diff = (data[ii, jj, kk] - base) / dist
-        # if better than the current best, note the best and the
-        # current label
-        if diff > best:
-            best = diff
-            bti, btj, btk = (si, sj, sk)
-            bni, bnj, bnk = (ii, jj, kk)
-        # if the neighbor has the same value as the current point, we likely
-        # have adjacent maxima. If the neighbor has a lower flat index than the
-        # current point, we use it as our pointer
-        elif diff == 0.0:
-            # get the flat idx of the current best neighbor and this neighbor
-            flat_idx = coords_to_flat(bni, bnj, bnk, nx, ny, nz)
-            flat_neigh = coords_to_flat(ii, jj, kk, nx, ny, nz)
-            # if the neighbors index is lower, update our best neigh/transform
-            if flat_neigh < flat_idx:
-                bti, btj, btk = (si, sj, sk)
-                bni, bnj, bnk = (ii, jj, kk)
-    # We've finished our loop. return the best shift, neighbor, and whether this
-    # is a max
-    # NOTE: Can't do is_max = best == 0.0 for older numba
-    is_max = False
-    if best == 0.0:
-        is_max = True
-    # return best_transform, best_neigh, is_max
-    return (
-        np.array((bti, btj, btk), dtype=np.int64),
-        np.array((bni, bnj, bnk), dtype=np.int64),
-        is_max,
-    )
-
-
-@njit(cache=True)
-def climb_to_max(
-    data: NDArray[np.float64],
-    i: np.int64,
-    j: np.int64,
-    k: np.int64,
-    neighbor_transforms: NDArray[np.int64],
-    neighbor_dists: NDArray[np.int64],
-):
-    """
-    For a given coordinate (i,j,k) in a grid (data), hill climbs until a maximum
-    is reached.
-
-    Parameters
-    ----------
-    data : NDArray[np.float64]
-        The data for each voxel.
-    i : np.int64
-        First coordinate
-    j : np.int64
-        Second coordinate
-    k : np.int64
-        Third coordinate
-    neighbor_transforms : NDArray[np.int64]
-        Transformations to apply to get to the voxels neighbors
-    neighbor_dists : NDArray[np.int64]
-        The distance to each voxels neighbor
-
-    Returns
-    -------
-    mi : np.int64
-        The first coordinate of the maximum
-    mj : np.int64
-        The second coordinate of the maximum
-    mk : np.int64
-        The third coordinate of the maximum
-
-    """
-    # start hill climbing
-    while True:
-        _, (mi, mj, mk), is_max = get_best_neighbor(
-            data,
-            i,
-            j,
-            k,
-            neighbor_transforms,
-            neighbor_dists,
-        )
-        if is_max:
-            break
-        # otherwise, update coord
-        i, j, k = (mi, mj, mk)
-    return mi, mj, mk
-
+    return labels, all_frac_coords
 
 @njit(cache=True, fastmath=True)
 def get_min_dists(

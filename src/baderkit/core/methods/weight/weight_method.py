@@ -5,17 +5,16 @@ import logging
 import numpy as np
 
 from baderkit.core.methods.base import MethodBase
-from baderkit.core.methods.shared_numba import combine_maxima_frac
 
 from .weight_numba import (  # reduce_charge_volume,; get_labels,
     get_weight_assignments,
-    sort_maxima_vox,
+    sort_maxima_frac,
 )
 
 
 class WeightMethod(MethodBase):
 
-    def run(self):
+    def _run_bader(self, labels):
         """
         Assigns basin weights to each voxel and assigns charge using
         the weight method:
@@ -55,31 +54,26 @@ class WeightMethod(MethodBase):
         all_neighbor_transforms, all_neighbor_dists = (
             reference_grid.point_neighbor_transforms
         )
-        labels, charges, volumes, maxima_vox = get_weight_assignments(
+        labels, charges, volumes = get_weight_assignments(
             reference_data,
+            labels,
             charge_data,
             sorted_indices,
             neighbor_transforms,
             neighbor_alpha,
             all_neighbor_transforms,
             all_neighbor_dists,
+            self.maxima_mask
         )
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)
-        # our maxima are already fully reduced by the current method, but we need
-        # the combined frac coords. Get those here
-        maxima_frac = reference_grid.grid_to_frac(maxima_vox)
-        self._maxima_frac = combine_maxima_frac(
-            labels,
-            maxima_vox,
-            maxima_frac,
-        )
-        self._maxima_vox = sort_maxima_vox(
-            maxima_vox,
-            shape[0],
-            shape[1],
-            shape[2],
-        )
+        # our frac coords may not be in the correct order. We rearrange them
+        # here
+        self._maxima_frac = sort_maxima_frac(
+            self.maxima_frac,
+            shape
+            )
+        
         # adjust charges from vasp convention
         charges /= shape.prod()
         # adjust volumes from voxel count
@@ -94,5 +88,4 @@ class WeightMethod(MethodBase):
             "vacuum_volume": (self.num_vacuum / reference_grid.ngridpts)
             * reference_grid.structure.volume,
         }
-        results.update(self.get_extras())
         return results

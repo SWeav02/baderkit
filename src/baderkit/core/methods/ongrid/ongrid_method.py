@@ -5,14 +5,13 @@ import logging
 import numpy as np
 
 from baderkit.core.methods.base import MethodBase
-from baderkit.core.methods.shared_numba import combine_maxima_frac
 
 from .ongrid_numba import get_steepest_pointers
 
 
 class OngridMethod(MethodBase):
 
-    def run(self):
+    def _run_bader(self, labels):
         """
         Assigns voxels to basins and calculates charge using the on-grid
         method:
@@ -33,11 +32,13 @@ class OngridMethod(MethodBase):
         # For each voxel, get the label of the surrounding voxel that has the highest
         # density
         logging.info("Calculating Steepest Neighbors")
-        pointers, self._maxima_mask = get_steepest_pointers(
+        labels = get_steepest_pointers(
             data=data,
+            labels=labels,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             vacuum_mask=self.vacuum_mask,
+            maxima_mask=self.maxima_mask,
         )
         # Our pointers object is a 1D array pointing each voxel to its parent voxel. We
         # essentially have a classic forest of trees problem where each maxima is
@@ -47,25 +48,17 @@ class OngridMethod(MethodBase):
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
         logging.info("Finding Roots")
-        pointers = self.get_roots(pointers)
+        labels = self.get_roots(labels)
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
-        unique_roots, labels_flat = np.unique(pointers, return_inverse=True)
+        unique_roots, labels = np.unique(labels, return_inverse=True)
         # If we had at least one vacuum point, we need to subtract our labels by
         # 1 to recover the vacuum label.
         if -1 in unique_roots:
-            labels_flat -= 1
+            labels -= 1
         # reconstruct a 3D array with our labels
-        labels = labels_flat.reshape(shape)
-        # Get the frac coords of each maximum, including averaging of neighboring
-        # local maxima
-        maxima_frac = grid.grid_to_frac(self.maxima_vox)
-        self._maxima_frac = combine_maxima_frac(
-            labels,
-            self.maxima_vox,
-            maxima_frac,
-        )
-        # labels, self._maxima_frac = self.reduce_label_maxima(labels)
+        labels = labels.reshape(shape)
+
         # assign all results
         results = {
             "basin_labels": labels,
@@ -73,5 +66,4 @@ class OngridMethod(MethodBase):
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")
         results.update(self.get_basin_charges_and_volumes(labels))
-        results.update(self.get_extras())
         return results
