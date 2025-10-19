@@ -379,7 +379,11 @@ def sort_maxima_frac(
     # sort flat indices from low to high
     sorted_indices = np.argsort(flat_indices)
     # sort maxima from lowest index to highest
-    return maxima_frac[sorted_indices], maxima_vox[sorted_indices], flat_indices[sorted_indices]
+    return (
+        maxima_frac[sorted_indices],
+        maxima_vox[sorted_indices],
+        flat_indices[sorted_indices],
+    )
 
 
 ###############################################################################

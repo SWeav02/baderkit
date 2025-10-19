@@ -35,7 +35,9 @@ class WeightMethod(MethodBase):
 
         # We need our maxima to follow the same ordering as the other methods.
         # We want to get this order down before we run our method
-        self._maxima_frac, self._maxima_vox, maxima_indices = sort_maxima_frac(self.maxima_frac, self.maxima_vox, shape)
+        self._maxima_frac, self._maxima_vox, maxima_indices = sort_maxima_frac(
+            self.maxima_frac, self.maxima_vox, shape
+        )
 
         logging.info("Sorting Reference Data")
         # sort data from lowest to highest

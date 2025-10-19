@@ -154,12 +154,12 @@ class Structure(PymatgenStructure):
                 site.label = f"{label}_{idx + 1}"
 
         return self
-    
+
     @staticmethod
     def merge_frac_coords(frac_coords):
         # avoid circular import
         from baderkit.core.methods.shared_numba import merge_frac_coords
-        
+
         frac_coords = np.asarray(frac_coords, dtype=np.float64)
         if len(frac_coords) == 0:
             return None

@@ -104,17 +104,17 @@ class MethodBase:
             data=self.reference_grid.cubic_spline_coeffs,
             maxima_vox=maxima_vox,
         )
-        
+
         # now run bader
         results = self._run_bader(labels)
 
-        # refine our maxima and get their values
+        # refine maxima using a quadratic fit
         refined_maxima_frac, maxima_values = refine_maxima(
             maxima_coords=self.maxima_frac,
-            data=self.reference_grid.cubic_spline_coeffs,
-            neighbor_transforms=neighbor_transforms,
+            data=self.reference_grid.total,
+            lattice=self.reference_grid.matrix,
         )
-        breakpoint()
+
         self._maxima_frac = refined_maxima_frac
 
         results.update(

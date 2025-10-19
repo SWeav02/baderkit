@@ -15,7 +15,7 @@ from numpy.typing import NDArray
 from pymatgen.electronic_structure.core import Spin
 from pymatgen.io.vasp import VolumetricData
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from scipy.ndimage import label, zoom, spline_filter
+from scipy.ndimage import label, spline_filter, zoom
 from scipy.spatial import Voronoi
 
 from baderkit.core.toolkit.file_parsers import (
@@ -249,8 +249,10 @@ class Grid(VolumetricData):
     @property
     def cubic_spline_coeffs(self) -> NDArray[float]:
         if self._cubic_spline_coeffs is None:
-            self._cubic_spline_coeffs = spline_filter(self.total, order=3, mode="grid-wrap")
-            
+            self._cubic_spline_coeffs = spline_filter(
+                self.total, order=3, mode="grid-wrap"
+            )
+
         return self._cubic_spline_coeffs
 
     # TODO: Do this with numba to reduce memory and probably increase speed
@@ -605,11 +607,11 @@ class Grid(VolumetricData):
             data = self.cubic_spline_coeffs
         else:
             data = self.total
-            
+
         interpolator = Interpolator(
             data=data,
             method=method,
-            )
+        )
         # interpolate value
         return interpolator([x, y, z])[0]
 
@@ -642,15 +644,14 @@ class Grid(VolumetricData):
             data = self.cubic_spline_coeffs
         else:
             data = self.total
-            
-        interpolator = Interpolator(
-            data=data,
-            method=method
-            )
+
+        interpolator = Interpolator(data=data, method=method)
         # interpolate values
         return interpolator(frac_coords)
 
-    def linear_slice(self, p1: NDArray[float], p2: NDArray[float], n: int = 100, method="cubic"):
+    def linear_slice(
+        self, p1: NDArray[float], p2: NDArray[float], n: int = 100, method="cubic"
+    ):
         """
         Interpolates the data between two fractional coordinates.
 
