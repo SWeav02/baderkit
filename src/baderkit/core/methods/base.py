@@ -96,27 +96,25 @@ class MethodBase:
         # ok to not try and do it during the actual method
 
         # get our initial maxima
-        maxima_mask = self.maxima_mask
         maxima_vox = self.maxima_vox
         # get neighbor transforms
         neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
         # now merge our maxima and initialize our labels
-        labels, self._maxima_frac = initialize_labels_from_maxima(
-            neighbor_transforms,
-            maxima_vox,
-            maxima_mask,
+        labels, self._maxima_frac, self._maxima_vox = initialize_labels_from_maxima(
+            data=self.reference_grid.cubic_spline_coeffs,
+            maxima_vox=maxima_vox,
         )
-
+        
         # now run bader
         results = self._run_bader(labels)
 
         # refine our maxima and get their values
         refined_maxima_frac, maxima_values = refine_maxima(
-            self.maxima_frac,
-            self.reference_grid.total,
-            neighbor_transforms,
-            sig_figs=self.reference_grid.sig_figs,
+            maxima_coords=self.maxima_frac,
+            data=self.reference_grid.cubic_spline_coeffs,
+            neighbor_transforms=neighbor_transforms,
         )
+        breakpoint()
         self._maxima_frac = refined_maxima_frac
 
         results.update(

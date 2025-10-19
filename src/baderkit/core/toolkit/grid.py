@@ -15,7 +15,7 @@ from numpy.typing import NDArray
 from pymatgen.electronic_structure.core import Spin
 from pymatgen.io.vasp import VolumetricData
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from scipy.ndimage import label, zoom
+from scipy.ndimage import label, zoom, spline_filter
 from scipy.spatial import Voronoi
 
 from baderkit.core.toolkit.file_parsers import (
@@ -126,7 +126,8 @@ class Grid(VolumetricData):
             sig_figs = infer_significant_figures(self.data["total"])
         self.sig_figs = sig_figs
 
-        self.interpolator = Interpolator(self.data["total"], sig_figs=sig_figs)
+        # custom interpolator setting
+        self._cubic_spline_coeffs = None
 
         if data_type is None:
             # attempt to guess data type from data range
@@ -245,38 +246,12 @@ class Grid(VolumetricData):
             ).reshape(self.shape)
         return self._flat_grid_indices
 
-    # @property
-    # def interpolator(self) -> RegularGridInterpolator:
-    #     if self._interpolator is None:
-    #         t0 = time.time()
-    #         if self.interpolator_method == "linear":
-    #             pad = 1
-    #         elif self.interpolator_method == "cubic":
-    #             pad = 2
-    #         else: # cubic or other
-    #             pad = 3
-    #         # pymatgen always sets their RegularGridInterpolator with linear interpolation
-    #         # but that isn't always what we want. Additionally, I have found some
-    #         # padding of the grid is usually required to get accurate interpolation
-    #         # near the edges.
-    #         x, y, z = self.dim
-    #         padded_total = np.pad(self.data["total"], pad, mode="wrap")
-    #         xpoints_pad = np.linspace(-pad, x + pad - 1, x + pad * 2) / x
-    #         ypoints_pad = np.linspace(-pad, y + pad - 1, y + pad * 2) / y
-    #         zpoints_pad = np.linspace(-pad, z + pad - 1, z + pad * 2) / z
-    #         self._interpolator = RegularGridInterpolator(
-    #             (xpoints_pad, ypoints_pad, zpoints_pad),
-    #             padded_total,
-    #             method=self.interpolator_method,
-    #             bounds_error=True,
-    #         )
-    #         t1 = time.time()
-    #         breakpoint()
-    #     return self._interpolator
-
-    # @interpolator.setter
-    # def interpolator(self, value):
-    #     self._interpolator = value
+    @property
+    def cubic_spline_coeffs(self) -> NDArray[float]:
+        if self._cubic_spline_coeffs is None:
+            self._cubic_spline_coeffs = spline_filter(self.total, order=3, mode="grid-wrap")
+            
+        return self._cubic_spline_coeffs
 
     # TODO: Do this with numba to reduce memory and probably increase speed
     @property
@@ -601,11 +576,11 @@ class Grid(VolumetricData):
         x: float,
         y: float,
         z: float,
+        method: str = "cubic",
     ):
         """Get a data value from self.data at a given point (x, y, z) in terms
-        of fractional lattice parameters. Will be interpolated using a
-        cubic spline on self.data if (x, y, z) is not in the original
-        set of data points.
+        of fractional lattice parameters. Will be interpolated using the
+        provided method.
 
         Parameters
         ----------
@@ -615,6 +590,10 @@ class Grid(VolumetricData):
             Fraction of lattice vector b.
         z: float
             Fraction of lattice vector c.
+        method : float
+            The method to use for interpolation. nearest, linear, or cubic. The
+            cubic method will calculate and store spline coefficients in an
+            array the same size as the grid, which increases memory usage
 
         Returns
         -------
@@ -622,12 +601,22 @@ class Grid(VolumetricData):
             Value from self.data (potentially interpolated) corresponding to
             the point (x, y, z).
         """
+        if method == "cubic":
+            data = self.cubic_spline_coeffs
+        else:
+            data = self.total
+            
+        interpolator = Interpolator(
+            data=data,
+            method=method,
+            )
         # interpolate value
-        return self.interpolator([x, y, z])[0]
+        return interpolator([x, y, z])[0]
 
     def values_at(
         self,
         frac_coords: NDArray[float],
+        method: str = "cubic",
     ) -> list[float]:
         """
         Interpolates the value of the data at each fractional coordinate in a
@@ -638,6 +627,10 @@ class Grid(VolumetricData):
         frac_coords : NDArray
             The fractional coordinates to interpolate values at with shape
             N, 3.
+        method : float
+            The method to use for interpolation. nearest, linear, or cubic. The
+            cubic method will calculate and store spline coefficients in an
+            array the same size as the grid, which increases memory usage
 
         Returns
         -------
@@ -645,10 +638,19 @@ class Grid(VolumetricData):
             The interpolated value at each fractional coordinate.
 
         """
+        if method == "cubic":
+            data = self.cubic_spline_coeffs
+        else:
+            data = self.total
+            
+        interpolator = Interpolator(
+            data=data,
+            method=method
+            )
         # interpolate values
-        return self.interpolator(frac_coords)
+        return interpolator(frac_coords)
 
-    def linear_slice(self, p1: NDArray[float], p2: NDArray[float], n: int = 100):
+    def linear_slice(self, p1: NDArray[float], p2: NDArray[float], n: int = 100, method="cubic"):
         """
         Interpolates the data between two fractional coordinates.
 
@@ -660,6 +662,10 @@ class Grid(VolumetricData):
             The fractional coordinates of the second point
         n : int, optional
             The number of points to collect along the line
+        method : float
+            The method to use for interpolation. nearest, linear, or cubic. The
+            cubic method will calculate and store spline coefficients in an
+            array the same size as the grid, which increases memory usage
 
         Returns:
             List of n data points (mostly interpolated) representing a linear slice of the
@@ -682,7 +688,7 @@ class Grid(VolumetricData):
         y_pts = np.linspace(p1[1], p2[1], num=n)
         z_pts = np.linspace(p1[2], p2[2], num=n)
         frac_coords = np.column_stack((x_pts, y_pts, z_pts))
-        return self.values_at(frac_coords)
+        return self.values_at(frac_coords, method)
 
     def get_box_around_point(self, point: NDArray, neighbor_size: int = 1) -> NDArray:
         """

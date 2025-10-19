@@ -4,6 +4,8 @@ import numpy as np
 from numba import njit, prange  # , types
 from numpy.typing import NDArray
 
+from baderkit.core.toolkit.grid_numba import linear_slice
+
 ###############################################################################
 # General methods
 ###############################################################################
@@ -476,43 +478,107 @@ def union(parents, x, y):
 
 @njit(cache=True, parallel=True)
 def initialize_labels_from_maxima(
-    neighbor_transforms,
+    data,
     maxima_vox,
-    maxima_mask,
+    max_vox_offset = 5,
 ):
-    nx, ny, nz = maxima_mask.shape
+    nx, ny, nz = data.shape
     ny_nz = ny * nz
 
     # get the fractional representation of each maximum
-    maxima_frac = maxima_vox / np.array(maxima_mask.shape, dtype=np.int64)
+    maxima_frac = maxima_vox / np.array(data.shape, dtype=np.int64)
 
     # create a flat array of labels. These will initially all be -1
     labels = np.full(nx * ny * nz, -1, dtype=np.int64)
 
     # Now we initialize the maxima
-    maxima_indices = []
+    maxima_labels = []
     for i, j, k in maxima_vox:
         max_idx = coords_to_flat(i, j, k, ny_nz, nz)
         labels[max_idx] = max_idx
-        maxima_indices.append(max_idx)
+        maxima_labels.append(max_idx)
+        
+    # We check each maximum to see if it borders another maximum. This can happen
+    # either when two neighboring grid points have the exact same value, or when
+    # two points slighly further straddle an off grid maximum such that the points
+    # around them are still lower. The latter does not have an obvious cutoff
+    # distance, so we instead scan through our maxima finding the closest neighbor
+    # that hasn't been checked yet. We assume grid points are relatively evenly
+    # spaced
+    
+    # first, we find unchecked lowest neighbors
+    maxima_neighs = np.empty(len(maxima_vox)-1, dtype=np.int64)
+    maxima_neigh_offset = np.empty((len(maxima_vox)-1,3), dtype=np.int64)
+    dists = np.empty(len(maxima_vox)-1,dtype=np.int64)
+    for max_idx in prange(len(maxima_vox)-1):
+        max_frac = maxima_frac[max_idx]
+        max_vox = maxima_vox[max_idx]
+        # iterate over maxima after this point and find the closest
+        best_dist = max_vox_offset # set to max reasonable number of voxels away
+        best_neigh = -1
+        best_fi = 0
+        best_fj = 0
+        best_fk = 0
+        for neigh_max_idx in range(max_idx+1, len(maxima_vox)):
+            neigh_frac = maxima_frac[neigh_max_idx]
+            # unwrap relative to central
+            fi, fj, fk = (neigh_frac - np.round(neigh_frac - max_frac))
+            # convert to voxel
+            fi = round(fi*nx)
+            fj = round(fj*ny)
+            fk = round(fk*nz)
+            # get offset
+            fi = fi - max_vox[0] # get offset from point
+            fj = fj - max_vox[1]
+            fk = fk - max_vox[2]
+            
+            # calculate distance
+            dist = (fi**2 + fj**2 + fk**2)**(1/2)
+            if dist < best_dist:
+                best_dist = dist
+                best_neigh = neigh_max_idx
+                best_fi = fi
+                best_fj = fj
+                best_fk = fk
+        maxima_neighs[max_idx] = best_neigh
+        maxima_neigh_offset[max_idx] = (best_fi, best_fj, best_fk)
+        dists[max_idx] = best_dist
+    
+    # Now, for each maximum we check its nearest neighbor. If its within a
+    # single voxel we immediately combine, and if its further, we use a spline
+    # interpolation to determine if there is at least some minima between them
+    for max_idx, (maxima_neigh, offset) in enumerate(zip(maxima_neighs, maxima_neigh_offset)):
+        if maxima_neigh == -1:
+            # there were no neighs within our cutoff so this point has no
+            # neighs
+            continue
+        
+        max_label = maxima_labels[max_idx]
+        neigh_label = maxima_labels[maxima_neigh]
 
-    # For each maximum, we check its neighbors to see if they are also a maximum
-    # if so, we create a union
-    for max_idx, (i, j, k) in zip(maxima_indices, maxima_vox):
-        # get flat index
-        for si, sj, sk in neighbor_transforms:
-            # get neighbor and wrap
-            ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-            # check if new point is also a maximum
-            if maxima_mask[ii, jj, kk]:
-                # get flat index
-                neigh_max_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
-                # make a union
-                union(labels, max_idx, neigh_max_idx)
+        if np.max(np.abs(offset)) <= 1:
+            # we are within a single voxel of each other and must be the same
+            # maximum (at least at this resolution). union
+            union(labels, max_label, neigh_label)
+        else:
+            # we want to interpolate between our points. If there is at least
+            # one local minimum, these are separete maxima
+            max_vox = maxima_vox[max_idx]
+            neigh_vox = max_vox + offset
+            # set number of interpolation points to roughly the number of voxels
+            # between the points with a minimum of 5
+            n_points = max(round(dists[max_idx]), 5)
+            values = linear_slice(data, max_vox, neigh_vox, n=n_points, is_frac=False)
+            # check that at least one point is lower than both points
+            lower_point = min(values[0], values[-1])
+            if np.any(values[1:-1] < lower_point):
+                continue
+            # if there is no min, these belong to the same maximum. union
+            union(labels, max_label, neigh_label)
 
     # get the roots of each maximum
     maxima_roots = []
-    for max_idx in maxima_indices:
+    for max_idx in maxima_labels:
         maxima_roots.append(find_root_no_compression(labels, max_idx))
     maxima_roots = np.array(maxima_roots, dtype=np.int64)
 
@@ -521,19 +587,20 @@ def initialize_labels_from_maxima(
     unique_roots = np.unique(maxima_roots)
     n_unique = len(unique_roots)
 
-    # Prepare result array to store frac coords
+    # Prepare result array to store frac coords and grid coords
     all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
+    all_grid_coords = np.zeros((n_unique, 3), dtype=np.int64)
 
     # Parallel loop: for each unique label, scan new_labels and get average
     # frac coords
     for u_idx in prange(n_unique):
         target_root = unique_roots[u_idx]
         frac_coords = []
-        maxima_w_root = []
+        maxima_w_root_labels = []
         for max_idx, root in enumerate(maxima_roots):
             if root == target_root:
                 frac_coords.append(maxima_frac[max_idx])
-                maxima_w_root.append(maxima_indices[max_idx])
+                maxima_w_root_labels.append(maxima_labels[max_idx])
         # combine frac coords
         merged_coord = merge_frac_coords(frac_coords)
         # now we make sure the combined coords resulted in a value that's
@@ -542,19 +609,105 @@ def initialize_labels_from_maxima(
         i = merged_coord[0] * nx
         j = merged_coord[1] * ny
         k = merged_coord[2] * nz
-        closest_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
+        closest_max_label = coords_to_flat(i, j, k, ny_nz, nz)
 
-        if not closest_max_idx in maxima_w_root:
+        if not closest_max_label in maxima_w_root_labels:
             merged_coord = frac_coords[0]
-            closest_max_idx = maxima_w_root[0]
+            closest_max_label = maxima_w_root_labels[0]
+            i, j, k = flat_to_coords(closest_max_label, ny_nz, nz)
 
         # add our frac coords
         all_frac_coords[u_idx] = merged_coord
+        # add our grid coords
+        all_grid_coords[u_idx] = (i,j,k)
         # relabel all maxima to point to the root maximum
-        for max_idx in maxima_w_root:
-            labels[max_idx] = closest_max_idx
+        for max_label in maxima_w_root_labels:
+            labels[max_label] = closest_max_label
 
-    return labels, all_frac_coords
+    return labels, all_frac_coords, all_grid_coords
+
+# @njit(cache=True, parallel=True)
+# def initialize_labels_from_maxima(
+#     neighbor_transforms,
+#     maxima_vox,
+#     maxima_mask,
+# ):
+#     nx, ny, nz = maxima_mask.shape
+#     ny_nz = ny * nz
+
+#     # get the fractional representation of each maximum
+#     maxima_frac = maxima_vox / np.array(maxima_mask.shape, dtype=np.int64)
+
+#     # create a flat array of labels. These will initially all be -1
+#     labels = np.full(nx * ny * nz, -1, dtype=np.int64)
+
+#     # Now we initialize the maxima
+#     maxima_indices = []
+#     for i, j, k in maxima_vox:
+#         max_idx = coords_to_flat(i, j, k, ny_nz, nz)
+#         labels[max_idx] = max_idx
+#         maxima_indices.append(max_idx)
+        
+
+#     # For each maximum, we check its neighbors to see if they are also a maximum
+#     # if so, we create a union
+#     for max_idx, (i, j, k) in zip(maxima_indices, maxima_vox):
+#         # get flat index
+#         for si, sj, sk in neighbor_transforms:
+#             # get neighbor and wrap
+#             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+#             # check if new point is also a maximum
+#             if maxima_mask[ii, jj, kk]:
+#                 # get flat index
+#                 neigh_max_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
+#                 # make a union
+#                 union(labels, max_idx, neigh_max_idx)
+
+#     # get the roots of each maximum
+#     maxima_roots = []
+#     for max_idx in maxima_indices:
+#         maxima_roots.append(find_root_no_compression(labels, max_idx))
+#     maxima_roots = np.array(maxima_roots, dtype=np.int64)
+
+#     # Now we want to calculate the new frac coords for each group
+#     # find unique labels and their count
+#     unique_roots = np.unique(maxima_roots)
+#     n_unique = len(unique_roots)
+
+#     # Prepare result array to store frac coords
+#     all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
+
+#     # Parallel loop: for each unique label, scan new_labels and get average
+#     # frac coords
+#     for u_idx in prange(n_unique):
+#         target_root = unique_roots[u_idx]
+#         frac_coords = []
+#         maxima_w_root = []
+#         for max_idx, root in enumerate(maxima_roots):
+#             if root == target_root:
+#                 frac_coords.append(maxima_frac[max_idx])
+#                 maxima_w_root.append(maxima_indices[max_idx])
+#         # combine frac coords
+#         merged_coord = merge_frac_coords(frac_coords)
+#         # now we make sure the combined coords resulted in a value that's
+#         # actually near one of the maxima. If not, we default back to the
+#         # first maximum with this root
+#         i = merged_coord[0] * nx
+#         j = merged_coord[1] * ny
+#         k = merged_coord[2] * nz
+#         closest_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
+
+#         if not closest_max_idx in maxima_w_root:
+#             merged_coord = frac_coords[0]
+#             closest_max_idx = maxima_w_root[0]
+
+#         # add our frac coords
+#         all_frac_coords[u_idx] = merged_coord
+#         # relabel all maxima to point to the root maximum
+#         for max_idx in maxima_w_root:
+#             labels[max_idx] = closest_max_idx
+
+#     return labels, all_frac_coords
 
 
 @njit(cache=True, fastmath=True)

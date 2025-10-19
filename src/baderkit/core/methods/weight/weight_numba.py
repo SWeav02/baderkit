@@ -365,14 +365,11 @@ def get_weight_assignments(
 @njit(parallel=True, cache=True)
 def sort_maxima_frac(
     maxima_frac,
+    maxima_vox,
     grid_shape,
 ):
     nx, ny, nz = grid_shape
     ny_nz = ny * nz
-
-    maxima_vox = np.round(maxima_frac * grid_shape).astype(np.int64)
-    for maxima_idx in prange(len(maxima_vox)):
-        maxima_vox[maxima_idx] %= grid_shape
 
     flat_indices = np.zeros(len(maxima_vox), dtype=np.int64)
     for idx in prange(len(flat_indices)):
@@ -382,7 +379,7 @@ def sort_maxima_frac(
     # sort flat indices from low to high
     sorted_indices = np.argsort(flat_indices)
     # sort maxima from lowest index to highest
-    return maxima_frac[sorted_indices], flat_indices[sorted_indices]
+    return maxima_frac[sorted_indices], maxima_vox[sorted_indices], flat_indices[sorted_indices]
 
 
 ###############################################################################
