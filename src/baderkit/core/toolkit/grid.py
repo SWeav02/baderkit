@@ -1298,6 +1298,8 @@ class Grid(VolumetricData):
         t0 = time.time()
         # get structure and data from file
         grid_file = Path(grid_file)
+        # check that file exists
+        assert grid_file.exists(), f"No file with name {grid_file} found in directory"
         structure, data, data_aug, sig_figs = read_vasp(
             grid_file, total_only=total_only
         )
@@ -1343,6 +1345,8 @@ class Grid(VolumetricData):
         t0 = time.time()
         # make sure path is a Path object
         grid_file = Path(grid_file)
+        # check that file exists
+        assert grid_file.exists(), f"No file with name {grid_file} found in directory"
         structure, data, ion_charges, origin, sig_figs = read_cube(grid_file)
         # TODO: Also save the ion charges/origin for writing later
         t1 = time.time()
@@ -1387,6 +1391,8 @@ class Grid(VolumetricData):
         t0 = time.time()
         # make sure path is a Path object
         grid_file = Path(grid_file)
+        # check that file exists
+        assert grid_file.exists(), f"No file with name {grid_file} found in directory"
         # Create string to add structure to.
         poscar, data, data_aug = cls.parse_file(grid_file)
         t1 = time.time()
@@ -1440,6 +1446,9 @@ class Grid(VolumetricData):
         t0 = time.time()
         # make sure path is a Path object
         grid_file = Path(grid_file)
+
+        # check that file exists
+        assert grid_file.exists(), f"No file with name {grid_file} found in directory"
         # load the file
         pymatgen_grid = super().from_hdf5(filename=grid_file)
         t1 = time.time()
@@ -1480,6 +1489,10 @@ class Grid(VolumetricData):
 
         """
         grid_file = Path(grid_file)
+
+        # check that file exists
+        assert grid_file.exists(), f"No file with name {grid_file} found in directory"
+
         if format is None:
             # guess format from file
             format = detect_format(grid_file)
@@ -1487,7 +1500,7 @@ class Grid(VolumetricData):
         # make sure format is an available option
         assert (
             format in Format
-        ), "Provided format '{format}'. Options are: {[i.value for i in Format]}"
+        ), "Invalid provided format '{format}'. Options are: {[i.value for i in Format]}"
 
         # get the reading method corresponding to this output format
         method_name = format.reader

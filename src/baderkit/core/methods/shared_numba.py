@@ -629,125 +629,54 @@ def initialize_labels_from_maxima(
     return labels, all_frac_coords, all_grid_coords
 
 
-# @njit(cache=True, parallel=True)
-# def initialize_labels_from_maxima(
-#     neighbor_transforms,
-#     maxima_vox,
-#     maxima_mask,
-# ):
-#     nx, ny, nz = maxima_mask.shape
-#     ny_nz = ny * nz
-
-#     # get the fractional representation of each maximum
-#     maxima_frac = maxima_vox / np.array(maxima_mask.shape, dtype=np.int64)
-
-#     # create a flat array of labels. These will initially all be -1
-#     labels = np.full(nx * ny * nz, -1, dtype=np.int64)
-
-#     # Now we initialize the maxima
-#     maxima_indices = []
-#     for i, j, k in maxima_vox:
-#         max_idx = coords_to_flat(i, j, k, ny_nz, nz)
-#         labels[max_idx] = max_idx
-#         maxima_indices.append(max_idx)
-
-
-#     # For each maximum, we check its neighbors to see if they are also a maximum
-#     # if so, we create a union
-#     for max_idx, (i, j, k) in zip(maxima_indices, maxima_vox):
-#         # get flat index
-#         for si, sj, sk in neighbor_transforms:
-#             # get neighbor and wrap
-#             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-#             # check if new point is also a maximum
-#             if maxima_mask[ii, jj, kk]:
-#                 # get flat index
-#                 neigh_max_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
-#                 # make a union
-#                 union(labels, max_idx, neigh_max_idx)
-
-#     # get the roots of each maximum
-#     maxima_roots = []
-#     for max_idx in maxima_indices:
-#         maxima_roots.append(find_root_no_compression(labels, max_idx))
-#     maxima_roots = np.array(maxima_roots, dtype=np.int64)
-
-#     # Now we want to calculate the new frac coords for each group
-#     # find unique labels and their count
-#     unique_roots = np.unique(maxima_roots)
-#     n_unique = len(unique_roots)
-
-#     # Prepare result array to store frac coords
-#     all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
-
-#     # Parallel loop: for each unique label, scan new_labels and get average
-#     # frac coords
-#     for u_idx in prange(n_unique):
-#         target_root = unique_roots[u_idx]
-#         frac_coords = []
-#         maxima_w_root = []
-#         for max_idx, root in enumerate(maxima_roots):
-#             if root == target_root:
-#                 frac_coords.append(maxima_frac[max_idx])
-#                 maxima_w_root.append(maxima_indices[max_idx])
-#         # combine frac coords
-#         merged_coord = merge_frac_coords(frac_coords)
-#         # now we make sure the combined coords resulted in a value that's
-#         # actually near one of the maxima. If not, we default back to the
-#         # first maximum with this root
-#         i = merged_coord[0] * nx
-#         j = merged_coord[1] * ny
-#         k = merged_coord[2] * nz
-#         closest_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
-
-#         if not closest_max_idx in maxima_w_root:
-#             merged_coord = frac_coords[0]
-#             closest_max_idx = maxima_w_root[0]
-
-#         # add our frac coords
-#         all_frac_coords[u_idx] = merged_coord
-#         # relabel all maxima to point to the root maximum
-#         for max_idx in maxima_w_root:
-#             labels[max_idx] = closest_max_idx
-
-#     return labels, all_frac_coords
-
-
 @njit(cache=True, fastmath=True)
-def get_min_dists(
+def get_min_avg_surface_dists(
     labels,
     frac_coords,
-    edge_indices,
+    edge_mask,
     matrix,
     max_value,
 ):
     nx, ny, nz = labels.shape
-    # create array to store best dists
+    # create array to store best dists, sums, and counts
     dists = np.full(len(frac_coords), max_value, dtype=np.float64)
-    for i, j, k in edge_indices:
-        # get label at edge
-        label = labels[i, j, k]
-        # convert from voxel indices to frac
-        fi = i / nx
-        fj = j / ny
-        fk = k / nz
-        # calculate the distance to the appropriate frac coord
-        ni, nj, nk = frac_coords[label]
-        # get differences between each index
-        di = ni - fi
-        dj = nj - fj
-        dk = nk - fk
-        # wrap at edges to be as close as possible
-        di -= round(di)
-        dj -= round(dj)
-        dk -= round(dk)
-        # convert to cartesian coordinates
-        ci = di * matrix[0, 0] + dj * matrix[1, 0] + dk * matrix[2, 0]
-        cj = di * matrix[0, 1] + dj * matrix[1, 1] + dk * matrix[2, 1]
-        ck = di * matrix[0, 2] + dj * matrix[1, 2] + dk * matrix[2, 2]
-        # calculate distance
-        dist = np.linalg.norm(np.array((ci, cj, ck), dtype=np.float64))
-        # if this is the lowest distance, update radius
-        if dist < dists[label]:
-            dists[label] = dist
-    return dists
+    dist_sums = np.zeros(len(frac_coords), dtype=np.float64)
+    edge_totals = np.zeros(len(frac_coords), dtype=np.uint32)
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # skip outside edges
+                if not edge_mask[i, j, k]:
+                    continue
+                # get label at edge
+                label = labels[i, j, k]
+                # add to our count
+                edge_totals[label] += 1
+                # convert from voxel indices to frac
+                fi = i / nx
+                fj = j / ny
+                fk = k / nz
+                # calculate the distance to the appropriate frac coord
+                ni, nj, nk = frac_coords[label]
+                # get differences between each index
+                di = ni - fi
+                dj = nj - fj
+                dk = nk - fk
+                # wrap at edges to be as close as possible
+                di -= round(di)
+                dj -= round(dj)
+                dk -= round(dk)
+                # convert to cartesian coordinates
+                ci = di * matrix[0, 0] + dj * matrix[1, 0] + dk * matrix[2, 0]
+                cj = di * matrix[0, 1] + dj * matrix[1, 1] + dk * matrix[2, 1]
+                ck = di * matrix[0, 2] + dj * matrix[1, 2] + dk * matrix[2, 2]
+                # calculate distance
+                dist = np.linalg.norm(np.array((ci, cj, ck), dtype=np.float64))
+                # add to our total
+                dist_sums[label] += dist
+                # if this is the lowest distance, update radius
+                if dist < dists[label]:
+                    dists[label] = dist
+    # get average dists
+    average_dists = dist_sums / edge_totals
+    return dists, average_dists

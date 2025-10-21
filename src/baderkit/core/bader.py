@@ -12,7 +12,7 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from baderkit.core.methods import Method
-from baderkit.core.methods.shared_numba import get_edges, get_min_dists
+from baderkit.core.methods.shared_numba import get_edges, get_min_avg_surface_dists
 from baderkit.core.toolkit import Format, Grid, Structure
 
 # This allows for Self typing and is compatible with python 3.10
@@ -78,7 +78,7 @@ class Bader:
             else:
                 normalize_vacuum = True
 
-        self._method = method
+        self.method = method
 
         # if vacuum tolerance is True, set it to the same default as above
         if vacuum_tol is True:
@@ -119,7 +119,8 @@ class Bader:
                 "vacuum_mask",
                 "num_vacuum",
                 # Assigned by calling the property
-                "basin_surface_distances",
+                "basin_min_surface_distances",
+                "basin_avg_surface_distances",
                 "basin_edges",
                 "atom_edges",
                 "structure",
@@ -129,8 +130,8 @@ class Bader:
                 "atom_labels",
                 "atom_charges",
                 "atom_volumes",
-                "atom_surface_distances",
-                "total_electron_number",
+                "atom_min_surface_distances",
+                "atom_avg_surface_distances" "total_electron_number",
             ]
         # get our final list of properties
         reset_properties = [
@@ -192,7 +193,7 @@ class Bader:
         assert (
             value in Method
         ), f"Invalid method '{value}'. Available options are: {[i.value for i in Method]}"
-        self._method = value
+        self._method = Method(value)
         self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
 
     @property
@@ -368,7 +369,7 @@ class Bader:
         return self._basin_volumes
 
     @property
-    def basin_surface_distances(self) -> NDArray[float]:
+    def basin_min_surface_distances(self) -> NDArray[float]:
         """
 
         Returns
@@ -378,9 +379,23 @@ class Bader:
             the basins surface
 
         """
-        if self._basin_surface_distances is None:
-            self._basin_surface_distances = self._get_basin_surface_distances()
-        return self._basin_surface_distances
+        if self._basin_min_surface_distances is None:
+            self._get_basin_surface_distances()
+        return self._basin_min_surface_distances
+
+    @property
+    def basin_avg_surface_distances(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The avg distance from each basin maxima to the edges of its basin
+
+        """
+        if self._basin_avg_surface_distances is None:
+            self._get_basin_surface_distances()
+        return self._basin_avg_surface_distances
 
     @property
     def basin_atoms(self) -> NDArray[float]:
@@ -473,7 +488,7 @@ class Bader:
         return self._atom_volumes
 
     @property
-    def atom_surface_distances(self) -> NDArray[float]:
+    def atom_min_surface_distances(self) -> NDArray[float]:
         """
 
         Returns
@@ -482,9 +497,23 @@ class Bader:
             The distance from each atom to the nearest point on the atoms surface.
 
         """
-        if self._atom_surface_distances is None:
-            self._atom_surface_distances = self._get_atom_surface_distances()
-        return self._atom_surface_distances
+        if self._atom_min_surface_distances is None:
+            self._get_atom_surface_distances()
+        return self._atom_min_surface_distances
+
+    @property
+    def atom_avg_surface_distances(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The avg distance from each atom to the edges of its basin
+
+        """
+        if self._atom_avg_surface_distances is None:
+            self._get_basin_surface_distances()
+        return self._atom_avg_surface_distances
 
     @property
     def structure(self) -> Structure:
@@ -651,12 +680,14 @@ class Bader:
             "basin_maxima_vox": self.basin_maxima_vox,
             "basin_charges": self.basin_charges,
             "basin_volumes": self.basin_volumes,
-            "basin_surface_distances": self.basin_surface_distances,
+            "basin_min_surface_distances": self.basin_min_surface_distances,
+            "basin_avg_surface_distances": self.basin_avg_surface_distances,
             "basin_atoms": self.basin_atoms,
             "basin_atom_dists": self.basin_atom_dists,
             "atom_charges": self.atom_charges,
             "atom_volumes": self.atom_volumes,
-            "atom_surface_distances": self.atom_surface_distances,
+            "atom_min_surface_distances": self.atom_min_surface_distances,
+            "atom_avg_surface_distances": self.atom_avg_surface_distances,
             "structure": self.structure,
             "vacuum_charge": self.vacuum_charge,
             "vacuum_volume": self.vacuum_volume,
@@ -675,7 +706,7 @@ class Bader:
 
         """
         t0 = time.time()
-        logging.info(f"Beginning Bader Algorithm Using '{self.method}' Method")
+        logging.info(f"Beginning Bader Algorithm Using '{self.method.name}' Method")
         # Normalize the method name to a module and class name
         module_name = self.method.replace(
             "-", "_"
@@ -788,12 +819,14 @@ class Bader:
         None.
 
         """
-        return get_min_dists(
-            labels=self.atom_labels,
-            frac_coords=self.structure.frac_coords,
-            edge_indices=np.argwhere(self.atom_edges),
-            matrix=self.reference_grid.matrix,
-            max_value=np.max(self.structure.lattice.abc) * 2,
+        self._atom_min_surface_distances, self._atom_avg_surface_distances = (
+            get_min_avg_surface_dists(
+                labels=self.atom_labels,
+                frac_coords=self.structure.frac_coords,
+                edge_mask=self.atom_edges,
+                matrix=self.reference_grid.matrix,
+                max_value=np.max(self.structure.lattice.abc) * 2,
+            )
         )
 
     def _get_basin_surface_distances(self):
@@ -808,12 +841,14 @@ class Bader:
 
         """
         # get the minimum distances
-        return get_min_dists(
-            labels=self.basin_labels,
-            frac_coords=self.basin_maxima_frac,
-            edge_indices=np.argwhere(self.basin_edges),
-            matrix=self.reference_grid.matrix,
-            max_value=np.max(self.structure.lattice.abc) * 2,
+        self._basin_min_surface_distances, self._basin_avg_surface_distances = (
+            get_min_avg_surface_dists(
+                labels=self.basin_labels,
+                frac_coords=self.basin_maxima_frac,
+                edge_mask=self.basin_edges,
+                matrix=self.reference_grid.matrix,
+                max_value=np.max(self.structure.lattice.abc) * 2,
+            )
         )
 
     @classmethod
@@ -1282,7 +1317,7 @@ class Bader:
                 "z": atom_frac_coords[:, 2],
                 "charge": self.atom_charges,
                 "volume": self.atom_volumes,
-                "surface_dist": self.atom_surface_distances,
+                "surface_dist": self.atom_min_surface_distances,
             }
         )
         return atoms_df
@@ -1307,7 +1342,7 @@ class Bader:
                 "z": basin_frac_coords[:, 2],
                 "charge": self.basin_charges[subset],
                 "volume": self.basin_volumes[subset],
-                "surface_dist": self.basin_surface_distances[subset],
+                "surface_dist": self.basin_min_surface_distances[subset],
                 "atom_dist": self.basin_atom_dists[subset],
             }
         )
