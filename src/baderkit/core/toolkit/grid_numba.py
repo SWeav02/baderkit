@@ -300,6 +300,7 @@ class Interpolator:
 # Methods for finding offgrid maxima
 ###############################################################################
 
+
 @njit(fastmath=True, cache=True)
 def refine_frac_max(grid, frac_coords, lattice):
     """
@@ -415,9 +416,15 @@ def refine_frac_max(grid, frac_coords, lattice):
     x, y, z = offset_cart
     refined_value = (
         a0
-        + ax * x + ay * y + az * z
-        + axx * x * x + ayy * y * y + azz * z * z
-        + axy * x * y + axz * x * z + ayz * y * z
+        + ax * x
+        + ay * y
+        + az * z
+        + axx * x * x
+        + ayy * y * y
+        + azz * z * z
+        + axy * x * y
+        + axz * x * z
+        + ayz * y * z
     )
 
     # Ensure it doesn't fall below nearby grid values
@@ -434,7 +441,6 @@ def refine_frac_max(grid, frac_coords, lattice):
     refined_frac[2] = (fz + frac_offset[2]) % 1.0
 
     return refined_frac, refined_value
-
 
 
 @njit(parallel=True, cache=True)

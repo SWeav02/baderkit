@@ -101,7 +101,8 @@ class MethodBase:
         neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
         # now merge our maxima and initialize our labels
         labels, self._maxima_frac, self._maxima_vox = initialize_labels_from_maxima(
-            data=self.reference_grid.cubic_spline_coeffs,
+            data=self.reference_grid.total,
+            spline_coeffs=self.reference_grid.cubic_spline_coeffs,
             maxima_vox=maxima_vox,
         )
 
@@ -119,7 +120,7 @@ class MethodBase:
 
         results.update(
             {
-                "basin_maxima_vox": maxima_vox,
+                "basin_maxima_vox": self.maxima_vox,
                 "basin_maxima_frac": self.maxima_frac,
                 "basin_maxima_ref_values": maxima_values,
             }
