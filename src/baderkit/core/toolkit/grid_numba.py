@@ -300,11 +300,11 @@ class Interpolator:
 # Methods for finding offgrid maxima
 ###############################################################################
 
-
 @njit(fastmath=True, cache=True)
 def refine_frac_max(grid, frac_coords, lattice):
     """
-    Refine a local maximum on a 3D periodic grid (possibly non-orthogonal lattice).
+    Numerically stable refinement of a local maximum on a 3D periodic grid.
+    Fits a local quadratic and enforces concavity.
 
     Parameters
     ----------
@@ -313,7 +313,7 @@ def refine_frac_max(grid, frac_coords, lattice):
     frac_coords : tuple of float
         Fractional coordinates (fx, fy, fz) of the approximate maximum (in [0, 1)).
     lattice : ndarray, shape (3, 3)
-        Lattice vectors as rows (real-space basis, not necessarily orthogonal).
+        Lattice vectors as rows (real-space basis).
 
     Returns
     -------
@@ -322,10 +322,11 @@ def refine_frac_max(grid, frac_coords, lattice):
     refined_value : float
         Interpolated value at the refined maximum.
     """
+
     nx, ny, nz = grid.shape
     fx, fy, fz = frac_coords
 
-    # --- Step 1: nearest grid point indices (periodic)
+    # --- Step 1: nearest grid point
     ix = int(round(fx * nx)) % nx
     iy = int(round(fy * ny)) % ny
     iz = int(round(fz * nz)) % nz
@@ -339,11 +340,9 @@ def refine_frac_max(grid, frac_coords, lattice):
                     (ix + dx) % nx, (iy + dy) % ny, (iz + dz) % nz
                 ]
 
-    # --- Step 3: prepare design matrix (A) and values (b)
+    # --- Step 3: design matrix
     A = np.empty((27, 10), dtype=np.float64)
     b = np.empty(27, dtype=np.float64)
-
-    # inverse of grid shape for Cartesian conversion
     inv_n = np.array([1.0 / nx, 1.0 / ny, 1.0 / nz])
     row = 0
     for dx in range(-1, 2):
@@ -370,9 +369,12 @@ def refine_frac_max(grid, frac_coords, lattice):
                 b[row] = region[dx + 1, dy + 1, dz + 1]
                 row += 1
 
-    # --- Step 4: least-squares solve (AᵀA)x = Aᵀb
+    # --- Step 4: regularized least squares
     ATA = np.dot(A.T, A)
     ATb = np.dot(A.T, b)
+    # Regularization (Tikhonov) improves numerical stability
+    for i in range(10):
+        ATA[i, i] += 1e-10
     coeffs = np.linalg.solve(ATA, ATb)
 
     a0 = coeffs[0]
@@ -388,47 +390,51 @@ def refine_frac_max(grid, frac_coords, lattice):
     M[0, 1] = M[1, 0] = axy
     M[0, 2] = M[2, 0] = axz
     M[1, 2] = M[2, 1] = ayz
-
     grad = np.array([ax, ay, az])
+
+    # Ensure concave-down surface: flip signs if all curvatures are positive
+    trace_M = M[0, 0] + M[1, 1] + M[2, 2]
+    if trace_M > 0:
+        M *= -1.0
+        grad *= -1.0
+
+    # --- Step 6: solve for offset
     try:
         offset_cart = np.linalg.solve(M, -grad)
     except:
         offset_cart = np.zeros(3)
 
-    # --- Step 6: clamp offset to roughly within one voxel (in largest direction)
+    # --- Step 7: clamp offset to within one voxel size
     step_cart = np.sqrt(np.sum((lattice / np.array([[nx, ny, nz]])) ** 2, axis=1))
     max_step = np.max(step_cart)
-    for i in range(3):
-        if offset_cart[i] > max_step:
-            offset_cart[i] = max_step
-        elif offset_cart[i] < -max_step:
-            offset_cart[i] = -max_step
+    norm_offset = np.sqrt(np.sum(offset_cart**2))
+    if norm_offset > max_step:
+        offset_cart *= max_step / norm_offset
 
-    # --- Step 7: compute interpolated value
+    # --- Step 8: compute refined value
     x, y, z = offset_cart
     refined_value = (
         a0
-        + ax * x
-        + ay * y
-        + az * z
-        + axx * x * x
-        + ayy * y * y
-        + azz * z * z
-        + axy * x * y
-        + axz * x * z
-        + ayz * y * z
+        + ax * x + ay * y + az * z
+        + axx * x * x + ayy * y * y + azz * z * z
+        + axy * x * y + axz * x * z + ayz * y * z
     )
 
-    # --- Step 8: convert Cartesian offset → fractional offset
-    lattice_T = lattice.T
-    frac_offset = np.linalg.solve(lattice_T, offset_cart)
+    # Ensure it doesn't fall below nearby grid values
+    region_max = np.max(region)
+    if refined_value < region_max:
+        refined_value = region_max
+        offset_cart[:] = 0.0  # fallback: stay at grid point
 
+    # --- Step 9: Cartesian → fractional offset
+    frac_offset = np.linalg.solve(lattice.T, offset_cart)
     refined_frac = np.empty(3, dtype=np.float64)
     refined_frac[0] = (fx + frac_offset[0]) % 1.0
     refined_frac[1] = (fy + frac_offset[1]) % 1.0
     refined_frac[2] = (fz + frac_offset[2]) % 1.0
 
     return refined_frac, refined_value
+
 
 
 @njit(parallel=True, cache=True)
