@@ -99,8 +99,16 @@ and [Examples](/baderkit/examples) pages.
         ```
     
     Output files for atoms and bader basins will be written automatically to 
-    `bader_atom_summary.tsv` and `bader_basin_summary.tsv` respectively. Additional 
-    arguments and options such as those for printing output files or using different 
+    `bader_atom_summary.tsv` and `bader_basin_summary.tsv` respectively. Each file includes:
+
+    - atom label
+    - coordinates (fractional) 
+    - charge (*e*) 
+    - volume (Å<sup>3</sup>)
+    - minimum surface distance (Å)
+    - nearest atom (Å) <small>**basins only**</small>
+    
+    Additional arguments and options such as those for printing output files or using different 
     algorithms can be viewed by running the help command.
     ```bash
     baderkit run --help

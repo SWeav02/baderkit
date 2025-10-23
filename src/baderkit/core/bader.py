@@ -207,7 +207,6 @@ class Bader:
             )
         self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
 
-
     @property
     def vacuum_tol(self) -> float | bool:
         """
