@@ -59,9 +59,13 @@ class Bader:
     ):
 
         # ensure th method is valid
-        if method not in {m.value for m in Method}:
+        if isinstance(value, Method):
+            self._method = value
+        elif value in valid_values:
+            self._method = Method(value)
+        else:
             raise ValueError(
-                f"Invalid method '{method}'. Available options are: {[i.value for i in Method]}"
+                f"Invalid method '{value}'. Available options are: {valid_values}"
             )
 
         self._charge_grid = charge_grid
@@ -78,8 +82,6 @@ class Bader:
             else:
                 normalize_vacuum = True
 
-        self.method = method
-
         # if vacuum tolerance is True, set it to the same default as above
         if vacuum_tol is True:
             self._vacuum_tol = 1.0e-3
@@ -92,6 +94,8 @@ class Bader:
         # still be able to recalculate them if needed, though that should only
         # be done by advanced users
         self._reset_properties()
+
+        # whether or not to use overdetermined gradients in neargrid methods.
         self._use_overdetermined = False
 
     ###########################################################################
@@ -190,11 +194,18 @@ class Bader:
 
     @method.setter
     def method(self, value: str | Method):
-        assert (
-            value in Method
-        ), f"Invalid method '{value}'. Available options are: {[i.value for i in Method]}"
-        self._method = Method(value)
+        # Support both Method instances and their string values
+        valid_values = [m.value for m in Method]
+        if isinstance(value, Method):
+            self._method = value
+        elif value in valid_values:
+            self._method = Method(value)
+        else:
+            raise ValueError(
+                f"Invalid method '{value}'. Available options are: {valid_values}"
+            )
         self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
+
 
     @property
     def vacuum_tol(self) -> float | bool:
