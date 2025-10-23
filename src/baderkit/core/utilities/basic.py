@@ -127,10 +127,10 @@ def merge_frac_coords(
         return np.array((ref0 % 1.0, ref1 % 1.0, ref2 % 1.0), dtype=np.float64)
 
     else:
-        # return average of points
-        avg0 = (total0 / count) % 1.0
-        avg1 = (total1 / count) % 1.0
-        avg2 = (total2 / count) % 1.0
+        # return average of points (round for floating point error)
+        avg0 = round(total0 / count, 12) % 1.0
+        avg1 = round(total1 / count, 12) % 1.0
+        avg2 = round(total2 / count, 12) % 1.0
         return np.array((avg0, avg1, avg2), dtype=np.float64)
     
 

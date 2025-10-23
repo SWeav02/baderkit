@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 
 from abc import ABC, abstractmethod
-from typing import Literal, TypeVar, Dict, Type
+from typing import TypeVar, Dict, Type
 from functools import cached_property
-import logging
 
 import numpy as np
 from numpy.typing import NDArray
@@ -23,7 +22,6 @@ class NodeBase(ABC):
     is_reducible = False
     
     label_map = {
-        # "domain type" : "domain_type",
         "domain subtype" : "domain_subtype",
         "basins" : "basins",
         "dimensionality" : "dimensionality",
@@ -359,6 +357,7 @@ class IrreducibleNode(NodeBase):
         self._min_surface_dist = min_surface_dist
         self._avg_surface_dist = avg_surface_dist
         
+        self._coord_atom_indices = None
         
     @property
     def feature_type(self) -> FeatureType | None:
@@ -436,8 +435,8 @@ class IrreducibleNode(NodeBase):
                 # CrystalNN is very slow in this situation. I can't do them all
                 # at once because I don't want features seeing each other as neighbors
                 feature_structure = self.bifurcation_graph.structure.copy()
-                feature_structure.append("H-", self.frac_coords)
-                cnn = CrystalNN(distance_cutoffs=None)
+                feature_structure.append("H-", self.average_frac_coords)
+                cnn = CrystalNN(**self.bifurcation_graph.crystalnn_kwargs)
                 coordination = cnn.get_nn_info(feature_structure, -1)
                 self._coord_atom_indices = [int(i["site_index"]) for i in coordination]
         
@@ -456,6 +455,10 @@ class IrreducibleNode(NodeBase):
     def coord_atom_species(self) -> list[str]:
         structure = self.bifurcation_graph.structure
         return [structure[i].species_string for i in self.coord_atom_indices]
+    
+    @property
+    def coord_atom_dists(self) -> list[float]:
+        return self.atom_dists[self.coord_atom_indices]
     
     def remove(self) -> None: 
         # remove this node from the current parent's children

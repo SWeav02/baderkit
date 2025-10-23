@@ -29,6 +29,7 @@ FEATURE_COLORS = {
     "lone-pair": "rgba(128, 0, 128, 1)",  # purple
     "non-nuclear attractor": "rgba(128, 0, 0, 1)",  # maroon
     "electride": "rgba(170, 0, 0, 1)",  # dark red
+    "bare electron": "rgba(170, 0, 0, 1)",  # dark red
     }
 
 FEATURE_DUMMY_ATOMS = {
@@ -41,6 +42,7 @@ FEATURE_DUMMY_ATOMS = {
     "lone-pair": "Lp",
     "non-nuclear attractor": "Xn",
     "electride": "E",
+    "bare electron": "Le"
     }
 
 LINE_COLOR = "rgba(128, 128, 128, 1)" # grey
@@ -59,6 +61,12 @@ class DomainSubtype(str, Enum):
     irreducible_point = "irreducible - point"
     irreducible_ring = "irreducible - ring"
     irreducible_cage = "irreducible - cage"
+    
+    def __str__(self):
+        return self.value
+
+    def __repr__(self):
+        return str(self)
     
     @classproperty
     def reducible_types(cls):
@@ -102,20 +110,35 @@ class FeatureType(str, Enum):
     lone_pair = "lone-pair"
     non_nuclear_attractor = "non-nuclear attractor"
     electride = "electride"
+    bare_electron = "bare electron"
+    
+    def __str__(self):
+        return self.value
+
+    def __repr__(self):
+        return str(self)
 
     @classproperty
     def atomic_types(cls):
-        return [cls.shell, cls.deep_shell, cls.core]
+        return [cls.shell, cls.deep_shell, cls.core, cls.lone_pair]
 
     @classproperty
     def valence_types(cls):
         return [
             cls.covalent,
             cls.metallic,
-            cls.lone_pair,
             cls.non_nuclear_attractor,
             cls.electride,
+            cls.bare_electron
         ] 
+    
+    @classproperty
+    def bare_types(cls):
+        return [
+            cls.non_nuclear_attractor,
+            cls.electride,
+            cls.bare_electron
+            ]
     
     @property
     def plot_color(self):

@@ -35,6 +35,7 @@ class BifurcationGraph:
             basin_maxima_frac: NDArray[float],
             basin_charges: NDArray[float],
             basin_volumes: NDArray[float],
+            crystalnn_kwargs: dict,
             atomic_radii: NDArray[float] = None,
             ):
         self._root_nodes = []
@@ -46,6 +47,7 @@ class BifurcationGraph:
         self.basin_maxima_frac = basin_maxima_frac
         self.basin_charges = basin_charges
         self.basin_volumes = basin_volumes
+        self.crystalnn_kwargs = crystalnn_kwargs
         
         # optional radii parameter that must be set
         self._atomic_radii = atomic_radii
@@ -102,6 +104,7 @@ class BifurcationGraph:
             "nodes": [i.to_dict() for i in self],
             "structure": self.structure.to_json(),
             "labeler_type": self.labeler_type,
+            "crystalnn_kwargs": self.crystalnn_kwargs,
             }
         # convert array props to python list/int for json
         for prop_str in [
@@ -292,6 +295,7 @@ class BifurcationGraph:
             basin_maxima_frac=labeler.basin_maxima_frac,
             basin_charges=labeler.basin_charges,
             basin_volumes=labeler.basin_volumes,
+            crystalnn_kwargs=labeler.crystalnn_kwargs,
             )
         node_keys = []
         for feat_idx in range(len(domain_basins)):
