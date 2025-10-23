@@ -29,7 +29,7 @@ class Bader:
     charge_grid : Grid
         A Grid object with the charge density that will be integrated.
     reference_grid : Grid | None
-        A grid object whose values will be used to construct the basins. If
+        A Grid object whose values will be used to construct the basins. If
         None, defaults to the charge_grid.
     method : str | Method, optional
         The algorithm to use for generating bader basins.
