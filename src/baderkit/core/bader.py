@@ -59,13 +59,14 @@ class Bader:
     ):
 
         # ensure th method is valid
-        if isinstance(value, Method):
-            self._method = value
-        elif value in valid_values:
-            self._method = Method(value)
+        valid_methods = [m.value for m in Method]
+        if isinstance(method, Method):
+            self._method = method
+        elif method in valid_methods:
+            self._method = Method(method)
         else:
             raise ValueError(
-                f"Invalid method '{value}'. Available options are: {valid_values}"
+                f"Invalid method '{method}'. Available options are: {valid_methods}"
             )
 
         self._charge_grid = charge_grid
