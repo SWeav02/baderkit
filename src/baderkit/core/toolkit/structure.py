@@ -154,3 +154,18 @@ class Structure(PymatgenStructure):
                 site.label = f"{label}_{idx + 1}"
 
         return self
+
+    @staticmethod
+    def merge_frac_coords(frac_coords):
+        # avoid circular import
+        from baderkit.core.methods.shared_numba import merge_frac_coords
+
+        frac_coords = np.asarray(frac_coords, dtype=np.float64)
+        if len(frac_coords) == 0:
+            return None
+        elif frac_coords.ndim == 1:
+            return frac_coords
+        elif frac_coords.ndim == 2 and frac_coords.shape[2] == 3:
+            return merge_frac_coords(frac_coords)
+        else:
+            raise Exception("Frac coords must have Nx3 shape")

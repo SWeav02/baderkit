@@ -5,7 +5,7 @@ import logging
 import numpy as np
 
 from baderkit.core.methods.base import MethodBase
-from baderkit.core.methods.shared_numba import combine_maxima_frac, get_edges
+from baderkit.core.methods.shared_numba import get_edges
 
 from .neargrid_numba import (
     get_gradient_pointers_overdetermined,
@@ -18,7 +18,7 @@ class NeargridMethod(MethodBase):
 
     _use_overdetermined = False
 
-    def run(self):
+    def _run_bader(self, labels):
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
@@ -39,12 +39,14 @@ class NeargridMethod(MethodBase):
         logging.info("Calculating Gradients")
         if not self._use_overdetermined:
             # calculate gradients and pointers to best neighbors
-            labels, gradients, self._maxima_mask = get_gradient_pointers_simple(
+            labels, gradients = get_gradient_pointers_simple(
                 data=reference_data,
+                labels=labels,
                 dir2lat=self.dir2lat,
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
+                maxima_mask=self.maxima_mask,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system
@@ -60,11 +62,13 @@ class NeargridMethod(MethodBase):
             # calculate gradients and pointers to best neighbors
             labels, gradients, self._maxima_mask = get_gradient_pointers_overdetermined(
                 data=reference_data,
+                labels=labels,
                 car2lat=self.car2lat,
                 inv_norm_cart_trans=inv_norm_cart_trans,
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
+                maxima_mask=self.maxima_mask,
             )
         # Find roots
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
@@ -80,12 +84,7 @@ class NeargridMethod(MethodBase):
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)
         # get frac coords
-        maxima_frac = reference_grid.grid_to_frac(self.maxima_vox)
-        self._maxima_frac = combine_maxima_frac(
-            labels,
-            self.maxima_vox,
-            maxima_frac,
-        )
+
         logging.info("Starting Edge Refinement")
         # reduce maxima/basins
         # labels, self._maxima_frac = self.reduce_label_maxima(labels)
@@ -123,5 +122,4 @@ class NeargridMethod(MethodBase):
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")
         results.update(self.get_basin_charges_and_volumes(labels))
-        results.update(self.get_extras())
         return results

@@ -12,7 +12,7 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from baderkit.core.methods import Method
-from baderkit.core.methods.shared_numba import get_edges, get_min_dists
+from baderkit.core.methods.shared_numba import get_edges, get_min_avg_surface_dists
 from baderkit.core.toolkit import Format, Grid, Structure
 
 # This allows for Self typing and is compatible with python 3.10
@@ -29,7 +29,7 @@ class Bader:
     charge_grid : Grid
         A Grid object with the charge density that will be integrated.
     reference_grid : Grid | None
-        A grid object whose values will be used to construct the basins. If
+        A Grid object whose values will be used to construct the basins. If
         None, defaults to the charge_grid.
     method : str | Method, optional
         The algorithm to use for generating bader basins.
@@ -59,9 +59,14 @@ class Bader:
     ):
 
         # ensure th method is valid
-        if method not in {m.value for m in Method}:
+        valid_methods = [m.value for m in Method]
+        if isinstance(method, Method):
+            self._method = method
+        elif method in valid_methods:
+            self._method = Method(method)
+        else:
             raise ValueError(
-                f"Invalid method '{method}'. Available options are: {[i.value for i in Method]}"
+                f"Invalid method '{method}'. Available options are: {valid_methods}"
             )
 
         self._charge_grid = charge_grid
@@ -78,8 +83,6 @@ class Bader:
             else:
                 normalize_vacuum = True
 
-        self._method = method
-
         # if vacuum tolerance is True, set it to the same default as above
         if vacuum_tol is True:
             self._vacuum_tol = 1.0e-3
@@ -92,6 +95,8 @@ class Bader:
         # still be able to recalculate them if needed, though that should only
         # be done by advanced users
         self._reset_properties()
+
+        # whether or not to use overdetermined gradients in neargrid methods.
         self._use_overdetermined = False
 
     ###########################################################################
@@ -108,7 +113,8 @@ class Bader:
                 # assigned by run_bader
                 "basin_labels",
                 "basin_maxima_frac",
-                "basin_maxima_values",
+                "basin_maxima_charge_values",
+                "basin_maxima_ref_values",
                 "basin_maxima_vox",
                 "basin_charges",
                 "basin_volumes",
@@ -118,7 +124,8 @@ class Bader:
                 "vacuum_mask",
                 "num_vacuum",
                 # Assigned by calling the property
-                "basin_surface_distances",
+                "basin_min_surface_distances",
+                "basin_avg_surface_distances",
                 "basin_edges",
                 "atom_edges",
                 "structure",
@@ -128,8 +135,8 @@ class Bader:
                 "atom_labels",
                 "atom_charges",
                 "atom_volumes",
-                "atom_surface_distances",
-                "total_electron_number",
+                "atom_min_surface_distances",
+                "atom_avg_surface_distances" "total_electron_number",
             ]
         # get our final list of properties
         reset_properties = [
@@ -188,10 +195,16 @@ class Bader:
 
     @method.setter
     def method(self, value: str | Method):
-        assert (
-            value in Method
-        ), f"Invalid method '{value}'. Available options are: {[i.value for i in Method]}"
-        self._method = value
+        # Support both Method instances and their string values
+        valid_values = [m.value for m in Method]
+        if isinstance(value, Method):
+            self._method = value
+        elif value in valid_values:
+            self._method = Method(value)
+        else:
+            raise ValueError(
+                f"Invalid method '{value}'. Available options are: {valid_values}"
+            )
         self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
 
     @property
@@ -289,37 +302,21 @@ class Bader:
         return self._basin_maxima_frac
 
     @property
-    def basin_maxima_values(self) -> NDArray[float]:
-        """
-
-        Returns
-        -------
-        NDArray[float]
-            The fractional coordinates of each attractor.
-
-        """
-        if self._basin_maxima_values is None:
-            self.run_bader()
-        return self._basin_maxima_values
-
-    @property
     def basin_maxima_charge_values(self) -> NDArray[float]:
         """
 
         Returns
         -------
         NDArray[float]
-            The charge data value at each maximum
+            The charge data value at each maximum. If the maximum is
+            off grid, this value will be interpolated.
 
         """
-
-        # get the voxel coordinates for reduced maxima
-        voxel_coords = np.round(
-            self.charge_grid.frac_to_grid(self.basin_maxima_frac)
-        ).astype(int)
-        return self.charge_grid.total[
-            voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]
-        ]
+        if self._basin_maxima_charge_values is None:
+            self._basin_maxima_charge_values = self.charge_grid.values_at(
+                self.basin_maxima_frac
+            )
+        return self._basin_maxima_charge_values
 
     @property
     def basin_maxima_ref_values(self) -> NDArray[float]:
@@ -328,17 +325,15 @@ class Bader:
         Returns
         -------
         NDArray[float]
-            The reference data value at each maximum
+            The reference data value at each maximum. If the maximum is
+            off grid, this value will be interpolated.
 
         """
-
-        # get the voxel coordinates for reduced maxima
-        voxel_coords = np.round(
-            self.reference_grid.frac_to_grid(self.basin_maxima_frac)
-        ).astype(int)
-        return self.reference_grid.total[
-            voxel_coords[:, 0], voxel_coords[:, 1], voxel_coords[:, 2]
-        ]
+        if self._basin_maxima_ref_values is None:
+            # we get these values during each bader method anyways, so
+            # we run this here.
+            self.run_bader()
+        return self._basin_maxima_ref_values
 
     @property
     def basin_maxima_vox(self) -> NDArray[int]:
@@ -385,7 +380,7 @@ class Bader:
         return self._basin_volumes
 
     @property
-    def basin_surface_distances(self) -> NDArray[float]:
+    def basin_min_surface_distances(self) -> NDArray[float]:
         """
 
         Returns
@@ -395,9 +390,23 @@ class Bader:
             the basins surface
 
         """
-        if self._basin_surface_distances is None:
-            self._basin_surface_distances = self._get_basin_surface_distances()
-        return self._basin_surface_distances
+        if self._basin_min_surface_distances is None:
+            self._get_basin_surface_distances()
+        return self._basin_min_surface_distances
+
+    @property
+    def basin_avg_surface_distances(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The avg distance from each basin maxima to the edges of its basin
+
+        """
+        if self._basin_avg_surface_distances is None:
+            self._get_basin_surface_distances()
+        return self._basin_avg_surface_distances
 
     @property
     def basin_atoms(self) -> NDArray[float]:
@@ -490,7 +499,7 @@ class Bader:
         return self._atom_volumes
 
     @property
-    def atom_surface_distances(self) -> NDArray[float]:
+    def atom_min_surface_distances(self) -> NDArray[float]:
         """
 
         Returns
@@ -499,9 +508,23 @@ class Bader:
             The distance from each atom to the nearest point on the atoms surface.
 
         """
-        if self._atom_surface_distances is None:
-            self._atom_surface_distances = self._get_atom_surface_distances()
-        return self._atom_surface_distances
+        if self._atom_min_surface_distances is None:
+            self._get_atom_surface_distances()
+        return self._atom_min_surface_distances
+
+    @property
+    def atom_avg_surface_distances(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The avg distance from each atom to the edges of its basin
+
+        """
+        if self._atom_avg_surface_distances is None:
+            self._get_basin_surface_distances()
+        return self._atom_avg_surface_distances
 
     @property
     def structure(self) -> Structure:
@@ -668,12 +691,14 @@ class Bader:
             "basin_maxima_vox": self.basin_maxima_vox,
             "basin_charges": self.basin_charges,
             "basin_volumes": self.basin_volumes,
-            "basin_surface_distances": self.basin_surface_distances,
+            "basin_min_surface_distances": self.basin_min_surface_distances,
+            "basin_avg_surface_distances": self.basin_avg_surface_distances,
             "basin_atoms": self.basin_atoms,
             "basin_atom_dists": self.basin_atom_dists,
             "atom_charges": self.atom_charges,
             "atom_volumes": self.atom_volumes,
-            "atom_surface_distances": self.atom_surface_distances,
+            "atom_min_surface_distances": self.atom_min_surface_distances,
+            "atom_avg_surface_distances": self.atom_avg_surface_distances,
             "structure": self.structure,
             "vacuum_charge": self.vacuum_charge,
             "vacuum_volume": self.vacuum_volume,
@@ -692,7 +717,7 @@ class Bader:
 
         """
         t0 = time.time()
-        logging.info(f"Beginning Bader Algorithm Using '{self.method}' Method")
+        logging.info(f"Beginning Bader Algorithm Using '{self.method.name}' Method")
         # Normalize the method name to a module and class name
         module_name = self.method.replace(
             "-", "_"
@@ -722,32 +747,15 @@ class Bader:
         logging.info("Bader Algorithm Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
 
-    def run_atom_assignment(self, structure: Structure = None):
-        """
-        Assigns bader basins to the atoms in the provided structure.
+    def assign_basins_to_structure(self, structure: Structure):
 
-        Parameters
-        ----------
-        structure : Structure, optional
-            If provided, basins will be assigned to the atoms in this structure.
-            The default is None.
-
-        Returns
-        -------
-        None.
-
-        """
-        # Default structure
-        structure = structure or self.structure
-        self._structure = structure
-
-        # Shorthand access
+        # Get basin and atom frac coords
         basins = self.basin_maxima_frac  # (N_basins, 3)
-        t0 = time.time()
-        logging.info("Assigning Atom Properties")
         atoms = structure.frac_coords  # (N_atoms, 3)
+
+        # get lattice matrix and number of atoms/basins
         L = structure.lattice.matrix  # (3, 3)
-        N_basins, N_atoms = len(basins), len(atoms)
+        N_basins = len(basins)
 
         # Vectorized deltas, minimum‑image wrapping
         diffs = atoms[None, :, :] - basins[:, None, :]
@@ -768,17 +776,39 @@ class Bader:
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
         atom_labels = basin_atoms[self.basin_labels]
 
+        return basin_atoms, basin_atom_dists, atom_labels
+
+    def run_atom_assignment(self):
+        """
+        Assigns bader basins to this Bader objects structure.
+
+        Returns
+        -------
+        None.
+
+        """
+        # ensure bader has run (otherwise our time will include the bader time)
+        self.basin_maxima_frac
+
+        # Default structure
+        structure = self.structure
+
+        t0 = time.time()
+        logging.info("Assigning Atom Properties")
+        # get basin assignments for this bader objects structure
+        basin_atoms, basin_atom_dists, atom_labels = self.assign_basins_to_structure(
+            structure
+        )
+
         # Sum up charges/volumes per atom in one shot. slice with -1 is necessary
         # to prevent no negative value error
-        try:
-            atom_charges = np.bincount(
-                basin_atoms[:-1], weights=self.basin_charges, minlength=N_atoms
-            )
-            atom_volumes = np.bincount(
-                basin_atoms[:-1], weights=self.basin_volumes, minlength=N_atoms
-            )
-        except:
-            breakpoint()
+        atom_charges = np.bincount(
+            basin_atoms[:-1], weights=self.basin_charges, minlength=len(structure)
+        )
+        atom_volumes = np.bincount(
+            basin_atoms[:-1], weights=self.basin_volumes, minlength=len(structure)
+        )
+
         # Store everything
         self._basin_atoms = basin_atoms[:-1]
         self._basin_atom_dists = basin_atom_dists
@@ -788,47 +818,6 @@ class Bader:
         logging.info("Atom Assignment Finished")
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0, 2)}")
-
-    # def _get_atom_surface_distances(self):
-    #     """
-    #     Calculates the distance from each atom to the nearest surface. This is
-    #     automatically called during the atom assignment and generally should
-    #     not be called manually.
-
-    #     Returns
-    #     -------
-    #     None.
-
-    #     """
-    #     atom_labeled_voxels = self.atom_labels
-    #     atom_radii = []
-    #     # NOTE: We don't use the atom_edges property because its usually not
-    #     # needed by users and takes up more space in memory
-    #     edge_mask = self.atom_edges
-    #     for atom_index in track(
-    #         range(len(self.structure)), description="Calculating atom radii"
-    #     ):
-    #         # get the voxels corresponding to the interior edge of this basin
-    #         atom_edge_mask = (atom_labeled_voxels == atom_index) & edge_mask
-    #         edge_vox_coords = np.argwhere(atom_edge_mask)
-    #         # convert to frac coords
-    #         edge_frac_coords = self.reference_grid.grid_to_frac(edge_vox_coords)
-    #         atom_frac_coord = self.structure.frac_coords[atom_index]
-    #         # Get the difference in coords between atom and edges
-    #         coord_diff = atom_frac_coord - edge_frac_coords
-    #         # Wrap any coords that are more than 0.5 or less than -0.5
-    #         coord_diff -= np.round(coord_diff)
-    #         # Convert to cartesian coordinates
-    #         cart_coords = self.reference_grid.frac_to_cart(coord_diff)
-    #         # Calculate distance of each
-    #         norm = np.linalg.norm(cart_coords, axis=1)
-    #         if len(norm) == 0:
-    #             logging.warning(f"No volume assigned to atom at site {atom_index}.")
-    #             atom_radii.append(0)
-    #         else:
-    #             atom_radii.append(norm.min())
-    #     atom_radii = np.array(atom_radii)
-    #     self._atom_surface_distances = atom_radii
 
     def _get_atom_surface_distances(self):
         """
@@ -841,12 +830,14 @@ class Bader:
         None.
 
         """
-        return get_min_dists(
-            labels=self.atom_labels,
-            frac_coords=self.structure.frac_coords,
-            edge_indices=np.argwhere(self.atom_edges),
-            matrix=self.reference_grid.matrix,
-            max_value=np.max(self.structure.lattice.abc) * 2,
+        self._atom_min_surface_distances, self._atom_avg_surface_distances = (
+            get_min_avg_surface_dists(
+                labels=self.atom_labels,
+                frac_coords=self.structure.frac_coords,
+                edge_mask=self.atom_edges,
+                matrix=self.reference_grid.matrix,
+                max_value=np.max(self.structure.lattice.abc) * 2,
+            )
         )
 
     def _get_basin_surface_distances(self):
@@ -861,12 +852,14 @@ class Bader:
 
         """
         # get the minimum distances
-        return get_min_dists(
-            labels=self.basin_labels,
-            frac_coords=self.basin_maxima_frac,
-            edge_indices=np.argwhere(self.basin_edges),
-            matrix=self.reference_grid.matrix,
-            max_value=np.max(self.structure.lattice.abc) * 2,
+        self._basin_min_surface_distances, self._basin_avg_surface_distances = (
+            get_min_avg_surface_dists(
+                labels=self.basin_labels,
+                frac_coords=self.basin_maxima_frac,
+                edge_mask=self.basin_edges,
+                matrix=self.reference_grid.matrix,
+                max_value=np.max(self.structure.lattice.abc) * 2,
+            )
         )
 
     @classmethod
@@ -1042,8 +1035,10 @@ class Bader:
         # get the data to use
         if write_reference:
             data_array = self.reference_grid.total
+            data_type = self.reference_grid.data_type
         else:
             data_array = self.charge_grid.total
+            data_type = self.charge_grid.data_type
 
         if directory is None:
             directory = Path(".")
@@ -1053,7 +1048,11 @@ class Bader:
             # copy data to avoid overwriting. Set data off of basin to 0
             data_array_copy = data_array.copy()
             data_array_copy[mask] = 0.0
-            grid = Grid(structure=self.structure, data={"total": data_array_copy})
+            grid = Grid(
+                structure=self.structure,
+                data={"total": data_array_copy},
+                data_type=data_type,
+            )
             file_path = directory / f"{grid.data_type.prefix}_b{basin}"
             # write file
             grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
@@ -1133,8 +1132,10 @@ class Bader:
         # get the data to use
         if write_reference:
             data_array = self.reference_grid.total
+            data_type = self.reference_grid.data_type
         else:
             data_array = self.charge_grid.total
+            data_type = self.charge_grid.data_type
 
         if directory is None:
             directory = Path(".")
@@ -1143,7 +1144,11 @@ class Bader:
         # copy data to avoid overwriting. Set data off of basin to 0
         data_array_copy = data_array.copy()
         data_array_copy[~mask] = 0.0
-        grid = Grid(structure=self.structure, data={"total": data_array_copy})
+        grid = Grid(
+            structure=self.structure,
+            data={"total": data_array_copy},
+            data_type=data_type,
+        )
         file_path = directory / f"{grid.data_type.prefix}_bsum"
         # write file
         grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
@@ -1184,8 +1189,10 @@ class Bader:
         # get the data to use
         if write_reference:
             data_array = self.reference_grid.total
+            data_type = self.reference_grid.data_type
         else:
             data_array = self.charge_grid.total
+            data_type = self.charge_grid.data_type
 
         if directory is None:
             directory = Path(".")
@@ -1195,7 +1202,11 @@ class Bader:
             # copy data to avoid overwriting. Set data off of basin to 0
             data_array_copy = data_array.copy()
             data_array_copy[mask] = 0.0
-            grid = Grid(structure=self.structure, data={"total": data_array_copy})
+            grid = Grid(
+                structure=self.structure,
+                data={"total": data_array_copy},
+                data_type=data_type,
+            )
             file_path = directory / f"{grid.data_type.prefix}_a{atom_index}"
             # write file
             grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
@@ -1278,15 +1289,21 @@ class Bader:
         # get the data to use
         if write_reference:
             data_array = self.reference_grid.total
+            data_type = self.reference_grid.data_type
         else:
             data_array = self.charge_grid.total
+            data_type = self.charge_grid.data_type
 
         if directory is None:
             directory = Path(".")
         mask = np.isin(self.atom_labels, atom_indices)
         data_array_copy = data_array.copy()
         data_array_copy[~mask] = 0.0
-        grid = Grid(structure=self.structure, data={"total": data_array_copy})
+        grid = Grid(
+            structure=self.structure,
+            data={"total": data_array_copy},
+            data_type=data_type,
+        )
         file_path = directory / f"{grid.data_type.prefix}_asum"
         # write file
         grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
@@ -1311,7 +1328,7 @@ class Bader:
                 "z": atom_frac_coords[:, 2],
                 "charge": self.atom_charges,
                 "volume": self.atom_volumes,
-                "surface_dist": self.atom_surface_distances,
+                "surface_dist": self.atom_min_surface_distances,
             }
         )
         return atoms_df
@@ -1336,7 +1353,7 @@ class Bader:
                 "z": basin_frac_coords[:, 2],
                 "charge": self.basin_charges[subset],
                 "volume": self.basin_volumes[subset],
-                "surface_dist": self.basin_surface_distances[subset],
+                "surface_dist": self.basin_min_surface_distances[subset],
                 "atom_dist": self.basin_atom_dists[subset],
             }
         )

@@ -7,8 +7,65 @@ import math
 
 import numpy as np
 from numba import njit, prange
+from numpy.typing import NDArray
 
-from baderkit.core.methods.shared_numba import wrap_point
+
+@njit(cache=True, inline="always")
+def wrap_point(
+    i: np.int64, j: np.int64, k: np.int64, nx: np.int64, ny: np.int64, nz: np.int64
+) -> tuple[np.int64, np.int64, np.int64]:
+    """
+    Wraps a 3D point (i, j, k) into the periodic bounds defined by the grid dimensions (nx, ny, nz).
+
+    If any of the input coordinates are outside the bounds [0, nx), [0, ny), or [0, nz),
+    they are wrapped around using periodic boundary conditions.
+
+    Parameters
+    ----------
+    i : np.int64
+        x-index of the point.
+    j : np.int64
+        y-index of the point.
+    k : np.int64
+        z-index of the point.
+    nx : np.int64
+        Number of grid points along x-direction.
+    ny : np.int64
+        Number of grid points along y-direction.
+    nz : np.int64
+        Number of grid points along z-direction.
+
+    Returns
+    -------
+    tuple[np.int64, np.int64, np.int64]
+        The wrapped (i, j, k) indices within the bounds.
+    """
+    if i >= nx:
+        i -= nx
+    elif i < 0:
+        i += nx
+    if j >= ny:
+        j -= ny
+    elif j < 0:
+        j += ny
+    if k >= nz:
+        k -= nz
+    elif k < 0:
+        k += nz
+    return i, j, k
+
+
+###############################################################################
+# Sig Fig Management
+###############################################################################
+
+
+# @njit(cache=True)
+# def round_sig(value, num_sig_figs):
+#     if value == 0:
+#         return 0.0
+#     return round(value, int(num_sig_figs - np.floor(np.log10(abs(value))) - 1))
+
 
 ###############################################################################
 # Nearest point interpolation
@@ -82,100 +139,70 @@ def interp_linear(i, j, k, data, is_frac=True):
 
 
 ###############################################################################
-# Spline interpolation
+# Cubic spline interpolation
 ###############################################################################
-@njit(inline="always", cache=True, fastmath=True)
-def cubic_hermite_weights(t):
-    """Return 4 cubic Hermite (Catmull-Rom) weights for fractional part t."""
-    # get t mults to avoid repeat calcs.
-    t2 = t * t
-    t3 = t2 * t
-
-    w_m1 = -0.5 * t3 + t2 - 0.5 * t
-    w_0 = 1.5 * t3 - 2.5 * t2 + 1.0
-    w_p1 = -1.5 * t3 + 2.0 * t2 + 0.5 * t
-    w_p2 = 0.5 * t3 - 0.5 * t2
-    return np.array([w_m1, w_0, w_p1, w_p2])
 
 
-# @njit(inline='always')
-# def quintic_bspline_weights(t):
-#     """
-#     Return 6 quintic B-spline weights for the stencil offsets [-2,-1,0,1,2,3].
-#     Valid for t in [0,1). Coefficients are the degree-5 polynomial pieces.
-#     """
-#     t2 = t * t
-#     t3 = t2 * t
-#     t4 = t3 * t
-#     t5 = t4 * t
-
-#     # coefficients (highest-order first) collapsed into Horner-like evaluation
-#     # w0 -> offset -2, w1 -> offset -1, ..., w5 -> offset +3
-#     w0 = (-1.0/120.0)*t5 + (1.0/24.0)*t4 + (-1.0/12.0)*t3 + (1.0/12.0)*t2 + (-1.0/24.0)*t + (1.0/120.0)
-#     w1 = ( 1.0/24.0)*t5 + (-1.0/6.0)*t4 + (1.0/6.0)*t3 + (1.0/6.0)*t2 + (-5.0/12.0)*t + (13.0/60.0)
-#     w2 = (-1.0/12.0)*t5 + (1.0/4.0)*t4 + 0.0*t3 + (-1.0/2.0)*t2 + 0.0*t + (11.0/20.0)
-#     w3 = ( 1.0/12.0)*t5 + (-1.0/6.0)*t4 + (-1.0/6.0)*t3 + (1.0/6.0)*t2 + (5.0/12.0)*t + (13.0/60.0)
-#     w4 = (-1.0/24.0)*t5 + (1.0/24.0)*t4 + (1.0/12.0)*t3 + (1.0/12.0)*t2 + (1.0/24.0)*t + (1.0/120.0)
-#     w5 = ( 1.0/120.0)*t5  # remaining lower-order coefficients are zero
-
-#     return np.array([w0, w1, w2, w3, w4, w5])
+@njit(cache=True, inline="always", fastmath=True)
+def cubic_bspline_weights(di, dj, dk):
+    weights = np.empty((3, 4), dtype=np.float64)
+    for d_idx, d in enumerate((di, dj, dk)):
+        for i in range(4):
+            x = abs((i - 1) - d)
+            if x < 1.0:
+                w = (4.0 - 6.0 * x * x + 3.0 * x * x * x) / 6.0
+            elif x < 2.0:
+                t = 2.0 - x
+                w = (t * t * t) / 6.0
+            else:
+                w = 0.0
+            weights[d_idx, i] = w
+    return weights
 
 
-@njit(cache=True, fastmath=True, inline="always")
+@njit(cache=True, fastmath=True)
 def interp_spline(i, j, k, data, is_frac=True):
-    """
-    3D Hermite cubic interpolation with periodic boundary conditions.
-    """
     nx, ny, nz = data.shape
 
+    # convert fractional to voxel coordinates
     if is_frac:
-        # convert to voxel coordinates
         i = i * nx
         j = j * ny
         k = k * nz
 
-    # No need to wrap as we do so later
+    # round down to get int value
+    ri = int(math.floor(i))  # floor works with negative too
+    rj = int(math.floor(j))
+    rk = int(math.floor(k))
 
-    # get rounded down voxel coords
-    ri = int(i // 1.0)
-    rj = int(j // 1.0)
-    rk = int(k // 1.0)
-
-    # get offset from rounded voxel coord
+    # get fractional offsets in [0,1)
     di = i - ri
     dj = j - rj
     dk = k - rk
 
-    # get cubic weights
-    wx = cubic_hermite_weights(di)
-    wy = cubic_hermite_weights(dj)
-    wz = cubic_hermite_weights(dk)
-    offset = 1
-    size = 4
+    # calculate weights
+    weights = cubic_bspline_weights(di, dj, dk)
 
-    # if order == 3:
-    #     wx = cubic_hermite_weights(dx)
-    #     wy = cubic_hermite_weights(dy)
-    #     wz = cubic_hermite_weights(dz)
-    #     offset = 1
-    #     size = 4
-    # elif order == 5:
-    #     wx = quintic_bspline_weights(dx)
-    #     wy = quintic_bspline_weights(dy)
-    #     wz = quintic_bspline_weights(dz)
-    #     offset = 2
-    #     size = 6
-    # else:
-    #     raise ValueError("Order must be 3 (cubic) or 5 (quintic)")
+    # separable evaluation:
+    # first convolve along x for the 4x4 neighborhood in y,z to produce tmp[4,4]
+    tmp = np.zeros((4, 4), dtype=np.float64)  # tmp[j_index, k_index]
+    for joff in range(4):
+        yj = (rj - 1 + joff) % ny
+        for koff in range(4):
+            zk = (rk - 1 + koff) % nz
+            # convolve along x for this (y,z)
+            s = 0.0
+            for ioff in range(4):
+                xi = (ri - 1 + ioff) % nx
+                s += weights[0, ioff] * data[xi, yj, zk]
+            tmp[joff, koff] = s
 
+    # now convolve tmp by wy along y and wz along z
     val = 0.0
-    for i in range(size):
-        xi = (ri - offset + i) % nx
-        for j in range(size):
-            yj = (rj - offset + j) % ny
-            for k in range(size):
-                zk = (rk - offset + k) % nz
-                val += wx[i] * wy[j] * wz[k] * data[xi, yj, zk]
+    for joff in range(4):
+        for koff in range(4):
+            val += weights[1, joff] * weights[2, koff] * tmp[joff, koff]
+
     return val
 
 
@@ -227,6 +254,24 @@ def interpolate_points(points, method, data, is_frac=True):
     return out
 
 
+@njit(cache=True)
+def linear_slice(
+    data,
+    p1: NDArray[float],
+    p2: NDArray[float],
+    n: int = 100,
+    is_frac=True,
+    method="cubic",
+):
+
+    x_pts = np.linspace(p1[0], p2[0], num=n)
+    y_pts = np.linspace(p1[1], p2[1], num=n)
+    z_pts = np.linspace(p1[2], p2[2], num=n)
+    coords = np.column_stack((x_pts, y_pts, z_pts))
+
+    return interpolate_points(coords, method, data, is_frac)
+
+
 ###############################################################################
 # Wrapper class for interpolation
 ###############################################################################
@@ -256,204 +301,252 @@ class Interpolator:
 ###############################################################################
 
 
-# @njit(parallel=True, fastmath=True, cache=True)
+@njit(fastmath=True, cache=True)
+def refine_frac_max(grid, frac_coords, lattice):
+    """
+    Numerically stable refinement of a local maximum on a 3D periodic grid.
+    Fits a local quadratic and enforces concavity.
+
+    Parameters
+    ----------
+    grid : 3D ndarray
+        Periodic scalar field (e.g., charge density).
+    frac_coords : tuple of float
+        Fractional coordinates (fx, fy, fz) of the approximate maximum (in [0, 1)).
+    lattice : ndarray, shape (3, 3)
+        Lattice vectors as rows (real-space basis).
+
+    Returns
+    -------
+    refined_frac : ndarray, shape (3,)
+        Refined fractional coordinates of the true maximum (wrapped to [0, 1)).
+    refined_value : float
+        Interpolated value at the refined maximum.
+    """
+
+    nx, ny, nz = grid.shape
+    fx, fy, fz = frac_coords
+
+    # --- Step 1: nearest grid point
+    ix = int(round(fx * nx)) % nx
+    iy = int(round(fy * ny)) % ny
+    iz = int(round(fz * nz)) % nz
+
+    # --- Step 2: extract 3×3×3 neighborhood
+    region = np.empty((3, 3, 3), dtype=grid.dtype)
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            for dz in range(-1, 2):
+                region[dx + 1, dy + 1, dz + 1] = grid[
+                    (ix + dx) % nx, (iy + dy) % ny, (iz + dz) % nz
+                ]
+
+    # --- Step 3: design matrix
+    A = np.empty((27, 10), dtype=np.float64)
+    b = np.empty(27, dtype=np.float64)
+    inv_n = np.array([1.0 / nx, 1.0 / ny, 1.0 / nz])
+    row = 0
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            for dz in range(-1, 2):
+                # fractional → Cartesian offset
+                fxo = dx * inv_n[0]
+                fyo = dy * inv_n[1]
+                fzo = dz * inv_n[2]
+                ox = lattice[0, 0] * fxo + lattice[1, 0] * fyo + lattice[2, 0] * fzo
+                oy = lattice[0, 1] * fxo + lattice[1, 1] * fyo + lattice[2, 1] * fzo
+                oz = lattice[0, 2] * fxo + lattice[1, 2] * fyo + lattice[2, 2] * fzo
+
+                A[row, 0] = 1.0
+                A[row, 1] = ox
+                A[row, 2] = oy
+                A[row, 3] = oz
+                A[row, 4] = ox * ox
+                A[row, 5] = oy * oy
+                A[row, 6] = oz * oz
+                A[row, 7] = ox * oy
+                A[row, 8] = ox * oz
+                A[row, 9] = oy * oz
+                b[row] = region[dx + 1, dy + 1, dz + 1]
+                row += 1
+
+    # --- Step 4: regularized least squares
+    ATA = np.dot(A.T, A)
+    ATb = np.dot(A.T, b)
+    # Regularization (Tikhonov) improves numerical stability
+    for i in range(10):
+        ATA[i, i] += 1e-10
+    coeffs = np.linalg.solve(ATA, ATb)
+
+    a0 = coeffs[0]
+    ax, ay, az = coeffs[1], coeffs[2], coeffs[3]
+    axx, ayy, azz = coeffs[4], coeffs[5], coeffs[6]
+    axy, axz, ayz = coeffs[7], coeffs[8], coeffs[9]
+
+    # --- Step 5: solve ∇f = 0 → M * offset = -grad
+    M = np.empty((3, 3), dtype=np.float64)
+    M[0, 0] = 2.0 * axx
+    M[1, 1] = 2.0 * ayy
+    M[2, 2] = 2.0 * azz
+    M[0, 1] = M[1, 0] = axy
+    M[0, 2] = M[2, 0] = axz
+    M[1, 2] = M[2, 1] = ayz
+    grad = np.array([ax, ay, az])
+
+    # Ensure concave-down surface: flip signs if all curvatures are positive
+    trace_M = M[0, 0] + M[1, 1] + M[2, 2]
+    if trace_M > 0:
+        M *= -1.0
+        grad *= -1.0
+
+    # --- Step 6: solve for offset
+    try:
+        offset_cart = np.linalg.solve(M, -grad)
+    except:
+        offset_cart = np.zeros(3)
+
+    # --- Step 7: clamp offset to within one voxel size
+    step_cart = np.sqrt(np.sum((lattice / np.array([[nx, ny, nz]])) ** 2, axis=1))
+    max_step = np.max(step_cart)
+    norm_offset = np.sqrt(np.sum(offset_cart**2))
+    if norm_offset > max_step:
+        offset_cart *= max_step / norm_offset
+
+    # --- Step 8: compute refined value
+    x, y, z = offset_cart
+    refined_value = (
+        a0
+        + ax * x
+        + ay * y
+        + az * z
+        + axx * x * x
+        + ayy * y * y
+        + azz * z * z
+        + axy * x * y
+        + axz * x * z
+        + ayz * y * z
+    )
+
+    # Ensure it doesn't fall below nearby grid values
+    region_max = np.max(region)
+    if refined_value < region_max:
+        refined_value = region_max
+        offset_cart[:] = 0.0  # fallback: stay at grid point
+
+    # --- Step 9: Cartesian → fractional offset
+    frac_offset = np.linalg.solve(lattice.T, offset_cart)
+    refined_frac = np.empty(3, dtype=np.float64)
+    refined_frac[0] = (fx + frac_offset[0]) % 1.0
+    refined_frac[1] = (fy + frac_offset[1]) % 1.0
+    refined_frac[2] = (fz + frac_offset[2]) % 1.0
+
+    return refined_frac, refined_value
+
+
+@njit(parallel=True, cache=True)
 def refine_maxima(
     maxima_coords,
     data,
-    neighbor_transforms,
-    tol=1e-8,
-    is_frac=True,
+    lattice,
 ):
-    nx, ny, nz = data.shape
-    # copy initial maxima to avoid overwriting them
-    maxima_coords = maxima_coords.copy()
-    # copy transforms to avoid altering in place
-    neighbor_transforms = neighbor_transforms.copy().astype(np.float64)
-    # normalize in each direction to one
-    for transform_idx, transform in enumerate(neighbor_transforms):
-        neighbor_transforms[transform_idx] = transform / np.linalg.norm(transform)
-
-    # if fractional, convert each coordinate to voxel coords
-    if is_frac:
-        for max_coord in maxima_coords:
-            max_coord[0] *= nx
-            max_coord[1] *= ny
-            max_coord[2] *= nz
-
-    # get the initial values
-    current_values = interpolate_points(maxima_coords, "cubic", data, False)
-    # loop over coords in parallel and optimize positions
+    new_coords = np.empty_like(maxima_coords, dtype=np.float64)
+    new_values = np.empty(len(maxima_coords), dtype=np.float64)
     for coord_idx in prange(len(maxima_coords)):
-        frac_mult = 1
-        # create initial delta magnitude
-        delta_mag = 1.0
-        loop_count = 0
-        while delta_mag > tol and loop_count < 50:
-            loop_count += 1
-            # increase frac multiplier
-            frac_mult *= 2
-            # get smaller transform than last loop
-            current_trans = neighbor_transforms / frac_mult
-            # get current best position
-            i, j, k = maxima_coords[coord_idx]
-            # loop over transforms and check if they improve our value
-            for si, sj, sk in current_trans:
-                ti = i + si
-                tj = j + sj
-                tk = k + sk
-                value = interp_spline(ti, tj, tk, data, False)
-                # if value is improved, update the best position/value
-                if value > current_values[coord_idx]:
-                    current_values[coord_idx] = value
-                    maxima_coords[coord_idx] = (ti, tj, tk)
-                    # calculate magnitude of delta in fractional coordinates
-                    fsi = si / nx
-                    fsj = sj / ny
-                    fsk = sk / nz
-                    delta_mag = (fsi * fsi + fsj * fsj + fsk * fsk) ** 0.5
-    dec = -int(math.log10(tol))
-    if is_frac:
-        # convert to frac, round, and wrap
-        for max_idx, (i, j, k) in enumerate(maxima_coords):
-            i = round(i / nx, dec) % 1.0
-            j = round(j / ny, dec) % 1.0
-            k = round(k / nz, dec) % 1.0
-            maxima_coords[max_idx] = (i, j, k)
-    else:
-        # round and wrap
-        for max_idx, (i, j, k) in enumerate(maxima_coords):
-            i = round(i, dec) % nx
-            j = round(j, dec) % ny
-            k = round(k, dec) % nz
-            maxima_coords[max_idx] = (i, j, k)
-
-    return maxima_coords, current_values
+        coord = maxima_coords[coord_idx]
+        new_coord, new_value = refine_frac_max(data, coord, lattice)
+        new_coords[coord_idx] = new_coord
+        new_values[coord_idx] = new_value
+    # round and wrap coords
+    new_coords = np.round(new_coords, 6)
+    new_coords %= 1
+    return new_coords, new_values
 
 
-# @njit(inline='always', fastmath=True, cache=True)
-# def get_gradient_and_hessian(i, j, k, data, d, is_frac=False):
+# Method that refines maxima using interpolation. I had a lot of issues with
+# ringing/overshooting
+# @njit(parallel=True, fastmath=True, cache=True)
+# def refine_maxima(
+#     maxima_coords,
+#     data,
+#     neighbor_transforms,
+#     tol=1e-8,
+#     is_frac=True,
+# ):
 #     nx, ny, nz = data.shape
+#     # copy initial maxima to avoid overwriting them
+#     maxima_coords = maxima_coords.copy()
+#     # copy transforms to avoid altering in place
+#     neighbor_transforms = neighbor_transforms.copy().astype(np.float64)
 
-#     # if coord is fractional, convert to voxel coords
+#     # normalize in each direction to one
+#     for transform_idx, transform in enumerate(neighbor_transforms):
+#         neighbor_transforms[transform_idx] = transform / np.linalg.norm(transform)
+
+#     # if fractional, convert each coordinate to voxel coords
 #     if is_frac:
-#         i = i*nx
-#         j = j*ny
-#         k = k*nz
+#         for max_coord in maxima_coords:
+#             max_coord[0] *= nx
+#             max_coord[1] *= ny
+#             max_coord[2] *= nz
 
-#     # get squared shift to avoid repeat calcs
-#     d2 = d*d
-#     dx2 = 2*d
-#     d2x4 = 4*d2
-
-#     # Get values at shifts using cubic interpolation
-#     v000 = interp_spline(i, j, k, data, False)
-#     v100 = interp_spline(i+d, j, k, data, False)
-#     v_100 = interp_spline(i-d, j, k, data, False)
-#     v010 = interp_spline(i, j+d, k, data, False)
-#     v0_10 = interp_spline(i, j-d, k, data, False)
-#     v001 = interp_spline(i, j, k+d, data, False)
-#     v00_1 = interp_spline(i, j, k-d, data, False)
-#     v110 = interp_spline(i+d, j+d, k, data, False)
-#     v_110 = interp_spline(i-d, j+d, k, data, False)
-#     v1_10 = interp_spline(i+d, j-d, k, data, False)
-#     v_1_10 = interp_spline(i-d, j-d, k, data, False)
-#     v101 = interp_spline(i+d, j, k+d, data, False)
-#     v_101 = interp_spline(i-d, j, k+d, data, False)
-#     v10_1 = interp_spline(i+d, j, k-d, data, False)
-#     v_10_1 = interp_spline(i-d, j, k-d, data, False)
-#     v011 = interp_spline(i, j+d, k+d, data, False)
-#     v0_11 = interp_spline(i, j-d, k+d, data, False)
-#     v01_1 = interp_spline(i, j+d, k-d, data, False)
-#     v0_1_1 = interp_spline(i, j-d, k-d, data, False)
-
-#     # get gradient
-#     fx = (v100 - v_100) / dx2
-#     fy = (v010 - v0_10) / dx2
-#     fz = (v001 - v00_1) / dx2
-#     g = np.array((fx, fy, fz), dtype=np.float64)
-
-#     # get hessian
-#     v000x2 = v000 * 2
-#     fxx = (v100 - v000x2 + v_100) / d2
-#     fyy = (v010 - v000x2 + v0_10) / d2
-#     fzz = (v001 - v000x2 + v00_1) / d2
-
-#     fxy = (v110 - v1_10 - v_110 + v_1_10) / d2x4
-#     fxz = (v101 - v10_1 - v_101 + v_10_1) / d2x4
-#     fyz = (v011 - v01_1 - v0_11 + v0_1_1) / d2x4
-
-#     H = np.array(
-#         (
-#         (fxx, fxy, fxz),
-#         (fxy, fyy, fyz),
-#         (fxz, fyz, fzz)
-#         ), dtype=np.float64)
-
-#     return g, H
-
-# @njit(fastmath=True, cache=True, inline='always')
-# def refine_maximum_newton(i, j, k, data, d=0.25, tol=1e-12, maxiter=50, is_frac=True):
-#     nx, ny, nz = data.shape
-
-#     # if coord is fractional, convert to voxel coords
-#     if is_frac:
-#         i = i*nx
-#         j = j*ny
-#         k = k*nz
-
-#     # loop until convergence
-#     for iter_num in range(maxiter):
-#         # get gradient and hessian
-#         g, H = get_gradient_and_hessian(i, j, k, data, d, is_frac=False)
-
-#         # solve for delta
-#         di, dj, dk = np.linalg.solve(H, -g)
-
-#         # get new point
-#         i = i+di
-#         j = j+dj
-#         k = k+dk
-
-#         # check if magnitude of delta is below tolerance (in fractional coords)
-#         fdi = di * nx
-#         fdj = dj * ny
-#         fdk = dk * nz
-#         dmag = (fdi*fdi + fdj*fdj + fdk*fdk) ** 0.5
-#         if dmag < tol:
-#             break
-
-#     # get value at final point
-#     value = interp_spline(i, j, k, data, False)
-
-#     if is_frac:
-#         # convert back to fractional, round, and wrap
-#         i = round(i/nx, 12) % 1.0
-#         j = round(j/ny, 12) % 1.0
-#         k = round(k/nz, 12) % 1.0
-#     else:
-#         # round and wrap final coord
-#         i = round(i, 12) % nx
-#         j = round(j, 12) % ny
-#         k = round(k, 12) % nz
-
-#     return np.array((i,j,k), dtype=np.float64), value
-
-# @njit(parallel=True, cache=True)
-# def refine_maxima_newton(maxima_coords, data, d=0.25, tol=1e-12, maxiter=50, is_frac=True):
-#     # create array to store new coords/values
-#     new_coords = np.empty_like(maxima_coords, dtype=np.float64)
-#     new_values = np.empty(len(new_coords), dtype=np.float64)
-
+#     # get the initial values
+#     current_values = interpolate_points(
+#         data=data,
+#         points=maxima_coords,
+#         method="cubic",
+#         is_frac=False,
+#     )
+#     # loop over coords in parallel and optimize positions
 #     for coord_idx in prange(len(maxima_coords)):
 #         i, j, k = maxima_coords[coord_idx]
-#         new_coord, new_value = refine_maximum_newton(
-#             i,j,k,
-#             data,
-#             d=d,
-#             tol=tol,
-#             maxiter=maxiter,
-#             is_frac=is_frac
-#             )
-#         new_coords[coord_idx] = new_coord
-#         new_values[coord_idx] = new_value
-#     return new_coords, new_values
+
+#         frac_mult = 1
+#         # create initial delta magnitude
+#         delta_mag = 1.0
+#         loop_count = 0
+#         while delta_mag > tol and loop_count < 50:
+#             loop_count += 1
+#             # increase frac multiplier
+#             frac_mult *= 2
+#             # get smaller transform than last loop
+#             current_trans = neighbor_transforms / frac_mult
+#             # get current best position
+#             i, j, k = maxima_coords[coord_idx]
+#             # loop over transforms and check if they improve our value
+#             for si, sj, sk in current_trans:
+#                 ti = i + si
+#                 tj = j + sj
+#                 tk = k + sk
+#                 value = interp_spline(
+#                     ti,
+#                     tj,
+#                     tk,
+#                     data=data,
+#                     is_frac=False,
+#                     )
+#                 # if value is improved, update the best position/value
+#                 if value > current_values[coord_idx]:
+#                     current_values[coord_idx] = value
+#                     maxima_coords[coord_idx] = (ti, tj, tk)
+#                     # calculate magnitude of delta in fractional coordinates
+#                     fsi = si / nx
+#                     fsj = sj / ny
+#                     fsk = sk / nz
+#                     delta_mag = (fsi * fsi + fsj * fsj + fsk * fsk) ** 0.5
+#     dec = -int(math.log10(tol))
+#     if is_frac:
+#         # convert to frac, round, and wrap
+#         for max_idx, (i, j, k) in enumerate(maxima_coords):
+#             i = round(i / nx, dec) % 1.0
+#             j = round(j / ny, dec) % 1.0
+#             k = round(k / nz, dec) % 1.0
+#             maxima_coords[max_idx] = (i, j, k)
+#     else:
+#         # round and wrap
+#         for max_idx, (i, j, k) in enumerate(maxima_coords):
+#             i = round(i, dec) % nx
+#             j = round(j, dec) % ny
+#             k = round(k, dec) % nz
+#             maxima_coords[max_idx] = (i, j, k)
+
+#     return maxima_coords, current_values

@@ -15,27 +15,29 @@ from baderkit.core.methods.shared_numba import (
 @njit(parallel=True, cache=True)
 def get_weight_assignments(
     reference_data,
+    labels,
     charge_data,
     sorted_indices,
     neighbor_transforms: NDArray[np.int64],
     neighbor_alpha: NDArray[np.float64],
     all_neighbor_transforms,
     all_neighbor_dists,
+    maxima_mask,
+    maxima_indices,
 ):
     nx, ny, nz = reference_data.shape
+    ny_nz = ny * nz
     num_coords = len(sorted_indices)
     full_num_coords = nx * ny * nz
     # create arrays to store neighs. Don't store flux yet
     num_transforms = len(neighbor_transforms)
     neigh_array = np.empty((num_coords, num_transforms), dtype=np.uint32)
     neigh_nums = np.empty(num_coords, dtype=np.uint8)
-    # Create a 1D array to store labels
-    labels = np.full(full_num_coords, -1, dtype=np.int64)
     # Create 1D arrays to store flattened charge
     flat_charge = np.empty(full_num_coords, dtype=np.float64)
     # Create lists to store basin charges/volumes
-    charges = []
-    volumes = []
+    charges = np.zeros(len(maxima_indices), dtype=np.float64)
+    volumes = np.zeros(len(maxima_indices), dtype=np.float64)
 
     ###########################################################################
     # Get neighbors
@@ -45,12 +47,12 @@ def get_weight_assignments(
     for sorted_idx in prange(num_coords):
         idx = sorted_indices[sorted_idx]
         # get 3D coords
-        i, j, k = flat_to_coords(idx, nx, ny, nz)
+        i, j, k = flat_to_coords(idx, ny_nz, nz)
         # get the reference and charge data
         base_value = reference_data[i, j, k]
         # set flat charge
         flat_charge[idx] = charge_data[i, j, k]
-        equal_neighs = False
+
         # get higher neighbors at each point
         neigh_num = 0
         for si, sj, sk in neighbor_transforms:
@@ -59,14 +61,11 @@ def get_weight_assignments(
             # get the neighbors value
             neigh_value = reference_data[ii, jj, kk]
             # if this value is below the current points value, continue
-            if neigh_value < base_value:
+            if neigh_value <= base_value:
                 continue
-            # Note if this neighbor has an equal value
-            if neigh_value == base_value:
-                equal_neighs = True
-                continue
+
             # get this neighbors index and add it to our array
-            neigh_idx = coords_to_flat(ii, jj, kk, nx, ny, nz)
+            neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
             neigh_array[sorted_idx, neigh_num] = neigh_idx
             neigh_num += 1
         neigh_nums[sorted_idx] = neigh_num
@@ -74,56 +73,36 @@ def get_weight_assignments(
         # Check if we had any higher neighbors
         if neigh_num == 0:
             # this is a local maximum. Check if its a true max
-            shift, (ni, nj, nk), is_max = get_best_neighbor(
-                data=reference_data,
-                i=i,
-                j=j,
-                k=k,
-                neighbor_transforms=all_neighbor_transforms,
-                neighbor_dists=all_neighbor_dists,
-            )
-            if not is_max:
+            if not maxima_mask[i, j, k]:
                 # this is not a real maximum. Assign it to the highest neighbor
-                neigh_idx = coords_to_flat(ni, nj, nk, nx, ny, nz)
+                shift, (ni, nj, nk) = get_best_neighbor(
+                    data=reference_data,
+                    i=i,
+                    j=j,
+                    k=k,
+                    neighbor_transforms=all_neighbor_transforms,
+                    neighbor_dists=all_neighbor_dists,
+                )
+                neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
                 neigh_nums[sorted_idx] = 1  # overwrite 0 entry
                 neigh_array[sorted_idx, 0] = neigh_idx
                 continue
 
-            # Check if we border another maximum
-            if not equal_neighs:
-                # Note this maximum doesn't border any others by labeling it above the max label
-                neigh_array[sorted_idx, 0] = full_num_coords
-                continue
-            # We do border at least one other maximum and record each of them
-            neigh_num = 0
-            for si, sj, sk in neighbor_transforms:
-                # get neighbor and wrap around periodic boundary
-                ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-                # get neighbors value. Skip of it doesn't equal the current points
-                # value
-                neigh_value = reference_data[ii, jj, kk]
-                if neigh_value != base_value:
-                    continue
-                # get this neighbors index and assign it
-                neigh_idx = coords_to_flat(ii, jj, kk, nx, ny, nz)
-                neigh_array[sorted_idx, neigh_num] = neigh_idx
-                neigh_num += 1
-            # add a value above the possible neighbor indices to note when we
-            # have reached the end of our neighboring maxima.
-            if neigh_num != len(neighbor_transforms):
-                neigh_array[sorted_idx, neigh_num] = full_num_coords
-            continue
+            # Note this is a maximum
+            neigh_nums[sorted_idx] = 0
+            # assign the first value to the current label. This will allow us
+            # to check if the maximum is the root max in the next section
+            neigh_array[sorted_idx, 0] = labels[idx]
 
     ###########################################################################
     # Assign interior
     ###########################################################################
     # create list to store edge indices
     edge_sorted_indices = []
-    # create list to store maxima indices
-    maxima_vox = []
+    added_maxima = []
+
     # Now we have the neighbors for each point. Loop over them from highest to
     # lowest and assign single basin points
-    maxima_num = 0
     for sorted_idx, (idx, neighs, neigh_num) in enumerate(
         zip(sorted_indices, neigh_array, neigh_nums)
     ):
@@ -149,40 +128,41 @@ def get_weight_assignments(
             if best_label != -1:
                 labels[idx] = label
                 charges[label] += flat_charge[idx]
-                volumes[label] += 1
+                volumes[label] += 1.0
             # Otherwise, this point is an exterior point that is partially assigned
             # to multiple basins. We add it to our list.
             else:
                 edge_sorted_indices.append(sorted_idx)
         else:
-            # This is a local maximum. Add it to our list of indices
-            maxima_vox.append((flat_to_coords(idx, nx, ny, nz)))
-            # Check if there are any neighboring maxima that have already been assigned
-            best_label = -1
-            for neigh in neighs:
-                if neigh == full_num_coords:
-                    # This is the end of our neighs and we break
-                    break
-                label = labels[neigh]
-                if label != -1:
-                    best_label = label
-                    break
-            # if the best label is still this index, assign a new maximum and
-            # increase the counter
-            if best_label == -1:
-                labels[idx] = maxima_num
-                maxima_num += 1
-                charges.append(flat_charge[idx])
-                volumes.append(1)
-            else:
-                # assign to best label
-                labels[idx] = best_label
-                charges[best_label] += flat_charge[idx]
-                volumes[best_label] += 1
 
-    # convert charges/volumes to arrays
-    charges = np.array(charges, dtype=np.float64)
-    volumes = np.array(volumes, dtype=np.float64)
+            # Skip if this maximum was already processed
+            if idx in added_maxima:
+                continue
+
+            # get this maximas current label
+            label = labels[idx]
+
+            # Determine the root maximum
+            root_idx = label if label != idx else idx
+
+            # check if this is a root
+            is_root = idx == root_idx
+
+            # If this root maximum hasn't been added yet, add it
+            if root_idx not in added_maxima:
+                added_maxima.append(root_idx)
+                max_idx = np.searchsorted(maxima_indices, root_idx)
+                labels[root_idx] = max_idx
+                charges[max_idx] += flat_charge[root_idx]
+                volumes[max_idx] += 1.0
+            else:
+                max_idx = labels[root_idx]
+
+            if not is_root:
+                # Assign this point to the correct maximum
+                labels[idx] = max_idx
+                charges[max_idx] += flat_charge[idx]
+                volumes[max_idx] += 1.0
 
     ###########################################################################
     # Fluxes
@@ -193,8 +173,6 @@ def get_weight_assignments(
     flux_array = np.empty((num_edges, num_transforms), dtype=np.float64)
     neigh_array = np.empty_like(flux_array, dtype=np.int64)
     neigh_nums = np.empty(num_edges, dtype=np.uint8)
-    # create mask to note if this point has neighbors that are also exterior
-    only_interor_neighs = np.zeros(num_edges, dtype=np.bool_)
     # create an array to store pointers from idx to edge idx
     idx_to_edge = np.empty(full_num_coords, dtype=np.uint32)
     # calculate fluxes in parallel. If possible, we will immediately calculate the
@@ -207,7 +185,7 @@ def get_weight_assignments(
         # loop over neighs and get their label. If all of them have labels, we
         # can immediately calculate weights
         # get 3D coords
-        i, j, k = flat_to_coords(idx, nx, ny, nz)
+        i, j, k = flat_to_coords(idx, ny_nz, nz)
         # get the reference and charge data
         base_value = reference_data[i, j, k]
         # set flat charge
@@ -216,7 +194,7 @@ def get_weight_assignments(
         total_flux = 0.0
         neigh_labels = neigh_array[edge_idx]
         neigh_fluxes = flux_array[edge_idx]
-        no_exterior_neighs = True
+        # no_exterior_neighs = True
         neigh_num = 0
         for (si, sj, sk), alpha in zip(neighbor_transforms, neighbor_alpha):
             # get neighbor and wrap around periodic boundary
@@ -227,7 +205,7 @@ def get_weight_assignments(
             if neigh_value <= base_value:
                 continue
             # get this neighbors index
-            neigh_idx = coords_to_flat(ii, jj, kk, nx, ny, nz)
+            neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
             # calculate the flux flowing to this voxel
             flux = (neigh_value - base_value) * alpha
             total_flux += flux
@@ -239,20 +217,50 @@ def get_weight_assignments(
                 neigh_fluxes[neigh_num] = flux
                 neigh_labels[neigh_num] = -neigh_idx - 1
                 neigh_num += 1
-                no_exterior_neighs = False
+                # no_exterior_neighs = False
                 continue
             # otherwise, check if this label already exists in our neighbors
             found = False
             for nidx, nlabel in enumerate(neigh_labels):
+                if nidx == neigh_num:
+                    # we've reached the end of our assigned labels so we break
+                    break
                 if label == nlabel:
                     neigh_fluxes[nidx] += flux
+                    found = True
+                    break
             if not found:
                 neigh_fluxes[neigh_num] = flux
                 neigh_labels[neigh_num] = neigh_label
                 neigh_num += 1
+
+        # BUG-FIX
+        # in rare cases, we may find no neighbors. This means we found a false
+        # maximum earlier and assigned it to an ongrid neighbor that itself
+        # ended up being an edge point or another false maximum. To correct for
+        # this, we can assign a full flux of 1 to the best ongrid neighbor
+        if neigh_num == 0:
+            shift, (ni, nj, nk) = get_best_neighbor(
+                data=reference_data,
+                i=i,
+                j=j,
+                k=k,
+                neighbor_transforms=all_neighbor_transforms,
+                neighbor_dists=all_neighbor_dists,
+            )
+            neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
+            neigh_label = labels[neigh_idx]
+            neigh_fluxes[0] = 1.0
+            # If the neighbor belongs to a basin, assign to the same one. Otherwise,
+            # it's an edge and we note the connections
+            if neigh_label >= 0:
+                neigh_labels[0] = neigh_label
+            else:
+                neigh_labels[0] = -neigh_idx - 1
+            total_flux = 1.0
+            neigh_num = 1
+
         neigh_nums[edge_idx] = neigh_num
-        if no_exterior_neighs:
-            only_interor_neighs[edge_idx] = True
         # normalize fluxes
         neigh_fluxes /= total_flux
 
@@ -265,8 +273,8 @@ def get_weight_assignments(
     approx_charges = charges.copy()
     all_weights = []
     all_labels = []
-    for edge_idx, (fluxes, neighs, neigh_num, only_interior) in enumerate(
-        zip(flux_array, neigh_array, neigh_nums, only_interor_neighs)
+    for edge_idx, (fluxes, neighs, neigh_num) in enumerate(
+        zip(flux_array, neigh_array, neigh_nums)
     ):
         sorted_idx = edge_sorted_indices[edge_idx]
         idx = sorted_indices[sorted_idx]
@@ -280,11 +288,9 @@ def get_weight_assignments(
                 break
             # NOTE: I was looping over neigh_num here, but sometimes this caused a
             # crash. Maybe numba is trying to us prange even though I didn't ask it to?
-            # for neigh_idx in range(neigh_num):
-            #     flux = fluxes[neigh_idx]
-            #     label = neighs[neigh_idx]
+
             if label >= 0:
-                # This is actually a basin rather than another edge index.
+                # This is a basin rather than another edge index.
                 if scratch_weights[label] == 0.0:
                     current_labels.append(label)
                 scratch_weights[label] += flux
@@ -353,26 +359,31 @@ def get_weight_assignments(
         labels,
         charges,
         volumes,
-        np.array(maxima_vox, dtype=np.int64),
     )
 
 
 @njit(parallel=True, cache=True)
-def sort_maxima_vox(
+def sort_maxima_frac(
+    maxima_frac,
     maxima_vox,
-    nx,
-    ny,
-    nz,
+    grid_shape,
 ):
+    nx, ny, nz = grid_shape
+    ny_nz = ny * nz
+
     flat_indices = np.zeros(len(maxima_vox), dtype=np.int64)
     for idx in prange(len(flat_indices)):
         i, j, k = maxima_vox[idx]
-        flat_indices[idx] = coords_to_flat(i, j, k, nx, ny, nz)
+        flat_indices[idx] = coords_to_flat(i, j, k, ny_nz, nz)
 
     # sort flat indices from low to high
     sorted_indices = np.argsort(flat_indices)
     # sort maxima from lowest index to highest
-    return maxima_vox[sorted_indices]
+    return (
+        maxima_frac[sorted_indices],
+        maxima_vox[sorted_indices],
+        flat_indices[sorted_indices],
+    )
 
 
 ###############################################################################

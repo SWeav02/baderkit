@@ -10,7 +10,7 @@ from baderkit.core.methods.neargrid.neargrid_numba import (
     get_gradient_pointers_simple,
     refine_fast_neargrid,
 )
-from baderkit.core.methods.shared_numba import combine_maxima_frac, get_edges
+from baderkit.core.methods.shared_numba import get_edges
 
 from .neargrid_weight_numba import (
     get_edge_charges_volumes,
@@ -22,7 +22,7 @@ class NeargridWeightMethod(MethodBase):
 
     _use_overdetermined = False
 
-    def run(self):
+    def _run_bader(self, labels):
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
@@ -45,12 +45,14 @@ class NeargridWeightMethod(MethodBase):
         logging.info("Calculating Gradients")
         if not self._use_overdetermined:
             # calculate gradients and pointers to best neighbors
-            labels, gradients, self._maxima_mask = get_gradient_pointers_simple(
+            labels, gradients = get_gradient_pointers_simple(
                 data=reference_data,
+                labels=labels,
                 dir2lat=self.dir2lat,
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
+                maxima_mask=self.maxima_mask,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system
@@ -64,13 +66,15 @@ class NeargridWeightMethod(MethodBase):
             # get the pseudo inverse
             inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms[:13])
             # calculate gradients and pointers to best neighbors
-            labels, gradients, self._maxima_mask = get_gradient_pointers_overdetermined(
+            labels, gradients = get_gradient_pointers_overdetermined(
                 data=reference_data,
+                labels=labels,
                 car2lat=self.car2lat,
                 inv_norm_cart_trans=inv_norm_cart_trans,
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
+                maxima_mask=self.maxima_mask,
             )
         # Find roots
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
@@ -85,13 +89,7 @@ class NeargridWeightMethod(MethodBase):
             labels -= 1
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)
-        # get frac coords
-        maxima_frac = reference_grid.grid_to_frac(self.maxima_vox)
-        self._maxima_frac = combine_maxima_frac(
-            labels,
-            self.maxima_vox,
-            maxima_frac,
-        )
+
         logging.info("Starting Edge Refinement")
         # shift to vacuum at 0
         labels += 1
@@ -178,5 +176,4 @@ class NeargridWeightMethod(MethodBase):
             "vacuum_charge": vacuum_charge,
             "vacuum_volume": vacuum_volume,
         }
-        results.update(self.get_extras())
         return results
