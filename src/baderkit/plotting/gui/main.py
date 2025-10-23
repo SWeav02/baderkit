@@ -15,7 +15,6 @@ os.environ["QT_API"] = "pyqt5"
 
 from PyQt5.QtGui import QIcon
 from pyvistaqt import MainWindow as pvMainWindow
-from qtpy import QtCore as qc
 from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 

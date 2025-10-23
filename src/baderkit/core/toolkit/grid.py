@@ -18,16 +18,16 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from scipy.ndimage import label, spline_filter, zoom
 from scipy.spatial import Voronoi
 
-from baderkit.core.toolkit.file_parsers import (
+from baderkit.core.utilities.file_parsers import (
     Format,
     detect_format,
     infer_significant_figures,
     read_cube,
     read_vasp,
 )
-from baderkit.core.toolkit.file_parsers import write_cube as write_cube_file
-from baderkit.core.toolkit.file_parsers import write_vasp as write_vasp_file
-from baderkit.core.toolkit.grid_numba import Interpolator
+from baderkit.core.utilities.file_parsers import write_cube as write_cube_file
+from baderkit.core.utilities.file_parsers import write_vasp as write_vasp_file
+from baderkit.core.toolkit.interpolator import Interpolator
 from baderkit.core.toolkit.structure import Structure
 
 # This allows for Self typing and is compatible with python versions before 3.11

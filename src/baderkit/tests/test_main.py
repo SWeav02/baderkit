@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from baderkit.core import Bader, Grid
-from baderkit.core.methods import Method
+from baderkit.core.bader.methods import Method
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"

@@ -10,8 +10,8 @@ from pathlib import Path
 
 import typer
 
-from baderkit.core.methods import Method
-from baderkit.core.toolkit import Format
+from baderkit.core.bader.methods import Method
+from baderkit.core.utilities.file_parsers import Format
 
 baderkit_app = typer.Typer(rich_markup_mode="markdown")
 
