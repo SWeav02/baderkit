@@ -6,7 +6,6 @@ from functools import cached_property
 
 import numpy as np
 from numpy.typing import NDArray
-from pymatgen.analysis.local_env import CrystalNN
 
 from baderkit.core.utilities.basic import merge_frac_coords
 from baderkit.core.utilities.coord_env import get_dists_to_atoms
@@ -92,7 +91,7 @@ class NodeBase(ABC):
         self,
         other: Node,
             ):
-        assert type(other) == Node, "Both objects must by Node types to make equality check"
+
         assert self.bifurcation_graph is other.bifurcation_graph, "Nodes must belong to the same BifurcationGraph to make equality check"
         
         # node indices are unique. Return the comparison between the two
@@ -345,6 +344,8 @@ class IrreducibleNode(NodeBase):
     def __init__(
             self,
             feature_type: FeatureType | str = FeatureType.unknown,
+            nearest_atom_sphere: int = None,
+            dist_beyond_atom: float = None,
             min_surface_dist: float = None,
             avg_surface_dist: float = None,
             **kwargs,
@@ -354,10 +355,13 @@ class IrreducibleNode(NodeBase):
         # these usually need to be labeled, but this allows them to be recreated
         # from json
         self.feature_type = feature_type
+        self._dist_beyond_atom = dist_beyond_atom
+        self._nearest_atom_sphere = nearest_atom_sphere
         self._min_surface_dist = min_surface_dist
         self._avg_surface_dist = avg_surface_dist
         
         self._coord_atom_indices = None
+        self._coord_quasi_atom_indices = None
         
     @property
     def feature_type(self) -> FeatureType | None:
@@ -396,6 +400,15 @@ class IrreducibleNode(NodeBase):
             )
     
     @cached_property
+    def quasi_atom_dists(self) -> NDArray[int]:
+        return get_dists_to_atoms(
+            self.average_frac_coords,
+            self.bifurcation_graph.quasi_atom_structure.frac_coords,
+            self.bifurcation_graph.quasi_atom_structure.cart_coords,
+            self.bifurcation_graph.quasi_atom_structure.lattice.matrix,
+            )
+    
+    @cached_property
     def atom_distance(self) -> float:
         return np.min(self.atom_dists)
     
@@ -407,11 +420,15 @@ class IrreducibleNode(NodeBase):
     def nearest_atom_species(self) -> str:
         return self.bifurcation_graph.structure[self.nearest_atom].species_string
     
-    @cached_property
+    @property
+    def nearest_atom_sphere(self) -> int:
+        # the nearest atom if you measure the center of this feature to the
+        # atoms surface
+        return self._nearest_atom_sphere
+    
+    @property
     def dist_beyond_atom(self) -> float:
-        if self.bifurcation_graph.atomic_radii is not None:
-            radius = self.bifurcation_graph.atomic_radii[self.nearest_atom]
-            return self.atom_distance - radius
+        return self._dist_beyond_atom
         
     @property
     def min_surface_dist(self) -> float:
@@ -436,20 +453,10 @@ class IrreducibleNode(NodeBase):
                 # at once because I don't want features seeing each other as neighbors
                 feature_structure = self.bifurcation_graph.structure.copy()
                 feature_structure.append("H-", self.average_frac_coords)
-                cnn = CrystalNN(**self.bifurcation_graph.crystalnn_kwargs)
-                coordination = cnn.get_nn_info(feature_structure, -1)
+                coordination = self.bifurcation_graph.cnn.get_nn_info(feature_structure, -1)
                 self._coord_atom_indices = [int(i["site_index"]) for i in coordination]
         
         return self._coord_atom_indices
-    
-    @coord_atom_indices.setter
-    def coord_atom_indices(self, value: list[int]):
-        try:
-            value = [int(i) for i in value]
-        except:
-            raise TypeError("Atom indices must be a list of integers")
-        
-        self._coord_atom_indices = value
     
     @property
     def coord_atom_species(self) -> list[str]:
@@ -459,6 +466,38 @@ class IrreducibleNode(NodeBase):
     @property
     def coord_atom_dists(self) -> list[float]:
         return self.atom_dists[self.coord_atom_indices]
+    
+    @property
+    def coord_quasi_atom_indices(self) -> list[int]:
+        if self._coord_quasi_atom_indices is None:
+            if self.feature_type in FeatureType.atomic_types:
+                self._coord_quasi_atom_indices = [int(self.nearest_atom)]
+            else:
+                feature_structure = self.bifurcation_graph._quasi_hatom_structure.copy()
+                if self.feature_type in FeatureType.bare_types:
+                    # this feature is already in our structure. just find the index
+                    try:
+                        feat_idx = self.bifurcation_graph.get_feature_nodes(FeatureType.bare_types).index(self)
+                    except:
+                        breakpoint()
+                    struc_idx = len(self.bifurcation_graph.structure)+feat_idx
+                else:
+                    # temporarily add this feature to our structure
+                    feature_structure.append("H-", self.average_frac_coords)
+                    struc_idx = -1
+                coordination = self.bifurcation_graph.cnn.get_nn_info(feature_structure, struc_idx)
+                self._coord_quasi_atom_indices = [int(i["site_index"]) for i in coordination]
+        
+        return self._coord_quasi_atom_indices
+    
+    @property
+    def coord_quasi_atom_species(self) -> list[str]:
+        structure = self.bifurcation_graph.quasi_atom_structure
+        return [structure[i].species_string for i in self.coord_quasi_atom_indices]
+    
+    @property
+    def coord_quasi_atom_dists(self) -> list[float]:
+        return self.quasi_atom_dists[self.coord_quasi_atom_indices]
     
     def remove(self) -> None: 
         # remove this node from the current parent's children

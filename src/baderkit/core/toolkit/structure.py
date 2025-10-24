@@ -7,6 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 from pymatgen.core import Lattice, Species
 from pymatgen.core import Structure as PymatgenStructure
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Structure")
@@ -30,6 +31,10 @@ class Structure(PymatgenStructure):
         # relabel_sites method that doesn't exist in earlier versions of pymatgen
         for site in self:
             site.label = site.specie.symbol
+            
+        # cache for symmetry data
+        self._symmetry_data = None
+        self._last_symmetry_save = None
 
     @property
     def labels(self) -> list[str]:
@@ -154,6 +159,35 @@ class Structure(PymatgenStructure):
                 site.label = f"{label}_{idx + 1}"
 
         return self
+    
+    @property
+    def symmetry_data(self):
+        """
+
+        Returns
+        -------
+        TYPE
+            The pymatgen symmetry dataset for the Structure object
+
+        """
+        if self._symmetry_data is None or self._last_symmetry_save != tuple(self):
+            self._last_symmetry_save = tuple(self)
+            self._symmetry_data = SpacegroupAnalyzer(
+                self
+            ).get_symmetry_dataset()
+        return self._symmetry_data
+
+    @property
+    def equivalent_atoms(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The equivalent atoms in the Structure.
+
+        """
+        return self.symmetry_data.equivalent_atoms
 
     @staticmethod
     def merge_frac_coords(frac_coords):

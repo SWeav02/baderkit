@@ -21,15 +21,20 @@ class ElfRadiiTools:
             feature_labels: NDArray,
             feature_structure: Structure,
             covalent_symbol: str = "Z",
+            override_structure: Structure | None = None
             ):
         
         self.grid = grid
         self.cubic_coeffs = grid.cubic_spline_coeffs
         self.feature_structure = feature_structure
-        self.structure = grid.structure
         self.feature_labels = feature_labels
         self.covalent_symbol = covalent_symbol
         
+        if override_structure is None:
+            self.structure = grid.structure
+        else:
+            self.structure = override_structure
+            
         # NOTE: atom labels should correspond to labeled structure
     
     @cached_property
@@ -44,12 +49,12 @@ class ElfRadiiTools:
         return neighbor_indices, neighbor_dists, neighbor_images
     
     @cached_property
-    def atomic_radii(self):
+    def atom_elf_radii(self):
         
         # get nearest neighbor info
         neighbor_indices, neighbor_dists, neighbor_images = self.nearest_neighbors
         return get_elf_radii(
-            equivalent_atoms=self.grid.equivalent_atoms,
+            equivalent_atoms=self.structure.equivalent_atoms,
             data=self.cubic_coeffs,
             feature_labels=self.feature_labels,
             atom_frac_coords=self.structure.frac_coords,

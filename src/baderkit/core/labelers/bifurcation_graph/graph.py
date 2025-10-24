@@ -8,6 +8,7 @@ import itertools
 import numpy as np
 from numpy.typing import NDArray
 import plotly.graph_objects as go
+from pymatgen.analysis.local_env import CrystalNN
 
 from baderkit.core import Bader, Structure
 
@@ -47,10 +48,7 @@ class BifurcationGraph:
         self.basin_maxima_frac = basin_maxima_frac
         self.basin_charges = basin_charges
         self.basin_volumes = basin_volumes
-        self.crystalnn_kwargs = crystalnn_kwargs
-        
-        # optional radii parameter that must be set
-        self._atomic_radii = atomic_radii
+        self.cnn = CrystalNN(**crystalnn_kwargs)
 
     def __iter__(self):
         return iter(self.nodes)
@@ -91,10 +89,19 @@ class BifurcationGraph:
         return [i for i in self if not i.is_reducible and i.feature_type in (None, FeatureType.unknown)]
     
     @property
-    def atomic_radii(self):
-        if self._atomic_radii is None:
-            logging.warning("Radii must be set by a labeler or alternative method")
-        return self._atomic_radii
+    def quasi_atom_structure(self):
+        structure = self.structure.copy()
+        for node in self.get_feature_nodes(feature_types=FeatureType.bare_types):
+            structure.append(node.feature_type.dummy_species, node.average_frac_coords)
+        return structure
+    
+    @property
+    def _quasi_hatom_structure(self):
+        # same as above, but with H- dummy atoms for approximate radii in crystalNN
+        structure = self.structure.copy()
+        for node in self.get_feature_nodes(feature_types=FeatureType.bare_types):
+            structure.append("H-", node.average_frac_coords)
+        return structure
     
     def get_feature_nodes(self, feature_types: list[str]):
         return [i for i in self if not i.is_reducible and i.feature_type in feature_types]

@@ -14,7 +14,6 @@ import numpy as np
 from numpy.typing import NDArray
 from pymatgen.electronic_structure.core import Spin
 from pymatgen.io.vasp import VolumetricData
-from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from scipy.ndimage import label, spline_filter, zoom
 from scipy.spatial import Voronoi
 
@@ -147,7 +146,6 @@ class Grid(VolumetricData):
         self._point_dists = None
         self._max_point_dist = None
         self._grid_neighbor_transforms = None
-        self._symmetry_data = None
         self._maxima_mask = None
         self._minima_mask = None
 
@@ -499,34 +497,6 @@ class Grid(VolumetricData):
         volume = self.structure.volume
         number_of_voxels = self.ngridpts
         return number_of_voxels / volume
-
-    @property
-    def symmetry_data(self):
-        """
-
-        Returns
-        -------
-        TYPE
-            The pymatgen symmetry dataset for the Grid's Structure object
-
-        """
-        if self._symmetry_data is None:
-            self._symmetry_data = SpacegroupAnalyzer(
-                self.structure
-            ).get_symmetry_dataset()
-        return self._symmetry_data
-
-    @property
-    def equivalent_atoms(self) -> NDArray[int]:
-        """
-
-        Returns
-        -------
-        NDArray[int]
-            The equivalent atoms in the Structure.
-
-        """
-        return self.symmetry_data.equivalent_atoms
 
     @property
     def maxima_mask(self) -> NDArray[bool]:

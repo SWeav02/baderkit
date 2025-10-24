@@ -199,4 +199,3 @@ def get_elf_radii(
         
     return atomic_radii
     
-    

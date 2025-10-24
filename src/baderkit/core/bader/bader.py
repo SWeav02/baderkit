@@ -777,7 +777,7 @@ class Bader:
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
         atom_labels = basin_atoms[self.basin_labels]
 
-        return basin_atoms, basin_atom_dists, atom_labels
+        return basin_atoms[:-1], basin_atom_dists, atom_labels
 
     def run_atom_assignment(self):
         """
@@ -801,17 +801,16 @@ class Bader:
             structure
         )
 
-        # Sum up charges/volumes per atom in one shot. slice with -1 is necessary
-        # to prevent no negative value error
+        # Sum up charges/volumes per atom in one shot
         atom_charges = np.bincount(
-            basin_atoms[:-1], weights=self.basin_charges, minlength=len(structure)
+            basin_atoms, weights=self.basin_charges, minlength=len(structure)
         )
         atom_volumes = np.bincount(
-            basin_atoms[:-1], weights=self.basin_volumes, minlength=len(structure)
+            basin_atoms, weights=self.basin_volumes, minlength=len(structure)
         )
 
         # Store everything
-        self._basin_atoms = basin_atoms[:-1]
+        self._basin_atoms = basin_atoms
         self._basin_atom_dists = basin_atom_dists
         self._atom_labels = atom_labels
         self._atom_charges = atom_charges

@@ -2,6 +2,17 @@
 import numpy as np
 from numba import njit, prange
 
+@njit(cache=True, inline="always")
+def frac2cart_numba(
+    frac2cart,
+    i,j,k
+        ):
+    # I think this may be faster than using the standard matrix mult for some reason
+    ci = i * frac2cart[0][0] + j * frac2cart[1][0] + k * frac2cart[2][0]
+    cj = i * frac2cart[0][1] + j * frac2cart[1][1] + k * frac2cart[2][1]
+    ck = i * frac2cart[0][2] + j * frac2cart[1][2] + k * frac2cart[2][2]
+    return ci, cj, ck
+
 @njit(parallel=True, cache=True)
 def get_atom_nearest_neighbors(
         atom_frac_coords,
@@ -27,9 +38,7 @@ def get_atom_nearest_neighbors(
                     tj = fj + sj
                     tk = fk + sk
                     # convert to cartestian coord
-                    ci = ti * frac2cart[0][0] + tj * frac2cart[1][0] + tk * frac2cart[2][0]
-                    cj = ti * frac2cart[0][1] + tj * frac2cart[1][1] + tk * frac2cart[2][1]
-                    ck = ti * frac2cart[0][2] + tj * frac2cart[1][2] + tk * frac2cart[2][2]
+                    ci, cj, ck = frac2cart_numba(frac2cart, ti, tj, tk)
                     # compare distance to each neighbor
                     for j, (nci, ncj, nck) in enumerate(atom_cart_coords):
                         # skip if this is the current coord
@@ -69,9 +78,7 @@ def get_dists_to_atoms(
                 tj = fj + sj
                 tk = fk + sk
                 # convert to cartesian
-                ci = ti * frac2cart[0][0] + tj * frac2cart[1][0] + tk * frac2cart[2][0]
-                cj = ti * frac2cart[0][1] + tj * frac2cart[1][1] + tk * frac2cart[2][1]
-                ck = ti * frac2cart[0][2] + tj * frac2cart[1][2] + tk * frac2cart[2][2]
+                ci, cj, ck = frac2cart_numba(frac2cart, ti, tj, tk)
                 trans_cart_coords[trans_idx] = (ci, cj, ck)
                 trans_idx += 1
     
@@ -124,9 +131,7 @@ def check_covalent(
                 tj = fj + sj
                 tk = fk + sk
                 # convert to cartesian
-                ci = ti * frac2cart[0][0] + tj * frac2cart[1][0] + tk * frac2cart[2][0]
-                cj = ti * frac2cart[0][1] + tj * frac2cart[1][1] + tk * frac2cart[2][1]
-                ck = ti * frac2cart[0][2] + tj * frac2cart[1][2] + tk * frac2cart[2][2]
+                ci, cj, ck = frac2cart_numba(frac2cart, ti, tj, tk)
                 # calculate distance to each atom
                 for i, (ai, aj, ak) in enumerate(atom_cart_coords):
                     di = ai-ci
