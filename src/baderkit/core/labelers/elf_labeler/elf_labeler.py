@@ -11,6 +11,7 @@ from typing import TypeVar, Literal
 import numpy as np
 import plotly.graph_objects as go
 from numpy.typing import NDArray
+from pymatgen.io.vasp import Potcar
 
 from baderkit.core import Grid, Bader, Structure
 from baderkit.core.utilities.file_parsers import Format
@@ -223,7 +224,38 @@ class ElfLabeler(Bader):
     def feature_indices_by_type(self, feature_types: list[FeatureType | str]):
         return np.array([i for i, feat in enumerate(self.feature_types) if feat in feature_types], dtype=np.int64)
     
-    def get_atom_charges_and_volumes(
+    def get_oxidation_and_volumes_from_potcar(
+        self,
+        potcar_path: Path = "POTCAR",
+        use_quasi_atoms: bool = True,
+        **kwargs
+            ):
+        charges, volumes = self.get_atom_charges_and_volumes(use_quasi_atoms=use_quasi_atoms, **kwargs)
+        # convert to path
+        potcar_path = Path(potcar_path)
+        # load
+        potcars = Potcar.from_file(potcar_path)
+        nelectron_data = {}
+        # the result is a list because there can be multiple element potcars
+        # in the file (e.g. for NaCl, POTCAR = POTCAR_Na + POTCAR_Cl)
+        for potcar in potcars:
+            nelectron_data.update({potcar.element: potcar.nelectrons})
+        # calculate oxidation states
+        if use_quasi_atoms:
+            structure = self.quasi_atom_structure
+        else:
+            structure = self.structure
+        
+        oxi_state_data = []
+        for site, site_charge in zip(structure, charges):
+            element_str = site.specie.name
+            val_electrons = nelectron_data.get(element_str, 0.0)
+            oxi_state = val_electrons - site_charge
+            oxi_state_data.append(oxi_state)
+            
+        return np.array(oxi_state_data)
+    
+    def get_charges_and_volumes(
             self,
             splitting_method: Literal[
                 "weighted_dist",
