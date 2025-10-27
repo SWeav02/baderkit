@@ -43,20 +43,24 @@ class SpinElfLabeler:
         else:
             self._equal_spin = False
         # create spin up and spin down elf analyzer instances
-        self.elf_analyzer_up = ElfLabeler(
+        self.elf_labeler_up = ElfLabeler(
             reference_grid=self.reference_grid_up,
             charge_grid=self.charge_grid_up,
             **kwargs,
             )
         if not self._equal_spin:
-            self.elf_analyzer_down = ElfLabeler(
+            self.elf_labeler_down = ElfLabeler(
                 reference_grid=self.reference_grid_down, 
                 charge_grid=self.charge_grid_down, 
                 **kwargs,
                 )
         else:
-            self.elf_analyzer_down = self.elf_analyzer_up
+            self.elf_labeler_down = self.elf_labeler_up
         
+        
+        # calculated properties
+        self._labeled_structure = None
+        self._quasi_atom_structure = None
     
     ###########################################################################
     # Properties for spin up and spin down systems
@@ -68,32 +72,127 @@ class SpinElfLabeler:
         Shortcut to grid's structure object
         """
         structure = self.original_reference_grid.structure.copy()
-        structure.add_oxidation_state_by_guess()
         return structure
     
     @property
-    def labeled_structure_up(self) -> Structure:
-        return self.elf_analyzer_up.labeled_structure
-    
+    def labeled_structure(self) -> Structure:
+        """
+        The combined labeled structure from both the spin-up and spin-down system. Features
+        found at the same fractional coordinates are combined, while those at
+        different coordinates are labeled separately
+        """
+        if self._labeled_structure is None:
+            # start with only atoms
+            labeled_structure = self.structure.copy()
+            # get up and downs structures
+            structure_up = self.elf_labeler_up.labeled_structure
+            structure_down = self.elf_labeler_down.labeled_structure
+            # get species from the spin up system
+            new_species = []
+            new_coords = []
+            for site in structure_up[len(self.structure):]:
+                species = site.specie.symbol
+                # add frac coords no matter what
+                new_coords.append(site.frac_coords)
+                # if this site is in the spin-down structure, it exists in both and
+                # we add the site with the original species name
+                if site in structure_down:
+                    new_species.append(species)
+                else:
+                    # otherwise, we rename the species
+                    new_species.append(species+"u")
+            # do the same for the spin down system
+            for site in structure_down[len(self.structure):]:
+                # only add the structure if it didn't exist in the spin up system
+                if site not in structure_up:
+                    species = site.specie.symbol
+                    new_species.append(species+"d")
+                    new_coords.append(site.frac_coords)
+            # add our sites
+            for species, coords in zip(new_species, new_coords):
+                labeled_structure.append(species, coords)
+            self._labeled_structure = labeled_structure
+        return self._labeled_structure
+        
+
     @property
-    def labeled_structure_down(self) -> Structure:
-        return self.elf_analyzer_down.labeled_structure
-    
-    @property
-    def bifurcation_graph_up(self) -> BifurcationGraph:
-        return self.elf_analyzer_up.bifurcation_graph
-    
-    @property
-    def bifurcation_graph_down(self) -> BifurcationGraph:
-        return self.elf_analyzer_down.bifurcation_graph
-    
-    @property
-    def bifurcation_plot_up(self) -> go.Figure:
-        return self.elf_analyzer_up.bifurcation_plot
-    
-    @property
-    def bifurcation_plot_down(self) -> go.Figure:
-        return self.elf_analyzer_down.bifurcation_plot
+    def quasi_atom_structure(self) -> Structure:
+        """
+        The combined quasi atom structure from both the spin-up and spin-down system. Features
+        found at the same fractional coordinates are combined, while those at
+        different coordinates are labeled separately
+        """
+        if self._quasi_atom_structure is None:
+            # start with only atoms
+            labeled_structure = self.structure.copy()
+            # get up and downs structures
+            structure_up = self.elf_labeler_up.quasi_atom_structure
+            structure_down = self.elf_labeler_down.quasi_atom_structure
+            # get species from the spin up system
+            new_species = []
+            new_coords = []
+            for site in structure_up[len(self.structure):]:
+                species = site.specie.symbol
+                # add frac coords no matter what
+                new_coords.append(site.frac_coords)
+                # if this site is in the spin-down structure, it exists in both and
+                # we add the site with the original species name
+                if site in structure_down:
+                    new_species.append(species)
+                else:
+                    # otherwise, we rename the species
+                    new_species.append(species+"u")
+            # do the same for the spin down system
+            for site in structure_down[len(self.structure):]:
+                # only add the structure if it didn't exist in the spin up system
+                if site not in structure_up:
+                    species = site.specie.symbol
+                    new_species.append(species+"d")
+                    new_coords.append(site.frac_coords)
+            # add our sites
+            for species, coords in zip(new_species, new_coords):
+                labeled_structure.append(species, coords)
+            self._quasi_atom_structure = labeled_structure
+
+        return self._quasi_atom_structure
+                
+    def get_charges_and_volumes(
+            self,
+            use_quasi_atoms: bool = True,
+            **kwargs,
+            ):
+        # get the initial charges/volumes from the spin up system
+        charges, volumes = self.elf_labeler_up.get_charges_and_volumes(
+            use_quasi_atoms=use_quasi_atoms,
+            **kwargs
+            )
+        # convert to lists
+        charges = charges.tolist()
+        volumes = volumes.tolist()
+        
+        # get the charges from the spin down system
+        charges_down, volumes_down = self.elf_labeler_down.get_charges_and_volumes(
+            use_quasi_atoms=use_quasi_atoms,
+            **kwargs
+            )
+        # get structures from each system
+        if use_quasi_atoms:
+            structure_up = self.elf_labeler_up.quasi_atom_structure
+            structure_down = self.elf_labeler_down.quasi_atom_structure
+        else:
+            structure_up = self.structure
+            structure_down = self.structure
+        # add charge from spin down structure
+        for site, charge, volume in zip(structure_down, charges_down, volumes_down):
+            if site in structure_up:
+                index = structure_up.index(site)
+                charges[index] += charge
+                volumes[index] += volume
+            else:
+                charges.append(charge)
+                volumes.append(volume)
+        return np.array(charges), np.array(volumes)
+        
     
     def get_oxidation_and_volumes_from_potcar(
         self,
@@ -102,7 +201,7 @@ class SpinElfLabeler:
         **kwargs
             ):
         # get the charges/volumes
-        charges, volumes = self.get_atom_charges_and_volumes(use_quasi_atoms=use_quasi_atoms, **kwargs)
+        charges, volumes = self.get_charges_and_volumes(use_quasi_atoms=use_quasi_atoms, **kwargs)
         # convert to path
         potcar_path = Path(potcar_path)
         # load
@@ -117,21 +216,15 @@ class SpinElfLabeler:
             structure = self.quasi_atom_structure
         else:
             structure = self.structure
-        
+
         oxi_state_data = []
         for site, site_charge in zip(structure, charges):
-            element_str = site.specie.name
+            element_str = site.specie.symbol
             val_electrons = nelectron_data.get(element_str, 0.0)
             oxi_state = val_electrons - site_charge
             oxi_state_data.append(oxi_state)
             
         return np.array(oxi_state_data), charges, volumes
-    
-    def get_charges_and_volumes(
-            self,
-            **kwargs,
-            ):
-        pass
     
     
     def write_bifurcation_plots(self, filename: str | Path):
@@ -144,8 +237,8 @@ class SpinElfLabeler:
             filename_up = filename.with_name(f"{filename.name}_up")
             filename_down = filename.with_name(f"{filename.name}_down")
     
-        self.elf_analyzer_up.write_bifurcation_plot(filename_up)
-        self.elf_analyzer_down.write_bifurcation_plot(filename_down)
+        self.elf_labeler_up.write_bifurcation_plot(filename_up)
+        self.elf_labeler_down.write_bifurcation_plot(filename_down)
 
     
     ###########################################################################
