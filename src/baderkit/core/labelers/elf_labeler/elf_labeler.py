@@ -664,6 +664,7 @@ class ElfLabeler:
             include_dummy_atoms: bool = False,
             write_reference: bool = True,
             output_format: str | Format = None,
+            prefix_override: str = None,
             **writer_kwargs,
             ):
         """
@@ -686,6 +687,10 @@ class ElfLabeler:
             The format to write with. If None, writes to source format stored in
             the Grid objects metadata.
             Defaults to None.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
 
         Returns
         -------
@@ -709,6 +714,10 @@ class ElfLabeler:
         else:
             structure = self.structure
             
+        # get prefix
+        if prefix_override is None:
+            prefix_override = data_type.prefix
+            
         for feat_idx in feature_indices:
             basins = self.bader.feature_basins[feat_idx]
             # get mask where this feature is NOT
@@ -721,7 +730,7 @@ class ElfLabeler:
                 data={"total": data_array_copy},
                 data_type=data_type,
             )
-            file_path = directory / f"{grid.data_type.prefix}_f{feat_idx}"
+            file_path = directory / f"{prefix_override}_f{feat_idx}"
             # write file
             grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
             
@@ -732,6 +741,7 @@ class ElfLabeler:
             include_dummy_atoms: bool = False,
             write_reference: bool = True,
             output_format: str | Format = None,
+            prefix_override: str = None,
             **writer_kwargs,
             ):
         """
@@ -754,6 +764,10 @@ class ElfLabeler:
             The format to write with. If None, writes to source format stored in
             the Grid objects metadata.
             Defaults to None.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
         """
         # get the data to use
         if write_reference:
@@ -772,6 +786,10 @@ class ElfLabeler:
         else:
             structure = self.structure
             
+        # get prefix
+        if prefix_override is None:
+            prefix_override = data_type.prefix
+            
         # get all basin indices to include
         basin_list = []
         for feat_idx in feature_indices:
@@ -787,7 +805,7 @@ class ElfLabeler:
             data={"total": data_array_copy},
             data_type=data_type,
         )
-        file_path = directory / f"{grid.data_type.prefix}_fsum"
+        file_path = directory / f"{prefix_override}_fsum"
         # write file
         grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
 
