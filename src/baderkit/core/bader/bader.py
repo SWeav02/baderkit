@@ -10,6 +10,7 @@ from typing import Literal, TypeVar
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+from pymatgen.io.vasp import Potcar
 
 from .methods import Method
 from .methods.shared_numba import get_edges, get_min_avg_surface_dists
@@ -818,6 +819,43 @@ class Bader:
         logging.info("Atom Assignment Finished")
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0, 2)}")
+        
+    def get_oxidation_from_potcar(
+        self,
+        potcar_path: Path = "POTCAR"
+            ):
+        """
+        Calculates the oxidation state of each atom from the provided POTCAR
+        file.
+
+        Parameters
+        ----------
+        potcar_path : Path, optional
+            The path to the POTCAR to calculate oxidation states from. The default is "POTCAR".
+
+        Returns
+        -------
+        NDArray
+            The oxidation state of each atom in the structure.
+
+        """
+        # convert to path
+        potcar_path = Path(potcar_path)
+        # load
+        potcars = Potcar.from_file(potcar_path)
+        nelectron_data = {}
+        # the result is a list because there can be multiple element potcars
+        # in the file (e.g. for NaCl, POTCAR = POTCAR_Na + POTCAR_Cl)
+        for potcar in potcars:
+            nelectron_data.update({potcar.element: potcar.nelectrons})
+        # calculate oxidation states
+        oxi_state_data = []
+        for site, site_charge in zip(self.structure, self.atom_charges):
+            element_str = site.specie.name
+            oxi_state = nelectron_data[element_str] - site_charge
+            oxi_state_data.append(oxi_state)
+            
+        return np.array(oxi_state_data)
 
     def _get_atom_surface_distances(self):
         """
