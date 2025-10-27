@@ -9,11 +9,10 @@ import logging
 from typing import TypeVar
 
 import numpy as np
-import plotly.graph_objects as go
+from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
 
 from baderkit.core import Grid, Structure
-from baderkit.core.labelers.bifurcation_graph import BifurcationGraph
 
 from .elf_labeler import ElfLabeler
 
@@ -61,9 +60,10 @@ class SpinElfLabeler:
         # calculated properties
         self._labeled_structure = None
         self._quasi_atom_structure = None
+        self._average_atom_elf_radii = None
     
     ###########################################################################
-    # Properties for spin up and spin down systems
+    # Properties combining spin up and spin down systems
     ###########################################################################
     
     @property
@@ -73,6 +73,15 @@ class SpinElfLabeler:
         """
         structure = self.original_reference_grid.structure.copy()
         return structure
+    
+    @property
+    def average_atom_elf_radii(self) -> NDArray[np.float64]:
+        if self._average_atom_elf_radii is None:
+            # get the atomic radii from the spin up/down systems
+            spin_up_radii = self.elf_labeler_up.atom_elf_radii
+            spin_down_radii = self.elf_labeler_down.atom_elf_radii
+            self._average_atom_elf_radii = (spin_up_radii + spin_down_radii) / 2
+        return self._average_atom_elf_radii
     
     @property
     def labeled_structure(self) -> Structure:
