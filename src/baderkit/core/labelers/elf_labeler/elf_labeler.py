@@ -65,7 +65,7 @@ def forward_kwargs_doc(from_func):
     return decorator
 
 
-class ElfLabeler(Bader):
+class ElfLabeler:
     """
     A class for finding electride sites from an ELFCAR.
     """
@@ -74,6 +74,8 @@ class ElfLabeler(Bader):
 
     def __init__(
         self,
+        charge_grid: Grid,
+        reference_grid: Grid,
         ignore_low_pseudopotentials: bool = False,
         shared_shell_ratio: float = 1/3,
         combine_shells: bool = True,
@@ -87,10 +89,12 @@ class ElfLabeler(Bader):
         crystalnn_kwargs: dict = {"distance_cutoffs":None},
         **kwargs
     ):
-        super().__init__(**kwargs)
         # ensure the reference file is ELF
-        if self.reference_grid.data_type != "elf":
+        if reference_grid.data_type != "elf":
             logging.warning("A non-ELF reference file has been detected. Results may not be valid.")
+        
+        self.charge_grid = charge_grid
+        self.reference_grid = reference_grid
         
         self.ignore_low_pseudopotentials = ignore_low_pseudopotentials
         self.crystalnn_kwargs = crystalnn_kwargs
@@ -119,6 +123,13 @@ class ElfLabeler(Bader):
         
         self._feature_labels = None
         self._feature_structure = None
+        
+        # create a bader object
+        self.bader = Bader(
+            charge_grid=charge_grid,
+            reference_grid=reference_grid,
+            **kwargs
+            )
 
     ###########################################################################
     # Calculated Properties
@@ -126,8 +137,16 @@ class ElfLabeler(Bader):
     # TODO: Make these reset on a change similar to the Bader class
     
     @property
+    def structure(self) -> Structure:
+        return self.reference_grid.structure
+    
+    @property
     def quasi_atom_structure(self) -> Structure:
         return self.bifurcation_graph.quasi_atom_structure
+    
+    @property
+    def labeled_structure(self) -> Structure:
+        return self.bifurcation_graph.labeled_structure
     
     @property
     def bifurcations(self) -> dict:
@@ -230,7 +249,7 @@ class ElfLabeler(Bader):
         use_quasi_atoms: bool = True,
         **kwargs
             ):
-        charges, volumes = self.get_atom_charges_and_volumes(use_quasi_atoms=use_quasi_atoms, **kwargs)
+        charges, volumes = self.get_charges_and_volumes(use_quasi_atoms=use_quasi_atoms, **kwargs)
         # convert to path
         potcar_path = Path(potcar_path)
         # load
@@ -253,7 +272,7 @@ class ElfLabeler(Bader):
             oxi_state = val_electrons - site_charge
             oxi_state_data.append(oxi_state)
             
-        return np.array(oxi_state_data)
+        return np.array(oxi_state_data), charges, volumes
     
     def get_charges_and_volumes(
             self,
@@ -265,6 +284,7 @@ class ElfLabeler(Bader):
                 "nearest"
                 ] = "pauling",
             use_quasi_atoms: bool = True,
+            **kwargs,
             ):
         """
         Assign charge from each feature to their associated atoms. For features
@@ -421,7 +441,7 @@ class ElfLabeler(Bader):
             ):
 
         # Get the original basin atom assignments
-        basin_atoms = self.basin_atoms
+        basin_atoms = self.bader.basin_atoms
         
         # get indices of requested type
         feature_indices = self.feature_indices_by_type(included_features)
@@ -438,7 +458,7 @@ class ElfLabeler(Bader):
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
         
         # reassign labels
-        feature_labels = basin_atoms[self.basin_labels]
+        feature_labels = basin_atoms[self.bader.basin_labels]
         
         # get corresponding structure if requested
         if return_structure:
@@ -547,7 +567,7 @@ class ElfLabeler(Bader):
         
         # collect frac coords and map basin labels to features
         frac_coords = [i.average_frac_coords for i in nodes]
-        feature_map = np.empty(len(self.basin_maxima_frac), dtype=np.uint32)
+        feature_map = np.empty(len(self.bader.basin_maxima_frac), dtype=np.uint32)
         for node_idx, node in enumerate(nodes):
             feature_map[node.basins] = node_idx
 
@@ -555,15 +575,15 @@ class ElfLabeler(Bader):
         neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
 
         edge_mask = get_feature_edges(
-            labeled_array=self.basin_labels,
+            labeled_array=self.bader.basin_labels,
             feature_map=feature_map,
             neighbor_transforms = neighbor_transforms,
-            vacuum_mask=self.vacuum_mask,
+            vacuum_mask=self.bader.vacuum_mask,
             )
         
         # calculate the minimum and average distance to each features surface
         min_dists, avg_dists = get_min_avg_feat_surface_dists(
-            labels=self.basin_labels,
+            labels=self.bader.basin_labels,
             feature_map=feature_map,
             frac_coords=np.array(frac_coords, dtype=np.float64),
             edge_mask=edge_mask,
@@ -584,6 +604,7 @@ class ElfLabeler(Bader):
         cls,
         charge_filename: Path | str = "CHGCAR",
         reference_filename: Path | str = "ELFCAR",
+        total_only: bool = True,
         **kwargs,
     ) -> Self:
         """
@@ -597,8 +618,13 @@ class ElfLabeler(Bader):
         reference_filename : Path | str
             The path to ELFCAR like file that will be used for partitioning.
             If None, the charge file will be used for partitioning.
+        total_only: bool
+            If true, only the first set of data in the file will be read. This
+            increases speed and reduced memory usage as the other data is typically
+            not used.
+            Defaults to True.
         **kwargs : dict
-            Keyword arguments to pass to the Bader class.
+            Keyword arguments to pass to the Labeler class.
 
         Returns
         -------
@@ -608,11 +634,14 @@ class ElfLabeler(Bader):
         """
         # This is just a wrapper of the Bader class to update the default to
         # load the ELFCAR
-        return super().from_vasp(
-            charge_filename=charge_filename,
-            reference_filename=reference_filename,
-            **kwargs
-            )
+        charge_grid = Grid.from_vasp(charge_filename, total_only=total_only)
+        if reference_filename is None:
+            reference_grid = None
+        else:
+            reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
+
+        return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
+    
     
     ###########################################################################
     # Methods for writing results
@@ -681,9 +710,9 @@ class ElfLabeler(Bader):
             structure = self.structure
             
         for feat_idx in feature_indices:
-            basins = self.feature_basins[feat_idx]
+            basins = self.bader.feature_basins[feat_idx]
             # get mask where this feature is NOT
-            mask = np.isin(self.basin_labels, basins, invert=True)
+            mask = np.isin(self.bader.basin_labels, basins, invert=True)
             # copy data to avoid overwriting. Set data off of basin to 0
             data_array_copy = data_array.copy()
             data_array_copy[mask] = 0.0
@@ -749,7 +778,7 @@ class ElfLabeler(Bader):
             basin_list.extend(self.feature_basins[feat_idx])
 
         # get mask where features are not
-        mask = np.isin(self.basin_labels, basin_list, invert=True)
+        mask = np.isin(self.bader.basin_labels, basin_list, invert=True)
         # copy data to avoid overwriting. Set data off of basin to 0
         data_array_copy = data_array.copy()
         data_array_copy[mask] = 0.0
@@ -846,7 +875,7 @@ class ElfLabeler(Bader):
         # run bader for nice looking logging purposes
         # NOTE: I call a property rather than run_bader/run_atom_assignment to
         # avoid repeat calcs if we've already run
-        self.atom_labels 
+        self.bader.atom_labels 
         
         logging.info("Beginning ELF Analysis")
 

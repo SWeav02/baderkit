@@ -10,6 +10,7 @@ from typing import TypeVar
 
 import numpy as np
 import plotly.graph_objects as go
+from pymatgen.io.vasp import Potcar
 
 from baderkit.core import Grid, Structure
 from baderkit.core.labelers.bifurcation_graph import BifurcationGraph
@@ -71,12 +72,12 @@ class SpinElfLabeler:
         return structure
     
     @property
-    def feature_structure_up(self) -> Structure:
-        return self.elf_analyzer_up.feature_structure
+    def labeled_structure_up(self) -> Structure:
+        return self.elf_analyzer_up.labeled_structure
     
     @property
-    def feature_structure_down(self) -> Structure:
-        return self.elf_analyzer_down.feature_structure
+    def labeled_structure_down(self) -> Structure:
+        return self.elf_analyzer_down.labeled_structure
     
     @property
     def bifurcation_graph_up(self) -> BifurcationGraph:
@@ -94,7 +95,46 @@ class SpinElfLabeler:
     def bifurcation_plot_down(self) -> go.Figure:
         return self.elf_analyzer_down.bifurcation_plot
     
-    def write_plots(self, filename: str | Path):
+    def get_oxidation_and_volumes_from_potcar(
+        self,
+        potcar_path: Path = "POTCAR",
+        use_quasi_atoms: bool = True,
+        **kwargs
+            ):
+        # get the charges/volumes
+        charges, volumes = self.get_atom_charges_and_volumes(use_quasi_atoms=use_quasi_atoms, **kwargs)
+        # convert to path
+        potcar_path = Path(potcar_path)
+        # load
+        potcars = Potcar.from_file(potcar_path)
+        nelectron_data = {}
+        # the result is a list because there can be multiple element potcars
+        # in the file (e.g. for NaCl, POTCAR = POTCAR_Na + POTCAR_Cl)
+        for potcar in potcars:
+            nelectron_data.update({potcar.element: potcar.nelectrons})
+        # calculate oxidation states
+        if use_quasi_atoms:
+            structure = self.quasi_atom_structure
+        else:
+            structure = self.structure
+        
+        oxi_state_data = []
+        for site, site_charge in zip(structure, charges):
+            element_str = site.specie.name
+            val_electrons = nelectron_data.get(element_str, 0.0)
+            oxi_state = val_electrons - site_charge
+            oxi_state_data.append(oxi_state)
+            
+        return np.array(oxi_state_data), charges, volumes
+    
+    def get_charges_and_volumes(
+            self,
+            **kwargs,
+            ):
+        pass
+    
+    
+    def write_bifurcation_plots(self, filename: str | Path):
         filename = Path(filename)
     
         if filename.suffix:

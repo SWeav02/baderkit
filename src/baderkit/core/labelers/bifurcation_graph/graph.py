@@ -103,6 +103,14 @@ class BifurcationGraph:
             structure.append("H-", node.average_frac_coords)
         return structure
     
+    @property
+    def labeled_structure(self):
+        structure = self.structure.copy()
+        for node in self.irreducible_nodes:
+            structure.append(node.feature_type.dummy_species, node.average_frac_coords)
+        return structure
+    
+    
     def get_feature_nodes(self, feature_types: list[str]):
         return [i for i in self if not i.is_reducible and i.feature_type in feature_types]
     
@@ -174,13 +182,13 @@ class BifurcationGraph:
         # get mask where potential saddle points connecting domains exist
         bif_mask = find_potential_saddle_points(
             data=reference_grid.total,
-            edge_mask=labeler.basin_edges,
+            edge_mask=labeler.bader.basin_edges,
             greater=True
             )
         
         # get the basins connected at these points
         lower_points, upper_points, connection_values = find_domain_connections(
-            basin_labels=labeler.basin_labels,
+            basin_labels=labeler.bader.basin_labels,
             data=reference_grid.total,
             bif_mask=bif_mask,
             neighbor_transforms=neighbor_transforms,
@@ -190,7 +198,7 @@ class BifurcationGraph:
         bif_mask = None
 
         # add maxima values as the points each basin "connects" to itself
-        basin_maxima = labeler.basin_maxima_ref_values
+        basin_maxima = labeler.bader.basin_maxima_ref_values
         basin_indices = np.arange(len(basin_maxima))
         lower_points = np.append(lower_points, basin_indices)
         upper_points = np.append(upper_points, basin_indices)
@@ -208,10 +216,10 @@ class BifurcationGraph:
         # get values of connections
         connection_values = connection_values[unique_indices]
         
-        basin_maxima_grid = np.round(labeler.reference_grid.frac_to_grid(labeler.basin_maxima_frac)).astype(np.int64)
+        basin_maxima_grid = np.round(labeler.reference_grid.frac_to_grid(labeler.bader.basin_maxima_frac)).astype(np.int64)
         basin_maxima_grid %= labeler.reference_grid.shape
         
-        basin_maxima_ref_values=labeler.basin_maxima_ref_values
+        basin_maxima_ref_values=labeler.bader.basin_maxima_ref_values
         
         (
             domain_basins,
@@ -254,7 +262,7 @@ class BifurcationGraph:
         # possible saddle points where voids between domains first connect
         bif_mask = find_potential_saddle_points(
             data=reference_grid.total,
-            edge_mask=labeler.basin_edges,
+            edge_mask=labeler.bader.basin_edges,
             greater=False
             )
         # get the possible values and clear mask
@@ -286,9 +294,9 @@ class BifurcationGraph:
                 domain_parents=domain_parents,
                 atom_grid_coords=atom_grid_coords,
                 neighbor_transforms=neighbor_transforms,
-                basin_labels=labeler.basin_labels,
+                basin_labels=labeler.bader.basin_labels,
                 data=reference_grid.total,
-                num_basins=len(labeler.basin_maxima_frac),
+                num_basins=len(labeler.bader.basin_maxima_frac),
                 )
         t2 = time.time()
         logging.info(f"Time: {round(t2-t1, 2)}")
@@ -299,9 +307,9 @@ class BifurcationGraph:
         graph = cls(
             structure=labeler.structure,
             labeler_type=labeler.__class__.__name__,
-            basin_maxima_frac=labeler.basin_maxima_frac,
-            basin_charges=labeler.basin_charges,
-            basin_volumes=labeler.basin_volumes,
+            basin_maxima_frac=labeler.bader.basin_maxima_frac,
+            basin_charges=labeler.bader.basin_charges,
+            basin_volumes=labeler.bader.basin_volumes,
             crystalnn_kwargs=labeler.crystalnn_kwargs,
             )
         node_keys = []
