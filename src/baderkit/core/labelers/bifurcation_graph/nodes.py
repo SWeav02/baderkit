@@ -439,7 +439,7 @@ class IrreducibleNode(NodeBase):
         return self._avg_surface_dist
     
     @property
-    def coord_num(self) -> int:
+    def coord_number(self) -> int:
         return len(self.coord_atom_indices)
     
     @property
@@ -466,6 +466,10 @@ class IrreducibleNode(NodeBase):
     @property
     def coord_atom_dists(self) -> list[float]:
         return self.atom_dists[self.coord_atom_indices]
+    
+    @property
+    def quasi_coord_number(self) -> int:
+        return len(self.coord_quasi_atom_indices)
     
     @property
     def coord_quasi_atom_indices(self) -> list[int]:
