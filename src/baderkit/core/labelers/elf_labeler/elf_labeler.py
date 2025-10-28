@@ -43,26 +43,6 @@ Self = TypeVar("Self", bound="ElfLabeler")
     
 # TODO: add convenience properties/methods for getting information about different
 # assignments
-import inspect
-import textwrap
-
-def forward_kwargs_doc(from_func):
-    """
-    Decorator to copy the keyword-argument section of another function's docstring.
-    """
-    def decorator(func):
-        base_doc = func.__doc__ or ""
-        source_doc = inspect.getdoc(from_func) or ""
-        # Try to extract the **Parameters** section for nice alignment (NumPy-style)
-        if "Parameters" in source_doc:
-            merged = base_doc + "\n\n" + textwrap.dedent(
-                source_doc.split("Parameters", 1)[1]
-            )
-            func.__doc__ = merged
-        else:
-            func.__doc__ = base_doc + "\n\n" + source_doc
-        return func
-    return decorator
 
 
 class ElfLabeler:
@@ -809,7 +789,6 @@ class ElfLabeler:
         # write file
         grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
 
-    @forward_kwargs_doc(write_feature_basins)
     def write_all_features(self, **kwargs):
         """
         Writes the bader basins associated with all features

@@ -58,6 +58,7 @@ class Bader:
         vacuum_tol: float | bool = 1.0e-3,
         normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
+        **kwargs,
     ):
 
         # ensure th method is valid

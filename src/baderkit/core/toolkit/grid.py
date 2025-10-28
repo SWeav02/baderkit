@@ -450,8 +450,7 @@ class Grid(VolumetricData):
     def grid_neighbor_transforms(self) -> list:
         """
         The transforms for translating a grid index to neighboring unit
-        cells. This is necessary for the many voxels that will not be directly
-        within an atoms partitioning.
+        cells.
 
         Returns
         -------
@@ -661,7 +660,7 @@ class Grid(VolumetricData):
         frac_coords = np.column_stack((x_pts, y_pts, z_pts))
         return self.values_at(frac_coords, method)
 
-    def get_box_around_point(self, point: NDArray, neighbor_size: int = 1) -> NDArray:
+    def cubic_slice(self, point: NDArray, neighbor_size: int = 1) -> NDArray:
         """
         Gets a box around a given point taking into account wrapping at cell
         boundaries.
@@ -669,7 +668,7 @@ class Grid(VolumetricData):
         Parameters
         ----------
         point : NDArray
-            The indices of the point to get a box around.
+            The grid indices of the point to get a box around.
         neighbor_size : int, optional
             The size of the box on either side of the point. The default is 1.
 
