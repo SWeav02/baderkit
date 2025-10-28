@@ -51,6 +51,7 @@ class ElfLabeler:
     """
     
     _labeled_covalent = False
+    _spin_system = "total"
 
     def __init__(
         self,

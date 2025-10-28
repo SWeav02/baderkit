@@ -19,6 +19,9 @@ from .elf_labeler import ElfLabeler
 Self = TypeVar("Self", bound="ElfLabeler")
 
 class SpinElfLabeler:
+    
+    _spin_system = "separate"
+    
     def __init__(
             self,
             charge_grid: Grid,
@@ -53,8 +56,12 @@ class SpinElfLabeler:
                 charge_grid=self.charge_grid_down, 
                 **kwargs,
                 )
+            self.elf_labeler_up._spin_system = "up"
+            self.elf_labeler_down._spin_system = "down"
         else:
             self.elf_labeler_down = self.elf_labeler_up
+            self.elf_labeler_up._spin_system = "half" # same up/down
+        
         
         
         # calculated properties
@@ -109,13 +116,13 @@ class SpinElfLabeler:
                     new_species.append(species)
                 else:
                     # otherwise, we rename the species
-                    new_species.append(species+"u")
+                    new_species.append(species+"xu")
             # do the same for the spin down system
             for site in structure_down[len(self.structure):]:
                 # only add the structure if it didn't exist in the spin up system
                 if site not in structure_up:
                     species = site.specie.symbol
-                    new_species.append(species+"d")
+                    new_species.append(species+"xd")
                     new_coords.append(site.frac_coords)
             # add our sites
             for species, coords in zip(new_species, new_coords):
@@ -150,13 +157,13 @@ class SpinElfLabeler:
                     new_species.append(species)
                 else:
                     # otherwise, we rename the species
-                    new_species.append(species+"u")
+                    new_species.append(species+"xu")
             # do the same for the spin down system
             for site in structure_down[len(self.structure):]:
                 # only add the structure if it didn't exist in the spin up system
                 if site not in structure_up:
                     species = site.specie.symbol
-                    new_species.append(species+"d")
+                    new_species.append(species+"xd")
                     new_coords.append(site.frac_coords)
             # add our sites
             for species, coords in zip(new_species, new_coords):
@@ -170,6 +177,11 @@ class SpinElfLabeler:
             use_quasi_atoms: bool = True,
             **kwargs,
             ):
+        """
+        NOTE: Volumes may not have a physical meaning when differences are found
+        between spin up/down systems. They are calculated as the average between
+        the systems.
+        """
         # get the initial charges/volumes from the spin up system
         charges, volumes = self.elf_labeler_up.get_charges_and_volumes(
             use_quasi_atoms=use_quasi_atoms,
@@ -200,7 +212,7 @@ class SpinElfLabeler:
             else:
                 charges.append(charge)
                 volumes.append(volume)
-        return np.array(charges), np.array(volumes)
+        return np.array(charges), np.array(volumes) / 2
         
     
     def get_oxidation_and_volumes_from_potcar(
@@ -209,6 +221,10 @@ class SpinElfLabeler:
         use_quasi_atoms: bool = True,
         **kwargs
             ):
+        """
+        NOTE: Volumes may not have a physical meaning when differences are found
+        between spin up/down systems
+        """
         # get the charges/volumes
         charges, volumes = self.get_charges_and_volumes(use_quasi_atoms=use_quasi_atoms, **kwargs)
         # convert to path
