@@ -745,7 +745,7 @@ class Grid(VolumetricData):
         # return new_x, new_y, new_z
         return sphere_indices
 
-    def get_transformation_in_radius(self, radius: float) -> NDArray[int]:
+    def get_transformations_in_radius(self, radius: float) -> NDArray[int]:
         """
         Gets the transformations required to move from a point to the points
         surrounding it within the provided radius

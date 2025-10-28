@@ -48,6 +48,7 @@ class BifurcationGraph:
         self.basin_maxima_frac = basin_maxima_frac
         self.basin_charges = basin_charges
         self.basin_volumes = basin_volumes
+        self.crystalnn_kwargs = crystalnn_kwargs
         self.cnn = CrystalNN(**crystalnn_kwargs)
 
     def __iter__(self):
