@@ -4,7 +4,7 @@
 Contains the main class for running elf topology analysis.
 """
 
-from functools import cached_property
+import warnings
 import logging
 import math
 from pathlib import Path
@@ -304,7 +304,8 @@ class ElfLabeler:
         # convert to path
         potcar_path = Path(potcar_path)
         # load
-        potcars = Potcar.from_file(potcar_path)
+        with warnings.catch_warnings(record=True):
+            potcars = Potcar.from_file(potcar_path)
         nelectron_data = {}
         # the result is a list because there can be multiple element potcars
         # in the file (e.g. for NaCl, POTCAR = POTCAR_Na + POTCAR_Cl)

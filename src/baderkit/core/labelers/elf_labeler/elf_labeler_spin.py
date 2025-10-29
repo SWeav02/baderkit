@@ -4,6 +4,7 @@
 Extends the ElfLabeler to spin polarized calculations
 """
 
+import warnings
 from pathlib import Path
 import logging
 from typing import TypeVar
@@ -61,7 +62,6 @@ class SpinElfLabeler:
         else:
             self.elf_labeler_down = self.elf_labeler_up
             self.elf_labeler_up._spin_system = "half" # same up/down
-        
         
         
         # calculated properties
@@ -273,7 +273,8 @@ class SpinElfLabeler:
         # convert to path
         potcar_path = Path(potcar_path)
         # load
-        potcars = Potcar.from_file(potcar_path)
+        with warnings.catch_warnings(record=True):
+            potcars = Potcar.from_file(potcar_path)
         nelectron_data = {}
         # the result is a list because there can be multiple element potcars
         # in the file (e.g. for NaCl, POTCAR = POTCAR_Na + POTCAR_Cl)
