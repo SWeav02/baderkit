@@ -1,8 +1,20 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
+@njit(cache=True, inline="always")
+def dist(p1, p2):
+    x, y, z = p1
+    x1, y1, z1 = p2
+    return ((x1-x)**2 + (y1-y)**2 + (z1-z)**2) ** (0.5)
+
+@njit(cache=True, parallel=True, inline="always")
+def mutiple_dists(p1s, p2s):
+    dists = np.empty(len(p1s), dtype=np.float64)
+    for idx in prange(len(p1s)):
+        dists[idx] = dist(p1s[idx], p2s[idx])
+    return dists
 
 @njit(cache=True, inline="always")
 def wrap_point(

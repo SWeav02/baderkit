@@ -4,6 +4,7 @@
 Contains the main class for running elf topology analysis.
 """
 
+from functools import cached_property
 import logging
 import math
 from pathlib import Path
@@ -12,11 +13,13 @@ import numpy as np
 import plotly.graph_objects as go
 from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
+from pymatgen.analysis.local_env import CrystalNN
 
 from baderkit.core import Grid, Bader, Structure
 from baderkit.core.utilities.file_parsers import Format
 from baderkit.core.utilities.coord_env import check_all_covalent
 from baderkit.core.labelers.bifurcation_graph import BifurcationGraph, DomainSubtype, FeatureType
+from baderkit.core.utilities.basic import mutiple_dists
 
 from .elf_radii import ElfRadiiTools
 from .elf_labeler_numba import get_feature_edges, get_min_avg_feat_surface_dists
@@ -79,6 +82,7 @@ class ElfLabeler:
         
         self.ignore_low_pseudopotentials = ignore_low_pseudopotentials
         self.crystalnn_kwargs = crystalnn_kwargs
+        self.cnn = CrystalNN(**crystalnn_kwargs)
         
         # define cutoff variables
         # TODO: These should be hidden variables to allow for setter methods
@@ -100,7 +104,11 @@ class ElfLabeler:
         self._bifurcation_graph = None
         self._bifurcation_plot = None
         self._atom_elf_radii = None
+        self._atom_elf_radii_types = None
         self._quasi_atom_elf_radii = None
+        self._atom_nn_elf_radii = None
+        self._atom_nn_elf_radii_types = None
+        self._nearest_neighbor_data = None
         
         self._feature_labels = None
         self._feature_structure = None
@@ -115,25 +123,11 @@ class ElfLabeler:
     ###########################################################################
     # Calculated Properties
     ###########################################################################
-    # TODO: Make these reset on a change similar to the Bader class
+    # TODO: Make these reset on a change similar to the Bader class. Add docs
     
-    @property
-    def structure(self) -> Structure:
-        return self.reference_grid.structure
-    
-    @property
-    def quasi_atom_structure(self) -> Structure:
-        return self.bifurcation_graph.quasi_atom_structure
-    
-    @property
-    def labeled_structure(self) -> Structure:
-        return self.bifurcation_graph.labeled_structure
-    
-    @property
-    def bifurcations(self) -> dict:
-        if self._bifurcations is None:
-            self._bifurcations = self._get_bifurcations()
-        return self._bifurcations
+    ###########################################################################
+    # Bifurcation Properties
+    ###########################################################################
     
     @property
     def bifurcation_graph(self) -> BifurcationGraph:
@@ -147,6 +141,55 @@ class ElfLabeler:
             self._bifurcation_plot = self.bifurcation_graph.get_plot()
         return self._bifurcation_plot
     
+    ###########################################################################
+    # Atom Properties
+    ###########################################################################
+    @property
+    def structure(self) -> Structure:
+        return self.reference_grid.structure
+    
+    @property
+    def quasi_atom_structure(self) -> Structure:
+        return self.bifurcation_graph.quasi_atom_structure
+    
+    @property
+    def labeled_structure(self) -> Structure:
+        return self.bifurcation_graph.labeled_structure
+    
+    @property
+    def nearest_neighbor_data(self):
+        if self._nearest_neighbor_data is None:
+            # get nearest neighbors for all atoms in structure
+            nearest_neighs = self.cnn.get_all_nn_info(self.structure)
+            # we just want the species and frac coords of each atom's neighbors
+            sites = []
+            neighs = []
+            frac_coords = []
+            cart_coords = []
+            for site_idx, neigh_list in enumerate(nearest_neighs):
+                for neigh_dict in neigh_list:
+                    sites.append(site_idx)
+                    neighs.append(neigh_dict["site_index"])
+                    frac_coords.append(neigh_dict["site"].frac_coords)
+                    cart_coords.append(neigh_dict["site"].coords)
+            # convert to arrays
+            sites = np.array(sites, dtype=np.uint32)
+            neighs = np.array(neighs, dtype=np.uint32)
+            frac_coords = np.array(frac_coords, dtype=np.float64)
+            cart_coords = np.array(cart_coords, dtype=np.float64)
+            # calculate distances (since pymatgen doesn't include these in the
+            # summary for some reason)
+            site_cart_coords = self.structure.cart_coords[sites]
+            dists = mutiple_dists(site_cart_coords, cart_coords)
+            
+            self._nearest_neighbor_data = (
+                sites,
+                neighs,
+                frac_coords,
+                dists
+                )
+        return self._nearest_neighbor_data
+    
     @property
     def atom_elf_radii(self) -> NDArray[np.float64]:
         if self._atom_elf_radii is None:
@@ -155,12 +198,39 @@ class ElfLabeler:
         return self._atom_elf_radii
     
     @property
+    def atom_elf_radii_types(self) -> NDArray[np.float64]:
+        if self._atom_elf_radii_types is None:
+            # run labeling and radii calc by calling our bifurcation graph
+            self.bifurcation_graph
+        return np.where(self._atom_elf_radii_types, "covalent", "ionic")
+    
+    @property
     def quasi_atom_elf_radii(self) -> NDArray[np.float64]:
         if self._quasi_atom_elf_radii is None:
             # make sure labeled bifurcation graph exists
             self.bifurcation_graph
             self._get_quasi_atom_elf_radii()
         return self._quasi_atom_elf_radii
+    
+    @property
+    def atom_nn_elf_radii(self) -> NDArray[np.float64]:
+        if self._atom_nn_elf_radii is None:
+            # make sure labeled bifurcation graph exists
+            self.bifurcation_graph
+            self._get_nn_atom_elf_radii()
+        return self._atom_nn_elf_radii
+    
+    @property
+    def atom_nn_elf_radii_types(self) -> NDArray[np.float64]:
+        if self._atom_nn_elf_radii_types is None:
+            # make sure labeled bifurcation graph exists
+            self.bifurcation_graph
+            self._get_nn_atom_elf_radii()
+        return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
+    
+    ###########################################################################
+    # Feature Properties
+    ###########################################################################
     
     def _get_feature_properties(self, property_name: str):
         features = []
@@ -518,6 +588,7 @@ class ElfLabeler:
             )
         self.bifurcation_graph._atom_elf_radii = radii_tools.atom_elf_radii
         self._atom_elf_radii = radii_tools.atom_elf_radii
+        self._atom_elf_radii_types = radii_tools.atom_elf_radii_types
         
     def _get_quasi_atom_elf_radii(self):
         if not self._labeled_covalent:
@@ -538,6 +609,32 @@ class ElfLabeler:
             )
         self.bifurcation_graph._atom_elf_radii = radii_tools.atom_elf_radii
         self._quasi_atom_elf_radii = radii_tools.atom_elf_radii
+        
+    def _get_nn_atom_elf_radii(self):
+        if not self._labeled_covalent:
+            raise Exception("Covalent features must be labeled for reliable radii.")
+        
+        # First we get our neighbor arrays
+        site_indices, neigh_indices, neigh_frac_coords, neigh_dists = self.nearest_neighbor_data
+
+        # Now we get a labeled structure including covalent, metallic, and bare
+        # electron features
+        included_types = FeatureType.valence_types.copy()
+        feature_labels, feature_structure = self.get_feature_labels(included_features=included_types)
+
+        # Calculate all radii
+        radii_tools = ElfRadiiTools(
+            grid=self.reference_grid,
+            feature_labels=feature_labels,
+            feature_structure=feature_structure,
+            override_structure=self.quasi_atom_structure
+            )
+        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = radii_tools.get_all_neigh_elf_radii_and_type(
+            site_indices, 
+            neigh_indices, 
+            neigh_frac_coords, 
+            neigh_dists,
+            )
         
     def _calculate_feature_surface_dists(self):
         # Calculate the minimum and average distance from each irreducible features

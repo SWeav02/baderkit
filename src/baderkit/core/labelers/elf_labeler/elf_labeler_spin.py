@@ -20,7 +20,7 @@ Self = TypeVar("Self", bound="ElfLabeler")
 
 class SpinElfLabeler:
     
-    _spin_system = "separate"
+    _spin_system = "combined"
     
     def __init__(
             self,
@@ -67,7 +67,11 @@ class SpinElfLabeler:
         # calculated properties
         self._labeled_structure = None
         self._quasi_atom_structure = None
-        self._average_atom_elf_radii = None
+        self._atom_elf_radii = None
+        self._atom_elf_radii_types = None
+        self._atom_nn_elf_radii = None
+        self._atom_nn_elf_radii_types = None
+        self._nearest_neighbor_data = None
     
     ###########################################################################
     # Properties combining spin up and spin down systems
@@ -82,13 +86,52 @@ class SpinElfLabeler:
         return structure
     
     @property
-    def average_atom_elf_radii(self) -> NDArray[np.float64]:
-        if self._average_atom_elf_radii is None:
+    def nearest_neighbor_data(self) -> list:
+        if self._nearest_neighbor_data is None:
+            # get nearest neighbors from spin up labeler
+            nearest_neighbor_data = self.elf_labeler_up.nearest_neighbor_data
+            # set spin down for speed
+            self.elf_labeler_down._nearest_neighbor_data = nearest_neighbor_data
+            self._nearest_neighbor_data = nearest_neighbor_data
+        return self._nearest_neighbor_data
+    
+    @property
+    def atom_elf_radii(self) -> NDArray[np.float64]:
+        if self._atom_elf_radii is None:
             # get the atomic radii from the spin up/down systems
             spin_up_radii = self.elf_labeler_up.atom_elf_radii
             spin_down_radii = self.elf_labeler_down.atom_elf_radii
-            self._average_atom_elf_radii = (spin_up_radii + spin_down_radii) / 2
-        return self._average_atom_elf_radii
+            self._atom_elf_radii = (spin_up_radii + spin_down_radii) / 2
+        return self._atom_elf_radii
+    
+    @property
+    def atom_elf_radii_types(self) -> NDArray[np.float64]:
+        if self._atom_elf_radii_types is None:
+            # make sure spin up/down labelers have calculated radii
+            self.atom_elf_radii
+            # default to covalent
+            self._atom_elf_radii_types = self.elf_labeler_up._atom_elf_radii_types | self.elf_labeler_down._atom_elf_radii_types
+        # convert to strings and return
+        return np.where(self._atom_elf_radii_types, "covalent", "ionic")
+    
+    @property
+    def atom_nn_elf_radii(self) -> NDArray[np.float64]:
+        if self._atom_nn_elf_radii is None:
+            # get the atomic radii from the spin up/down systems
+            spin_up_radii = self.elf_labeler_up.atom_nn_elf_radii
+            spin_down_radii = self.elf_labeler_down.atom_nn_elf_radii
+            self._atom_nn_elf_radii = (spin_up_radii + spin_down_radii) / 2
+        return self._atom_nn_elf_radii
+    
+    @property
+    def atom_nn_elf_radii_types(self) -> NDArray[np.float64]:
+        if self._atom_nn_elf_radii_types is None:
+            # make sure spin up/down labelers have calculated radii
+            self.atom_nn_elf_radii
+            # default to covalent
+            self._atom_nn_elf_radii_types = self.elf_labeler_up._atom_nn_elf_radii_types | self.elf_labeler_down._atom_nn_elf_radii_types
+        # convert to strings and return
+        return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
     
     @property
     def labeled_structure(self) -> Structure:

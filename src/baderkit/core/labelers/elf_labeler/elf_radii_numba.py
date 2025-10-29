@@ -44,9 +44,9 @@ def get_elf_radius(
 
     # SITUATION 1:
         # The atom's nearest neighbor is a translation of itself. The radius
-        # must always be halfway between the two.
+        # must always be halfway between the two and the bond must be covalent
     if len(unique_labels) == 1:
-        return 0.5 * bond_dist
+        return 0.5 * bond_dist, True
         
     # SITUATION 2:
         # The atom is covalently bonded to its nearest neighbor. The radius is
@@ -150,7 +150,7 @@ def get_elf_radius(
     
     # We now have a refined radius. Calculate the actual bond distance
     bond_frac = radius_index / (num_points - 1)
-    return bond_frac * bond_dist
+    return bond_frac * bond_dist, covalent
     
 @njit(cache=True)
 def get_elf_radii(
@@ -166,8 +166,9 @@ def get_elf_radii(
     # get the unique atoms we need to calculate radii for
     unique_atoms = np.unique(equivalent_atoms)
     
-    # create array to store radii
+    # create array to store radii and their type
     atomic_radii = np.empty(len(atom_frac_coords), dtype=np.float64)    
+    radius_is_covalent = np.empty(len(atom_frac_coords), dtype=np.bool_) 
     
     # get the radius for each atom. NOTE: We don't do this in parallel because
     # we want the interpolation to be done in parallel instead
@@ -181,7 +182,7 @@ def get_elf_radii(
         neigh_coords = atom_frac_coords[neigh_idx] + neigh_image
         
         # get the radius for this atom
-        radius = get_elf_radius(
+        radius, is_covalent = get_elf_radius(
             data,
             feature_labels,
             atom_idx,
@@ -191,11 +192,63 @@ def get_elf_radii(
             bond_dist,
                 )
         atomic_radii[atom_idx] = radius
+        radius_is_covalent[atom_idx] = is_covalent
         
     # update values for equivalent atoms
     for atom_idx in range(len(atomic_radii)):
         equiv_atom = equivalent_atoms[atom_idx]
         atomic_radii[atom_idx] = atomic_radii[equiv_atom]
+        radius_is_covalent[atom_idx] = radius_is_covalent[equiv_atom]
         
-    return atomic_radii
+    return atomic_radii, radius_is_covalent
+    
+@njit(cache=True)
+def get_all_atom_elf_radii(
+    site_indices,
+    neigh_indices,
+    site_frac_coords,
+    neigh_frac_coords,
+    neigh_dists,
+    equivalent_bonds,
+    data,
+    feature_labels,
+    covalent_labels,
+        ):
+    
+    # get the unique bonds
+    unique_bonds = np.unique(equivalent_bonds)
+    
+    # create array to store radii
+    atomic_radii = np.empty(len(site_indices), dtype=np.float64)    
+    radius_is_covalent = np.empty(len(site_indices), dtype=np.bool_) 
+    
+    # get the radius for each unique bond
+    for pair_idx in unique_bonds:
+        site_idx = site_indices[pair_idx]
+        site_frac = site_frac_coords[site_idx]
+        neigh_frac = neigh_frac_coords[pair_idx]
+        bond_dist = neigh_dists[pair_idx]
+        radius, is_covalent = get_elf_radius(
+            data,
+            feature_labels,
+            site_idx,
+            site_frac,
+            neigh_frac,
+            covalent_labels,
+            bond_dist,
+                )
+        atomic_radii[pair_idx] = radius
+        radius_is_covalent[pair_idx] = is_covalent
+        
+    # update values for equivalent bonds
+    for pair_idx in range(len(atomic_radii)):
+        equiv_bond = equivalent_bonds[pair_idx]
+        atomic_radii[pair_idx] = atomic_radii[equiv_bond]
+        radius_is_covalent[pair_idx] = radius_is_covalent[equiv_bond]
+        
+    return atomic_radii, radius_is_covalent
+    
+    
+    
+    
     

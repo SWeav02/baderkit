@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 from baderkit.core import Structure, Grid
 
 from baderkit.core.utilities.coord_env import get_atom_nearest_neighbors
-from .elf_radii_numba import get_elf_radii
+from .elf_radii_numba import get_elf_radii, get_all_atom_elf_radii
     
 
 
@@ -49,8 +49,7 @@ class ElfRadiiTools:
         return neighbor_indices, neighbor_dists, neighbor_images
     
     @cached_property
-    def atom_elf_radii(self):
-        
+    def _elf_radii_and_type(self):
         # get nearest neighbor info
         neighbor_indices, neighbor_dists, neighbor_images = self.nearest_neighbors
         return get_elf_radii(
@@ -67,4 +66,42 @@ class ElfRadiiTools:
                 )
             )
     
+    @cached_property
+    def atom_elf_radii(self):
+        return self._elf_radii_and_type[0]
+    
+    @cached_property
+    def atom_elf_radii_types(self):
+        return self._elf_radii_and_type[1]
+    
+    def get_all_neigh_elf_radii_and_type(
+        self,
+        site_indices,
+        neigh_indices,
+        neigh_frac_coords,
+        neigh_dists,
+            ):
+        # first, get the unique bonds. We do this here because numba does not
+        # currently allow np.unique axis argument
+        equivalent_atoms = self.structure.equivalent_atoms
+        equiv_sites = equivalent_atoms[site_indices]
+        equiv_neighs = equivalent_atoms[neigh_indices]
+        pair_array = np.column_stack((equiv_sites, equiv_neighs, neigh_dists))
+        unique_bonds, index, inverse = np.unique(pair_array, return_inverse=True, return_index=True, axis=0)
+        equivalent_bonds = index[inverse]
+        
+        return get_all_atom_elf_radii(
+            site_indices=site_indices,
+            neigh_indices=neigh_indices,
+            site_frac_coords=self.structure.frac_coords,
+            neigh_frac_coords=neigh_frac_coords,
+            neigh_dists=neigh_dists,
+            equivalent_bonds=equivalent_bonds,
+            data=self.cubic_coeffs,
+            feature_labels=self.feature_labels,
+            covalent_labels=np.array(
+                self.feature_structure.indices_from_symbol(self.covalent_symbol), 
+                dtype=np.float64
+                ),
+                )
     
