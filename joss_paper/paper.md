@@ -41,7 +41,7 @@ Bader charge analysis is among the most widely used methods in chemistry and mat
 
 BaderKit includes each of the algorithms from the original Fortran code including the `ongrid` [@Henkelman:2006], `neargrid` [@Henkelman:2009], and `weight` [@Yu:2011] methods. On a modern machine (AMD Ryzen™ Threadripper™ 1950X CPU with 16 cores), `BaderKit` runs two to three times as fast as the original Fortran code (\autoref{fig:fig1}). This speedup is primarily due to changes made to each method that allow them to be parallelized on multi-core architectures. Here, we briefly touch on the most significant changes.
 
-![**Figure1:** Comparison of runtimes for BaderKit and the Henkelman Fortran code calculated by taking the average of 10 runs. For a fair comparison, both methods were called through the command line and include reading files, running the algorithm, and writing outputs. \label{fig:fig1}](time_vs_grid_baderkit_henk_subplots.png){ width=25% }
+![Comparison of runtimes for BaderKit and the Henkelman Fortran code calculated by taking the average of 10 runs. For a fair comparison, both methods were called through the command line and include reading files, running the algorithm, and writing outputs. \label{fig:fig1}](time_vs_grid_baderkit_henk_subplots.png){ width=80% }
 
 The original `ongrid` and `neargrid` methods perform hill climbing algorithms that start at arbitrary points and climb the steepest gradient until either a maximum or previous point is reached. The `ongrid` method is fast, but its results are highly dependent on the rotational orientation of the system. The `neargrid` method is similar, but improves upon this by storing a correction vector from the current point to the true gradient and making adjustments when the vector is sufficiently large. It requires an additional edge refinement step as the correction vector is only correct for the initial starting point of the path. Instead of a path-building method, `BaderKit` loops over each point in parallel and establishes a pointer to the steepest neighbor. This creates a classic 'forest of trees' problem where the root of each tree corresponds to a Bader basin. `BaderKit` then finds these roots using a vectorized pointer jumper algorithm. For the `neargrid` method, the points along the edge are then iteratively refined in parallel using the original path method. This operation is significantly sped up by caching the gradients calculated during the initial pointer construction.
 
@@ -51,7 +51,7 @@ In contrast to the `ongrid` and `neargrid` methods, the `weight` method allows p
 
 In addition to improved speed, BaderKit fixes an issue in the original codes handling of local maxima. In highly symmetrical systems, it is common for a local maximum to sit precisely between two or more grid points. This results in multiple adjacent points with values greater than or equal to their neighbors. In the original Fortran code, these points are incorrectly considered separate maxima. `BaderKit` explicitly checks for this, combines adjacent maxima, and performs a quick refinement using a parabolic fit to estimate the true, offgrid, location of the maxima (\autoref{fig:fig2}). This adds negligible time, and results in more physically reasonable basins.
 
-![**Figure2:** Comparison of basins found around an Ag atom in the Henkelman code and BaderKit. \label{fig:fig2}](basin_reduction.png){ width=30% }
+![Comparison of basins found around an Ag atom in the Henkelman code and BaderKit. \label{fig:fig2}](basin_reduction.png){ width=50% }
 
 # Use in Other Codes
 
