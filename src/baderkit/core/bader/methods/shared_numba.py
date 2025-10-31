@@ -270,6 +270,7 @@ def initialize_labels_from_maxima(
     # Iterate over each maximum (except the first) and check for nearby maxima
     # above them
     for sorted_max_idx, max_idx in enumerate(sorted_indices[1:]):
+        sorted_max_idx += 1
         max_frac = maxima_frac[max_idx]
         # iterate over maxima before this point and find the closest that hasn't
         # been merged already
