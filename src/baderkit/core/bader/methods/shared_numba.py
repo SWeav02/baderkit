@@ -227,7 +227,9 @@ def get_maxima(
                     maxima[i, j, k] = True
     return maxima
 
-@njit(cache=True, parallel=True)
+# NOTE: Parts of this could probably be parallelized, but I was running into issues
+# with rather unhelpful error messages (ValueError: negative dimensions not allowed)
+@njit(cache=True)
 def initialize_labels_from_maxima(
     data,
     spline_coeffs,
@@ -267,13 +269,11 @@ def initialize_labels_from_maxima(
 
     # Iterate over each maximum (except the first) and check for nearby maxima
     # above them
-    for sorted_max_idx in range(1, len(maxima_labels)):
-        max_idx = sorted_indices[sorted_max_idx]
+    for sorted_max_idx, max_idx in enumerate(sorted_indices[1:]):
         max_frac = maxima_frac[max_idx]
         # iterate over maxima before this point and find the closest that hasn't
         # been merged already
-        for sorted_neigh_max_idx in range(0, sorted_max_idx):
-            neigh_max_idx = sorted_indices[sorted_neigh_max_idx]
+        for neigh_max_idx in sorted_indices[:sorted_max_idx]:
             neigh_frac = maxima_frac[neigh_max_idx]
             # unwrap relative to central
             fi, fj, fk = neigh_frac - np.round(neigh_frac - max_frac)
@@ -337,7 +337,7 @@ def initialize_labels_from_maxima(
 
     # Parallel loop: for each unique label, scan new_labels and get average
     # frac coords
-    for u_idx in prange(n_unique):
+    for u_idx in range(n_unique):
         target_root = unique_roots[u_idx]
         frac_coords = []
         maxima_w_root_labels = []

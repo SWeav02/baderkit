@@ -73,6 +73,7 @@ class WeightMethod(MethodBase):
             self.maxima_mask,
             maxima_indices,
         )
+
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)
 

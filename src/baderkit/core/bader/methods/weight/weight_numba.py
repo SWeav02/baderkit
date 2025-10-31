@@ -267,7 +267,7 @@ def get_weight_assignments(
     # them from high to low and assign charges, volumes, and labels
     scratch_weights = np.zeros(len(charges), dtype=np.float64)
     approx_charges = charges.copy()
-    # TODO: Cap weights at 26 (or lower?) for memory.
+
     all_weights = []
     all_labels = []
     for edge_idx, (fluxes, neighs, neigh_num) in enumerate(
@@ -278,7 +278,6 @@ def get_weight_assignments(
         charge = flat_charge[idx]
 
         current_labels = []
-        current_weights = []
         # Loop over neighbors and calculate weights for this point
         for neigh_idx, (flux, label) in enumerate(zip(fluxes, neighs)):
             if neigh_idx == neigh_num:
@@ -309,24 +308,48 @@ def get_weight_assignments(
         # Now loop over each label and assign charges, volumes, and labels
         best_label = -1
         best_weight = 0.0
+        total_weight = 0.0
         tied_labels = False
         tol = 1e-6  # for floating point errors
+        # BUGFIX: remove values below a cutoff to help with memory
+        reduced_labels = []
+        reduced_weights = []
+        
         for label in current_labels:
             weight = scratch_weights[label]
+            scratch_weights[label] = 0.0 # reset scratch
             charges[label] += charge * weight
             volumes[label] += weight
+            # skip if our weight is below a very small tolerance
+            if weight < 1e-30:
+                continue
+            
             if weight > best_weight + tol:  # greater than with a tolerance
                 best_label = label
                 best_weight = weight
                 tied_labels = False
             elif weight > best_weight - tol:  # equal to with a tolerance
                 tied_labels == True
-            # add weight to current weights and reset scratch
-            current_weights.append(weight)
-            scratch_weights[label] = 0.0
+            # add weight to current weights
+            reduced_weights.append(weight)
+            reduced_labels.append(label)
+            total_weight += weight
+            
+            
+        # BUGFIX: cap the lists at a reasonable size to avoid memory explosions
+        if len(reduced_labels) > 26:
+            weight_array = np.array(reduced_weights, dtype=np.float64)
+            ordered_weights = np.argsort(weight_array)[-26:]
+            total_weight = weight_array[ordered_weights].sum()
+            reduced_weights = [reduced_weights[i] for i in ordered_weights]
+            reduced_labels = [reduced_labels[i] for i in ordered_weights]
+        
+        # renormalize weights in case we removed any
+        reduced_weights = [i/total_weight for i in reduced_weights]
+        
         # add weights/labels for this point to our list
-        all_weights.append(current_weights)
-        all_labels.append(current_labels)
+        all_weights.append(reduced_weights)
+        all_labels.append(reduced_labels)
 
         # Now we want to assign our label. If there wasn't a tie in our labels,
         # we assign to highest weight
@@ -337,7 +360,7 @@ def get_weight_assignments(
             # we have a tie. We assign to the basin where the added charge will
             # most improve the approximate charge
             best_improvement = -1.0
-            for label, weight in zip(current_labels, current_weights):
+            for label, weight in zip(reduced_labels, reduced_weights):
                 if weight < best_weight - tol:
                     continue
                 # calculate the difference from the current charge before and
