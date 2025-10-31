@@ -60,6 +60,7 @@ class WeightMethod(MethodBase):
         all_neighbor_transforms, all_neighbor_dists = (
             reference_grid.point_neighbor_transforms
         )
+
         labels, charges, volumes = get_weight_assignments(
             reference_data,
             labels,

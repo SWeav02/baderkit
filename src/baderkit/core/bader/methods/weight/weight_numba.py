@@ -34,7 +34,7 @@ def get_weight_assignments(
     # Create lists to store basin charges/volumes
     charges = np.zeros(len(maxima_indices), dtype=np.float64)
     volumes = np.zeros(len(maxima_indices), dtype=np.float64)
-
+    
     ###########################################################################
     # Get neighbors
     ###########################################################################
@@ -89,7 +89,7 @@ def get_weight_assignments(
             # assign the first value to the current label. This will allow us
             # to check if the maximum is the root max in the next section
             neigh_array[sorted_idx, 0] = labels[idx]
-
+    
     ###########################################################################
     # Assign interior
     ###########################################################################
@@ -159,7 +159,7 @@ def get_weight_assignments(
                 labels[idx] = max_idx
                 charges[max_idx] += flat_charge[idx]
                 volumes[max_idx] += 1.0
-
+    
     ###########################################################################
     # Fluxes
     ###########################################################################
@@ -267,6 +267,7 @@ def get_weight_assignments(
     # them from high to low and assign charges, volumes, and labels
     scratch_weights = np.zeros(len(charges), dtype=np.float64)
     approx_charges = charges.copy()
+    # TODO: Cap weights at 26 (or lower?) for memory.
     all_weights = []
     all_labels = []
     for edge_idx, (fluxes, neighs, neigh_num) in enumerate(

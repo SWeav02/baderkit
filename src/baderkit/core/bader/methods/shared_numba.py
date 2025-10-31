@@ -232,13 +232,15 @@ def initialize_labels_from_maxima(
     data,
     spline_coeffs,
     maxima_vox,
-    max_vox_offset=5,
+    lattice,
+    max_cart_offset=1,
 ):
     nx, ny, nz = data.shape
     ny_nz = ny * nz
 
     # create an array to store values at each maximum
     maxima_values = np.empty(len(maxima_vox), dtype=np.float64)
+    maxima_labels = np.empty(len(maxima_vox), dtype=np.int64)
 
     # get the fractional representation of each maximum
     maxima_frac = maxima_vox / np.array(data.shape, dtype=np.int64)
@@ -247,120 +249,76 @@ def initialize_labels_from_maxima(
     labels = np.full(nx * ny * nz, -1, dtype=np.int64)
 
     # Now we initialize the maxima
-    maxima_labels = []
     for max_idx, (i, j, k) in enumerate(maxima_vox):
         # get value at maximum
         maxima_values[max_idx] = data[i, j, k]
         # set as initial group root
-        max_idx = coords_to_flat(i, j, k, ny_nz, nz)
-        labels[max_idx] = max_idx
-        maxima_labels.append(max_idx)
+        flat_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
+        maxima_labels[max_idx] = flat_max_idx
+        labels[flat_max_idx] = flat_max_idx
 
     # We check each maximum to see if it borders another maximum. This can happen
     # either when two neighboring grid points have the exact same value, or when
     # two points slighly further straddle an off grid maximum such that the points
-    # around them are still lower. The latter does not have an obvious cutoff
-    # distance, so we instead scan through our maxima finding the closest neighbor
-    # that hasn't been checked yet. We assume grid points are relatively evenly
-    # spaced
+    # around them are still lower. 
+    
+    # sort maxima from high to low
+    sorted_indices = np.flip(np.argsort(maxima_values))
 
-    # first, we find unchecked lowest neighbors
-    maxima_neighs = np.empty(len(maxima_vox) - 1, dtype=np.int64)
-    dists = np.empty(len(maxima_vox) - 1, dtype=np.int64)
-    for max_idx in prange(len(maxima_vox) - 1):
+    # Iterate over each maximum (except the first) and check for nearby maxima
+    # above them
+    for sorted_max_idx in range(1, len(maxima_labels)):
+        max_idx = sorted_indices[sorted_max_idx]
         max_frac = maxima_frac[max_idx]
-        max_vox = maxima_vox[max_idx]
-        # iterate over maxima after this point and find the closest
-        best_dist = max_vox_offset  # set to max reasonable number of voxels away
-        best_neigh = -1
-        for neigh_max_idx in range(max_idx + 1, len(maxima_vox)):
+        # iterate over maxima before this point and find the closest that hasn't
+        # been merged already
+        for sorted_neigh_max_idx in range(0, sorted_max_idx):
+            neigh_max_idx = sorted_indices[sorted_neigh_max_idx]
             neigh_frac = maxima_frac[neigh_max_idx]
             # unwrap relative to central
             fi, fj, fk = neigh_frac - np.round(neigh_frac - max_frac)
-            # convert to voxel
-            fi = round(fi * nx)
-            fj = round(fj * ny)
-            fk = round(fk * nz)
-            # get offset
-            fi = fi - max_vox[0]  # get offset from point
-            fj = fj - max_vox[1]
-            fk = fk - max_vox[2]
-            # if the highest offset is 1, this is an adjacent maximum and
-            # we immediately give it a distance of 1 to indicate this
-            if max(abs(fi), abs(fj), abs(fk)) == 1:
-                best_dist = 1
-                best_neigh = neigh_max_idx
+            # get offset in frac coords
+            oi = fi - max_frac[0]
+            oj = fj - max_frac[1]
+            ok = fk - max_frac[2]
+            
+            # calculate the distance in cart coords
+            ci = lattice[0, 0] * oi + lattice[1, 0] * oj + lattice[2, 0] * ok
+            cj = lattice[0, 1] * oi + lattice[1, 1] * oj + lattice[2, 1] * ok
+            ck = lattice[0, 2] * oi + lattice[1, 2] * oj + lattice[2, 2] * ok
+            dist = (ci**2 + cj**2 + ck**2) ** (1 / 2)
+            
+            # if above our cutoff, continue
+            if dist > max_cart_offset:
+                continue
+            
+            # check if we're within a single voxel
+            # get offset in voxel coords
+            vi = round(oi * nx)
+            vj = round(oj * ny)
+            vk = round(ok * nz)
+            if max(abs(vi), abs(vj), abs(vk)) == 1:
+                # We are within a single voxel. Immediately union and break
+                max_label = maxima_labels[max_idx]
+                neigh_label = maxima_labels[neigh_max_idx]
+                union(labels, max_label, neigh_label)
                 break
-
-            # otherwise we calculate the distance in grid coordinates
-            dist = (fi**2 + fj**2 + fk**2) ** (1 / 2)
-            if dist < best_dist:
-                best_dist = dist
-                best_neigh = neigh_max_idx
-        maxima_neighs[max_idx] = best_neigh
-        dists[max_idx] = best_dist
-
-    # Now, for each maximum we check its nearest neighbor. If its within a
-    # single voxel we immediately combine, and if its further, we use a spline
-    # interpolation to determine if there is at least some minima between them
-    for max_idx, (maxima_neigh, dist) in enumerate(zip(maxima_neighs, dists)):
-        if maxima_neigh == -1:
-            # there were no neighs within our cutoff so this point has no
-            # neighs
-            continue
-
-        # get the labels for each
-        max_label = maxima_labels[max_idx]
-        neigh_label = maxima_labels[maxima_neigh]
-        # get the roots in case these maxima have been unioned previously
-        max_root = find_root(labels, max_label)
-        neigh_root = find_root(labels, neigh_label)
-        if max_root == neigh_root:
-            # we've already combined these neighbors indirectly. continue
-            continue
-
-        # get root maxima indices
-        max_root_idx = np.searchsorted(maxima_labels, max_root)
-        neigh_root_idx = np.searchsorted(maxima_labels, neigh_root)
-        to_union = False
-        if dist == 1:
-            # we are within a single voxel of each other and must be the same
-            # maximum (at least at this resolution).
-            to_union = True
-        else:
-            # we want to interpolate between our points. If there is at least
-            # one local minimum, these are separete maxima
-            # BUGFIX: We want to interpolate to the highest maximum in the group
-            # to avoid combining two real maxima because there is a fake maxima
-            # split between them.
-            max_frac = maxima_frac[max_root_idx]
-            neigh_frac = maxima_frac[neigh_root_idx]
-            # unwrap the neighbor to the closest point to the current max
-            neigh_frac = neigh_frac - np.round(neigh_frac - max_frac)
-
-            # set number of interpolation points to roughly the number of voxels
-            # between the points * 5
-            n_points = math.ceil(dist) * 5
+            
+            # check if there is a minimum between this point and its neighbor
+            # set number of interpolation points to ~20/A
+            n_points = math.ceil(dist*20)
             values = linear_slice(
-                spline_coeffs, max_frac, neigh_frac, n=n_points, is_frac=True
+                spline_coeffs, max_frac, (fi,fj,fk), n=n_points, is_frac=True
             )
             # check for a local minimum
-            left = values[1:-1] < values[:-2]
+            left = values[1:-1] <= values[:-2]
             right = values[1:-1] < values[2:]
-            if np.any(left & right):
-                continue
-            # if there is no min, these belong to the same maximum. union
-            to_union = True
-        if to_union:
-            # set the higher value as the root
-            value1 = maxima_values[max_root_idx]
-            value2 = maxima_values[neigh_root_idx]
-            higher = max(value1, value2)
-            # union the roots (not their maxima indices)
-            if value1 == higher:
-                union(labels, max_root, neigh_root)
-            else:
-                union(labels, neigh_root, max_root)
+            if not np.any(left & right):
+                # these are the same maximum and we combine
+                max_label = maxima_labels[max_idx]
+                neigh_label = maxima_labels[neigh_max_idx]
+                union(labels, max_label, neigh_label)
+                break
 
     # get the roots of each maximum
     maxima_roots = []
@@ -431,7 +389,6 @@ def initialize_labels_from_maxima(
             labels[max_label] = best_max_label
 
     return labels, all_frac_coords, all_grid_coords
-
 
 @njit(cache=True, fastmath=True)
 def get_min_avg_surface_dists(

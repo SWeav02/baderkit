@@ -319,7 +319,7 @@ class ElfLabeler:
         
         oxi_state_data = []
         for site, site_charge in zip(structure, charges):
-            element_str = site.specie.name
+            element_str = site.specie.symbol
             val_electrons = nelectron_data.get(element_str, 0.0)
             oxi_state = val_electrons - site_charge
             oxi_state_data.append(oxi_state)

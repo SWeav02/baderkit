@@ -104,6 +104,7 @@ class MethodBase:
             data=self.reference_grid.total,
             spline_coeffs=self.reference_grid.cubic_spline_coeffs,
             maxima_vox=maxima_vox,
+            lattice=self.reference_grid.structure.lattice.matrix,
         )
 
         # now run bader
