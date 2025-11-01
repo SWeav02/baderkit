@@ -13,6 +13,8 @@ def find_domain_connections(
         basin_labels: NDArray[np.int64],
         data: NDArray[np.float64],
         bif_mask: NDArray[np.bool_],
+        edge_mask: NDArray[np.bool_],
+        num_basins: np.int64,
         neighbor_transforms: NDArray[np.int64],
         ):
     """
@@ -21,7 +23,13 @@ def find_domain_connections(
     include some false connections.
     """
     nx, ny, nz = basin_labels.shape
-
+    
+    # BUGFIX
+    # create a tracker for which basins we find a connection for. We add this
+    # because very small basins (close to the size of a voxel) will not have
+    # bifurcations found by our union method. In those cases we need to loop
+    # over the edges again to find potential connection points.
+    found_mask = np.zeros(num_basins, dtype=np.bool_)
     
     lower_points = []
     upper_points = []
@@ -72,6 +80,56 @@ def find_domain_connections(
                     lower_points.append(min(unique_label, label))
                     upper_points.append(max(unique_label, label))
                     conn_values.append(best_val)
+                    # make sure both labels are marked
+                    found_mask[unique_label] = True
+                    found_mask[label] = True
+                    
+    # get the basins that don't have connections
+    missing_basins = np.where(~found_mask)[0]
+    if len(missing_basins) > 0:
+        # create an array to store neighbor results
+        new_connections = np.zeros((len(missing_basins), num_basins), dtype=np.float64)
+        # create a reverse index array
+        basin_map = np.empty(num_basins, dtype=np.uint16)
+        basin_map[missing_basins] = np.arange(len(missing_basins))
+        
+        for i in range(nx):
+            for j in range(ny):
+                for k in range(nz):
+                    # skip points that are not edge maxima
+                    if not edge_mask[i,j,k]:
+                        continue
+                    # get the label at this point
+                    label = basin_labels[i,j,k]
+                    missing_idx = basin_map[label]
+                    # skip labels we already have a results for
+                    if found_mask[label] or label == -1:
+                        continue
+                    # get value
+                    value = data[i,j,k]
+                    
+                    # iterate over neighbors
+                    for si, sj, sk in neighbor_transforms:
+                        # wrap points
+                        ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                        # skip points in the same basin
+                        neigh_label = basin_labels[ii,jj,kk]
+                        if neigh_label == label or neigh_label == -1:
+                            continue
+                        # get the value that these two points connect at
+                        conn_val = min(data[ii,jj,kk], value)
+                        if conn_val > new_connections[missing_idx, neigh_label]:
+                            new_connections[missing_idx, neigh_label] = conn_val
+        # get the new connections for each basin and add them to our lists
+        for missing_idx, connections in enumerate(new_connections):
+            label = missing_basins[missing_idx]
+            for neigh_label, conn_val in enumerate(connections):
+                if conn_val == 0:
+                    continue
+                # add connection
+                lower_points.append(min(neigh_label, label))
+                upper_points.append(max(neigh_label, label))
+                conn_values.append(conn_val)
                     
     return np.array(lower_points, dtype=np.int64), np.array(upper_points, dtype=np.int64), np.array(conn_values, dtype=np.float64)
 

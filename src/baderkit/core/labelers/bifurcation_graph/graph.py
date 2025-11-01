@@ -11,6 +11,7 @@ import plotly.graph_objects as go
 from pymatgen.analysis.local_env import CrystalNN
 
 from baderkit.core import Bader, Structure
+from baderkit.core.bader.methods.shared_numba import get_edges
 
 from .nodes import IrreducibleNode, ReducibleNode, NodeBase
 from .enum_and_styling import LINE_COLOR, DomainSubtype, FeatureType
@@ -192,6 +193,8 @@ class BifurcationGraph:
             basin_labels=labeler.bader.basin_labels,
             data=reference_grid.total,
             bif_mask=bif_mask,
+            edge_mask=get_edges(labeler.bader.basin_labels,neighbor_transforms,labeler.bader.vacuum_mask),
+            num_basins=len(labeler.bader.basin_maxima_frac),
             neighbor_transforms=neighbor_transforms,
             )
 
@@ -241,6 +244,7 @@ class BifurcationGraph:
         
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0, 2)}")
+        # breakpoint()
         # run a quick check ensuring that all basins appear as individual irreducible
         # nodes
         all_basins = np.zeros(len(basin_maxima_grid), dtype=np.bool_)

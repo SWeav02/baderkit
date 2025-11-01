@@ -25,6 +25,7 @@ FEATURE_COLORS = {
     "deep shell": "rgba(60, 60, 60, 1)", # dark grey
     "core": "rgba(0, 0, 0, 1)", # black
     "covalent": "rgba(0, 255, 255, 1)",  # aqua
+    "covalent-metallic": "rgba(101, 191, 224, 1)",  # aqua/gray
     "metallic": "rgba(112, 128, 144, 1)", # slate gray
     "lone-pair": "rgba(128, 0, 128, 1)",  # purple
     "non-nuclear attractor": "rgba(128, 0, 0, 1)",  # maroon
@@ -38,6 +39,7 @@ FEATURE_DUMMY_ATOMS = {
     "deep shell": "Xds",
     "core": "Xc",
     "covalent": "Z",
+    "covalent-metallic": "Z",
     "metallic": "M",
     "lone-pair": "Lp",
     "non-nuclear attractor": "Xn",
@@ -106,6 +108,7 @@ class FeatureType(str, Enum):
     deep_shell = "deep shell"
     core = "core"
     covalent = "covalent"
+    covalent_metallic = "covalent-metallic"
     metallic = "metallic"
     lone_pair = "lone-pair"
     non_nuclear_attractor = "non-nuclear attractor"
@@ -126,6 +129,7 @@ class FeatureType(str, Enum):
     def valence_types(cls):
         return [
             cls.covalent,
+            cls.covalent_metallic,
             cls.metallic,
             cls.non_nuclear_attractor,
             cls.electride,

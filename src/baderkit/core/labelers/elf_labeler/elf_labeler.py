@@ -1190,7 +1190,14 @@ class ElfLabeler:
                 included_atoms = parent.contained_atoms
 
             if is_covalent:
-                node.feature_type = FeatureType.covalent
+                # label as covalent or metallic covalent depending on the species'
+                # type
+                species1 = self.structure[int(atom0)].specie
+                species2 = self.structure[int(atom1)].specie
+                if species1.is_metal or species2.is_metal:
+                    node.feature_type = FeatureType.covalent_metallic
+                else:
+                    node.feature_type = FeatureType.covalent
                 # we also go ahead and set the neighboring atoms to avoid some
                 # CrystalNN calculations
                 node._coord_atom_indices = [int(atom0), int(atom1)]
@@ -1200,53 +1207,74 @@ class ElfLabeler:
     def _mark_lonepairs(self):
         logging.info("Marking lone-pair features")
         # lone-pairs separate off from covalent bonds or rarely from an ionic
-        # core/shell.
+        # core/shell. When breaking from covalent bonds, the lone-pair will only
+        # have one nearest neighbor in the molecule. When breaking off of
+        # an ionic core/shell, the lone-pair will at some point be part of a
+        # domain surrounding a single atom.
         
-        for node in self.bifurcation_graph.unassigned_nodes:
-            # get the first parent with an atom
-            for parent in node.ancestors:
-                if len(parent.contained_atoms) > 0:
-                    break
-            # if we reached the root, this is not a lone pair
-            if parent.domain_subtype == DomainSubtype.root:
+        # POSSIBLE BUG:
+            # In small cells, if a feature neighbors the same atoms at different
+            # translations and both belong to the same molecule/domain, it may
+            # be mislabeled as a lone-pair instead of a metal bond
+        
+        checked = []
+        nodes = self.bifurcation_graph.reducible_nodes.copy()
+        nodes.reverse()
+        num_unassigned = len(self.bifurcation_graph.unassigned_nodes)
+        for node in nodes:
+            # skip nodes that don't contain atoms
+            if len(node.contained_atoms) == 0:
                 continue
-
-            # track if all the children of this parent are covalent or atomic
-            all_covalent = True
-            all_atomic = True
-            # also track that there is at least one of these. If not, this is
-            # a misassigned set of shells (Really that shouldn't happen if everything
-            # is working as expected)
-            any_covalent = False
-            any_atomic = False
-            for child in parent.deep_children:
+            
+            # if none of this nodes children have an assignment, they are mislabeled
+            # shells
+            shells = True
+            all_checked = True
+            for child in node.deep_children:
                 if child.is_reducible:
                     continue
+                if not child.feature_type in [None, FeatureType.unknown]:
+                    checked.append(child.key)
+                    shells = False
+                elif child.key not in checked: # elif to continue if we already have a label
+                    all_checked = False
+
+            # if all nodes have been checked already, just continue
+            if all_checked:
+                continue
                 
-                if child.feature_type in [FeatureType.covalent]:
-                    any_covalent = True
-                    all_atomic = False
-                elif child.feature_type in [FeatureType.core, FeatureType.shell, FeatureType.deep_shell]:
-                    any_atomic = True
-                    all_covalent = False
+            if shells and len(node.contained_atoms) == 1:
+                for child in node.deep_children:
+                    child.feature_type = FeatureType.deep_shell
+                    checked.append(child.key)
+                continue
             
-            if not any_covalent and not any_atomic:
-                # This is a deep_shell instead
-                node.feature_type = FeatureType.deep_shell
-            
-            # if everything is a covalent bond or not assigned, this is a lone pair
-            if all_covalent:
-                node.feature_type = FeatureType.lone_pair
-            # otherwise, if all features are atomic we might have a lone-pair but
-            # with a few restrictions. It must have reasonably large charge and the
-            # parent must surround exactly 1 atom (not be infinite)
-            elif (
-                    all_atomic
-                    and not parent.is_infinite
-                    and len(parent.contained_atoms) == 1
-                    and node.charge > self.min_covalent_charge 
-                    ):
-                node.feature_type = "lone-pair"
+            # otherwise, check each unassigned node to see if it has exactly
+            # on neighbor in this domain
+            for child in node.deep_children:
+                # skip checked or reducible nodes
+                if child.is_reducible or child.key in checked:
+                    continue
+                # note we've checked this node
+                checked.append(child.key)
+                # check how many neighs are in this domain
+                neighs_in_domain = 0
+                for atom_idx in child.coord_atom_indices:
+                    if atom_idx in node.contained_atoms:
+                        neighs_in_domain += 1
+                    if neighs_in_domain > 1:
+                        break
+                # if theres more than one neighbor in the molecule, continue
+                if neighs_in_domain > 1:
+                    continue
+                # if we have a node with reasonable charge, mark it at a lone-pair
+                if child.charge > self.min_covalent_charge:
+                    child.feature_type=FeatureType.lone_pair
+                    # reset coord env so that it gets calculated as 1
+                    child._coord_atom_indices = None
+            # stop if we've checked all unassigned nodes
+            if len(checked) == num_unassigned:
+                break
 
     def _mark_metallic_or_bare(self):
         logging.info("Marking metallic and bare electron features")
