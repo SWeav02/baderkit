@@ -399,11 +399,14 @@ class BifurcationGraph:
     @staticmethod
     def _combine_shallow_irreducible_nodes(graph, cutoff=0.05):
         # TODO: Add check that nodes are at relatively similar values
-        nodes_to_combine = []
-        checked_nodes = []
-        for node in graph.reducible_nodes.copy():
+        # nodes_to_combine = []
+        # checked_nodes = []
+        nodes = graph.reducible_nodes.copy()
+        nodes.reverse()
+        
+        for node in nodes:
             # skip infinite nodes and nodes we've already checked
-            if node.is_infinite or node.key in checked_nodes:
+            if node.is_infinite:# or node.key in checked_nodes:
                 continue
             # get this nodes depth
             depth = node.depth
@@ -422,17 +425,20 @@ class BifurcationGraph:
             if not is_shallow:
                 continue
             
-            # note we want to combine this node
-            nodes_to_combine.append(node)
-            # if the node is shallow, we will combine all of its children later.
-            # for now, we note that its children have already been checked
-            for child in node.deep_children:
-                if child.is_reducible:
-                    checked_nodes.append(child.key)
-
-        # now we combine all of the nodes 
-        for node in nodes_to_combine:
+            # combine node
             node.make_irreducible()
+            
+        #     # note we want to combine this node
+        #     nodes_to_combine.append(node)
+        #     # if the node is shallow, we will combine all of its children later.
+        #     # for now, we note that its children have already been checked
+        #     for child in node.deep_children:
+        #         if child.is_reducible:
+        #             checked_nodes.append(child.key)
+
+        # # now we combine all of the nodes 
+        # for node in nodes_to_combine:
+        #     node.make_irreducible()
         
     def get_plot(self) -> go.Figure:
         """
