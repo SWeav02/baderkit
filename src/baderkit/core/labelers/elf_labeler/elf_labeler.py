@@ -1217,10 +1217,8 @@ class ElfLabeler:
             # translations and both belong to the same molecule/domain, it may
             # be mislabeled as a lone-pair instead of a metal bond
         
-        checked = []
         nodes = self.bifurcation_graph.reducible_nodes.copy()
         nodes.reverse()
-        num_unassigned = len(self.bifurcation_graph.unassigned_nodes)
         for node in nodes:
             # skip nodes that don't contain atoms
             if len(node.contained_atoms) == 0:
@@ -1229,34 +1227,30 @@ class ElfLabeler:
             # if none of this nodes children have an assignment, they are mislabeled
             # shells
             shells = True
-            all_checked = True
+            all_labeled = True
             for child in node.deep_children:
                 if child.is_reducible:
                     continue
                 if not child.feature_type in [None, FeatureType.unknown]:
-                    checked.append(child.key)
                     shells = False
-                elif child.key not in checked: # elif to continue if we already have a label
-                    all_checked = False
-
-            # if all nodes have been checked already, just continue
-            if all_checked:
+                else:
+                    all_labeled = False
+                    
+            # skip if all children are already labeled
+            if all_labeled:
                 continue
                 
             if shells and len(node.contained_atoms) == 1:
                 for child in node.deep_children:
                     child.feature_type = FeatureType.deep_shell
-                    checked.append(child.key)
                 continue
             
             # otherwise, check each unassigned node to see if it has exactly
-            # on neighbor in this domain
+            # one neighbor in this domain
             for child in node.deep_children:
                 # skip checked or reducible nodes
-                if child.is_reducible or child.key in checked:
+                if child.is_reducible or child.feature_type not in [None, FeatureType.unknown]:
                     continue
-                # note we've checked this node
-                checked.append(child.key)
                 # check how many neighs are in this domain
                 neighs_in_domain = 0
                 for atom_idx in child.coord_atom_indices:
@@ -1272,9 +1266,6 @@ class ElfLabeler:
                     child.feature_type=FeatureType.lone_pair
                     # reset coord env so that it gets calculated as 1
                     child._coord_atom_indices = None
-            # stop if we've checked all unassigned nodes
-            if len(checked) == num_unassigned:
-                break
 
     def _mark_metallic_or_bare(self):
         logging.info("Marking metallic and bare electron features")
