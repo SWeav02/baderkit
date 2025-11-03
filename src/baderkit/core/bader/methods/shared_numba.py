@@ -6,8 +6,8 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.utilities.basic import wrap_point, coords_to_flat, merge_frac_coords_weighted
-from baderkit.core.utilities.union_find import union, find_root, find_root_no_compression
+from baderkit.core.utilities.basic import wrap_point, coords_to_flat, merge_frac_coords_weighted, flat_to_coords
+from baderkit.core.utilities.union_find import union, find_root_no_compression
 from baderkit.core.utilities.interpolation import linear_slice
 
 ###############################################################################
@@ -233,22 +233,25 @@ def get_maxima(
 def initialize_labels_from_maxima(
     data,
     spline_coeffs,
+    maxima_mask,
     maxima_vox,
     lattice,
+    neighbor_transforms,
+    neighbor_dists,
     max_cart_offset=1,
 ):
     nx, ny, nz = data.shape
     ny_nz = ny * nz
-
+    
+    # create a flat array of labels. These will initially all be -1
+    labels = np.full(nx * ny * nz, -1, dtype=np.int64)
+    
     # create an array to store values at each maximum
     maxima_values = np.empty(len(maxima_vox), dtype=np.float64)
     maxima_labels = np.empty(len(maxima_vox), dtype=np.int64)
 
     # get the fractional representation of each maximum
     maxima_frac = maxima_vox / np.array(data.shape, dtype=np.int64)
-
-    # create a flat array of labels. These will initially all be -1
-    labels = np.full(nx * ny * nz, -1, dtype=np.int64)
 
     # Now we initialize the maxima
     for max_idx, (i, j, k) in enumerate(maxima_vox):
@@ -258,11 +261,105 @@ def initialize_labels_from_maxima(
         flat_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
         maxima_labels[max_idx] = flat_max_idx
         labels[flat_max_idx] = flat_max_idx
-
+    
+    ###########################################################################
+    # 1. Remove Flat False Maxima
+    ###########################################################################
+    # If there is a particularly flat region, a point might have neighbors that
+    # are the same value. This point may be mislabeled as a maximum if these
+    # neighbors are not themselves maxima. This issue is really caused by too
+    # few sig figs in the data preventing the region from being properly distinguished
+    
+    # create an array to store which maxima need to be reduced
+    flat_maxima_labels = []
+    flat_maxima_mask = np.zeros(len(maxima_vox), dtype=np.bool_)
+    best_neigh = []
+    num_to_reduce = 0
+    # check each maximum to see if it is a true maximum. We do this iteratively
+    # in case there is a flat area larger than a couple of voxels across
+    while True:
+        for max_idx, ((i,j,k), value, max_label) in enumerate(zip(maxima_vox, maxima_values, maxima_labels)):
+            # skip points that are already added
+            if not maxima_mask[i,j,k]:
+                continue
+            
+            for si, sj, sk in neighbor_transforms:
+                # get neighbor and wrap
+                ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                neigh_value = data[ii,jj,kk]
+                # skip lower points or points that are also true maxima
+                if neigh_value < value or maxima_mask[ii,jj,kk]:
+                    continue
+                flat_maxima_labels.append(max_label)
+                flat_maxima_mask[max_idx] = True
+                # temporarily set maxima_mask to false
+                maxima_mask[i,j,k] = False
+                # check if this neighbor is already in our flat set
+                neigh_label = coords_to_flat(ii, jj, kk, ny_nz, nz)
+                found = False
+                for max_label, max_neigh in zip(flat_maxima_labels, best_neigh):
+                    if neigh_label == max_label:
+                        # give this max the same neighbor as this point
+                        best_neigh.append(max_neigh)
+                        found=True
+                        break
+                if not found:
+                    best_neigh.append(neigh_label)
+                
+                break
+        # check if anything has changed. If not we're done
+        new_num_to_reduce = len(flat_maxima_labels)
+        if new_num_to_reduce == num_to_reduce:
+            break
+        num_to_reduce = new_num_to_reduce
+    # find the ongrid maximum each false maximum corresponds to
+    unique_neighs = np.unique(np.array(best_neigh, dtype=np.int64))
+    for unique_neigh_label in unique_neighs:
+        i, j, k = flat_to_coords(unique_neigh_label, ny_nz, nz)
+        # hill climb to best max
+        while True:
+            _, (ni, nj, nk) = get_best_neighbor(
+                data,
+                i,j,k,
+                neighbor_transforms,
+                neighbor_dists,
+                )
+            if maxima_mask[ni,nj,nk]:
+                break
+            if i==ni and j==nj and k==nk:
+                # we've hit another group of flat maxima. get their best neighbor
+                # and continue
+                flat_neigh = coords_to_flat(ni, nj, nk ,ny_nz, nz)
+                for max_label, neigh_label in zip(flat_maxima_labels, best_neigh):
+                    if max_label == flat_neigh:
+                        ni, nj, nk = flat_to_coords(neigh_label, ny_nz, nz)
+                        break
+            i=ni
+            j=nj
+            k=nk
+        best_max = coords_to_flat(ni, nj, nk, ny_nz, nz)
+        # union each corresponding point
+        for max_label, neigh_label in zip(flat_maxima_labels, best_neigh):
+            if neigh_label!=unique_neigh_label:
+                continue
+            union(labels, max_label, best_max)
+    
+    # add maxima back to mask (required for things like the weight method)
+    for max_label in flat_maxima_labels:
+        i,j,k = flat_to_coords(max_label, ny_nz, nz)
+        maxima_mask[i,j,k] = True
+        
+    
+    ###########################################################################
+    # 2. Remove Voxelated False Maxima
+    ###########################################################################
+    # If a maximum lies off of a voxel, it may cause multiple nearby points to
+    # appear to be ongrid maxima.
+    
     # We check each maximum to see if it borders another maximum. This can happen
     # either when two neighboring grid points have the exact same value, or when
-    # two points slighly further straddle an off grid maximum such that the points
-    # around them are still lower. 
+    # two points slighly further straddle an off grid maximum such that the ongrid points
+    # around them are lower. 
     
     # sort maxima from high to low
     sorted_indices = np.flip(np.argsort(maxima_values))
@@ -270,11 +367,24 @@ def initialize_labels_from_maxima(
     # Iterate over each maximum (except the first) and check for nearby maxima
     # above them
     for sorted_max_idx, max_idx in enumerate(sorted_indices[1:]):
+        # skip fake flat maxima
+        if flat_maxima_mask[max_idx]:
+            continue
         sorted_max_idx += 1
         max_frac = maxima_frac[max_idx]
+        value = maxima_values[max_idx]
         # iterate over maxima before this point and find the closest that hasn't
         # been merged already
-        for neigh_max_idx in sorted_indices[:sorted_max_idx]:
+        for neigh_max_idx in sorted_indices:
+            # skip if this is the same point
+            if neigh_max_idx == max_idx:
+                continue
+            
+            # break if we reach a point lower than the current one
+            neigh_value = maxima_values[neigh_max_idx]
+            if neigh_value < value:
+                break
+            
             neigh_frac = maxima_frac[neigh_max_idx]
             # unwrap relative to central
             fi, fj, fk = neigh_frac - np.round(neigh_frac - max_frac)
@@ -353,7 +463,9 @@ def initialize_labels_from_maxima(
             if root == target_root:
                 # note this maximum has this root
                 maxima_w_root_labels.append(maxima_labels[max_idx])
-                frac_coords.append(maxima_frac[max_idx])
+                # only append frac coords if this isn't a false flat max
+                if not flat_maxima_mask[max_idx]:
+                    frac_coords.append(maxima_frac[max_idx])
                 maxima_w_root_values.append(maxima_values[max_idx])
                 if maxima_values[max_idx] > highest_value:
                     # update our highest point and value

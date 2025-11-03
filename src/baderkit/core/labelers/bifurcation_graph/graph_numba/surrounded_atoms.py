@@ -150,8 +150,11 @@ def find_atom_domains(
     # of the opposite type or it wouldn't be finite. This group will also always
     # have more surface area in contact with the domain/void than any other
     # group. In other words, the most connecting points.
-    
+    while_count=0
     while True:
+        if while_count>100:
+            raise Exception()
+        while_count+=1
         if is_void:
             # get dimensionality
             void_dim = void_dims[current_group]
@@ -334,7 +337,7 @@ def get_domains_surrounding_atoms(
                 size=size,
                 neighbors=neighbor_transforms,
                 )
-        
+                
         # Get which domains surround each atom
         all_surrounding_domains = find_all_atom_domains(
                 atom_grid_coords=atom_grid_coords,

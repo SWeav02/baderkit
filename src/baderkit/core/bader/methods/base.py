@@ -98,14 +98,18 @@ class MethodBase:
         # get our initial maxima
         maxima_vox = self.maxima_vox
         # get neighbor transforms
-        neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
+        neighbor_transforms, neighbor_dists = self.reference_grid.point_neighbor_transforms
         # now merge our maxima and initialize our labels
         labels, self._maxima_frac, self._maxima_vox = initialize_labels_from_maxima(
             data=self.reference_grid.total,
             spline_coeffs=self.reference_grid.cubic_spline_coeffs,
+            maxima_mask=self.maxima_mask,
             maxima_vox=maxima_vox,
+            neighbor_transforms=neighbor_transforms,
+            neighbor_dists=neighbor_dists,
             lattice=self.reference_grid.structure.lattice.matrix,
         )
+        # breakpoint()
 
         # now run bader
         results = self._run_bader(labels)

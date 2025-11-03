@@ -342,7 +342,7 @@ def find_periodic_cycles(
         new_root = find_root_no_compression(parent, old_root)
         new_root_idx = np.searchsorted(new_roots, new_root)
         # update to include previous values
-        new_cycles[new_root_idx] = old_cycle
+        new_cycles[new_root_idx] = old_cycle | new_cycles[new_root_idx]
         
     # now iterate over new points and find new cycles
     for i in prange(nx):
