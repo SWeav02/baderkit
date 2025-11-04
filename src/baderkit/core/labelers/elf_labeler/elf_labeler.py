@@ -1038,7 +1038,7 @@ class ElfLabeler:
         # one voxel of the atom. We must check for this as it is possible for
         # a different type of basin to contain the atom if too few valence electrons
         # are in the pseudopotential
-        max_dist = self.reference_grid.max_point_dist
+        max_dist = self.reference_grid.max_point_dist * 2
         for node in self.bifurcation_graph.unassigned_nodes:
             if node.domain_subtype == DomainSubtype.irreducible_cage:
                 continue
@@ -1170,24 +1170,31 @@ class ElfLabeler:
                 is_covalent = False # could happen if there are multiple roots
             
             # Sometimes a lone pair happens to align well with an atom that
-            # is not part of our covalent system (e.g. CaC2). We can easily 
-            # check for this by seeing if our atoms both belong to the parent
-            # containing the full molecule
-            included_atoms = node.contained_atoms
+            # is not part of our covalent system (e.g. CaC2). Similar to shells,
+            # These atoms won't connect until a much lower value
+            # POSSIBLE BUG: Atoms with translational symmetry might be counted
+            # as part of multiple covalent systems and break this in small
+            # unit cells. This would require knowing which atom image is contained
+            # which we currently don't track and would require a large rework
+            
+            # find the first parent containing at least one of the neighboring
+            # atoms and containing both
+            one_atom = None
+            both_atoms = None
             for parent in node.ancestors:
-                if len(parent.contained_atoms) == len(included_atoms) or len(parent.contained_atoms) <= 1:
-                    continue
-                # check if all atoms are included in at least one child
-                distinct_atoms = []
-                for child in parent.children:
-                    distinct_atoms.extend(child.contained_atoms)
-                if not all([i in distinct_atoms for i in parent.contained_atoms]):
-                    if atom0 in parent.contained_atoms and atom1 in parent.contained_atoms:
-                        is_covalent = True
-                    else:
-                        is_covalent = False
-                    break
-                included_atoms = parent.contained_atoms
+                contained_atoms = parent.contained_atoms
+                if atom0 in contained_atoms or atom1 in contained_atoms:
+                    if one_atom is None:
+                        one_atom = parent.max_value
+                if atom0 in contained_atoms and atom1 in contained_atoms:
+                    if both_atoms is None:
+                        both_atoms = parent.max_value
+                        break
+            if not one_atom is None and not both_atoms is None:
+                if (both_atoms/one_atom) < self.shared_shell_ratio:
+                    is_covalent = False
+                else:
+                    is_covalent = True
 
             if is_covalent:
                 # label as covalent or metallic covalent depending on the species'
@@ -1217,7 +1224,7 @@ class ElfLabeler:
             # translations and both belong to the same molecule/domain, it may
             # be mislabeled as a lone-pair instead of a metal bond
         
-        nodes = self.bifurcation_graph.reducible_nodes.copy()
+        nodes = self.bifurcation_graph.sorted_reducible_nodes.copy()
         nodes.reverse()
         for node in nodes:
             # skip nodes that don't contain atoms
@@ -1226,29 +1233,32 @@ class ElfLabeler:
             
             # if none of this nodes children have an assignment, they are mislabeled
             # shells
-            shells = True
             all_labeled = True
+            none_labeled = True
             for child in node.deep_children:
                 if child.is_reducible:
                     continue
-                if not child.feature_type in [None, FeatureType.unknown]:
-                    shells = False
-                else:
+                if child.feature_type in [None, FeatureType.unknown]:
                     all_labeled = False
+                else:
+                    none_labeled = False
                     
             # skip if all children are already labeled
             if all_labeled:
                 continue
                 
-            if shells and len(node.contained_atoms) == 1:
-                for child in node.deep_children:
-                    child.feature_type = FeatureType.deep_shell
+            # if none are labeled, check if this should be a shell. If not, these
+            # are some form of metal bond so we continue
+            if none_labeled:
+                if len(node.contained_atoms) == 1 and not node.is_infinite:
+                    for child in node.deep_children:
+                        child.feature_type = FeatureType.deep_shell
                 continue
             
             # otherwise, check each unassigned node to see if it has exactly
             # one neighbor in this domain
             for child in node.deep_children:
-                # skip checked or reducible nodes
+                # skip reducible nodes and nodes with assignments
                 if child.is_reducible or child.feature_type not in [None, FeatureType.unknown]:
                     continue
                 # check how many neighs are in this domain

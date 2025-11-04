@@ -273,6 +273,12 @@ class ReducibleNode(NodeBase):
                 child.parent = self.parent
             # remove this node from the current parent's children
             self.parent._children = [i for i in self.parent._children if i is not self]
+            # recalculate parent's max value
+            min_val = 1e300
+            for child in self.parent.children:
+                if child.min_value < min_val:
+                    min_val = child.min_value
+            self.parent.max_value = min_val
         # delete this node
         graph = self.bifurcation_graph
         graph._nodes = [i for i in graph._nodes if i is not self]

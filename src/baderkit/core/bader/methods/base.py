@@ -109,7 +109,6 @@ class MethodBase:
             neighbor_dists=neighbor_dists,
             lattice=self.reference_grid.structure.lattice.matrix,
         )
-        # breakpoint()
 
         # now run bader
         results = self._run_bader(labels)

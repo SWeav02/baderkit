@@ -87,6 +87,14 @@ class BifurcationGraph:
         return [i for i in self if i.is_reducible]
     
     @property
+    def sorted_reducible_nodes(self):
+        nodes = self.reducible_nodes
+        min_vals = [i.min_value for i in nodes]
+        sorted_indices = np.argsort(min_vals)
+        
+        return [nodes[i] for i in sorted_indices]
+    
+    @property
     def unassigned_nodes(self):
         return [i for i in self if not i.is_reducible and i.feature_type in (None, FeatureType.unknown)]
     
@@ -326,8 +334,8 @@ class BifurcationGraph:
             else:
                 parent_key = node_keys[domain_parents[feat_idx]]
                 parent = graph.node_from_key(parent_key)
-            if len(domain_basins[feat_idx]) > 1 or domain_dims[feat_idx] > 0:
-                # This is a reducible domain
+            if feat_idx in domain_parents:
+                # This is a reducible domain as it has children
                 node = ReducibleNode(
                     bifurcation_graph=graph,
                     basins=domain_basins[feat_idx], 
@@ -372,7 +380,7 @@ class BifurcationGraph:
         
         # TODO: It is common for there to be quite a few shallow reducible domains
         # seemingly due to voxelation. I need a better method for removing these
-        # cls._remove_shallow_reducible_nodes(graph)
+        cls._remove_shallow_reducible_nodes(graph)
             
         
         # Now we check for reducible nodes that should really be considered
@@ -383,28 +391,24 @@ class BifurcationGraph:
         return graph
     
     @staticmethod
-    def _remove_shallow_reducible_nodes(graph, cutoff=0.01):
-        reducible_nodes = graph.reducible_nodes.copy()
-        reducible_nodes.reverse()
-        for node in reducible_nodes:
+    def _remove_shallow_reducible_nodes(graph, cutoff=0.005):
+        # iterate over nodes from low to high
+        reducible_nodes = graph.sorted_reducible_nodes
+        for node in reducible_nodes[1:]:
             parent = node.parent
-            if parent is None:
+            # check that this node is very shallow relative to its parent
+            if (node.depth / parent.depth) > cutoff:
                 continue
-            # The parent must only differ in dimensionality
-            if not np.all(np.isin(parent.basins, node.basins)):
-                continue
-            # if the node is exceedingly shallow, it probably is caused
-            # by voxelation
-            if (node.depth / node.parent.depth) < cutoff:
-                node.remove()
+            # This is a very shallow node. delete it
+            node.remove()
     
     @staticmethod
-    def _combine_shallow_irreducible_nodes(graph, cutoff=0.05):
+    def _combine_shallow_irreducible_nodes(graph, cutoff=0.1):
         # TODO: Add check that nodes are at relatively similar values
-        nodes = graph.reducible_nodes.copy()
-        nodes.reverse()
-        
-        for node in nodes:
+        # iterate from highest to lowest
+        reducible_nodes = graph.sorted_reducible_nodes.copy()
+        reducible_nodes.reverse()
+        for node in reducible_nodes:
             # skip infinite nodes and nodes we've already checked
             if node.is_infinite:# or node.key in checked_nodes:
                 continue
@@ -555,6 +559,8 @@ class BifurcationGraph:
                 # add a rectangle
                 x0 = Xn[idx]
                 x1 = Xn1[idx]
+                # make sure x1 is at least a reasonable minimum
+                x1 = max(x1, x0+0.01)
                 y0 = Yn0[idx]
                 y1 = Yn1[idx]
                 fig.add_trace(

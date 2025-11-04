@@ -239,6 +239,7 @@ def initialize_labels_from_maxima(
     neighbor_transforms,
     neighbor_dists,
     max_cart_offset=1,
+    rel_minima_tol=1e-4
 ):
     nx, ny, nz = data.shape
     ny_nz = ny * nz
@@ -290,11 +291,12 @@ def initialize_labels_from_maxima(
                 # skip lower points or points that are also true maxima
                 if neigh_value < value or maxima_mask[ii,jj,kk]:
                     continue
+                # note this is a false maximum
                 flat_maxima_labels.append(max_label)
                 flat_maxima_mask[max_idx] = True
                 # temporarily set maxima_mask to false
                 maxima_mask[i,j,k] = False
-                # check if this neighbor is already in our flat set
+                # check if this neighbor is also in our flat set
                 neigh_label = coords_to_flat(ii, jj, kk, ny_nz, nz)
                 found = False
                 for max_label, max_neigh in zip(flat_maxima_labels, best_neigh):
@@ -305,7 +307,7 @@ def initialize_labels_from_maxima(
                         break
                 if not found:
                     best_neigh.append(neigh_label)
-                
+                # we only need one neighbor to match so we break
                 break
         # check if anything has changed. If not we're done
         new_num_to_reduce = len(flat_maxima_labels)
@@ -349,17 +351,26 @@ def initialize_labels_from_maxima(
         i,j,k = flat_to_coords(max_label, ny_nz, nz)
         maxima_mask[i,j,k] = True
         
+    ###########################################################################
+    # 2. Combine Adjacent Maxima
+    ###########################################################################
+    # If a maximum lies off of the grid, two adjacent point may have the same
+    # value and appear to be separate maxima.
+    for (i,j,k), max_label in zip(maxima_vox, maxima_labels):
+        for si, sj, sk in neighbor_transforms:
+            # get neighbor and wrap
+            ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+            neigh_label = coords_to_flat(ii, jj, kk, ny_nz, nz)
+            # if the neighbor is also a maximum, create a union
+            if maxima_mask[ii,jj,kk]:
+                union(labels, max_label, neigh_label)
     
     ###########################################################################
     # 2. Remove Voxelated False Maxima
     ###########################################################################
-    # If a maximum lies off of a voxel, it may cause multiple nearby points to
-    # appear to be ongrid maxima.
-    
-    # We check each maximum to see if it borders another maximum. This can happen
-    # either when two neighboring grid points have the exact same value, or when
-    # two points slighly further straddle an off grid maximum such that the ongrid points
-    # around them are lower. 
+    # With the right shape (e.g. highly anisotropic) a maximum may lay offgrid
+    # and cause two ongrid points to appear to be higher than the region around
+    # them. We check for these in a region around each point using cubic interpolation
     
     # sort maxima from high to low
     sorted_indices = np.flip(np.argsort(maxima_values))
@@ -367,14 +378,14 @@ def initialize_labels_from_maxima(
     # Iterate over each maximum (except the first) and check for nearby maxima
     # above them
     for sorted_max_idx, max_idx in enumerate(sorted_indices[1:]):
-        # skip fake flat maxima
+        # skip fake flat maxima (we've already found their higher neighbors)
         if flat_maxima_mask[max_idx]:
             continue
         sorted_max_idx += 1
         max_frac = maxima_frac[max_idx]
         value = maxima_values[max_idx]
-        # iterate over maxima before this point and find the closest that hasn't
-        # been merged already
+        
+        # iterate over maxima above this point
         for neigh_max_idx in sorted_indices:
             # skip if this is the same point
             if neigh_max_idx == max_idx:
@@ -403,28 +414,36 @@ def initialize_labels_from_maxima(
             if dist > max_cart_offset:
                 continue
             
-            # check if we're within a single voxel
-            # get offset in voxel coords
-            vi = round(oi * nx)
-            vj = round(oj * ny)
-            vk = round(ok * nz)
-            if max(abs(vi), abs(vj), abs(vk)) == 1:
-                # We are within a single voxel. Immediately union and break
-                max_label = maxima_labels[max_idx]
-                neigh_label = maxima_labels[neigh_max_idx]
-                union(labels, max_label, neigh_label)
-                break
-            
             # check if there is a minimum between this point and its neighbor
             # set number of interpolation points to ~20/A
             n_points = math.ceil(dist*20)
             values = linear_slice(
                 spline_coeffs, max_frac, (fi,fj,fk), n=n_points, is_frac=True
             )
-            # check for a local minimum
-            left = values[1:-1] <= values[:-2]
-            right = values[1:-1] < values[2:]
-            if not np.any(left & right):
+            # check for a local minimum. If there is one, these are distince maxima
+            # BUGFIX: Check for minima with a tolerance.
+            minima = np.where((values[1:-1] < values[:-2]) & (values[1:-1] < values[2:]))[0] + 1
+            maxima = np.where((values[1:-1] > values[:-2]) & (values[1:-1] > values[2:]))[0] + 1
+
+            # Add edges if they qualify as maxima
+            if values[0] > values[1]:
+                maxima = np.append(0, maxima)
+            if values[-1] > values[-2]:
+                maxima = np.append(maxima, len(values) - 1)
+
+            filtered = []
+            for m in minima:
+                # Find nearest maxima to the left and right
+                left_max = maxima[maxima < m][-1]
+                right_max = maxima[maxima > m][0]
+
+                min_val = values[m]
+                max_val = max(values[left_max], values[right_max])
+
+                if (max_val - min_val) / max_val > rel_minima_tol:
+                    filtered.append(m)
+
+            if len(filtered) == 0:
                 # these are the same maximum and we combine
                 max_label = maxima_labels[max_idx]
                 neigh_label = maxima_labels[neigh_max_idx]
