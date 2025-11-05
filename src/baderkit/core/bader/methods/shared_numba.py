@@ -422,11 +422,11 @@ def initialize_labels_from_maxima(
             )
             # check for a local minimum. If there is one, these are distince maxima
             # BUGFIX: Check for minima with a tolerance.
-            minima = np.where((values[1:-1] < values[:-2]) & (values[1:-1] < values[2:]))[0] + 1
-            maxima = np.where((values[1:-1] > values[:-2]) & (values[1:-1] > values[2:]))[0] + 1
+            minima = np.where((values[1:-1] < values[:-2]) & (values[1:-1] <= values[2:]))[0] + 1
+            maxima = np.where((values[1:-1] > values[:-2]) & (values[1:-1] >= values[2:]))[0] + 1
 
             # Add edges if they qualify as maxima
-            if values[0] > values[1]:
+            if values[0] >= values[1]:
                 maxima = np.append(0, maxima)
             if values[-1] > values[-2]:
                 maxima = np.append(maxima, len(values) - 1)
