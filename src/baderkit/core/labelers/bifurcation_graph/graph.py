@@ -400,6 +400,7 @@ class BifurcationGraph:
             if (node.depth / parent.depth) > cutoff:
                 continue
             # This is a very shallow node. delete it
+            print("deleting")
             node.remove()
     
     @staticmethod

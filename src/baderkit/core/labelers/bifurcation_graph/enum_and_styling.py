@@ -26,6 +26,7 @@ FEATURE_COLORS = {
     "core": "rgba(0, 0, 0, 1)", # black
     "covalent": "rgba(0, 255, 255, 1)",  # aqua
     "covalent-metallic": "rgba(101, 191, 224, 1)",  # aqua/gray
+    "shallow covalent-metallic": "rgba(140, 180, 180, 1)",  # bluish gray
     "metallic": "rgba(112, 128, 144, 1)", # slate gray
     "lone-pair": "rgba(128, 0, 128, 1)",  # purple
     "non-nuclear attractor": "rgba(128, 0, 0, 1)",  # maroon
@@ -40,6 +41,7 @@ FEATURE_DUMMY_ATOMS = {
     "core": "Xc",
     "covalent": "Z",
     "covalent-metallic": "Z",
+    "shallow covalent-metallic": "Z",
     "metallic": "M",
     "lone-pair": "Lp",
     "non-nuclear attractor": "Xn",
@@ -109,6 +111,7 @@ class FeatureType(str, Enum):
     core = "core"
     covalent = "covalent"
     covalent_metallic = "covalent-metallic"
+    shallow_covalent_metallic = "shallow covalent-metallic"
     metallic = "metallic"
     lone_pair = "lone-pair"
     non_nuclear_attractor = "non-nuclear attractor"
@@ -130,6 +133,7 @@ class FeatureType(str, Enum):
         return [
             cls.covalent,
             cls.covalent_metallic,
+            cls.shallow_covalent_metallic,
             cls.metallic,
             cls.non_nuclear_attractor,
             cls.electride,
@@ -142,6 +146,14 @@ class FeatureType(str, Enum):
             cls.non_nuclear_attractor,
             cls.electride,
             cls.bare_electron
+            ]
+    
+    @classproperty
+    def covalent_types(cls):
+        return [
+            cls.covalent,
+            cls.covalent_metallic,
+            cls.shallow_covalent_metallic,
             ]
     
     @property

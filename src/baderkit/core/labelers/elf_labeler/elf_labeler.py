@@ -27,11 +27,7 @@ from .elf_labeler_numba import get_feature_edges, get_min_avg_feat_surface_dists
 Self = TypeVar("Self", bound="ElfLabeler")
 # TODO:
 
-    # - Move back to using Bader as an argument rather than inheriting? Better
-    # separates the two concepts and 
-    # - Make sure all basins in a feature get assigned properly. I probably
-    # need to make a custom method rather than assigning to the nearest dummy
-    # atom. Same for structures?
+    # - Add more bond types, i.e. metal bonds. Same for electrides?
     # - add a method to print a more traditional bifurcation plot?
     # - create method to get all radii around each atom using new radii method:
         # 1. get atom neighbors (up to distance or dynamically)
@@ -43,9 +39,6 @@ Self = TypeVar("Self", bound="ElfLabeler")
     # faster. I could probably even reimplement exact voxel splitting
     # - Update simmate workflows (and badelf -_- )
 
-    
-# TODO: add convenience properties/methods for getting information about different
-# assignments
 
 
 class ElfLabeler:
@@ -193,15 +186,37 @@ class ElfLabeler:
     @property
     def atom_elf_radii(self) -> NDArray[np.float64]:
         if self._atom_elf_radii is None:
-            # run labeling and radii calc by calling our bifurcation graph
-            self.bifurcation_graph
+            # NOTE: This is the smallest radius of each atom which is not always
+            # along the bond to the nearest neighbor, but typically is. For
+            # example CdPt3 has 2 Pt atoms with a Cd an dPt atom tied for the
+            # nearest.
+            
+            # Get radii of all nearest neighbors
+            all_radii = self.atom_nn_elf_radii
+            all_radii_types = self._atom_nn_elf_radii_types
+            site_indices, neigh_indices, neigh_coords, neigh_dists = self.nearest_neighbor_data
+            
+            # sort radii
+            sorted_indices = np.argsort(all_radii)
+            sorted_sites = site_indices[sorted_indices]
+            
+            # get first instance of each atom
+            radii = np.empty(len(self.structure), dtype=np.float64)
+            radii_types = np.empty(len(self.structure), dtype=all_radii_types.dtype)
+            for i in range(len(self.structure)):
+                first_index = np.argmax(sorted_sites==i)
+                radii[i] = all_radii[sorted_indices[first_index]]
+                radii_types[i] = all_radii_types[sorted_indices[first_index]]
+            self._atom_elf_radii = radii
+            self._atom_elf_radii_types = radii_types
+            
         return self._atom_elf_radii
     
     @property
     def atom_elf_radii_types(self) -> NDArray[np.float64]:
         if self._atom_elf_radii_types is None:
             # run labeling and radii calc by calling our bifurcation graph
-            self.bifurcation_graph
+            self.atom_elf_radii
         return np.where(self._atom_elf_radii_types, "covalent", "ionic")
     
     @property
@@ -568,28 +583,28 @@ class ElfLabeler:
     # Utilities
     ###########################################################################
     
-    def _get_atom_elf_radii(self):
-        if not self._labeled_covalent:
-            raise Exception("Covalent features must be labeled for reliable radii.")
+    # def _get_atom_elf_radii(self):
+    #     if not self._labeled_covalent:
+    #         raise Exception("Covalent features must be labeled for reliable radii.")
 
-        # The radii is set to either the minimum (ionic) or maximum (covalent)
-        # point separating two nearest atoms. In the case that an atom is surrounded
-        # by metallic/bare electron features, it is set to the last point that
-        # belongs to a core/shell/lone-pair. Thus, we need to label our structure
-        # with covalent and metallic/bare electron features first
-        included_types = FeatureType.valence_types.copy()
-        included_types.append(FeatureType.unknown)
+    #     # The radii is set to either the minimum (ionic) or maximum (covalent)
+    #     # point separating two nearest atoms. In the case that an atom is surrounded
+    #     # by metallic/bare electron features, it is set to the last point that
+    #     # belongs to a core/shell/lone-pair. Thus, we need to label our structure
+    #     # with covalent and metallic/bare electron features first
+    #     included_types = FeatureType.valence_types.copy()
+    #     included_types.append(FeatureType.unknown)
 
-        feature_labels, feature_structure = self.get_feature_labels(included_features=included_types)
+    #     feature_labels, feature_structure = self.get_feature_labels(included_features=included_types)
 
-        radii_tools = ElfRadiiTools(
-            grid=self.reference_grid,
-            feature_labels=feature_labels,
-            feature_structure=feature_structure,
-            )
-        self.bifurcation_graph._atom_elf_radii = radii_tools.atom_elf_radii
-        self._atom_elf_radii = radii_tools.atom_elf_radii
-        self._atom_elf_radii_types = radii_tools.atom_elf_radii_types
+    #     radii_tools = ElfRadiiTools(
+    #         grid=self.reference_grid,
+    #         feature_labels=feature_labels,
+    #         feature_structure=feature_structure,
+    #         )
+    #     self.bifurcation_graph._atom_elf_radii = radii_tools.atom_elf_radii
+    #     self._atom_elf_radii = radii_tools.atom_elf_radii
+    #     self._atom_elf_radii_types = radii_tools.atom_elf_radii_types
         
     def _get_quasi_atom_elf_radii(self):
         if not self._labeled_covalent:
@@ -598,6 +613,8 @@ class ElfLabeler:
         # we're getting radii acting as if bare electrons are atoms. We want
         # to label our structure similar to the method above, but use our
         # structure labeled with quasi atoms
+        # TODO: This should follow a similar scheme to the nn atom radii in
+        # case the smallest radius isn't along the nearest atoms bond
 
         included_types = FeatureType.valence_types.copy()
         feature_labels, feature_structure = self.get_feature_labels(included_features=included_types)
@@ -995,7 +1012,7 @@ class ElfLabeler:
         self._mark_lonepairs()
         
         # get atomic radii before checking for metal/bare
-        self._get_atom_elf_radii()
+        self._get_nn_atom_elf_radii()
         
         # Next we mark our metallic/bare electrons. These currently have a set
         # of rather arbitrary cutoffs to distinguish between them. In the future
@@ -1132,10 +1149,8 @@ class ElfLabeler:
         valence_nodes = []
         valence_frac = []
         for node in graph.unassigned_nodes:
-            # don't include nodes with too low of charge (avoids shallow metallics)
-            if node.charge > self.min_covalent_charge:
-                valence_frac.append(node.average_frac_coords)
-                valence_nodes.append(node)
+            valence_frac.append(node.average_frac_coords)
+            valence_nodes.append(node)
         
         # Convert our cutoff angle to radians
         min_covalent_angle = self.min_covalent_angle * math.pi / 180
@@ -1198,16 +1213,22 @@ class ElfLabeler:
 
             if is_covalent:
                 # label as covalent or metallic covalent depending on the species'
-                # type
+                # type and charge
                 species1 = self.structure[int(atom0)].specie
                 species2 = self.structure[int(atom1)].specie
                 if species1.is_metal or species2.is_metal:
-                    node.feature_type = FeatureType.covalent_metallic
-                else:
+                    if node.charge > self.min_covalent_charge:
+                        node.feature_type = FeatureType.covalent_metallic
+                    else:
+                        # this is a metal bond but it has very low charge
+                        node.feature_type = FeatureType.shallow_covalent_metallic
+                    # we also go ahead and set the neighboring atoms to avoid some
+                    # CrystalNN calculations
+                    node._coord_atom_indices = [int(atom0), int(atom1)]
+                elif node.charge > self.min_covalent_charge:
                     node.feature_type = FeatureType.covalent
-                # we also go ahead and set the neighboring atoms to avoid some
-                # CrystalNN calculations
-                node._coord_atom_indices = [int(atom0), int(atom1)]
+                    node._coord_atom_indices = [int(atom0), int(atom1)]
+                
         # note we've labeled our covalent features
         self._labeled_covalent = True
                 
@@ -1225,7 +1246,9 @@ class ElfLabeler:
             # be mislabeled as a lone-pair instead of a metal bond
         assigned_nodes = []
         for node in self.bifurcation_graph.irreducible_nodes:
-            if not node.feature_type in [None, FeatureType.unknown]:
+            if not node.feature_type in [None, FeatureType.unknown, FeatureType.shallow_covalent_metallic]:
+                # NOTE: exclude shallow covalent metal features in case these end up being
+                # misassigned deep shells. Not sure if this is necessary
                 assigned_nodes.append(node.key)
         
         nodes = self.bifurcation_graph.sorted_reducible_nodes.copy()
