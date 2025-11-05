@@ -5,8 +5,8 @@ This file defines options for feature labels and settings for colors and
 dummy atoms
 """
 
-from enum import Enum
 import logging
+from enum import Enum
 
 DOMAIN_COLORS = {
     "reducible - root": "rgba(128, 128, 128, 1)",  # grey
@@ -14,25 +14,25 @@ DOMAIN_COLORS = {
     "reducible - domain": "rgba(128, 128, 128, 1)",  # grey
     "reducible - dimensionality": "rgba(154, 128, 128, 1)",  # redish grey
     "reducible - contained atoms": "rgba(128, 128, 154, 1)",  # bluish grey
-    "irreducible": "rgba(47, 79, 79, 1)", # dark slate gray
-    "irreducible - point": "rgba(47, 79, 79, 1)", # dark slate gray
-    "irreducible - ring": "rgba(47, 79, 79, 1)", # dark slate gray
-    "irreducible - cage": "rgba(47, 79, 79, 1)", # dark slate gray
-    }
+    "irreducible": "rgba(47, 79, 79, 1)",  # dark slate gray
+    "irreducible - point": "rgba(47, 79, 79, 1)",  # dark slate gray
+    "irreducible - ring": "rgba(47, 79, 79, 1)",  # dark slate gray
+    "irreducible - cage": "rgba(47, 79, 79, 1)",  # dark slate gray
+}
 
 FEATURE_COLORS = {
-    "shell": "rgba(60, 60, 60, 1)", # dark grey
-    "deep shell": "rgba(60, 60, 60, 1)", # dark grey
-    "core": "rgba(0, 0, 0, 1)", # black
+    "shell": "rgba(60, 60, 60, 1)",  # dark grey
+    "deep shell": "rgba(60, 60, 60, 1)",  # dark grey
+    "core": "rgba(0, 0, 0, 1)",  # black
     "covalent": "rgba(0, 255, 255, 1)",  # aqua
     "covalent-metallic": "rgba(101, 191, 224, 1)",  # aqua/gray
     "shallow covalent-metallic": "rgba(140, 180, 180, 1)",  # bluish gray
-    "metallic": "rgba(112, 128, 144, 1)", # slate gray
+    "metallic": "rgba(112, 128, 144, 1)",  # slate gray
     "lone-pair": "rgba(128, 0, 128, 1)",  # purple
     "non-nuclear attractor": "rgba(128, 0, 0, 1)",  # maroon
     "electride": "rgba(170, 0, 0, 1)",  # dark red
     "bare electron": "rgba(170, 0, 0, 1)",  # dark red
-    }
+}
 
 FEATURE_DUMMY_ATOMS = {
     "unknown": "X",
@@ -46,14 +46,16 @@ FEATURE_DUMMY_ATOMS = {
     "lone-pair": "Lp",
     "non-nuclear attractor": "Xn",
     "electride": "E",
-    "bare electron": "Le"
-    }
+    "bare electron": "Le",
+}
 
-LINE_COLOR = "rgba(128, 128, 128, 1)" # grey
+LINE_COLOR = "rgba(128, 128, 128, 1)"  # grey
+
 
 class classproperty(property):
     def __get__(self, obj, cls):
         return self.fget(cls)
+
 
 class DomainSubtype(str, Enum):
     reducible = "reducible"
@@ -65,13 +67,13 @@ class DomainSubtype(str, Enum):
     irreducible_point = "irreducible - point"
     irreducible_ring = "irreducible - ring"
     irreducible_cage = "irreducible - cage"
-    
+
     def __str__(self):
         return self.value
 
     def __repr__(self):
         return str(self)
-    
+
     @classproperty
     def reducible_types(cls):
         return [
@@ -90,19 +92,21 @@ class DomainSubtype(str, Enum):
             cls.irreducible_ring,
             cls.irreducible_cage,
         ]
+
     @classproperty
     def subtypes(cls):
         return {
             "ReducibleNode": cls.reducible_types,
             "IrreducibleNode": cls.irreducible_types,
-        } 
-    
+        }
+
     @property
     def plot_color(self):
         color = DOMAIN_COLORS.get(self.value, None)
         if color is None:
             logging.warning(f"No plot color found for domain of type {self.name}")
         return color
+
 
 class FeatureType(str, Enum):
     unknown = "unknown"
@@ -117,7 +121,7 @@ class FeatureType(str, Enum):
     non_nuclear_attractor = "non-nuclear attractor"
     electride = "electride"
     bare_electron = "bare electron"
-    
+
     def __str__(self):
         return self.value
 
@@ -137,36 +141,34 @@ class FeatureType(str, Enum):
             cls.metallic,
             cls.non_nuclear_attractor,
             cls.electride,
-            cls.bare_electron
-        ] 
-    
+            cls.bare_electron,
+        ]
+
     @classproperty
     def bare_types(cls):
-        return [
-            cls.non_nuclear_attractor,
-            cls.electride,
-            cls.bare_electron
-            ]
-    
+        return [cls.non_nuclear_attractor, cls.electride, cls.bare_electron]
+
     @classproperty
     def covalent_types(cls):
         return [
             cls.covalent,
             cls.covalent_metallic,
             cls.shallow_covalent_metallic,
-            ]
-    
+        ]
+
     @property
     def plot_color(self):
         color = FEATURE_COLORS.get(self.value, None)
         if color is None:
             logging.warning(f"No plot color found for feature of type {self.name}")
         return color
-    
+
     @property
     def dummy_species(self):
         species = FEATURE_DUMMY_ATOMS.get(self.value, None)
         if species is None:
-            logging.warning(f"No dummy species label found for feature of type {self.name}. Using 'X'")
+            logging.warning(
+                f"No dummy species label found for feature of type {self.name}. Using 'X'"
+            )
             return "X"
         return species

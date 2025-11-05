@@ -6,13 +6,19 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.utilities.basic import wrap_point, coords_to_flat, merge_frac_coords_weighted, flat_to_coords
-from baderkit.core.utilities.union_find import union, find_root_no_compression
+from baderkit.core.utilities.basic import (
+    coords_to_flat,
+    flat_to_coords,
+    merge_frac_coords_weighted,
+    wrap_point,
+)
 from baderkit.core.utilities.interpolation import linear_slice
+from baderkit.core.utilities.union_find import find_root_no_compression, union
 
 ###############################################################################
 # General methods
 ###############################################################################
+
 
 @njit(cache=True, inline="always")
 def get_best_neighbor(
@@ -137,6 +143,7 @@ def get_edges(
                         break
     return edges
 
+
 @njit(fastmath=True, cache=True)
 def get_basin_charges_and_volumes(
     data: NDArray[np.float64],
@@ -169,6 +176,7 @@ def get_basin_charges_and_volumes(
     vacuum_volume = vacuum_volume * cell_volume / total_points
     vacuum_charge = vacuum_charge / total_points
     return charges, volumes, vacuum_charge, vacuum_volume
+
 
 @njit(parallel=True, cache=True)
 def get_maxima(
@@ -227,6 +235,7 @@ def get_maxima(
                     maxima[i, j, k] = True
     return maxima
 
+
 # NOTE: Parts of this could probably be parallelized, but I was running into issues
 # with rather unhelpful error messages (ValueError: negative dimensions not allowed)
 @njit(cache=True)
@@ -239,14 +248,14 @@ def initialize_labels_from_maxima(
     neighbor_transforms,
     neighbor_dists,
     max_cart_offset=1,
-    rel_minima_tol=1e-4
+    rel_minima_tol=1e-4,
 ):
     nx, ny, nz = data.shape
     ny_nz = ny * nz
-    
+
     # create a flat array of labels. These will initially all be -1
     labels = np.full(nx * ny * nz, -1, dtype=np.int64)
-    
+
     # create an array to store values at each maximum
     maxima_values = np.empty(len(maxima_vox), dtype=np.float64)
     maxima_labels = np.empty(len(maxima_vox), dtype=np.int64)
@@ -262,7 +271,7 @@ def initialize_labels_from_maxima(
         flat_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
         maxima_labels[max_idx] = flat_max_idx
         labels[flat_max_idx] = flat_max_idx
-    
+
     ###########################################################################
     # 1. Remove Flat False Maxima
     ###########################################################################
@@ -270,7 +279,7 @@ def initialize_labels_from_maxima(
     # are the same value. This point may be mislabeled as a maximum if these
     # neighbors are not themselves maxima. This issue is really caused by too
     # few sig figs in the data preventing the region from being properly distinguished
-    
+
     # create an array to store which maxima need to be reduced
     flat_maxima_labels = []
     flat_maxima_mask = np.zeros(len(maxima_vox), dtype=np.bool_)
@@ -279,23 +288,25 @@ def initialize_labels_from_maxima(
     # check each maximum to see if it is a true maximum. We do this iteratively
     # in case there is a flat area larger than a couple of voxels across
     while True:
-        for max_idx, ((i,j,k), value, max_label) in enumerate(zip(maxima_vox, maxima_values, maxima_labels)):
+        for max_idx, ((i, j, k), value, max_label) in enumerate(
+            zip(maxima_vox, maxima_values, maxima_labels)
+        ):
             # skip points that are already added
-            if not maxima_mask[i,j,k]:
+            if not maxima_mask[i, j, k]:
                 continue
-            
+
             for si, sj, sk in neighbor_transforms:
                 # get neighbor and wrap
                 ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-                neigh_value = data[ii,jj,kk]
+                neigh_value = data[ii, jj, kk]
                 # skip lower points or points that are also true maxima
-                if neigh_value < value or maxima_mask[ii,jj,kk]:
+                if neigh_value < value or maxima_mask[ii, jj, kk]:
                     continue
                 # note this is a false maximum
                 flat_maxima_labels.append(max_label)
                 flat_maxima_mask[max_idx] = True
                 # temporarily set maxima_mask to false
-                maxima_mask[i,j,k] = False
+                maxima_mask[i, j, k] = False
                 # check if this neighbor is also in our flat set
                 neigh_label = coords_to_flat(ii, jj, kk, ny_nz, nz)
                 found = False
@@ -303,7 +314,7 @@ def initialize_labels_from_maxima(
                     if neigh_label == max_label:
                         # give this max the same neighbor as this point
                         best_neigh.append(max_neigh)
-                        found=True
+                        found = True
                         break
                 if not found:
                     best_neigh.append(neigh_label)
@@ -322,56 +333,58 @@ def initialize_labels_from_maxima(
         while True:
             _, (ni, nj, nk) = get_best_neighbor(
                 data,
-                i,j,k,
+                i,
+                j,
+                k,
                 neighbor_transforms,
                 neighbor_dists,
-                )
-            if maxima_mask[ni,nj,nk]:
+            )
+            if maxima_mask[ni, nj, nk]:
                 break
-            if i==ni and j==nj and k==nk:
+            if i == ni and j == nj and k == nk:
                 # we've hit another group of flat maxima. get their best neighbor
                 # and continue
-                flat_neigh = coords_to_flat(ni, nj, nk ,ny_nz, nz)
+                flat_neigh = coords_to_flat(ni, nj, nk, ny_nz, nz)
                 for max_label, neigh_label in zip(flat_maxima_labels, best_neigh):
                     if max_label == flat_neigh:
                         ni, nj, nk = flat_to_coords(neigh_label, ny_nz, nz)
                         break
-            i=ni
-            j=nj
-            k=nk
+            i = ni
+            j = nj
+            k = nk
         best_max = coords_to_flat(ni, nj, nk, ny_nz, nz)
         # union each corresponding point
         for max_label, neigh_label in zip(flat_maxima_labels, best_neigh):
-            if neigh_label!=unique_neigh_label:
+            if neigh_label != unique_neigh_label:
                 continue
             union(labels, max_label, best_max)
-    
+
     # add maxima back to mask (required for things like the weight method)
     for max_label in flat_maxima_labels:
-        i,j,k = flat_to_coords(max_label, ny_nz, nz)
-        maxima_mask[i,j,k] = True
-        
+        i, j, k = flat_to_coords(max_label, ny_nz, nz)
+        maxima_mask[i, j, k] = True
+
     ###########################################################################
     # 2. Combine Adjacent Maxima
     ###########################################################################
     # If a maximum lies off of the grid, two adjacent point may have the same
     # value and appear to be separate maxima.
-    for (i,j,k), max_label in zip(maxima_vox, maxima_labels):
+    for (i, j, k), max_label in zip(maxima_vox, maxima_labels):
         for si, sj, sk in neighbor_transforms:
             # get neighbor and wrap
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             neigh_label = coords_to_flat(ii, jj, kk, ny_nz, nz)
             # if the neighbor is also a maximum, create a union
-            if maxima_mask[ii,jj,kk]:
+            if maxima_mask[ii, jj, kk]:
                 union(labels, max_label, neigh_label)
-    
+
     ###########################################################################
     # 2. Remove Voxelated False Maxima
     ###########################################################################
     # With the right shape (e.g. highly anisotropic) a maximum may lay offgrid
     # and cause two ongrid points to appear to be higher than the region around
     # them. We check for these in a region around each point using cubic interpolation
-    
+
     # sort maxima from high to low
     sorted_indices = np.flip(np.argsort(maxima_values))
 
@@ -384,18 +397,18 @@ def initialize_labels_from_maxima(
         sorted_max_idx += 1
         max_frac = maxima_frac[max_idx]
         value = maxima_values[max_idx]
-        
+
         # iterate over maxima above this point
         for neigh_max_idx in sorted_indices:
             # skip if this is the same point
             if neigh_max_idx == max_idx:
                 continue
-            
+
             # break if we reach a point lower than the current one
             neigh_value = maxima_values[neigh_max_idx]
             if neigh_value < value:
                 break
-            
+
             neigh_frac = maxima_frac[neigh_max_idx]
             # unwrap relative to central
             fi, fj, fk = neigh_frac - np.round(neigh_frac - max_frac)
@@ -403,27 +416,33 @@ def initialize_labels_from_maxima(
             oi = fi - max_frac[0]
             oj = fj - max_frac[1]
             ok = fk - max_frac[2]
-            
+
             # calculate the distance in cart coords
             ci = lattice[0, 0] * oi + lattice[1, 0] * oj + lattice[2, 0] * ok
             cj = lattice[0, 1] * oi + lattice[1, 1] * oj + lattice[2, 1] * ok
             ck = lattice[0, 2] * oi + lattice[1, 2] * oj + lattice[2, 2] * ok
             dist = (ci**2 + cj**2 + ck**2) ** (1 / 2)
-            
+
             # if above our cutoff, continue
             if dist > max_cart_offset:
                 continue
-            
+
             # check if there is a minimum between this point and its neighbor
             # set number of interpolation points to ~20/A
-            n_points = math.ceil(dist*20)
+            n_points = math.ceil(dist * 20)
             values = linear_slice(
-                spline_coeffs, max_frac, (fi,fj,fk), n=n_points, is_frac=True
+                spline_coeffs, max_frac, (fi, fj, fk), n=n_points, is_frac=True
             )
             # check for a local minimum. If there is one, these are distince maxima
             # BUGFIX: Check for minima with a tolerance.
-            minima = np.where((values[1:-1] < values[:-2]) & (values[1:-1] <= values[2:]))[0] + 1
-            maxima = np.where((values[1:-1] > values[:-2]) & (values[1:-1] >= values[2:]))[0] + 1
+            minima = (
+                np.where((values[1:-1] < values[:-2]) & (values[1:-1] <= values[2:]))[0]
+                + 1
+            )
+            maxima = (
+                np.where((values[1:-1] > values[:-2]) & (values[1:-1] >= values[2:]))[0]
+                + 1
+            )
 
             # Add edges if they qualify as maxima
             if values[0] >= values[1]:
@@ -521,6 +540,7 @@ def initialize_labels_from_maxima(
             labels[max_label] = best_max_label
 
     return labels, all_frac_coords, all_grid_coords
+
 
 @njit(cache=True, fastmath=True)
 def get_min_avg_surface_dists(

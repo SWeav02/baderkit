@@ -4,9 +4,9 @@
 Extends the ElfLabeler to spin polarized calculations
 """
 
+import logging
 import warnings
 from pathlib import Path
-import logging
 from typing import TypeVar
 
 import numpy as np
@@ -19,29 +19,39 @@ from .elf_labeler import ElfLabeler
 
 Self = TypeVar("Self", bound="ElfLabeler")
 
+
 class SpinElfLabeler:
-    
+
     _spin_system = "combined"
-    
+
     def __init__(
-            self,
-            charge_grid: Grid,
-            reference_grid: Grid,
-            **kwargs,
-            ):
+        self,
+        charge_grid: Grid,
+        reference_grid: Grid,
+        **kwargs,
+    ):
         # First make sure the grids are actually spin polarized
-        assert reference_grid.is_spin_polarized and charge_grid.is_spin_polarized, "ELF must be spin polarized. Use a spin polarized calculation or switch to the ElfLabeler class."
+        assert (
+            reference_grid.is_spin_polarized and charge_grid.is_spin_polarized
+        ), "ELF must be spin polarized. Use a spin polarized calculation or switch to the ElfLabeler class."
         # store the original grid
         self.original_reference_grid = reference_grid
         self.original_charge_grid = charge_grid
         # split the grids to spin up and spin down
-        self.reference_grid_up, self.reference_grid_down = reference_grid.split_to_spin()
+        self.reference_grid_up, self.reference_grid_down = (
+            reference_grid.split_to_spin()
+        )
         self.charge_grid_up, self.charge_grid_down = charge_grid.split_to_spin()
         # check if spin up and spin down are the same
         if np.allclose(
-            self.reference_grid_up.total, self.reference_grid_down.total, rtol=0, atol=1e-4
+            self.reference_grid_up.total,
+            self.reference_grid_down.total,
+            rtol=0,
+            atol=1e-4,
         ):
-            logging.info("Spin grids are found to be equal. Only spin-up system will be used.")
+            logging.info(
+                "Spin grids are found to be equal. Only spin-up system will be used."
+            )
             self._equal_spin = True
         else:
             self._equal_spin = False
@@ -50,20 +60,19 @@ class SpinElfLabeler:
             reference_grid=self.reference_grid_up,
             charge_grid=self.charge_grid_up,
             **kwargs,
-            )
+        )
         if not self._equal_spin:
             self.elf_labeler_down = ElfLabeler(
-                reference_grid=self.reference_grid_down, 
-                charge_grid=self.charge_grid_down, 
+                reference_grid=self.reference_grid_down,
+                charge_grid=self.charge_grid_down,
                 **kwargs,
-                )
+            )
             self.elf_labeler_up._spin_system = "up"
             self.elf_labeler_down._spin_system = "down"
         else:
             self.elf_labeler_down = self.elf_labeler_up
-            self.elf_labeler_up._spin_system = "half" # same up/down
-        
-        
+            self.elf_labeler_up._spin_system = "half"  # same up/down
+
         # calculated properties
         self._labeled_structure = None
         self._quasi_atom_structure = None
@@ -72,11 +81,11 @@ class SpinElfLabeler:
         self._atom_nn_elf_radii = None
         self._atom_nn_elf_radii_types = None
         self._nearest_neighbor_data = None
-    
+
     ###########################################################################
     # Properties combining spin up and spin down systems
     ###########################################################################
-    
+
     @property
     def structure(self) -> Structure:
         """
@@ -84,7 +93,7 @@ class SpinElfLabeler:
         """
         structure = self.original_reference_grid.structure.copy()
         return structure
-    
+
     @property
     def nearest_neighbor_data(self) -> list:
         if self._nearest_neighbor_data is None:
@@ -94,7 +103,7 @@ class SpinElfLabeler:
             self.elf_labeler_down._nearest_neighbor_data = nearest_neighbor_data
             self._nearest_neighbor_data = nearest_neighbor_data
         return self._nearest_neighbor_data
-    
+
     @property
     def atom_elf_radii(self) -> NDArray[np.float64]:
         if self._atom_elf_radii is None:
@@ -103,17 +112,20 @@ class SpinElfLabeler:
             spin_down_radii = self.elf_labeler_down.atom_elf_radii
             self._atom_elf_radii = (spin_up_radii + spin_down_radii) / 2
         return self._atom_elf_radii
-    
+
     @property
     def atom_elf_radii_types(self) -> NDArray[np.float64]:
         if self._atom_elf_radii_types is None:
             # make sure spin up/down labelers have calculated radii
             self.atom_elf_radii
             # default to covalent
-            self._atom_elf_radii_types = self.elf_labeler_up._atom_elf_radii_types | self.elf_labeler_down._atom_elf_radii_types
+            self._atom_elf_radii_types = (
+                self.elf_labeler_up._atom_elf_radii_types
+                | self.elf_labeler_down._atom_elf_radii_types
+            )
         # convert to strings and return
         return np.where(self._atom_elf_radii_types, "covalent", "ionic")
-    
+
     @property
     def atom_nn_elf_radii(self) -> NDArray[np.float64]:
         if self._atom_nn_elf_radii is None:
@@ -122,17 +134,20 @@ class SpinElfLabeler:
             spin_down_radii = self.elf_labeler_down.atom_nn_elf_radii
             self._atom_nn_elf_radii = (spin_up_radii + spin_down_radii) / 2
         return self._atom_nn_elf_radii
-    
+
     @property
     def atom_nn_elf_radii_types(self) -> NDArray[np.float64]:
         if self._atom_nn_elf_radii_types is None:
             # make sure spin up/down labelers have calculated radii
             self.atom_nn_elf_radii
             # default to covalent
-            self._atom_nn_elf_radii_types = self.elf_labeler_up._atom_nn_elf_radii_types | self.elf_labeler_down._atom_nn_elf_radii_types
+            self._atom_nn_elf_radii_types = (
+                self.elf_labeler_up._atom_nn_elf_radii_types
+                | self.elf_labeler_down._atom_nn_elf_radii_types
+            )
         # convert to strings and return
         return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
-    
+
     @property
     def labeled_structure(self) -> Structure:
         """
@@ -149,7 +164,7 @@ class SpinElfLabeler:
             # get species from the spin up system
             new_species = []
             new_coords = []
-            for site in structure_up[len(self.structure):]:
+            for site in structure_up[len(self.structure) :]:
                 species = site.specie.symbol
                 # add frac coords no matter what
                 new_coords.append(site.frac_coords)
@@ -159,20 +174,19 @@ class SpinElfLabeler:
                     new_species.append(species)
                 else:
                     # otherwise, we rename the species
-                    new_species.append(species+"xu")
+                    new_species.append(species + "xu")
             # do the same for the spin down system
-            for site in structure_down[len(self.structure):]:
+            for site in structure_down[len(self.structure) :]:
                 # only add the structure if it didn't exist in the spin up system
                 if site not in structure_up:
                     species = site.specie.symbol
-                    new_species.append(species+"xd")
+                    new_species.append(species + "xd")
                     new_coords.append(site.frac_coords)
             # add our sites
             for species, coords in zip(new_species, new_coords):
                 labeled_structure.append(species, coords)
             self._labeled_structure = labeled_structure
         return self._labeled_structure
-        
 
     @property
     def quasi_atom_structure(self) -> Structure:
@@ -190,7 +204,7 @@ class SpinElfLabeler:
             # get species from the spin up system
             new_species = []
             new_coords = []
-            for site in structure_up[len(self.structure):]:
+            for site in structure_up[len(self.structure) :]:
                 species = site.specie.symbol
                 # add frac coords no matter what
                 new_coords.append(site.frac_coords)
@@ -200,13 +214,13 @@ class SpinElfLabeler:
                     new_species.append(species)
                 else:
                     # otherwise, we rename the species
-                    new_species.append(species+"xu")
+                    new_species.append(species + "xu")
             # do the same for the spin down system
-            for site in structure_down[len(self.structure):]:
+            for site in structure_down[len(self.structure) :]:
                 # only add the structure if it didn't exist in the spin up system
                 if site not in structure_up:
                     species = site.specie.symbol
-                    new_species.append(species+"xd")
+                    new_species.append(species + "xd")
                     new_coords.append(site.frac_coords)
             # add our sites
             for species, coords in zip(new_species, new_coords):
@@ -214,12 +228,12 @@ class SpinElfLabeler:
             self._quasi_atom_structure = labeled_structure
 
         return self._quasi_atom_structure
-                
+
     def get_charges_and_volumes(
-            self,
-            use_quasi_atoms: bool = True,
-            **kwargs,
-            ):
+        self,
+        use_quasi_atoms: bool = True,
+        **kwargs,
+    ):
         """
         NOTE: Volumes may not have a physical meaning when differences are found
         between spin up/down systems. They are calculated as the average between
@@ -227,18 +241,16 @@ class SpinElfLabeler:
         """
         # get the initial charges/volumes from the spin up system
         charges, volumes = self.elf_labeler_up.get_charges_and_volumes(
-            use_quasi_atoms=use_quasi_atoms,
-            **kwargs
-            )
+            use_quasi_atoms=use_quasi_atoms, **kwargs
+        )
         # convert to lists
         charges = charges.tolist()
         volumes = volumes.tolist()
-        
+
         # get the charges from the spin down system
         charges_down, volumes_down = self.elf_labeler_down.get_charges_and_volumes(
-            use_quasi_atoms=use_quasi_atoms,
-            **kwargs
-            )
+            use_quasi_atoms=use_quasi_atoms, **kwargs
+        )
         # get structures from each system
         if use_quasi_atoms:
             structure_up = self.elf_labeler_up.quasi_atom_structure
@@ -256,20 +268,18 @@ class SpinElfLabeler:
                 charges.append(charge)
                 volumes.append(volume)
         return np.array(charges), np.array(volumes) / 2
-        
-    
+
     def get_oxidation_and_volumes_from_potcar(
-        self,
-        potcar_path: Path = "POTCAR",
-        use_quasi_atoms: bool = True,
-        **kwargs
-            ):
+        self, potcar_path: Path = "POTCAR", use_quasi_atoms: bool = True, **kwargs
+    ):
         """
         NOTE: Volumes may not have a physical meaning when differences are found
         between spin up/down systems
         """
         # get the charges/volumes
-        charges, volumes = self.get_charges_and_volumes(use_quasi_atoms=use_quasi_atoms, **kwargs)
+        charges, volumes = self.get_charges_and_volumes(
+            use_quasi_atoms=use_quasi_atoms, **kwargs
+        )
         # convert to path
         potcar_path = Path(potcar_path)
         # load
@@ -292,24 +302,22 @@ class SpinElfLabeler:
             val_electrons = nelectron_data.get(element_str, 0.0)
             oxi_state = val_electrons - site_charge
             oxi_state_data.append(oxi_state)
-            
+
         return np.array(oxi_state_data), charges, volumes
-    
-    
+
     def write_bifurcation_plots(self, filename: str | Path):
         filename = Path(filename)
-    
+
         if filename.suffix:
             filename_up = filename.with_name(f"{filename.stem}_up{filename.suffix}")
             filename_down = filename.with_name(f"{filename.stem}_down{filename.suffix}")
         else:
             filename_up = filename.with_name(f"{filename.name}_up")
             filename_down = filename.with_name(f"{filename.name}_down")
-    
+
         self.elf_labeler_up.write_bifurcation_plot(filename_up)
         self.elf_labeler_down.write_bifurcation_plot(filename_down)
 
-    
     ###########################################################################
     # From methods
     ###########################################################################
@@ -352,7 +360,7 @@ class SpinElfLabeler:
             reference_grid = Grid.from_vasp(reference_filename, total_only=False)
 
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
-    
+
     # TODO: Currently this class is only useful for VASP because .cube files
     # typically only contain a single grid. Is there a reason to create a convenience
     # function for cube files?

@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 
 from baderkit.core.utilities.basic import wrap_point
 
+
 @njit(parallel=True, cache=True)
 def get_feature_edges(
     labeled_array: NDArray[np.int64],
@@ -60,11 +61,13 @@ def get_feature_edges(
                     # Note this in our edge array and break
                     # NOTE: we also check that the neighbor is not part of the
                     # vacuum
-                    if neigh_feature_label != feature_label and not vacuum_mask[ii, jj, kk]:
+                    if (
+                        neigh_feature_label != feature_label
+                        and not vacuum_mask[ii, jj, kk]
+                    ):
                         edges[i, j, k] = True
                         break
     return edges
-
 
 
 @njit(cache=True, fastmath=True)
@@ -85,7 +88,7 @@ def get_min_avg_feat_surface_dists(
         for j in range(ny):
             for k in range(nz):
                 # skip outside edges
-                if not edge_mask[i,j,k]:
+                if not edge_mask[i, j, k]:
                     continue
                 # get feature label at edge
                 feature_label = feature_map[labels[i, j, k]]
@@ -119,5 +122,3 @@ def get_min_avg_feat_surface_dists(
     # get average dists
     average_dists = dist_sums / edge_totals
     return dists, average_dists
-
-

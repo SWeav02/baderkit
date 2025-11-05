@@ -3,10 +3,11 @@
 import math
 
 import numpy as np
-from numpy.typing import NDArray
 from numba import njit, prange
+from numpy.typing import NDArray
 
 from baderkit.core.utilities.interpolation import interp_nearest, interp_spline
+
 
 @njit(parallel=True, cache=True)
 def get_elf_radius(
@@ -18,15 +19,15 @@ def get_elf_radius(
     covalent_labels,
     bond_dist,
     line_res: int = 20,
-        ):
+):
     # get the number of points to interpolate
-    num_points = int(round(bond_dist*line_res))
+    num_points = int(round(bond_dist * line_res))
     # I want this to always be odd because it is common for the exact midpoint
     # to be the correct fraction. This isn't required, but results in clean
     # values in these cases
     if num_points % 2 == 1:
         num_points += 1
-    
+
     # get the vector pointing from each point along the line to the next
     step_vec = (neigh_coords - atom_coords) / (num_points - 1)
 
@@ -38,19 +39,19 @@ def get_elf_radius(
         x, y, z = atom_coords + float(point_idx) * step_vec
         values[point_idx] = interp_spline(x, y, z, data)
         labels[point_idx] = interp_nearest(x, y, z, feature_labels)
-        
+
     # get the unique labels
     unique_labels = np.unique(labels)
 
     # SITUATION 1:
-        # The atom's nearest neighbor is a translation of itself. The radius
-        # must always be halfway between the two and the bond must be covalent
+    # The atom's nearest neighbor is a translation of itself. The radius
+    # must always be halfway between the two and the bond must be covalent
     if len(unique_labels) == 1:
         return 0.5 * bond_dist, True
-        
+
     # SITUATION 2:
-        # The atom is covalently bonded to its nearest neighbor. The radius is
-        # the closest local maximum to the center of the bond
+    # The atom is covalently bonded to its nearest neighbor. The radius is
+    # the closest local maximum to the center of the bond
     covalent = False
     for label in unique_labels:
         if label in covalent_labels:
@@ -73,10 +74,12 @@ def get_elf_radius(
             if label == atom_idx:
                 last_idx = i
             # check if the point is a maximum
-            if ((i == 0) or (values[i - 1] <= value)) and ((i == len(values) - 1) or (value > values[i + 1])):
+            if ((i == 0) or (values[i - 1] <= value)) and (
+                (i == len(values) - 1) or (value > values[i + 1])
+            ):
                 # if the maximum is closer to the midpoint than previous points,
                 # update our best distance
-                dist = abs(i-midpoint)
+                dist = abs(i - midpoint)
                 if dist < maxima_dist:
                     maxima_dist = dist
                     radius_index = i
@@ -85,10 +88,10 @@ def get_elf_radius(
         if radius_index == -1:
             radius_index = last_idx
             use_maximum = False
-    
+
     # SITUATION 3:
-        # The atom is ionically bonded to its nearest neighbor. The radius is
-        # at the first point not labeled as belonging to this atom
+    # The atom is ionically bonded to its nearest neighbor. The radius is
+    # at the first point not labeled as belonging to this atom
     else:
         use_maximum = False
         radius_index = -1
@@ -99,10 +102,10 @@ def get_elf_radius(
                 break
         # make sure we found an assignment
         assert radius_index != -1
-    
+
     # Now we want to refine the radius. First, we get the coordinate of the
     # current radius
-    current_coord = atom_coords + radius_index*step_vec
+    current_coord = atom_coords + radius_index * step_vec
     ci, cj, ck = current_coord
     current_value = interp_spline(ci, cj, ck, data)
     # This point must be within one index of the true radius. We iteratively
@@ -110,8 +113,8 @@ def get_elf_radius(
     # iteration
     # calculate number of steps needed to reach required resolution
     # res = 1/line_res * 0.5^n
-    resolution = 1e-8 # angstroms
-    n = round(math.log(resolution * line_res) / math.log(1/2))
+    resolution = 1e-8  # angstroms
+    n = round(math.log(resolution * line_res) / math.log(1 / 2))
     step_mult = 1.0
     for i in range(n):
         step_mult /= 2.0
@@ -147,11 +150,12 @@ def get_elf_radius(
                 current_value = down_val
                 current_coord = dcoord
                 radius_index -= step_mult
-    
+
     # We now have a refined radius. Calculate the actual bond distance
     bond_frac = radius_index / (num_points - 1)
     return bond_frac * bond_dist, covalent
-    
+
+
 @njit(cache=True)
 def get_elf_radii(
     equivalent_atoms,
@@ -162,14 +166,14 @@ def get_elf_radii(
     neighbor_dists,
     neighbor_images,
     covalent_labels: NDArray,
-        ):
+):
     # get the unique atoms we need to calculate radii for
     unique_atoms = np.unique(equivalent_atoms)
-    
+
     # create array to store radii and their type
-    atomic_radii = np.empty(len(atom_frac_coords), dtype=np.float64)    
-    radius_is_covalent = np.empty(len(atom_frac_coords), dtype=np.bool_) 
-    
+    atomic_radii = np.empty(len(atom_frac_coords), dtype=np.float64)
+    radius_is_covalent = np.empty(len(atom_frac_coords), dtype=np.bool_)
+
     # get the radius for each atom. NOTE: We don't do this in parallel because
     # we want the interpolation to be done in parallel instead
     for atom_idx in unique_atoms:
@@ -177,10 +181,10 @@ def get_elf_radii(
         neigh_idx = neighbor_indices[atom_idx]
         bond_dist = neighbor_dists[atom_idx]
         neigh_image = neighbor_images[atom_idx]
-        
+
         # get the neighbors frac coords
         neigh_coords = atom_frac_coords[neigh_idx] + neigh_image
-        
+
         # get the radius for this atom
         radius, is_covalent = get_elf_radius(
             data,
@@ -190,18 +194,19 @@ def get_elf_radii(
             neigh_coords,
             covalent_labels,
             bond_dist,
-                )
+        )
         atomic_radii[atom_idx] = radius
         radius_is_covalent[atom_idx] = is_covalent
-        
+
     # update values for equivalent atoms
     for atom_idx in range(len(atomic_radii)):
         equiv_atom = equivalent_atoms[atom_idx]
         atomic_radii[atom_idx] = atomic_radii[equiv_atom]
         radius_is_covalent[atom_idx] = radius_is_covalent[equiv_atom]
-        
+
     return atomic_radii, radius_is_covalent
-    
+
+
 @njit(cache=True)
 def get_all_atom_elf_radii(
     site_indices,
@@ -213,15 +218,15 @@ def get_all_atom_elf_radii(
     data,
     feature_labels,
     covalent_labels,
-        ):
-    
+):
+
     # get the unique bonds
     unique_bonds = np.unique(equivalent_bonds)
-    
+
     # create array to store radii
-    atomic_radii = np.empty(len(site_indices), dtype=np.float64)    
-    radius_is_covalent = np.empty(len(site_indices), dtype=np.bool_) 
-    
+    atomic_radii = np.empty(len(site_indices), dtype=np.float64)
+    radius_is_covalent = np.empty(len(site_indices), dtype=np.bool_)
+
     # get the radius for each unique bond
     for pair_idx in unique_bonds:
         site_idx = site_indices[pair_idx]
@@ -236,19 +241,14 @@ def get_all_atom_elf_radii(
             neigh_frac,
             covalent_labels,
             bond_dist,
-                )
+        )
         atomic_radii[pair_idx] = radius
         radius_is_covalent[pair_idx] = is_covalent
-        
+
     # update values for equivalent bonds
     for pair_idx in range(len(atomic_radii)):
         equiv_bond = equivalent_bonds[pair_idx]
         atomic_radii[pair_idx] = atomic_radii[equiv_bond]
         radius_is_covalent[pair_idx] = radius_is_covalent[equiv_bond]
-        
+
     return atomic_radii, radius_is_covalent
-    
-    
-    
-    
-    

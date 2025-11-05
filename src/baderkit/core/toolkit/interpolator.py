@@ -13,7 +13,7 @@ class Interpolator:
     """
     A helper class for interpolating values from a regular periodic grid. Points
     are assumed to be in fractional coordinates.
-    
+
     Parameters
     ----------
     data : NDArray[np.float64]
@@ -23,7 +23,7 @@ class Interpolator:
         The method to use for interpolation. Current options are nearest, linear,
         or cubic.
     """
-    
+
     def __init__(self, data, method="cubic"):
         self.data = np.asarray(data)
         self.method = method

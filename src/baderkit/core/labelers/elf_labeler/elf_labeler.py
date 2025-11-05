@@ -4,48 +4,54 @@
 Contains the main class for running elf topology analysis.
 """
 
-import warnings
 import logging
 import math
+import warnings
 from pathlib import Path
-from typing import TypeVar, Literal
+from typing import Literal, TypeVar
+
 import numpy as np
 import plotly.graph_objects as go
 from numpy.typing import NDArray
-from pymatgen.io.vasp import Potcar
 from pymatgen.analysis.local_env import CrystalNN
+from pymatgen.io.vasp import Potcar
 
-from baderkit.core import Grid, Bader, Structure
-from baderkit.core.utilities.file_parsers import Format
-from baderkit.core.utilities.coord_env import check_all_covalent
-from baderkit.core.labelers.bifurcation_graph import BifurcationGraph, DomainSubtype, FeatureType
+from baderkit.core import Bader, Grid, Structure
+from baderkit.core.labelers.bifurcation_graph import (
+    BifurcationGraph,
+    DomainSubtype,
+    FeatureType,
+)
 from baderkit.core.utilities.basic import mutiple_dists
+from baderkit.core.utilities.coord_env import check_all_covalent
+from baderkit.core.utilities.file_parsers import Format
 
-from .elf_radii import ElfRadiiTools
 from .elf_labeler_numba import get_feature_edges, get_min_avg_feat_surface_dists
+from .elf_radii import ElfRadiiTools
 
 Self = TypeVar("Self", bound="ElfLabeler")
 # TODO:
 
-    # - Add more bond types, i.e. metal bonds. Same for electrides?
-    # - add a method to print a more traditional bifurcation plot?
-    # - create method to get all radii around each atom using new radii method:
-        # 1. get atom neighbors (up to distance or dynamically)
-        # 2. find radii for closest and add to official neighbors
-        # 3. go to next closest and get radii. See if they fit under planes made
-        # by other radii
-        # 4. Continue until all neighbors found. (Whats the best stop condition?)
-    # - rework BadELF voxel assignment using Numba. That should just be so much
-    # faster. I could probably even reimplement exact voxel splitting
-    # - Update simmate workflows (and badelf -_- )
+# - Add more bond types, i.e. metal bonds, atoms surrounded by electride?
+# Also add types for bonds between electrides and atoms?
 
+# - add a method to print a more traditional bifurcation plot?
+# - create method to get all radii around each atom using new radii method:
+# 1. get atom neighbors (up to distance or dynamically)
+# 2. find radii for closest and add to official neighbors
+# 3. go to next closest and get radii. See if they fit under planes made
+# by other radii
+# 4. Continue until all neighbors found. (Whats the best stop condition?)
+# - rework BadELF voxel assignment using Numba. That should just be so much
+# faster. I could probably even reimplement exact voxel splitting
+# - Update simmate workflows (and badelf -_- )
 
 
 class ElfLabeler:
     """
     A class for finding electride sites from an ELFCAR.
     """
-    
+
     _labeled_covalent = False
     _spin_system = "total"
 
@@ -54,7 +60,7 @@ class ElfLabeler:
         charge_grid: Grid,
         reference_grid: Grid,
         ignore_low_pseudopotentials: bool = False,
-        shared_shell_ratio: float = 1/3,
+        shared_shell_ratio: float = 1 / 3,
         combine_shells: bool = True,
         min_covalent_charge: float = 0.6,
         min_covalent_angle: float = 135,
@@ -63,27 +69,29 @@ class ElfLabeler:
         min_electride_charge: float = 0.5,
         min_electride_volume: float = 10,
         min_electride_dist_beyond_atom: float = 0.3,
-        crystalnn_kwargs: dict = {"distance_cutoffs":None},
-        **kwargs
+        crystalnn_kwargs: dict = {"distance_cutoffs": None},
+        **kwargs,
     ):
         # ensure the reference file is ELF
         if reference_grid.data_type != "elf":
-            logging.warning("A non-ELF reference file has been detected. Results may not be valid.")
-        
+            logging.warning(
+                "A non-ELF reference file has been detected. Results may not be valid."
+            )
+
         self.charge_grid = charge_grid
         self.reference_grid = reference_grid
-        
+
         self.ignore_low_pseudopotentials = ignore_low_pseudopotentials
         self.crystalnn_kwargs = crystalnn_kwargs
         self.cnn = CrystalNN(**crystalnn_kwargs)
-        
+
         # define cutoff variables
         # TODO: These should be hidden variables to allow for setter methods
         self.shared_shell_ratio = shared_shell_ratio
         self.combine_shells = combine_shells
         self.min_covalent_charge = min_covalent_charge
         self.min_covalent_angle = min_covalent_angle
-        
+
         # electride cutoffs
         self.min_electride_elf_value = min_electride_elf_value
         self.min_electride_charge = min_electride_charge
@@ -91,7 +99,7 @@ class ElfLabeler:
         self.min_electride_charge = min_electride_charge
         self.min_electride_volume = min_electride_volume
         self.min_electride_dist_beyond_atom = min_electride_dist_beyond_atom
-            
+
         # define properties that will be updated by running the method
         self._bifurcations = None
         self._bifurcation_graph = None
@@ -102,53 +110,51 @@ class ElfLabeler:
         self._atom_nn_elf_radii = None
         self._atom_nn_elf_radii_types = None
         self._nearest_neighbor_data = None
-        
+
         self._feature_labels = None
         self._feature_structure = None
-        
+
         # create a bader object
         self.bader = Bader(
-            charge_grid=charge_grid,
-            reference_grid=reference_grid,
-            **kwargs
-            )
+            charge_grid=charge_grid, reference_grid=reference_grid, **kwargs
+        )
 
     ###########################################################################
     # Calculated Properties
     ###########################################################################
     # TODO: Make these reset on a change similar to the Bader class. Add docs
-    
+
     ###########################################################################
     # Bifurcation Properties
     ###########################################################################
-    
+
     @property
     def bifurcation_graph(self) -> BifurcationGraph:
         if self._bifurcation_graph is None:
             self._get_bifurcation_graph()
         return self._bifurcation_graph
-    
+
     @property
     def bifurcation_plot(self) -> go.Figure:
         if self._bifurcation_plot is None:
             self._bifurcation_plot = self.bifurcation_graph.get_plot()
         return self._bifurcation_plot
-    
+
     ###########################################################################
     # Atom Properties
     ###########################################################################
     @property
     def structure(self) -> Structure:
         return self.reference_grid.structure
-    
+
     @property
     def quasi_atom_structure(self) -> Structure:
         return self.bifurcation_graph.quasi_atom_structure
-    
+
     @property
     def labeled_structure(self) -> Structure:
         return self.bifurcation_graph.labeled_structure
-    
+
     @property
     def nearest_neighbor_data(self):
         if self._nearest_neighbor_data is None:
@@ -174,15 +180,10 @@ class ElfLabeler:
             # summary for some reason)
             site_cart_coords = self.structure.cart_coords[sites]
             dists = mutiple_dists(site_cart_coords, cart_coords)
-            
-            self._nearest_neighbor_data = (
-                sites,
-                neighs,
-                frac_coords,
-                dists
-                )
+
+            self._nearest_neighbor_data = (sites, neighs, frac_coords, dists)
         return self._nearest_neighbor_data
-    
+
     @property
     def atom_elf_radii(self) -> NDArray[np.float64]:
         if self._atom_elf_radii is None:
@@ -190,35 +191,37 @@ class ElfLabeler:
             # along the bond to the nearest neighbor, but typically is. For
             # example CdPt3 has 2 Pt atoms with a Cd an dPt atom tied for the
             # nearest.
-            
+
             # Get radii of all nearest neighbors
             all_radii = self.atom_nn_elf_radii
             all_radii_types = self._atom_nn_elf_radii_types
-            site_indices, neigh_indices, neigh_coords, neigh_dists = self.nearest_neighbor_data
-            
+            site_indices, neigh_indices, neigh_coords, neigh_dists = (
+                self.nearest_neighbor_data
+            )
+
             # sort radii
             sorted_indices = np.argsort(all_radii)
             sorted_sites = site_indices[sorted_indices]
-            
+
             # get first instance of each atom
             radii = np.empty(len(self.structure), dtype=np.float64)
             radii_types = np.empty(len(self.structure), dtype=all_radii_types.dtype)
             for i in range(len(self.structure)):
-                first_index = np.argmax(sorted_sites==i)
+                first_index = np.argmax(sorted_sites == i)
                 radii[i] = all_radii[sorted_indices[first_index]]
                 radii_types[i] = all_radii_types[sorted_indices[first_index]]
             self._atom_elf_radii = radii
             self._atom_elf_radii_types = radii_types
-            
+
         return self._atom_elf_radii
-    
+
     @property
     def atom_elf_radii_types(self) -> NDArray[np.float64]:
         if self._atom_elf_radii_types is None:
             # run labeling and radii calc by calling our bifurcation graph
             self.atom_elf_radii
         return np.where(self._atom_elf_radii_types, "covalent", "ionic")
-    
+
     @property
     def quasi_atom_elf_radii(self) -> NDArray[np.float64]:
         if self._quasi_atom_elf_radii is None:
@@ -226,7 +229,7 @@ class ElfLabeler:
             self.bifurcation_graph
             self._get_quasi_atom_elf_radii()
         return self._quasi_atom_elf_radii
-    
+
     @property
     def atom_nn_elf_radii(self) -> NDArray[np.float64]:
         if self._atom_nn_elf_radii is None:
@@ -234,7 +237,7 @@ class ElfLabeler:
             self.bifurcation_graph
             self._get_nn_atom_elf_radii()
         return self._atom_nn_elf_radii
-    
+
     @property
     def atom_nn_elf_radii_types(self) -> NDArray[np.float64]:
         if self._atom_nn_elf_radii_types is None:
@@ -242,80 +245,82 @@ class ElfLabeler:
             self.bifurcation_graph
             self._get_nn_atom_elf_radii()
         return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
-    
+
     ###########################################################################
     # Feature Properties
     ###########################################################################
-    
+
     def _get_feature_properties(self, property_name: str):
         features = []
         for node in self.bifurcation_graph.irreducible_nodes:
             features.append(getattr(node, property_name, None))
         return features
-    
+
     @property
     def feature_types(self):
         return self._get_feature_properties("feature_type")
-    
+
     @property
     def feature_basins(self):
         return self._get_feature_properties("basins")
-    
+
     @property
     def feature_frac_coords(self):
         return self._get_feature_properties("frac_coords")
-    
+
     @property
     def feature_average_frac_coords(self):
         return np.array(self._get_feature_properties("average_frac_coords"))
-    
+
     @property
     def feature_charges(self):
         return np.array(self._get_feature_properties("charge"))
-    
+
     @property
     def feature_volumes(self):
         return np.array(self._get_feature_properties("volume"))
-    
+
     @property
     def feature_coord_atoms(self):
 
         return self._get_feature_properties("coord_atom_indices")
-    
+
     @property
     def feature_coord_atom_dists(self):
 
         return self._get_feature_properties("coord_atom_dists")
-        
+
     @property
     def feature_quasi_coord_atoms(self):
         return self._get_feature_properties("coord_quasi_atom_indices")
-    
+
     @property
     def feature_quasi_coord_atom_dists(self):
         return self._get_feature_properties("coord_quasi_atom_dists")
-    
+
     @property
     def feature_min_surface_dists(self):
         return np.array(self._get_feature_properties("min_surface_dist"))
-    
+
     @property
     def feature_avg_surface_dists(self):
         return np.array(self._get_feature_properties("avg_surface_dist"))
-    
+
     ###########################################################################
     # Helpful Methods
     ###########################################################################
     def feature_indices_by_type(self, feature_types: list[FeatureType | str]):
-        return np.array([i for i, feat in enumerate(self.feature_types) if feat in feature_types], dtype=np.int64)
-    
+        return np.array(
+            [i for i, feat in enumerate(self.feature_types) if feat in feature_types],
+            dtype=np.int64,
+        )
+
     def get_oxidation_and_volumes_from_potcar(
-        self,
-        potcar_path: Path = "POTCAR",
-        use_quasi_atoms: bool = True,
-        **kwargs
-            ):
-        charges, volumes = self.get_charges_and_volumes(use_quasi_atoms=use_quasi_atoms, **kwargs)
+        self, potcar_path: Path = "POTCAR", use_quasi_atoms: bool = True, **kwargs
+    ):
+        charges, volumes = self.get_charges_and_volumes(
+            use_quasi_atoms=use_quasi_atoms, **kwargs
+        )
         # convert to path
         potcar_path = Path(potcar_path)
         # load
@@ -331,46 +336,42 @@ class ElfLabeler:
             structure = self.quasi_atom_structure
         else:
             structure = self.structure
-        
+
         oxi_state_data = []
         for site, site_charge in zip(structure, charges):
             element_str = site.specie.symbol
             val_electrons = nelectron_data.get(element_str, 0.0)
             oxi_state = val_electrons - site_charge
             oxi_state_data.append(oxi_state)
-            
+
         return np.array(oxi_state_data), charges, volumes
-    
+
     def get_charges_and_volumes(
-            self,
-            splitting_method: Literal[
-                "weighted_dist",
-                "pauling", 
-                "equal", 
-                "dist", 
-                "nearest"
-                ] = "pauling",
-            use_quasi_atoms: bool = True,
-            **kwargs,
-            ):
+        self,
+        splitting_method: Literal[
+            "weighted_dist", "pauling", "equal", "dist", "nearest"
+        ] = "pauling",
+        use_quasi_atoms: bool = True,
+        **kwargs,
+    ):
         """
         Assign charge from each feature to their associated atoms. For features
         that have multiple neighbors (e.g. covalent bonds), several options
         are provided for how to divide the charge to nearby neighbors.
         If use_quasi_atoms is set to True, features with electride like character
-        will be treated as atoms and 
+        will be treated as atoms and
 
         Parameters
         ----------
         splitting_method : Literal["equal", "pauling", "dist", "weighted_dist", "nearest"], optional
-            The method used to divide charge and volume of shared features 
+            The method used to divide charge and volume of shared features
             betweeen their coordinating atoms.
-            
+
                 'weighted_dist' (default)
                     Fraction increases with decreasing distance to each atom. The
                     fraction is further weighted by the radius of each atom
                     calculated from the ELF
-                'pauling' 
+                'pauling'
                     Fraction increases with decreasing pauling electronegativity.
                     If an atom has no recorded EN a value of 2.2 is used which
                     may be incorrect in many cases.
@@ -381,7 +382,7 @@ class ElfLabeler:
                     of each atom
                 'nearest'
                     All charge is assigned to the features nearest atom.
-        
+
         use_quasi_atoms : bool, optional
             If True, features labeled as bare electrons will be treated as quasi
             atoms. They will receive partial charge from other shared features
@@ -396,53 +397,60 @@ class ElfLabeler:
             structure = self.quasi_atom_structure
         else:
             structure = self.structure
-        
+
         # create an array to store atom charges and volumes
         atom_charge = np.zeros(len(structure), dtype=np.float64)
         atom_volume = np.zeros(len(structure), dtype=np.float64)
-        
+
         # if using pauling, get all electronegativities
         if splitting_method == "pauling":
             pauling_ens = np.array([i.specie.X for i in structure])
             pauling_ens = np.nan_to_num(pauling_ens, nan=2.2)
-        
+
         quasi_num = 0
         for feature_idx in range(len(self.feature_types)):
             charge = self.feature_charges[feature_idx]
             volume = self.feature_volumes[feature_idx]
-            if use_quasi_atoms and self.feature_types[feature_idx] in FeatureType.bare_types:
+            if (
+                use_quasi_atoms
+                and self.feature_types[feature_idx] in FeatureType.bare_types
+            ):
                 # assign charge/volume to self
                 struc_idx = len(self.structure) + quasi_num
                 atom_charge[struc_idx] += charge
                 atom_volume[struc_idx] += volume
                 quasi_num += 1
                 continue
-            
+
             coord_atoms = self.feature_coord_atoms[feature_idx]
             # get unique atoms and counts (correction for small cells)
-            unique_atoms, unique_indices, atom_counts = np.unique(coord_atoms, return_index=True, return_counts=True)
-            
+            unique_atoms, unique_indices, atom_counts = np.unique(
+                coord_atoms, return_index=True, return_counts=True
+            )
+
             if len(coord_atoms) == 0:
                 # This shouldn't happen, but could if CrystalNN failed
                 # to find neighbors.
-                logging.warning(f"No neighboring atoms found for feature with index {feature_idx}. Feature assigned to nearest atom.")
+                logging.warning(
+                    f"No neighboring atoms found for feature with index {feature_idx}. Feature assigned to nearest atom."
+                )
                 # assign all charge/volume to the closest atom
                 nearest = np.argmin(self.feature_coord_atom_dists[feature_idx])
                 atom_charge[nearest] += charge
                 atom_volume[nearest] += volume
-            
+
             elif len(coord_atoms) == 1:
                 # all methods will add charge and volume to this atom.
                 # assigning it here potentially avoids divide by zeros for
                 # core features
                 atom_charge[coord_atoms[0]] += charge
                 atom_volume[coord_atoms[0]] += volume
-            
+
             elif splitting_method == "equal":
                 # evenly split the feature to each neighboring atom
-                atom_charge[unique_atoms] += (charge / len(coord_atoms))*atom_counts
-                atom_volume[unique_atoms] += (volume / len(coord_atoms))*atom_counts
-                
+                atom_charge[unique_atoms] += (charge / len(coord_atoms)) * atom_counts
+                atom_volume[unique_atoms] += (volume / len(coord_atoms)) * atom_counts
+
             elif splitting_method == "pauling":
                 # get the pauling ens for coordinated atoms
                 ens = pauling_ens[coord_atoms]
@@ -452,7 +460,7 @@ class ElfLabeler:
                 ens = ens[unique_indices]
                 atom_charge[unique_atoms] += charge * ens * atom_counts
                 atom_volume[unique_atoms] += volume * ens * atom_counts
-            
+
             elif splitting_method == "dist":
                 # get the dist to each coordinated atom
                 if use_quasi_atoms:
@@ -460,13 +468,13 @@ class ElfLabeler:
                 else:
                     dists = self.feature_coord_atom_dists[feature_idx].copy()
                 # invert and normalize
-                dists = 1/dists
+                dists = 1 / dists
                 dists /= dists.sum()
                 # add for each atom
                 for coord_idx, atom in enumerate(coord_atoms):
                     atom_charge[atom] += charge * dists[coord_idx]
                     atom_volume[atom] += volume * dists[coord_idx]
-            
+
             elif splitting_method == "weighted_dist":
                 # get the dist to each coordinated atom and their radii
                 if use_quasi_atoms:
@@ -483,133 +491,112 @@ class ElfLabeler:
                 for coord_idx, atom in enumerate(coord_atoms):
                     atom_charge[atom] += charge * weight[coord_idx]
                     atom_volume[atom] += volume * weight[coord_idx]
-                
+
             elif splitting_method == "nearest":
                 # assign all charge/volume to the closest atom
                 nearest = np.argmin(self.feature_coord_atom_dists[feature_idx])
                 atom_charge[nearest] += charge
                 atom_volume[nearest] += volume
             else:
-                raise ValueError(f"'{splitting_method}' is not a valid splitting method")
-                
-        
+                raise ValueError(
+                    f"'{splitting_method}' is not a valid splitting method"
+                )
+
         return atom_charge, atom_volume
-        
-    
+
     def get_feature_labels(
-            self,
-            included_features: list[str] = [
-                "covalent",
-                "metallic",
-                "bare electron",
-                "electride",
-                ],
-            return_structure: bool = True,
-            ):
+        self,
+        included_features: list[str] = [
+            "covalent",
+            "metallic",
+            "bare electron",
+            "electride",
+        ],
+        return_structure: bool = True,
+    ):
 
         # Get the original basin atom assignments
         basin_atoms = self.bader.basin_atoms
-        
+
         # get indices of requested type
         feature_indices = self.feature_indices_by_type(included_features)
-        
+
         # reassign basin atoms
         new_atom_idx = len(self.structure)
         for feat_idx in feature_indices:
             basins = self.feature_basins[feat_idx]
             basin_atoms[basins] = new_atom_idx
             new_atom_idx += 1
-        
+
         # NOTE: append -1 so that vacuum gets assigned to -1 in the atom_labels
         # array
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
-        
+
         # reassign labels
         feature_labels = basin_atoms[self.bader.basin_labels]
-        
+
         # get corresponding structure if requested
         if return_structure:
             feature_structure = self.get_feature_structure(included_features)
             return feature_labels, feature_structure
-        
+
         # return labels
         return feature_labels
-    
+
     def get_feature_structure(
-            self, 
-            included_features: list[str] = [
-                "covalent",
-                "metallic",
-                "bare electron",
-                "electride",
-                ],
-        ):
+        self,
+        included_features: list[str] = [
+            "covalent",
+            "metallic",
+            "bare electron",
+            "electride",
+        ],
+    ):
         """
         Generates a PyMatGen Structure object with dummy atoms for each requested
         feature.
         """
-        
+
         # Create a new structure without oxidation states
         structure = self.structure.copy()
         structure.remove_oxidation_states()
-        
+
         # Add dummy atoms of each type in list
-        for feature_type, frac_coords in zip(self.feature_types, self.feature_average_frac_coords):
+        for feature_type, frac_coords in zip(
+            self.feature_types, self.feature_average_frac_coords
+        ):
             if feature_type in included_features:
                 structure.append(feature_type.dummy_species, frac_coords)
-        
+
         return structure
-    
-    def get_feature_structure_by_index(
-            self, 
-            feature_indices: list[int]
-        ):
+
+    def get_feature_structure_by_index(self, feature_indices: list[int]):
         """
         Generates a PyMatGen Structure object with dummy atoms for each requested
         feature.
         """
-        
+
         # Create a new structure without oxidation states
         structure = self.structure.copy()
         structure.remove_oxidation_states()
-        
+
         # add each feature
         for feat_idx in feature_indices:
-            structure.append(self.feature_types[feat_idx].dummy_species, self.feature_average_frac_coords[feat_idx])
-        
+            structure.append(
+                self.feature_types[feat_idx].dummy_species,
+                self.feature_average_frac_coords[feat_idx],
+            )
+
         return structure
-    
+
     ###########################################################################
     # Utilities
     ###########################################################################
-    
-    # def _get_atom_elf_radii(self):
-    #     if not self._labeled_covalent:
-    #         raise Exception("Covalent features must be labeled for reliable radii.")
 
-    #     # The radii is set to either the minimum (ionic) or maximum (covalent)
-    #     # point separating two nearest atoms. In the case that an atom is surrounded
-    #     # by metallic/bare electron features, it is set to the last point that
-    #     # belongs to a core/shell/lone-pair. Thus, we need to label our structure
-    #     # with covalent and metallic/bare electron features first
-    #     included_types = FeatureType.valence_types.copy()
-    #     included_types.append(FeatureType.unknown)
-
-    #     feature_labels, feature_structure = self.get_feature_labels(included_features=included_types)
-
-    #     radii_tools = ElfRadiiTools(
-    #         grid=self.reference_grid,
-    #         feature_labels=feature_labels,
-    #         feature_structure=feature_structure,
-    #         )
-    #     self.bifurcation_graph._atom_elf_radii = radii_tools.atom_elf_radii
-    #     self._atom_elf_radii = radii_tools.atom_elf_radii
-    #     self._atom_elf_radii_types = radii_tools.atom_elf_radii_types
-        
     def _get_quasi_atom_elf_radii(self):
         if not self._labeled_covalent:
             raise Exception("Covalent features must be labeled for reliable radii.")
-        
+
         # we're getting radii acting as if bare electrons are atoms. We want
         # to label our structure similar to the method above, but use our
         # structure labeled with quasi atoms
@@ -617,50 +604,58 @@ class ElfLabeler:
         # case the smallest radius isn't along the nearest atoms bond
 
         included_types = FeatureType.valence_types.copy()
-        feature_labels, feature_structure = self.get_feature_labels(included_features=included_types)
+        feature_labels, feature_structure = self.get_feature_labels(
+            included_features=included_types
+        )
 
         radii_tools = ElfRadiiTools(
             grid=self.reference_grid,
             feature_labels=feature_labels,
             feature_structure=feature_structure,
-            override_structure=self.quasi_atom_structure
-            )
+            override_structure=self.quasi_atom_structure,
+        )
         self.bifurcation_graph._atom_elf_radii = radii_tools.atom_elf_radii
         self._quasi_atom_elf_radii = radii_tools.atom_elf_radii
-        
+
     def _get_nn_atom_elf_radii(self):
         if not self._labeled_covalent:
             raise Exception("Covalent features must be labeled for reliable radii.")
-        
+
         # First we get our neighbor arrays
-        site_indices, neigh_indices, neigh_frac_coords, neigh_dists = self.nearest_neighbor_data
+        site_indices, neigh_indices, neigh_frac_coords, neigh_dists = (
+            self.nearest_neighbor_data
+        )
 
         # Now we get a labeled structure including covalent, metallic, and bare
         # electron features
         included_types = FeatureType.valence_types.copy()
-        feature_labels, feature_structure = self.get_feature_labels(included_features=included_types)
+        feature_labels, feature_structure = self.get_feature_labels(
+            included_features=included_types
+        )
 
         # Calculate all radii
         radii_tools = ElfRadiiTools(
             grid=self.reference_grid,
             feature_labels=feature_labels,
             feature_structure=feature_structure,
-            override_structure=self.quasi_atom_structure
+            # override_structure=self.quasi_atom_structure
+        )
+        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = (
+            radii_tools.get_all_neigh_elf_radii_and_type(
+                site_indices,
+                neigh_indices,
+                neigh_frac_coords,
+                neigh_dists,
             )
-        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = radii_tools.get_all_neigh_elf_radii_and_type(
-            site_indices, 
-            neigh_indices, 
-            neigh_frac_coords, 
-            neigh_dists,
-            )
-        
+        )
+
     def _calculate_feature_surface_dists(self):
         # Calculate the minimum and average distance from each irreducible features
         # fractional coordinate to its edges. This is often different from the
         # original basins as we may combine some of them.
 
         nodes = self.bifurcation_graph.irreducible_nodes
-        
+
         # collect frac coords and map basin labels to features
         frac_coords = [i.average_frac_coords for i in nodes]
         feature_map = np.empty(len(self.bader.basin_maxima_frac), dtype=np.uint32)
@@ -673,10 +668,10 @@ class ElfLabeler:
         edge_mask = get_feature_edges(
             labeled_array=self.bader.basin_labels,
             feature_map=feature_map,
-            neighbor_transforms = neighbor_transforms,
+            neighbor_transforms=neighbor_transforms,
             vacuum_mask=self.bader.vacuum_mask,
-            )
-        
+        )
+
         # calculate the minimum and average distance to each features surface
         min_dists, avg_dists = get_min_avg_feat_surface_dists(
             labels=self.bader.basin_labels,
@@ -685,8 +680,8 @@ class ElfLabeler:
             edge_mask=edge_mask,
             matrix=self.reference_grid.matrix,
             max_value=np.max(self.structure.lattice.abc) * 2,
-            )
-        
+        )
+
         # set surface distances
         for node, min_dist, avg_dist in zip(nodes, min_dists, avg_dists):
             node._min_surface_dist = min_dist
@@ -737,32 +732,31 @@ class ElfLabeler:
             reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
 
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
-    
-    
+
     ###########################################################################
     # Methods for writing results
     ###########################################################################
     def write_bifurcation_plot(
-            self,
-            filename: str | Path,
-            ):
+        self,
+        filename: str | Path,
+    ):
         plot = self.bifurcation_plot
         # make sure path is a Path object
         filename = Path(filename)
         # add .html if filename doesn't include it
         filename_html = filename.with_suffix(".html")
         plot.write_html(filename_html)
-    
+
     def write_feature_basins(
-            self, 
-            feature_indices: list[int], 
-            directory: str | Path = None,
-            include_dummy_atoms: bool = False,
-            write_reference: bool = True,
-            output_format: str | Format = None,
-            prefix_override: str = None,
-            **writer_kwargs,
-            ):
+        self,
+        feature_indices: list[int],
+        directory: str | Path = None,
+        include_dummy_atoms: bool = False,
+        write_reference: bool = True,
+        output_format: str | Format = None,
+        prefix_override: str = None,
+        **writer_kwargs,
+    ):
         """
         For a give list of node keys, writes the bader basins associated with
         each.
@@ -803,17 +797,17 @@ class ElfLabeler:
 
         if directory is None:
             directory = Path(".")
-            
+
         # get structure
         if include_dummy_atoms:
             structure = self.get_feature_structure_by_index(feature_indices)
         else:
             structure = self.structure
-            
+
         # get prefix
         if prefix_override is None:
             prefix_override = data_type.prefix
-            
+
         for feat_idx in feature_indices:
             basins = self.bader.feature_basins[feat_idx]
             # get mask where this feature is NOT
@@ -829,21 +823,21 @@ class ElfLabeler:
             file_path = directory / f"{prefix_override}_f{feat_idx}"
             # write file
             grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
-            
+
     def write_feature_basins_sum(
-            self, 
-            feature_indices: list[int], 
-            directory: str | Path = None,
-            include_dummy_atoms: bool = False,
-            write_reference: bool = True,
-            output_format: str | Format = None,
-            prefix_override: str = None,
-            **writer_kwargs,
-            ):
+        self,
+        feature_indices: list[int],
+        directory: str | Path = None,
+        include_dummy_atoms: bool = False,
+        write_reference: bool = True,
+        output_format: str | Format = None,
+        prefix_override: str = None,
+        **writer_kwargs,
+    ):
         """
-        For a give list of node keys, writes the union of the bader basins 
+        For a give list of node keys, writes the union of the bader basins
         associated with each.
-        
+
         Parameters
         ----------
         feature_indices : list[int]
@@ -875,17 +869,17 @@ class ElfLabeler:
 
         if directory is None:
             directory = Path(".")
-            
+
         # get structure
         if include_dummy_atoms:
             structure = self.get_feature_structure_by_index(feature_indices)
         else:
             structure = self.structure
-            
+
         # get prefix
         if prefix_override is None:
             prefix_override = data_type.prefix
-            
+
         # get all basin indices to include
         basin_list = []
         for feat_idx in feature_indices:
@@ -920,17 +914,17 @@ class ElfLabeler:
 
         """
         self.write_feature_basins(
-            feature_indices=np.arange(len(self.feature_charges),dtype=int),
-            **kwargs)
-    
+            feature_indices=np.arange(len(self.feature_charges), dtype=int), **kwargs
+        )
+
     def write_features_by_type(
-            self,
-            included_types: list[FeatureType],
-            **kwargs,
-            ):
+        self,
+        included_types: list[FeatureType],
+        **kwargs,
+    ):
         """
         Writes the bader basins associated with all features of the selected type
-        
+
         Parameters
         ----------
         **kwargs :
@@ -945,17 +939,17 @@ class ElfLabeler:
         self.write_feature_basins(
             feature_indices=feature_indices,
             **kwargs,
-            )
-    
+        )
+
     def write_features_by_type_sum(
-            self,
-            included_types: list[FeatureType],
-            **kwargs,
-            ):
+        self,
+        included_types: list[FeatureType],
+        **kwargs,
+    ):
         """
-        Writes the union of the bader basins associated with all features of the 
+        Writes the union of the bader basins associated with all features of the
         selected type
-        
+
         Parameters
         ----------
         **kwargs :
@@ -967,15 +961,12 @@ class ElfLabeler:
 
         """
         feature_indices = self.feature_indices_by_type(included_types)
-        self.write_feature_basins_sum(
-            feature_indices=feature_indices,
-            **kwargs
-            )
-    
+        self.write_feature_basins_sum(feature_indices=feature_indices, **kwargs)
+
     ###########################################################################
     # Core Graph Construction
     ###########################################################################
-    
+
     def _get_bifurcation_graph(self):
         """
         This will construct a BifurcationGraph class.
@@ -988,13 +979,13 @@ class ElfLabeler:
         # run bader for nice looking logging purposes
         # NOTE: I call a property rather than run_bader/run_atom_assignment to
         # avoid repeat calcs if we've already run
-        self.bader.atom_labels 
-        
+        self.bader.atom_labels
+
         logging.info("Beginning ELF Analysis")
 
         # get an initial graph connecting bifurcations and final basins
         self._initialize_bifurcation_graph()
-        
+
         # Now we have a graph with information associated with each basin. We want
         # to label each node. First, we label cores as they are the simplest
         self._mark_cores()
@@ -1002,18 +993,18 @@ class ElfLabeler:
         # Next, we mark shells. This step distinguishes ionic and covalent
         # features, the most ambiguous step
         self._mark_shells()
-        
+
         # Next we label covalent bonds. These must lie along an atomic bond and
         # have a reasonably large charge
         self._mark_covalent()
-        
+
         # Next we mark lone pairs. These split off from covalent bonds or rarely
         # from atomic shells (e.g. SnO)
         self._mark_lonepairs()
-        
+
         # get atomic radii before checking for metal/bare
         self._get_nn_atom_elf_radii()
-        
+
         # Next we mark our metallic/bare electrons. These currently have a set
         # of rather arbitrary cutoffs to distinguish between them. In the future
         # I would like to perform a comprehensive study.
@@ -1040,12 +1031,10 @@ class ElfLabeler:
                 "At least one ELF feature was not assigned. This is a bug!!! Please report it to our github:"
                 "https://github.com/SWeav02/baderkit/issues"
             )
-        
+
         # calculate feature surface distances
         self._calculate_feature_surface_dists()
-        
-        
-                
+
     def _initialize_bifurcation_graph(self):
         self._bifurcation_graph = BifurcationGraph.from_labeler(self)
 
@@ -1063,20 +1052,23 @@ class ElfLabeler:
                 continue
             if node.atom_distance <= max_dist:
                 node.feature_type = FeatureType.core
-                
+
     def _mark_shells(self):
         logging.info("Marking atomic shells")
         # shells are "reducible" features that surround exactly one atom. The
         # main difficulty is distinguishing them from heterogeneous covalent
         # bonds.
-        
+
         # as a first step, we label any features that were combined when the
         # graph was generated due to being very shallow. These will be marked
         # "shallow" and contain one atom
         for node in self.bifurcation_graph.unassigned_nodes:
-            if node.domain_subtype == DomainSubtype.irreducible_cage and len(node.contained_atoms) == 1:
+            if (
+                node.domain_subtype == DomainSubtype.irreducible_cage
+                and len(node.contained_atoms) == 1
+            ):
                 node.feature_type = "shell"
-                
+
         # Now we label shells that may be slightly deeper. Regardless of depth,
         # shells will always surround a single atom. To distinguish them from
         # heterogenous covalent bonds (which also may surround 1 atom), we gauge
@@ -1097,12 +1089,12 @@ class ElfLabeler:
 
             # we want to find the highest ELF value where these features contribute
             # to another atoms outer shell. This isn't always the first
-            # parent that contains multiple atoms, as shells and heterogenous 
+            # parent that contains multiple atoms, as shells and heterogenous
             # covalent bonds usually connect to each other before surrounding
             # a different atom. Instead we want the first ancestor that surrounds
             # a new atom without being in contact with that atoms shells/core
 
-            found_parent = False            
+            found_parent = False
             included_atoms = node.contained_atoms
             for parent in node.ancestors:
                 if len(parent.contained_atoms) == len(included_atoms):
@@ -1116,7 +1108,7 @@ class ElfLabeler:
                     found_parent = True
                     break
                 included_atoms = parent.contained_atoms
-            
+
             if not found_parent:
                 # There is no appropriate parent and this must be a shell
                 shell_nodes.append(node)
@@ -1124,9 +1116,11 @@ class ElfLabeler:
             # get the highest point where this feature contains the atom
             highest_nearest_shell = node.max_value
             # check if the ratio is below our cutoff
-            if (highest_neighbor_shell / highest_nearest_shell) < self.shared_shell_ratio:
+            if (
+                highest_neighbor_shell / highest_nearest_shell
+            ) < self.shared_shell_ratio:
                 shell_nodes.append(node)
-                
+
         for node in shell_nodes:
             if self.combine_shells:
                 # convert to an irreducible node
@@ -1136,7 +1130,7 @@ class ElfLabeler:
                 for child in node.deep_children:
                     if not child.is_reducible:
                         child.subtype = "shell"
-    
+
     def _mark_covalent(self):
         """
         Takes in a bifurcation graph and labels valence features that
@@ -1144,17 +1138,17 @@ class ElfLabeler:
         """
         logging.info("Marking covalent features")
         graph = self.bifurcation_graph
-        
+
         # get frac coords of unassigned nodes
         valence_nodes = []
         valence_frac = []
         for node in graph.unassigned_nodes:
             valence_frac.append(node.average_frac_coords)
             valence_nodes.append(node)
-        
+
         # Convert our cutoff angle to radians
         min_covalent_angle = self.min_covalent_angle * math.pi / 180
-        
+
         # get our atom frac coords
         atom_frac_coords = self.structure.frac_coords
         atom_cart_coords = self.structure.cart_coords
@@ -1163,16 +1157,18 @@ class ElfLabeler:
         # if/then is to avoid numba disliking empty lists
         if len(valence_frac) > 0:
             nodes_in_tolerance, atom_neighs = check_all_covalent(
-                valence_frac, 
-                atom_frac_coords, 
-                atom_cart_coords, 
-                frac2cart=self.structure.lattice.matrix, 
+                valence_frac,
+                atom_frac_coords,
+                atom_cart_coords,
+                frac2cart=self.structure.lattice.matrix,
                 min_covalent_angle=min_covalent_angle,
-                )
+            )
         else:
             nodes_in_tolerance, atom_neighs = [], []
 
-        for node, in_tolerance, (atom0, atom1) in zip(valence_nodes, nodes_in_tolerance, atom_neighs):
+        for node, in_tolerance, (atom0, atom1) in zip(
+            valence_nodes, nodes_in_tolerance, atom_neighs
+        ):
             # skip nodes that aren't within our angle tolerance
             if not in_tolerance:
                 continue
@@ -1182,8 +1178,8 @@ class ElfLabeler:
             if atom0 in contained_atoms and atom1 in contained_atoms:
                 is_covalent = True
             else:
-                is_covalent = False # could happen if there are multiple roots
-            
+                is_covalent = False  # could happen if there are multiple roots
+
             # Sometimes a lone pair happens to align well with an atom that
             # is not part of our covalent system (e.g. CaC2). Similar to shells,
             # These atoms won't connect until a much lower value
@@ -1191,7 +1187,7 @@ class ElfLabeler:
             # as part of multiple covalent systems and break this in small
             # unit cells. This would require knowing which atom image is contained
             # which we currently don't track and would require a large rework
-            
+
             # find the first parent containing at least one of the neighboring
             # atoms and containing both
             one_atom = None
@@ -1206,7 +1202,7 @@ class ElfLabeler:
                         both_atoms = parent.max_value
                         break
             if not one_atom is None and not both_atoms is None:
-                if (both_atoms/one_atom) < self.shared_shell_ratio:
+                if (both_atoms / one_atom) < self.shared_shell_ratio:
                     is_covalent = False
                 else:
                     is_covalent = True
@@ -1228,10 +1224,10 @@ class ElfLabeler:
                 elif node.charge > self.min_covalent_charge:
                     node.feature_type = FeatureType.covalent
                     node._coord_atom_indices = [int(atom0), int(atom1)]
-                
+
         # note we've labeled our covalent features
         self._labeled_covalent = True
-                
+
     def _mark_lonepairs(self):
         logging.info("Marking lone-pair features")
         # lone-pairs separate off from covalent bonds or rarely from an ionic
@@ -1239,25 +1235,29 @@ class ElfLabeler:
         # have one nearest neighbor in the molecule. When breaking off of
         # an ionic core/shell, the lone-pair will at some point be part of a
         # domain surrounding a single atom.
-        
+
         # POSSIBLE BUG:
-            # In small cells, if a feature neighbors the same atoms at different
-            # translations and both belong to the same molecule/domain, it may
-            # be mislabeled as a lone-pair instead of a metal bond
+        # In small cells, if a feature neighbors the same atoms at different
+        # translations and both belong to the same molecule/domain, it may
+        # be mislabeled as a lone-pair instead of a metal bond
         assigned_nodes = []
         for node in self.bifurcation_graph.irreducible_nodes:
-            if not node.feature_type in [None, FeatureType.unknown, FeatureType.shallow_covalent_metallic]:
+            if not node.feature_type in [
+                None,
+                FeatureType.unknown,
+                FeatureType.shallow_covalent_metallic,
+            ]:
                 # NOTE: exclude shallow covalent metal features in case these end up being
                 # misassigned deep shells. Not sure if this is necessary
                 assigned_nodes.append(node.key)
-        
+
         nodes = self.bifurcation_graph.sorted_reducible_nodes.copy()
         nodes.reverse()
         for node in nodes:
             # skip nodes that don't contain atoms
             if len(node.contained_atoms) == 0:
                 continue
-            
+
             # if none of this nodes children have an assignment, they are mislabeled
             # shells
             all_labeled = True
@@ -1269,11 +1269,11 @@ class ElfLabeler:
                     none_labeled = False
                 else:
                     all_labeled = False
-                    
+
             # skip if all children are already labeled
             if all_labeled:
                 continue
-                
+
             # if none are labeled, check if this should be a shell. If not, these
             # are some form of metal bond so we continue
             if none_labeled:
@@ -1283,7 +1283,7 @@ class ElfLabeler:
                 for child in node.deep_children:
                     assigned_nodes.append(child.key)
                 continue
-            
+
             # otherwise, check each unassigned node to see if it has exactly
             # one neighbor in this domain
             for child in node.deep_children:
@@ -1302,7 +1302,7 @@ class ElfLabeler:
                     continue
                 # if we have a node with reasonable charge, mark it at a lone-pair
                 if child.charge > self.min_covalent_charge:
-                    child.feature_type=FeatureType.lone_pair
+                    child.feature_type = FeatureType.lone_pair
                     assigned_nodes.append(child.key)
                     # reset coord env so that it gets calculated as 1
                     child._coord_atom_indices = None
@@ -1312,7 +1312,7 @@ class ElfLabeler:
         # The remaining features are various types of non-nuclear attractors.
         # We separate them into metallic or "bare electrons" based on a series
         # of cutoffs
-        
+
         # first we need to calculate how far each feature is beyond nearby
         # atom radii
         for node in self.bifurcation_graph.irreducible_nodes:
@@ -1324,8 +1324,7 @@ class ElfLabeler:
             dist_beyond_atoms = atom_dists - atom_radii
             node._nearest_atom_sphere = np.argmin(dist_beyond_atoms)
             node._dist_beyond_atom = dist_beyond_atoms.min()
-        
-        
+
         # NOTE: These are very likely to change in the future
         conditions = np.array(
             [
@@ -1333,7 +1332,7 @@ class ElfLabeler:
                 self.min_electride_depth,
                 self.min_electride_charge,
                 self.min_electride_volume,
-                self.min_electride_dist_beyond_atom
+                self.min_electride_dist_beyond_atom,
             ]
         )
         for node in self.bifurcation_graph.unassigned_nodes:
@@ -1350,8 +1349,7 @@ class ElfLabeler:
                 node.feature_type = FeatureType.bare_electron
             else:
                 node.feature_type = FeatureType.metallic
-    
-        
+
     # This is a method aimed at giving a feature a score on how "bare" it is
     # with the goal of distinguishing metals from electrides. We will leave it
     # out until we have a better metric
@@ -1362,11 +1360,11 @@ class ElfLabeler:
     #     0 to 1 and is the combination of several different metrics:
     #     ELF value, charge, depth, volume, and atom distance.
     #     """
-    #     # create a structure object with oxidation states for improved 
+    #     # create a structure object with oxidation states for improved
     #     # crystalnn
     #     temp_structure = self.structure.copy()
     #     temp_structure.add_oxidation_state_by_guess()
-        
+
     #     nodes = self.bifurcation_graph.get_feature_nodes(["metallic", "bare electron"])
     #     for node in track(nodes, description="Calculating bare electron character"):
 
@@ -1426,8 +1424,8 @@ class ElfLabeler:
     #         # Thus covalent bonds should have a value of 0 and lone-pairs may
     #         # be slightly within this radius, also recieving a value of 0.
     #         radius = node.average_surface_dist
-                    
-    #         # Now that we have a radius, we need to get a metric of 0-1. 
+
+    #         # Now that we have a radius, we need to get a metric of 0-1.
     #         dist_contribution = radius / hydride_radius
     #         # limit to a range of 0 to 1
     #         dist_contribution = min(max(dist_contribution, 0), 1)
@@ -1465,10 +1463,7 @@ class ElfLabeler:
     #         )
     #         bare_electron_indicator = np.sum(contributers * weights)
 
-            
     #         # we update our node to include this information
     #         node.unnormalized_bare_electron_indicator = unnormalized_contributors
     #         node.bare_electron_indicator = bare_electron_indicator
     #         node.bare_electron_scores = contributers
-
-

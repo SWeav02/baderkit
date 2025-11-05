@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 
-import warnings
 import copy
 import importlib
 import logging
 import time
+import warnings
 from pathlib import Path
 from typing import Literal, TypeVar
 
@@ -13,10 +13,11 @@ import pandas as pd
 from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
 
-from .methods import Method
-from .methods.shared_numba import get_edges, get_min_avg_surface_dists
 from baderkit.core.toolkit import Grid, Structure
 from baderkit.core.utilities.file_parsers import Format
+
+from .methods import Method
+from .methods.shared_numba import get_edges, get_min_avg_surface_dists
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
@@ -821,11 +822,8 @@ class Bader:
         logging.info("Atom Assignment Finished")
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0, 2)}")
-        
-    def get_oxidation_from_potcar(
-        self,
-        potcar_path: Path = "POTCAR"
-            ):
+
+    def get_oxidation_from_potcar(self, potcar_path: Path = "POTCAR"):
         """
         Calculates the oxidation state of each atom from the provided POTCAR
         file.
@@ -857,7 +855,7 @@ class Bader:
             element_str = site.specie.name
             oxi_state = nelectron_data[element_str] - site_charge
             oxi_state_data.append(oxi_state)
-            
+
         return np.array(oxi_state_data)
 
     def _get_atom_surface_distances(self):

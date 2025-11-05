@@ -17,6 +17,8 @@ from pymatgen.io.vasp import VolumetricData
 from scipy.ndimage import label, spline_filter, zoom
 from scipy.spatial import Voronoi
 
+from baderkit.core.toolkit.interpolator import Interpolator
+from baderkit.core.toolkit.structure import Structure
 from baderkit.core.utilities.file_parsers import (
     Format,
     detect_format,
@@ -26,8 +28,6 @@ from baderkit.core.utilities.file_parsers import (
 )
 from baderkit.core.utilities.file_parsers import write_cube as write_cube_file
 from baderkit.core.utilities.file_parsers import write_vasp as write_vasp_file
-from baderkit.core.toolkit.interpolator import Interpolator
-from baderkit.core.toolkit.structure import Structure
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Grid")

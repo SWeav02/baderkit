@@ -3,11 +3,13 @@
 import numpy as np
 from numba import njit, prange
 
+
 @njit(cache=True, inline="always")
 def dist(p1, p2):
     x, y, z = p1
     x1, y1, z1 = p2
-    return ((x1-x)**2 + (y1-y)**2 + (z1-z)**2) ** (0.5)
+    return ((x1 - x) ** 2 + (y1 - y) ** 2 + (z1 - z) ** 2) ** (0.5)
+
 
 @njit(cache=True, parallel=True, inline="always")
 def mutiple_dists(p1s, p2s):
@@ -15,6 +17,7 @@ def mutiple_dists(p1s, p2s):
     for idx in prange(len(p1s)):
         dists[idx] = dist(p1s[idx], p2s[idx])
     return dists
+
 
 @njit(cache=True, inline="always")
 def wrap_point(
@@ -60,11 +63,11 @@ def wrap_point(
         k += nz
     return i, j, k
 
-@njit(inline="always", cache=True)
-def wrap_point_w_shift(
-    i,j,k,nx,ny,nz):
 
-    si, sj, sk = (0,0,0)
+@njit(inline="always", cache=True)
+def wrap_point_w_shift(i, j, k, nx, ny, nz):
+
+    si, sj, sk = (0, 0, 0)
     if i >= nx:
         i -= nx
         si = 1
@@ -85,6 +88,7 @@ def wrap_point_w_shift(
         sk = -1
     return i, j, k, si, sj, sk
 
+
 @njit(fastmath=True, cache=True, inline="always")
 def flat_to_coords(idx, ny_nz, nz):
     i = idx // (ny_nz)
@@ -92,9 +96,11 @@ def flat_to_coords(idx, ny_nz, nz):
     k = idx % nz
     return i, j, k
 
+
 @njit(fastmath=True, cache=True, inline="always")
 def coords_to_flat(i, j, k, ny_nz, nz):
     return i * (ny_nz) + j * nz + k
+
 
 @njit(fastmath=True, cache=True)
 def merge_frac_coords(
@@ -144,7 +150,7 @@ def merge_frac_coords(
         avg1 = round(total1 / count, 12) % 1.0
         avg2 = round(total2 / count, 12) % 1.0
         return np.array((avg0, avg1, avg2), dtype=np.float64)
-    
+
 
 @njit(fastmath=True, cache=True)
 def merge_frac_coords_weighted(

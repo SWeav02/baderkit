@@ -98,7 +98,9 @@ class MethodBase:
         # get our initial maxima
         maxima_vox = self.maxima_vox
         # get neighbor transforms
-        neighbor_transforms, neighbor_dists = self.reference_grid.point_neighbor_transforms
+        neighbor_transforms, neighbor_dists = (
+            self.reference_grid.point_neighbor_transforms
+        )
         # now merge our maxima and initialize our labels
         labels, self._maxima_frac, self._maxima_vox = initialize_labels_from_maxima(
             data=self.reference_grid.total,

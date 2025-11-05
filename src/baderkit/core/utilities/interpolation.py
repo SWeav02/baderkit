@@ -2,8 +2,8 @@
 import math
 
 import numpy as np
-from numpy.typing import NDArray
 from numba import njit, prange
+from numpy.typing import NDArray
 
 from baderkit.core.utilities.basic import wrap_point
 
@@ -211,6 +211,7 @@ def linear_slice(
 
     return interpolate_points(coords, method, data, is_frac)
 
+
 ###############################################################################
 # Parabolic Fitting
 ###############################################################################
@@ -355,6 +356,7 @@ def refine_frac_max_parabolic(grid, frac_coords, lattice):
 
     return refined_frac, refined_value
 
+
 @njit(parallel=True, cache=True)
 def refine_maxima(
     maxima_coords,
@@ -372,6 +374,7 @@ def refine_maxima(
     new_coords = np.round(new_coords, 6)
     new_coords %= 1
     return new_coords, new_values
+
 
 # Method that refines maxima using spline interpolation. I had a lot of issues with
 # ringing/overshooting

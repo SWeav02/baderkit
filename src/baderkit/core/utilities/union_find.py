@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-    
+
 import numpy as np
 from numba import njit, prange
 
@@ -15,13 +15,15 @@ def find_root(parent, x):
         x = parent[x]
     return x
 
+
 @njit(cache=True, inline="always")
 def find_root_no_compression(parent, x):
     """Find root with no path compression. Parallel friendly."""
     while x != parent[x]:
         x = parent[x]
     return x
-    
+
+
 @njit(cache=True, inline="always")
 def find_root_with_shift(parent, offset_x, offset_y, offset_z, x):
     """Find root with partial compression and accumulate offset for periodic cycle counting"""
@@ -55,6 +57,7 @@ def find_root_with_shift(parent, offset_x, offset_y, offset_z, x):
 
     return y, cx, cy, cz
 
+
 @njit(cache=True, inline="always")
 def find_root_with_shift_no_compression(parent, offset_x, offset_y, offset_z, x):
     """Find root and offset with no compression/accumulation. Parallel friendly"""
@@ -69,53 +72,58 @@ def find_root_with_shift_no_compression(parent, offset_x, offset_y, offset_z, x)
 
     return x, cx, cy, cz
 
+
 ###############################################################################
 # Union Methods
 ###############################################################################
 
+
 @njit(cache=True, inline="always")
-def union_w_roots(parents, x, y, root_mask):      
+def union_w_roots(parents, x, y, root_mask):
     """Create union between two points and update a root mask"""
     rx = find_root(parents, x)
     ry = find_root(parents, y)
 
     parents[rx] = ry
-    
+
     if root_mask[rx]:
         root_mask[rx] = False
     if not root_mask[ry]:
         root_mask[ry] = True
-        
+
+
 @njit(cache=True, inline="always")
-def union(parents, x, y):        
+def union(parents, x, y):
     """Create union between two points"""
     rx = find_root(parents, x)
     ry = find_root(parents, y)
 
     parents[rx] = ry
-    
+
+
 @njit(cache=True, inline="always")
 def bulk_union(parent, xs, ys):
     """Create union between many points"""
     for i in range(len(xs)):
         parent = union(parent, xs[i], ys[i])
     return parent
-    
+
+
 @njit(cache=True, inline="always")
-def union_with_shift(root_mask, parent, offset_x, offset_y, offset_z, size, a, b, si, sj, sk):
+def union_with_shift(
+    root_mask, parent, offset_x, offset_y, offset_z, size, a, b, si, sj, sk
+):
     """Create union between two points and accumulate shift needed to calculate cycles around periodic boundaries"""
     ra, ox, oy, oz = find_root_with_shift(parent, offset_x, offset_y, offset_z, a)
     rb, ox1, oy1, oz1 = find_root_with_shift(parent, offset_x, offset_y, offset_z, b)
-    
-        
+
     if ra == rb:
         # no need to combine
         return
-    
+
     cx = si + ox1 - ox
     cy = sj + oy1 - oy
     cz = sk + oz1 - oz
-
 
     # union-by-size: attach smaller under larger
     if size[ra] < size[rb]:
@@ -144,7 +152,8 @@ def union_with_shift(root_mask, parent, offset_x, offset_y, offset_z, size, a, b
             root_mask[ra] = True
         if root_mask[rb]:
             root_mask[rb] = False
-        
+
+
 ###############################################################################
 # Compression Methods
 ###############################################################################

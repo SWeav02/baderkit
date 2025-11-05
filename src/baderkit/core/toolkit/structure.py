@@ -31,7 +31,7 @@ class Structure(PymatgenStructure):
         # relabel_sites method that doesn't exist in earlier versions of pymatgen
         for site in self:
             site.label = site.specie.symbol
-            
+
         # cache for symmetry data
         self._symmetry_data = None
         self._last_symmetry_save = None
@@ -159,7 +159,7 @@ class Structure(PymatgenStructure):
                 site.label = f"{label}_{idx + 1}"
 
         return self
-    
+
     @property
     def symmetry_data(self):
         """
@@ -172,9 +172,7 @@ class Structure(PymatgenStructure):
         """
         if self._symmetry_data is None or self._last_symmetry_save != tuple(self):
             self._last_symmetry_save = tuple(self)
-            self._symmetry_data = SpacegroupAnalyzer(
-                self
-            ).get_symmetry_dataset()
+            self._symmetry_data = SpacegroupAnalyzer(self).get_symmetry_dataset()
         return self._symmetry_data
 
     @property

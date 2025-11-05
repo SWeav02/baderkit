@@ -4,9 +4,9 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
+from baderkit.core.bader.methods.shared_numba import get_best_neighbor
 from baderkit.core.utilities.basic import coords_to_flat, flat_to_coords, wrap_point
 
-from baderkit.core.bader.methods.shared_numba import get_best_neighbor
 
 @njit(parallel=True, cache=True)
 def get_weight_assignments(
@@ -34,7 +34,7 @@ def get_weight_assignments(
     # Create lists to store basin charges/volumes
     charges = np.zeros(len(maxima_indices), dtype=np.float64)
     volumes = np.zeros(len(maxima_indices), dtype=np.float64)
-    
+
     ###########################################################################
     # Get neighbors
     ###########################################################################
@@ -89,7 +89,7 @@ def get_weight_assignments(
             # assign the first value to the current label. This will allow us
             # to check if the maximum is the root max in the next section
             neigh_array[sorted_idx, 0] = labels[idx]
-    
+
     ###########################################################################
     # Assign interior
     ###########################################################################
@@ -159,7 +159,7 @@ def get_weight_assignments(
                 labels[idx] = max_idx
                 charges[max_idx] += flat_charge[idx]
                 volumes[max_idx] += 1.0
-    
+
     ###########################################################################
     # Fluxes
     ###########################################################################
@@ -314,16 +314,16 @@ def get_weight_assignments(
         # BUGFIX: remove values below a cutoff to help with memory
         reduced_labels = []
         reduced_weights = []
-        
+
         for label in current_labels:
             weight = scratch_weights[label]
-            scratch_weights[label] = 0.0 # reset scratch
+            scratch_weights[label] = 0.0  # reset scratch
             charges[label] += charge * weight
             volumes[label] += weight
             # skip if our weight is below a very small tolerance
             if weight < 1e-30:
                 continue
-            
+
             if weight > best_weight + tol:  # greater than with a tolerance
                 best_label = label
                 best_weight = weight
@@ -334,8 +334,7 @@ def get_weight_assignments(
             reduced_weights.append(weight)
             reduced_labels.append(label)
             total_weight += weight
-            
-            
+
         # BUGFIX: cap the lists at a reasonable size to avoid memory explosions
         if len(reduced_labels) > 26:
             weight_array = np.array(reduced_weights, dtype=np.float64)
@@ -343,10 +342,10 @@ def get_weight_assignments(
             total_weight = weight_array[ordered_weights].sum()
             reduced_weights = [reduced_weights[i] for i in ordered_weights]
             reduced_labels = [reduced_labels[i] for i in ordered_weights]
-        
+
         # renormalize weights in case we removed any
-        reduced_weights = [i/total_weight for i in reduced_weights]
-        
+        reduced_weights = [i / total_weight for i in reduced_weights]
+
         # add weights/labels for this point to our list
         all_weights.append(reduced_weights)
         all_labels.append(reduced_labels)

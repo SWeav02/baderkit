@@ -4,8 +4,9 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.utilities.basic import coords_to_flat, wrap_point
 from baderkit.core.bader.methods.shared_numba import get_best_neighbor
+from baderkit.core.utilities.basic import coords_to_flat, wrap_point
+
 
 @njit(cache=True, inline="always")
 def get_gradient_simple(
@@ -121,6 +122,7 @@ def get_gradient_overdetermined(
 
     ti, tj, tk = ti_new, tj_new, tk_new
     return ti, tj, tk
+
 
 # NOTE: I used to calculate and store the ongrid steps and delta rs in this first
 # method rather than just the gradient. This was a tiny bit faster but not worth

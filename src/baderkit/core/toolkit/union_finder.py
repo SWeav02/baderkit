@@ -3,10 +3,11 @@ import numpy as np
 from numba import njit
 
 from baderkit.core.utilities.union_find import (
-    find_root,
     bulk_union,
     compress_roots,
-    )
+    find_root,
+)
+
 
 @njit(cache=True)
 def _union(parent, x, y):
@@ -14,19 +15,21 @@ def _union(parent, x, y):
     higher = max(x, y)
     while len(parent) <= higher:
         parent.append(len(parent))
-        
+
     rx = find_root(parent, x)
     ry = find_root(parent, y)
     parent[rx] = ry
     return parent
 
+
 class UnionFind:
     """
     A basic union finding class. Assumes entries are integers spanning 0 to N.
     """
+
     def __init__(self):
         self.parent = [0]
-    
+
     def find_root(self, x):
         return find_root(self.parent, x)
 
@@ -43,6 +46,6 @@ class UnionFind:
         unique_roots = np.unique(roots)
         # TODO: Replace the following for loop if possible
         return [np.where(roots == r)[0] for r in unique_roots]
-    
+
     def groups_sets(self):
         return {frozenset(s) for s in self.groups()}
