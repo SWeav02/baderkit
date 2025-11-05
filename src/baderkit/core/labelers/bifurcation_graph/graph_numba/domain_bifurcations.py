@@ -161,7 +161,8 @@ def find_domain_bifurcations(
     new_solid = np.zeros((nx,ny,nz), dtype=np.bool_) # initial empty solid
     root_mask = np.zeros(N, dtype=np.bool_) # nothing is a root yet
     roots = np.empty(0, dtype=np.int64) # empty 1D array as nothing is a root yet
-    cycles = np.empty((0,125), dtype=np.bool_) # empty as we have no cycles yet
+    cycles = [[(-1,-1,-1)]] # empty as we have no cycles yet
+    cycles=cycles[1:]
     parent = np.arange(N, dtype=np.uint32) # All voxels point to themselves
     offset_x = np.zeros(N, dtype=np.int8) # no offsets to start
     offset_y = np.zeros(N, dtype=np.int8)

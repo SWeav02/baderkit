@@ -1223,6 +1223,10 @@ class ElfLabeler:
             # In small cells, if a feature neighbors the same atoms at different
             # translations and both belong to the same molecule/domain, it may
             # be mislabeled as a lone-pair instead of a metal bond
+        assigned_nodes = []
+        for node in self.bifurcation_graph.irreducible_nodes:
+            if not node.feature_type in [None, FeatureType.unknown]:
+                assigned_nodes.append(node.key)
         
         nodes = self.bifurcation_graph.sorted_reducible_nodes.copy()
         nodes.reverse()
@@ -1238,10 +1242,10 @@ class ElfLabeler:
             for child in node.deep_children:
                 if child.is_reducible:
                     continue
-                if child.feature_type in [None, FeatureType.unknown]:
-                    all_labeled = False
-                else:
+                if child.key in assigned_nodes:
                     none_labeled = False
+                else:
+                    all_labeled = False
                     
             # skip if all children are already labeled
             if all_labeled:
@@ -1253,13 +1257,15 @@ class ElfLabeler:
                 if len(node.contained_atoms) == 1 and not node.is_infinite:
                     for child in node.deep_children:
                         child.feature_type = FeatureType.deep_shell
+                for child in node.deep_children:
+                    assigned_nodes.append(child.key)
                 continue
             
             # otherwise, check each unassigned node to see if it has exactly
             # one neighbor in this domain
             for child in node.deep_children:
                 # skip reducible nodes and nodes with assignments
-                if child.is_reducible or child.feature_type not in [None, FeatureType.unknown]:
+                if child.is_reducible or child.key in assigned_nodes:
                     continue
                 # check how many neighs are in this domain
                 neighs_in_domain = 0
@@ -1274,6 +1280,7 @@ class ElfLabeler:
                 # if we have a node with reasonable charge, mark it at a lone-pair
                 if child.charge > self.min_covalent_charge:
                     child.feature_type=FeatureType.lone_pair
+                    assigned_nodes.append(child.key)
                     # reset coord env so that it gets calculated as 1
                     child._coord_atom_indices = None
 

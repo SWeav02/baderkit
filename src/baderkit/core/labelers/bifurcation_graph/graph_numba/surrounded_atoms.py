@@ -2,6 +2,7 @@
 
 import numpy as np
 from numba import njit, prange
+from numba.typed import List
 
 from baderkit.core.utilities.basic import wrap_point, coords_to_flat
 from baderkit.core.utilities.union_find import find_root_no_compression
@@ -248,7 +249,7 @@ def get_domains_surrounding_atoms(
     N = nx * ny * nz
     
     # create map from basin labels to domain labels
-    basin_domain_map = np.empty(num_basins, dtype=np.uint32)
+    basin_domain_map = np.empty(num_basins, dtype=np.int64)
     
     # create a map for old domains to new
     new_domain_map = np.full(len(domain_parents), -1, dtype=np.int64)
@@ -257,7 +258,8 @@ def get_domains_surrounding_atoms(
     new_solid = np.zeros((nx,ny,nz), dtype=np.bool_) # initial empty solid
     root_mask = np.zeros(N, dtype=np.bool_) # nothing is a root yet
     roots = np.empty(0, dtype=np.int64) # empty 1D array as nothing is a root yet
-    cycles = np.empty((0,125), dtype=np.bool_) # empty as we have no cycles yet
+    cycles = [[np.array((-1,-1,-1), dtype=np.float64)]] # empty as we have no cycles yet
+    cycles=cycles[1:]
     parent = np.arange(N, dtype=np.uint32) # All voxels point to themselves
     offset_x = np.zeros(N, dtype=np.int8) # no offsets to start
     offset_y = np.zeros(N, dtype=np.int8)
@@ -280,10 +282,8 @@ def get_domains_surrounding_atoms(
     current_domain_atoms = current_domain_atoms[1:]
     # iterate over all possible values
     for current_value in possible_values:
-        # NOTE: I don't think we need to set the basin_domain_map to a default
-        # value because it shouldn't be possible for a void to touch a domain
-        # other than one in this list
-        previous_domains = current_domains.copy()
+        basin_domain_map[:] = -1
+        previous_domains = [i for i in current_domains]
         current_domains = []
         new_domains = []
         num_domains = 0
@@ -298,6 +298,7 @@ def get_domains_surrounding_atoms(
                 # map each basin in this domain back to the domain
                 for basin_idx in domain_basins[domain_idx]:
                     basin_domain_map[basin_idx] = num_domains
+
                 # note we found a new domain
                 num_domains += 1
                 if min_value == current_value:
@@ -310,7 +311,26 @@ def get_domains_surrounding_atoms(
         # TODO: I can probably improve speed further by freezing domains/basins
         # that have been found to not surround anything, decreasing the number
         # of voxels that need to be checked for unions
-        
+        # if current_value==0.20697:
+        #     breakpoint()
+        # if len(cycles) == 0:
+        #     cycles = List()
+        #     test = List()
+        #     test.append((-1,-1,-1))
+        #     cycles.append(test)
+        #     cycles = cycles[1:]
+        # else:
+        #     cycles1 = cycles.copy()
+        #     cycles = List()
+        #     for cycle in cycles1:
+        #         if len(cycle) == 0:
+        #             test = List()
+        #             test.append((-1,-1,-1))
+        #             test = test[1:]
+        #         else:
+        #             test = List(cycle)
+        #         cycles.append(test)
+
         (
         root_mask, 
         parent, 
@@ -337,7 +357,8 @@ def get_domains_surrounding_atoms(
                 size=size,
                 neighbors=neighbor_transforms,
                 )
-                
+
+
         # Get which domains surround each atom
         all_surrounding_domains = find_all_atom_domains(
                 atom_grid_coords=atom_grid_coords,
@@ -355,7 +376,7 @@ def get_domains_surrounding_atoms(
         # Get the atoms surrounded by each domain
         # track if no atoms are surrounded
         no_atoms_surrounded = True
-        previous_domain_atoms = current_domain_atoms.copy()
+        previous_domain_atoms = [i.copy() for i in current_domain_atoms]
         current_domain_atoms = []
         for i in range(len(current_domains)):
             domain_list = [-1]

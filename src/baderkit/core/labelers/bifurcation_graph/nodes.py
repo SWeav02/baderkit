@@ -274,7 +274,7 @@ class ReducibleNode(NodeBase):
             # remove this node from the current parent's children
             self.parent._children = [i for i in self.parent._children if i is not self]
             # recalculate parent's max value
-            min_val = 1e300
+            min_val = self.max_value
             for child in self.parent.children:
                 if child.min_value < min_val:
                     min_val = child.min_value

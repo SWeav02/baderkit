@@ -131,7 +131,7 @@ def get_connections_in_box(size):
     connections = np.column_stack((lower_connection, upper_connection))
     return np.array(shifts, dtype=np.int8), connections
 
-@njit(cache=True, inline="always")
+@njit(cache=True)
 def check_if_possible_saddle(
     i,j,k,
     value,
@@ -186,7 +186,7 @@ def check_if_possible_saddle(
     
     return maybe_bif
 
-@njit(cache=True, inline="always")
+@njit(cache=True)
 def check_if_saddle(
     i,j,k,
     value,
@@ -309,7 +309,7 @@ def find_potential_saddle_points(
 # Labeling and Dimensionality
 ###############################################################################
 
-@njit(parallel=True, inline="always")
+@njit(parallel=False, cache=True)
 def find_periodic_cycles(
         solid, 
         previous_solid,
@@ -333,33 +333,46 @@ def find_periodic_cycles(
     new_roots = np.nonzero(root_mask)[0]
     n_roots = len(new_roots)
     
-    # create a new array for cycles in the current mask
-    new_cycles = np.zeros((n_roots, 125), dtype=np.bool_)
+    # create a new list for cycles in the current mask
+    new_cycles = []
+    for i in range(n_roots):
+        cycle_list = [np.array((-1,-1,-1), dtype=np.float64)]
+        cycle_list = cycle_list[1:]
+        new_cycles.append(cycle_list)
     
     # add cycles from the previous round
     for old_root, old_cycle in zip(old_roots, old_cycles):
+        if len(old_cycle) == 0:
+            continue
         # get the new root
         new_root = find_root_no_compression(parent, old_root)
         new_root_idx = np.searchsorted(new_roots, new_root)
         # update to include previous values
-        new_cycles[new_root_idx] = old_cycle | new_cycles[new_root_idx]
+        for cycle in old_cycle:
+            new_cycles[new_root_idx].append(cycle)
         
     # now iterate over new points and find new cycles
-    for i in prange(nx):
+    for i in range(nx):
         for j in range(ny):
             for k in range(nz):
                 if not solid[i,j,k] or previous_solid[i,j,k]:
                     continue
                 idx = coords_to_flat(i, j, k, ny_nz, nz)
+                
+                # find root
+                ra, ox, oy, oz = find_root_with_shift(parent, offset_x, offset_y, offset_z, idx)
+                root_idx = np.searchsorted(new_roots, ra)
+                cycles = new_cycles[root_idx]
+                if len(cycles) == 3:
+                    # This root is already 3d and we can continue
+                    continue
 
                 for di, dj, dk in neighbors:
                     ni, nj, nk, si, sj, sk = wrap_point_w_shift(i+di, j+dj, k+dk, nx, ny, nz)
                     if not solid[ni,nj,nk]:
                         continue
-                    neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
-
-                    ra, ox, oy, oz = find_root_with_shift_no_compression(parent, offset_x, offset_y, offset_z, idx)
-                    rb, ox1, oy1, oz1 = find_root_with_shift_no_compression(parent, offset_x, offset_y, offset_z, neigh_idx)
+                    neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)                    
+                    rb, ox1, oy1, oz1 = find_root_with_shift(parent, offset_x, offset_y, offset_z, neigh_idx)
 
                     if ra != rb:
                         continue
@@ -369,42 +382,93 @@ def find_periodic_cycles(
                     cz = oz - oz1 - sk
 
                     if cx == 0 and cy == 0 and cz == 0:
-                        continue
+                        continue                            
+                    
+                    v = np.array((cx, cy, cz), dtype=np.float64)
 
-                    root_idx = np.searchsorted(new_roots, ra)
-                    cycle_idx = shift_to_index(cx, cy, cz)
-                    if not new_cycles[root_idx, cycle_idx]:
-                        new_cycles[root_idx, cycle_idx] = True
+                    # Project onto existing basis Q
+                    if len(cycles) > 0:
+                        # Subtract projection of v onto each q in Q
+                        for q in cycles:
+                            proj = np.dot(v, q)
+                            v = v - proj * q
 
+                    norm = np.sqrt(np.dot(v, v))
+                    if norm > 1e-12:  # independent
+                        # Normalize and add to orthogonal basis
+                        v = v / norm
+                        cycles.append(v)
 
     return new_cycles, new_roots
 
-@njit(parallel=True, cache=True, inline="always")
-def get_root_dims(cycles):
-    """
-    Determines the dimensionality of a solid in a periodic system based on cycles
-    around periodic edges collected during union finding.
-    """
-    # create array to store dims
-    dimensionalities = np.zeros(cycles.shape[0], dtype=np.int8)
-    for root_idx in prange(cycles.shape[0]):
-        cycle_shifts = cycles[root_idx]
-        cycle_list = []
-        for cycle_idx, is_cycle in enumerate(cycle_shifts):
-            if not is_cycle:
-                continue
-            cx, cy, cz = index_to_shift(cycle_idx)
-            cycle_list.append((cx, cy, cz))
-        if len(cycle_list) == 0:
-            dimensionalities[root_idx] = 0 # finite, no wrapping
-            continue
+# # @njit(parallel=True, cache=True)
+# def get_root_dims(cycles):
+#     """
+#     Determines the dimensionality of a solid in a periodic system based on
+#     cycles around periodic edges collected during union finding.
+#     Also prunes redundant (linearly dependent) cycles.
+#     """
+#     n = len(cycles)
+#     dimensionalities = np.zeros(n, dtype=np.int8)
 
-        M = np.array(cycle_list, dtype=np.float32)
-        rank = np.linalg.matrix_rank(M)
-        dimensionalities[root_idx] = rank
-    return dimensionalities
+#     for root_idx in prange(n):
+#         cycle_list = cycles[root_idx]
 
-@njit(cache=True, inline='always')
+#         if len(cycle_list) == 0:
+#             dimensionalities[root_idx] = 0
+#             continue
+        
+#         elif len(cycle_list) == 1:
+#             dimensionalities[root_idx] = 1
+#             continue
+
+#         # Convert to float array for SVD
+#         M = np.array(cycle_list, dtype=np.float64)
+
+#         # Perform SVD
+#         # U, S, Vt = np.linalg.svd(M)
+
+#         # Calculate rank/dimensionaity
+#         tol = 1e-12
+#         # rank = np.sum(S > tol)
+#         # dimensionalities[root_idx] = rank
+
+#         # get linearly independent rows
+#         # Greedy orthogonal projection test
+#         selected = []
+#         Q = np.zeros((3, 3), dtype=np.float64)
+
+#         for i in range(M.shape[0]):
+#             v = M[i]
+
+#             # Project onto existing basis Q
+#             if len(selected) > 0:
+#                 # Subtract projection of v onto each q in Q
+#                 for j in range(len(selected)):
+#                     q = Q[j]
+#                     proj = np.dot(v, q)
+#                     v = v - proj * q
+
+#             norm = np.sqrt(np.dot(v, v))
+#             if norm > 1e-12:  # independent
+#                 # Normalize and add to orthogonal basis
+#                 v = v / norm
+#                 Q[len(selected)] = v
+#                 selected.append(i)
+
+#             if len(selected) == rank:
+#                 break  # no need to check further once rank reached
+
+#         # Replace with pruned list
+#         pruned = []
+#         for idx in selected:
+#             pruned.append(cycle_list[idx])
+#         cycles[root_idx] = pruned
+
+#     return dimensionalities, cycles
+
+
+@njit(cache=True)
 def get_domain_dimensionality(
     parent,
     offset_x,
@@ -502,7 +566,10 @@ def get_connected_groups(
         )
     
     # Now get dimensionalities of each root
-    dimensionalities = get_root_dims(cycles)
+    # dimensionalities, cycles = get_root_dims(cycles)
+    dimensionalities = np.zeros(len(cycles), dtype=np.uint8)
+    for idx, cycle in enumerate(cycles):
+        dimensionalities[idx] = len(cycle)
     
     return root_mask, parent, offset_x, offset_y, offset_z, roots, cycles, dimensionalities
 
