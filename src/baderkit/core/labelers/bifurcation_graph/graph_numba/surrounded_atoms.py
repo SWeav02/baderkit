@@ -2,7 +2,6 @@
 
 import numpy as np
 from numba import njit, prange
-from numba.typed import List
 
 from baderkit.core.utilities.basic import wrap_point, coords_to_flat
 from baderkit.core.utilities.union_find import find_root_no_compression
@@ -311,25 +310,6 @@ def get_domains_surrounding_atoms(
         # TODO: I can probably improve speed further by freezing domains/basins
         # that have been found to not surround anything, decreasing the number
         # of voxels that need to be checked for unions
-        # if current_value==0.20697:
-        #     breakpoint()
-        # if len(cycles) == 0:
-        #     cycles = List()
-        #     test = List()
-        #     test.append((-1,-1,-1))
-        #     cycles.append(test)
-        #     cycles = cycles[1:]
-        # else:
-        #     cycles1 = cycles.copy()
-        #     cycles = List()
-        #     for cycle in cycles1:
-        #         if len(cycle) == 0:
-        #             test = List()
-        #             test.append((-1,-1,-1))
-        #             test = test[1:]
-        #         else:
-        #             test = List(cycle)
-        #         cycles.append(test)
 
         (
         root_mask, 

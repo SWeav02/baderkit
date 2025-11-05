@@ -7,7 +7,6 @@ from baderkit.core.utilities.union_find import (
     union_w_roots,
     union_with_shift,
     find_root_no_compression,
-    find_root_with_shift_no_compression,
     find_root_with_shift,
     )
 
@@ -373,100 +372,36 @@ def find_periodic_cycles(
                         continue
                     neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)                    
                     rb, ox1, oy1, oz1 = find_root_with_shift(parent, offset_x, offset_y, offset_z, neigh_idx)
-
+                    
+                    # if not the same root, no cycle can be formed
                     if ra != rb:
                         continue
-
+                    
+                    # calculate total cycle offset
                     cx = ox - ox1 - si
                     cy = oy - oy1 - sj
                     cz = oz - oz1 - sk
 
                     if cx == 0 and cy == 0 and cz == 0:
-                        continue                            
+                        continue
+
+                    # Check if this is a new linearly independent cycle
+                    # Project onto existing basis
+                    for q1, q2, q3 in cycles:
+                        proj = cx*q1 + cy*q2 + cz* q3
+                        cx = cx - proj * q1
+                        cy = cy - proj * q2
+                        cz = cz - proj * q3
                     
-                    v = np.array((cx, cy, cz), dtype=np.float64)
-
-                    # Project onto existing basis Q
-                    if len(cycles) > 0:
-                        # Subtract projection of v onto each q in Q
-                        for q in cycles:
-                            proj = np.dot(v, q)
-                            v = v - proj * q
-
-                    norm = np.sqrt(np.dot(v, v))
+                    # calculate norm
+                    norm = (cx**2 + cy**2 + cz**2)**0.5
                     if norm > 1e-12:  # independent
+                        v = np.array((cx, cy, cz), dtype=np.float64)
                         # Normalize and add to orthogonal basis
                         v = v / norm
                         cycles.append(v)
 
     return new_cycles, new_roots
-
-# # @njit(parallel=True, cache=True)
-# def get_root_dims(cycles):
-#     """
-#     Determines the dimensionality of a solid in a periodic system based on
-#     cycles around periodic edges collected during union finding.
-#     Also prunes redundant (linearly dependent) cycles.
-#     """
-#     n = len(cycles)
-#     dimensionalities = np.zeros(n, dtype=np.int8)
-
-#     for root_idx in prange(n):
-#         cycle_list = cycles[root_idx]
-
-#         if len(cycle_list) == 0:
-#             dimensionalities[root_idx] = 0
-#             continue
-        
-#         elif len(cycle_list) == 1:
-#             dimensionalities[root_idx] = 1
-#             continue
-
-#         # Convert to float array for SVD
-#         M = np.array(cycle_list, dtype=np.float64)
-
-#         # Perform SVD
-#         # U, S, Vt = np.linalg.svd(M)
-
-#         # Calculate rank/dimensionaity
-#         tol = 1e-12
-#         # rank = np.sum(S > tol)
-#         # dimensionalities[root_idx] = rank
-
-#         # get linearly independent rows
-#         # Greedy orthogonal projection test
-#         selected = []
-#         Q = np.zeros((3, 3), dtype=np.float64)
-
-#         for i in range(M.shape[0]):
-#             v = M[i]
-
-#             # Project onto existing basis Q
-#             if len(selected) > 0:
-#                 # Subtract projection of v onto each q in Q
-#                 for j in range(len(selected)):
-#                     q = Q[j]
-#                     proj = np.dot(v, q)
-#                     v = v - proj * q
-
-#             norm = np.sqrt(np.dot(v, v))
-#             if norm > 1e-12:  # independent
-#                 # Normalize and add to orthogonal basis
-#                 v = v / norm
-#                 Q[len(selected)] = v
-#                 selected.append(i)
-
-#             if len(selected) == rank:
-#                 break  # no need to check further once rank reached
-
-#         # Replace with pruned list
-#         pruned = []
-#         for idx in selected:
-#             pruned.append(cycle_list[idx])
-#         cycles[root_idx] = pruned
-
-#     return dimensionalities, cycles
-
 
 @njit(cache=True)
 def get_domain_dimensionality(
