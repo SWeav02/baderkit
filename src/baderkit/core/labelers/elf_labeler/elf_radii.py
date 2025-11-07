@@ -21,7 +21,7 @@ class ElfRadiiTools:
         grid: Grid,
         feature_labels: NDArray,
         feature_structure: Structure,
-        covalent_symbol: str = "Z",
+        covalent_symbols: list[str] = ["Z", "M"],
         override_structure: Structure | None = None,
     ):
 
@@ -29,7 +29,7 @@ class ElfRadiiTools:
         self.cubic_coeffs = grid.cubic_spline_coeffs
         self.feature_structure = feature_structure
         self.feature_labels = feature_labels
-        self.covalent_symbol = covalent_symbol
+        self.covalent_symbols = covalent_symbols
 
         if override_structure is None:
             self.structure = grid.structure
@@ -38,42 +38,42 @@ class ElfRadiiTools:
 
         # NOTE: atom labels should correspond to labeled structure
 
-    @cached_property
-    def nearest_neighbors(self):
-        # calculate the nearest neighbors
-        neighbor_indices, neighbor_dists, neighbor_images = get_atom_nearest_neighbors(
-            atom_frac_coords=self.structure.frac_coords,
-            atom_cart_coords=self.structure.cart_coords,
-            frac2cart=self.structure.lattice.matrix,
-        )
+    # @cached_property
+    # def nearest_neighbors(self):
+    #     # calculate the nearest neighbors
+    #     neighbor_indices, neighbor_dists, neighbor_images = get_atom_nearest_neighbors(
+    #         atom_frac_coords=self.structure.frac_coords,
+    #         atom_cart_coords=self.structure.cart_coords,
+    #         frac2cart=self.structure.lattice.matrix,
+    #     )
 
-        return neighbor_indices, neighbor_dists, neighbor_images
+    #     return neighbor_indices, neighbor_dists, neighbor_images
 
-    @cached_property
-    def _elf_radii_and_type(self):
-        # get nearest neighbor info
-        neighbor_indices, neighbor_dists, neighbor_images = self.nearest_neighbors
-        return get_elf_radii(
-            equivalent_atoms=self.structure.equivalent_atoms,
-            data=self.cubic_coeffs,
-            feature_labels=self.feature_labels,
-            atom_frac_coords=self.structure.frac_coords,
-            neighbor_indices=neighbor_indices,
-            neighbor_dists=neighbor_dists,
-            neighbor_images=neighbor_images,
-            covalent_labels=np.array(
-                self.feature_structure.indices_from_symbol(self.covalent_symbol),
-                dtype=np.float64,
-            ),
-        )
+    # @cached_property
+    # def _elf_radii_and_type(self):
+    #     # get nearest neighbor info
+    #     neighbor_indices, neighbor_dists, neighbor_images = self.nearest_neighbors
+    #     return get_elf_radii(
+    #         equivalent_atoms=self.structure.equivalent_atoms,
+    #         data=self.cubic_coeffs,
+    #         feature_labels=self.feature_labels,
+    #         atom_frac_coords=self.structure.frac_coords,
+    #         neighbor_indices=neighbor_indices,
+    #         neighbor_dists=neighbor_dists,
+    #         neighbor_images=neighbor_images,
+    #         covalent_labels=np.array(
+    #             self.feature_structure.indices_from_symbol(self.covalent_symbol),
+    #             dtype=np.float64,
+    #         ),
+    #     )
 
-    @cached_property
-    def atom_elf_radii(self):
-        return self._elf_radii_and_type[0]
+    # @cached_property
+    # def atom_elf_radii(self):
+    #     return self._elf_radii_and_type[0]
 
-    @cached_property
-    def atom_elf_radii_types(self):
-        return self._elf_radii_and_type[1]
+    # @cached_property
+    # def atom_elf_radii_types(self):
+    #     return self._elf_radii_and_type[1]
 
     def get_all_neigh_elf_radii_and_type(
         self,
@@ -92,6 +92,11 @@ class ElfRadiiTools:
             pair_array, return_inverse=True, return_index=True, axis=0
         )
         equivalent_bonds = index[inverse]
+        
+        # create a map of covalent labels
+        covalent_labels = np.zeros(len(self.feature_structure), dtype=np.bool_)
+        for symbol in self.covalent_symbols:
+            covalent_labels[np.array(self.feature_structure.indices_from_symbol(symbol), dtype=np.int64)] = True
 
         return get_all_atom_elf_radii(
             site_indices=site_indices,
@@ -102,8 +107,5 @@ class ElfRadiiTools:
             equivalent_bonds=equivalent_bonds,
             data=self.cubic_coeffs,
             feature_labels=self.feature_labels,
-            covalent_labels=np.array(
-                self.feature_structure.indices_from_symbol(self.covalent_symbol),
-                dtype=np.float64,
-            ),
+            covalent_labels=covalent_labels,
         )

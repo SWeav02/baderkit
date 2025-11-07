@@ -33,12 +33,12 @@ def get_elf_radius(
 
     # create arrays to store the values and labels along the bond
     values = np.empty(num_points, dtype=np.float64)
-    labels = np.empty(num_points, dtype=np.float64)
+    labels = np.empty(num_points, dtype=np.int64)
     # calculate the positions, values, and labels along the line in parallel
     for point_idx in prange(num_points):
         x, y, z = atom_coords + float(point_idx) * step_vec
         values[point_idx] = interp_spline(x, y, z, data)
-        labels[point_idx] = interp_nearest(x, y, z, feature_labels)
+        labels[point_idx] = int(interp_nearest(x, y, z, feature_labels))
 
     # get the unique labels
     unique_labels = np.unique(labels)
@@ -50,11 +50,11 @@ def get_elf_radius(
         return 0.5 * bond_dist, True
 
     # SITUATION 2:
-    # The atom is covalently bonded to its nearest neighbor. The radius is
-    # the closest local maximum to the center of the bond
+    # The atom has a covalent or metallic bond with its nearest neighbor, the 
+    # radius is the closest local maximum to the center of the bond
     covalent = False
     for label in unique_labels:
-        if label in covalent_labels:
+        if covalent_labels[label]:
             covalent = True
             break
     if covalent:
@@ -68,7 +68,7 @@ def get_elf_radius(
         midpoint = (len(values) - 1) / 2
         for i, (value, label) in enumerate(zip(values, labels)):
             # skip points that aren't part of the covalent bond
-            if label not in covalent_labels:
+            if not covalent_labels[label]:
                 continue
             # if this point is assigned to the current atom, update our idx
             if label == atom_idx:
@@ -91,7 +91,9 @@ def get_elf_radius(
 
     # SITUATION 3:
     # The atom is ionically bonded to its nearest neighbor. The radius is
-    # at the first point not labeled as belonging to this atom
+    # at the first point not labeled as belonging to this atom.
+    # NOTE: If we have not labeled metals/electrides yet, this also captures
+    # the situation where we treat metal features as separate from the atom
     else:
         use_maximum = False
         radius_index = -1

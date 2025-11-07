@@ -142,6 +142,7 @@ class FeatureType(str, Enum):
             cls.non_nuclear_attractor,
             cls.electride,
             cls.bare_electron,
+            cls.unknown,
         ]
 
     @classproperty

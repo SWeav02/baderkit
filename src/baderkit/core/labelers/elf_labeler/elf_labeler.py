@@ -53,6 +53,7 @@ class ElfLabeler:
     """
 
     _labeled_covalent = False
+    _labeled_metallic = False
     _spin_system = "total"
 
     def __init__(
@@ -107,9 +108,13 @@ class ElfLabeler:
         self._atom_elf_radii = None
         self._atom_elf_radii_types = None
         self._quasi_atom_elf_radii = None
+        self._quasi_atom_elf_radii_types = None
         self._atom_nn_elf_radii = None
+        self._quasi_atom_nn_elf_radii = None
         self._atom_nn_elf_radii_types = None
+        self._quasi_atom_nn_elf_radii_types = None
         self._nearest_neighbor_data = None
+        self._quasi_atom_nearest_neighbor_data = None
 
         self._feature_labels = None
         self._feature_structure = None
@@ -158,60 +163,24 @@ class ElfLabeler:
     @property
     def nearest_neighbor_data(self):
         if self._nearest_neighbor_data is None:
-            # get nearest neighbors for all atoms in structure
-            nearest_neighs = self.cnn.get_all_nn_info(self.structure)
-            # we just want the species and frac coords of each atom's neighbors
-            sites = []
-            neighs = []
-            frac_coords = []
-            cart_coords = []
-            for site_idx, neigh_list in enumerate(nearest_neighs):
-                for neigh_dict in neigh_list:
-                    sites.append(site_idx)
-                    neighs.append(neigh_dict["site_index"])
-                    frac_coords.append(neigh_dict["site"].frac_coords)
-                    cart_coords.append(neigh_dict["site"].coords)
-            # convert to arrays
-            sites = np.array(sites, dtype=np.uint32)
-            neighs = np.array(neighs, dtype=np.uint32)
-            frac_coords = np.array(frac_coords, dtype=np.float64)
-            cart_coords = np.array(cart_coords, dtype=np.float64)
-            # calculate distances (since pymatgen doesn't include these in the
-            # summary for some reason)
-            site_cart_coords = self.structure.cart_coords[sites]
-            dists = mutiple_dists(site_cart_coords, cart_coords)
-
-            self._nearest_neighbor_data = (sites, neighs, frac_coords, dists)
+            self._nearest_neighbor_data = self._get_nearest_neighbor_data(self.structure)
         return self._nearest_neighbor_data
+    
+    @property
+    def quasi_atom_nearest_neighbor_data(self):
+        if self._quasi_atom_nearest_neighbor_data is None:
+            self._quasi_atom_nearest_neighbor_data = self._get_nearest_neighbor_data(self.quasi_atom_structure)
+        return self._quasi_atom_nearest_neighbor_data
 
     @property
     def atom_elf_radii(self) -> NDArray[np.float64]:
-        if self._atom_elf_radii is None:
-            # NOTE: This is the smallest radius of each atom which is not always
-            # along the bond to the nearest neighbor, but typically is. For
-            # example CdPt3 has 2 Pt atoms with a Cd an dPt atom tied for the
-            # nearest.
-
-            # Get radii of all nearest neighbors
-            all_radii = self.atom_nn_elf_radii
-            all_radii_types = self._atom_nn_elf_radii_types
-            site_indices, neigh_indices, neigh_coords, neigh_dists = (
-                self.nearest_neighbor_data
-            )
-
-            # sort radii
-            sorted_indices = np.argsort(all_radii)
-            sorted_sites = site_indices[sorted_indices]
-
-            # get first instance of each atom
-            radii = np.empty(len(self.structure), dtype=np.float64)
-            radii_types = np.empty(len(self.structure), dtype=all_radii_types.dtype)
-            for i in range(len(self.structure)):
-                first_index = np.argmax(sorted_sites == i)
-                radii[i] = all_radii[sorted_indices[first_index]]
-                radii_types[i] = all_radii_types[sorted_indices[first_index]]
-            self._atom_elf_radii = radii
-            self._atom_elf_radii_types = radii_types
+        if self._atom_elf_radii is None:            
+            self._atom_elf_radii, self._atom_elf_radii_types = self._get_atom_elf_radii(
+                self.structure, 
+                self.atom_nn_elf_radii, 
+                self._atom_nn_elf_radii_types, 
+                self.nearest_neighbor_data,
+                )
 
         return self._atom_elf_radii
 
@@ -225,25 +194,56 @@ class ElfLabeler:
     @property
     def quasi_atom_elf_radii(self) -> NDArray[np.float64]:
         if self._quasi_atom_elf_radii is None:
-            # make sure labeled bifurcation graph exists
-            self.bifurcation_graph
-            self._get_quasi_atom_elf_radii()
+            self._quasi_atom_elf_radii, self._quasi_atom_elf_radii_types = self._get_atom_elf_radii(
+                self.quasi_atom_structure, 
+                self.quasi_atom_nn_elf_radii, 
+                self._quasi_atom_nn_elf_radii_types, 
+                self.quasi_atom_nearest_neighbor_data,
+                )
         return self._quasi_atom_elf_radii
+    
+    @property
+    def quasi_atom_elf_radii_types(self) -> NDArray[np.float64]:
+        if self._quasi_atom_elf_radii_types is None:
+            # run labeling and radii calc by calling our bifurcation graph
+            self.quasi_atom_elf_radii
+        return np.where(self._quasi_atom_elf_radii_types, "covalent", "ionic")
 
     @property
     def atom_nn_elf_radii(self) -> NDArray[np.float64]:
         if self._atom_nn_elf_radii is None:
-            # make sure labeled bifurcation graph exists
-            self.bifurcation_graph
-            self._get_nn_atom_elf_radii()
+            if self._labeled_covalent is None:
+                self.bifurcation_graph
+            self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure)
         return self._atom_nn_elf_radii
 
     @property
     def atom_nn_elf_radii_types(self) -> NDArray[np.float64]:
         if self._atom_nn_elf_radii_types is None:
+            # call radii method
+            self.atom_nn_elf_radii
+        return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
+    
+    @property
+    def quasi_atom_nn_elf_radii(self) -> NDArray[np.float64]:
+        if self._quasi_atom_nn_elf_radii is None:
             # make sure labeled bifurcation graph exists
-            self.bifurcation_graph
-            self._get_nn_atom_elf_radii()
+            if self._labeled_covalent is None:
+                self.bifurcation_graph
+            # if there are no quasi atoms, just return the results for the base
+            # structure (avoid repeat calc)
+            if len(self.structure) == len(self.quasi_atom_structure):
+                self._quasi_atom_nn_elf_radii = self.atom_nn_elf_radii
+                self._quasi_atom_nn_elf_radii_types = self._atom_nn_elf_radii_types
+            else:
+                self._quasi_atom_nn_elf_radii, self._quasi_atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.quasi_atom_structure)
+        return self._quasi_atom_nn_elf_radii
+    
+    @property
+    def quasi_atom_nn_elf_radii_types(self) -> NDArray[np.float64]:
+        if self._quasi_atom_nn_elf_radii_types is None:
+            # call radii method
+            self.quasi_atom_nn_elf_radii
         return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
 
     ###########################################################################
@@ -592,38 +592,39 @@ class ElfLabeler:
     ###########################################################################
     # Utilities
     ###########################################################################
+    
+    def _get_nearest_neighbor_data(self, structure: Structure):
+        nearest_neighs = self.cnn.get_all_nn_info(structure)
+        # we just want the species and frac coords of each atom's neighbors
+        sites = []
+        neighs = []
+        frac_coords = []
+        cart_coords = []
+        for site_idx, neigh_list in enumerate(nearest_neighs):
+            for neigh_dict in neigh_list:
+                sites.append(site_idx)
+                neighs.append(neigh_dict["site_index"])
+                frac_coords.append(neigh_dict["site"].frac_coords)
+                cart_coords.append(neigh_dict["site"].coords)
+        # convert to arrays
+        sites = np.array(sites, dtype=np.uint32)
+        neighs = np.array(neighs, dtype=np.uint32)
+        frac_coords = np.array(frac_coords, dtype=np.float64)
+        cart_coords = np.array(cart_coords, dtype=np.float64)
+        # calculate distances (since pymatgen doesn't include these in the
+        # summary for some reason)
+        site_cart_coords = structure.cart_coords[sites]
+        dists = mutiple_dists(site_cart_coords, cart_coords)
 
-    def _get_quasi_atom_elf_radii(self):
+        return (sites, neighs, frac_coords, dists)
+    
+    def _get_nn_atom_elf_radii(self, structure: Structure):
         if not self._labeled_covalent:
             raise Exception("Covalent features must be labeled for reliable radii.")
-
-        # we're getting radii acting as if bare electrons are atoms. We want
-        # to label our structure similar to the method above, but use our
-        # structure labeled with quasi atoms
-        # TODO: This should follow a similar scheme to the nn atom radii in
-        # case the smallest radius isn't along the nearest atoms bond
-
-        included_types = FeatureType.valence_types.copy()
-        feature_labels, feature_structure = self.get_feature_labels(
-            included_features=included_types
-        )
-
-        radii_tools = ElfRadiiTools(
-            grid=self.reference_grid,
-            feature_labels=feature_labels,
-            feature_structure=feature_structure,
-            override_structure=self.quasi_atom_structure,
-        )
-        self.bifurcation_graph._atom_elf_radii = radii_tools.atom_elf_radii
-        self._quasi_atom_elf_radii = radii_tools.atom_elf_radii
-
-    def _get_nn_atom_elf_radii(self):
-        if not self._labeled_covalent:
-            raise Exception("Covalent features must be labeled for reliable radii.")
-
+        
         # First we get our neighbor arrays
         site_indices, neigh_indices, neigh_frac_coords, neigh_dists = (
-            self.nearest_neighbor_data
+            self.quasi_atom_nearest_neighbor_data
         )
 
         # Now we get a labeled structure including covalent, metallic, and bare
@@ -638,9 +639,9 @@ class ElfLabeler:
             grid=self.reference_grid,
             feature_labels=feature_labels,
             feature_structure=feature_structure,
-            # override_structure=self.quasi_atom_structure
+            override_structure=structure,
         )
-        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = (
+        return (
             radii_tools.get_all_neigh_elf_radii_and_type(
                 site_indices,
                 neigh_indices,
@@ -648,6 +649,29 @@ class ElfLabeler:
                 neigh_dists,
             )
         )
+        
+    @staticmethod
+    def _get_atom_elf_radii(structure, all_radii, all_radii_types, nn_data):
+        # NOTE: This is the smallest radius of each atom which is not always
+        # along the bond to the nearest neighbor, but typically is. For
+        # example CdPt3 has 2 Pt atoms with a Cd an dPt atom tied for the
+        # nearest.
+
+        site_indices, neigh_indices, neigh_coords, neigh_dists = nn_data
+
+        # sort radii
+        sorted_indices = np.argsort(all_radii)
+        sorted_sites = site_indices[sorted_indices]
+
+        # get first instance of each atom
+        radii = np.empty(len(structure), dtype=np.float64)
+        radii_types = np.empty(len(structure), dtype=all_radii_types.dtype)
+        for i in range(len(structure)):
+            first_index = np.argmax(sorted_sites == i)
+            radii[i] = all_radii[sorted_indices[first_index]]
+            radii_types[i] = all_radii_types[sorted_indices[first_index]]
+        return radii, radii_types
+
 
     def _calculate_feature_surface_dists(self):
         # Calculate the minimum and average distance from each irreducible features
@@ -1002,12 +1026,30 @@ class ElfLabeler:
         # from atomic shells (e.g. SnO)
         self._mark_lonepairs()
 
-        # get atomic radii before checking for metal/bare
-        self._get_nn_atom_elf_radii()
+        # get atomic radii before checking for metal/bare.
+        # NOTE: This intentionally may underestimates radii in metallic systems.
+        # For metal systems, we would treat metal maxima similar to covalent
+        # bonds. For electrides, we would treat maxima as part of a separate
+        # "quasi atom"
+        logging.info("Calculating atomic radii")
+        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure)
 
         # Next we mark our metallic/bare electrons. These currently have a set
         # of rather arbitrary cutoffs to distinguish between them. In the future
         # I would like to perform a comprehensive study.
+        self._mark_metallic_or_bare()
+        
+        # BUGFIX: The atomic radii are somewhat dependent on if we consider a
+        # feature to be metallic or a qausi-atom. We first calculate the radii
+        # assuming quasi atoms to allow for the best chance of a feature getting
+        # through the "dist_beyond_atom" cutoff. Then we recalculate and relabel
+        # so that metallic systems have the proper label
+        # Recalculate radii with our updated markers
+        logging.info("Re-calculating atomic radii")
+        self._atom_elf_radii = None
+        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure)
+        
+        # Re-mark metallic/electrides
         self._mark_metallic_or_bare()
 
         # In some cases, the user may not have used a pseudopotential with enough core electrons.
@@ -1313,7 +1355,11 @@ class ElfLabeler:
                     child._coord_atom_indices = None
 
     def _mark_metallic_or_bare(self):
-        logging.info("Marking metallic and bare electron features")
+        if not self._labeled_metallic:
+            logging.info("Marking metallic and bare electron features")
+        else:
+            logging.info("Re-marking metallic and bare electron features")
+        self._labeled_metallic = True
         # The remaining features are various types of non-nuclear attractors.
         # We separate them into metallic or "bare electrons" based on a series
         # of cutoffs
@@ -1340,7 +1386,10 @@ class ElfLabeler:
                 self.min_electride_dist_beyond_atom,
             ]
         )
-        for node in self.bifurcation_graph.unassigned_nodes:
+        for node in self.bifurcation_graph.irreducible_nodes:
+            # skip nodes that aren't metallic/bare/unlabeled
+            if node.feature_type not in [FeatureType.metallic, FeatureType.bare_electron, FeatureType.unknown]:
+                continue
             condition_test = np.array(
                 [
                     node.max_value,
