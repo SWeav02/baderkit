@@ -110,6 +110,7 @@ class MethodBase:
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             lattice=self.reference_grid.structure.lattice.matrix,
+            rel_minima_tol=1e-5,
         )
 
         # now run bader

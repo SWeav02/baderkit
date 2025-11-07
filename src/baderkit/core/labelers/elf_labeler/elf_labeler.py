@@ -1055,16 +1055,21 @@ class ElfLabeler:
 
     def _mark_shells(self):
         logging.info("Marking atomic shells")
-        # shells are "reducible" features that surround exactly one atom. The
-        # main difficulty is distinguishing them from heterogeneous covalent
+        # shells are "reducible" features that surround exactly one atom. 
+        # Often they shouldn't really be reducible, but appear to be so due to
+        # the inability of the voxel grid to represent a sphere well
+        # The main difficulty is distinguishing them from heterogeneous covalent
         # bonds.
 
         # as a first step, we label any features that were combined when the
         # graph was generated due to being very shallow. These will be marked
-        # "shallow" and contain one atom
+        # as irreducible cages and contain one atom.
+        # BUG-FIX: There is also a possibility if the bader basin reduction tolerance
+        # is too high that a cage will be combined during the bader algorithm and
+        # marked as a point. We mark this as well
         for node in self.bifurcation_graph.unassigned_nodes:
             if (
-                node.domain_subtype == DomainSubtype.irreducible_cage
+                node.domain_subtype in [DomainSubtype.irreducible_cage, DomainSubtype.irreducible_point]
                 and len(node.contained_atoms) == 1
             ):
                 node.feature_type = "shell"

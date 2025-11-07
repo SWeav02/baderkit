@@ -248,7 +248,7 @@ def initialize_labels_from_maxima(
     neighbor_transforms,
     neighbor_dists,
     max_cart_offset=1,
-    rel_minima_tol=1e-4,
+    rel_minima_tol=1e-5,
 ):
     nx, ny, nz = data.shape
     ny_nz = ny * nz
