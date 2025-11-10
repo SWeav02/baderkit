@@ -52,7 +52,8 @@ class WeightMethod(MethodBase):
         neighbor_transforms, neighbor_dists, facet_areas, _ = (
             reference_grid.point_neighbor_voronoi_transforms
         )
-        # # get a single alpha corresponding to the area/dist
+
+        # get a single alpha corresponding to the area/dist
         neighbor_alpha = facet_areas / neighbor_dists
 
         # Get the flux of volume from each voxel to its neighbor.

@@ -38,7 +38,7 @@ def get_weight_assignments(
     ###########################################################################
     # Get neighbors
     ###########################################################################
-
+    
     # loop over points in parallel and calculate neighbors
     for sorted_idx in prange(num_coords):
         idx = sorted_indices[sorted_idx]
@@ -48,7 +48,21 @@ def get_weight_assignments(
         base_value = reference_data[i, j, k]
         # set flat charge
         flat_charge[idx] = charge_data[i, j, k]
-
+        
+        # BUGFIX: In rare cases, the voronoi neighbors might include a neighbor
+        # more than 1 voxel away. In this case it's possible we labeled a maximum
+        # earlier that wouldn't be found as a maximum here. We default to the
+        # maxima found earlier as we used interpolation to confirm or reject
+        # them. Here we need to check for these first to make sure they get
+        # assigned properly
+        if maxima_mask[i,j,k]:
+            # Note this is a maximum
+            neigh_nums[sorted_idx] = 0
+            # assign the first value to the current label. This will allow us
+            # to check if the maximum is the root max in the next section
+            neigh_array[sorted_idx, 0] = labels[idx]
+            continue
+        
         # get higher neighbors at each point
         neigh_num = 0
         for si, sj, sk in neighbor_transforms:
@@ -59,36 +73,28 @@ def get_weight_assignments(
             # if this value is below the current points value, continue
             if neigh_value <= base_value:
                 continue
-
             # get this neighbors index and add it to our array
             neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
             neigh_array[sorted_idx, neigh_num] = neigh_idx
             neigh_num += 1
-        neigh_nums[sorted_idx] = neigh_num
 
         # Check if we had any higher neighbors
         if neigh_num == 0:
-            # this is a local maximum. Check if its a true max
-            if not maxima_mask[i, j, k]:
-                # this is not a real maximum. Assign it to the highest neighbor
-                shift, (ni, nj, nk) = get_best_neighbor(
-                    data=reference_data,
-                    i=i,
-                    j=j,
-                    k=k,
-                    neighbor_transforms=all_neighbor_transforms,
-                    neighbor_dists=all_neighbor_dists,
-                )
-                neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
-                neigh_nums[sorted_idx] = 1  # overwrite 0 entry
-                neigh_array[sorted_idx, 0] = neigh_idx
-                continue
+            # this is not a real maximum. Assign it to the highest neighbor
+            shift, (ni, nj, nk) = get_best_neighbor(
+                data=reference_data,
+                i=i,
+                j=j,
+                k=k,
+                neighbor_transforms=all_neighbor_transforms,
+                neighbor_dists=all_neighbor_dists,
+            )
+            neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
+            neigh_nums[sorted_idx] = 1  # note a single neighbor
+            neigh_array[sorted_idx, 0] = neigh_idx
+        else:
+            neigh_nums[sorted_idx] = neigh_num
 
-            # Note this is a maximum
-            neigh_nums[sorted_idx] = 0
-            # assign the first value to the current label. This will allow us
-            # to check if the maximum is the root max in the next section
-            neigh_array[sorted_idx, 0] = labels[idx]
 
     ###########################################################################
     # Assign interior
@@ -102,6 +108,7 @@ def get_weight_assignments(
     for sorted_idx, (idx, neighs, neigh_num) in enumerate(
         zip(sorted_indices, neigh_array, neigh_nums)
     ):
+        
         if neigh_num > 0:
             # This is not a maximum. Check if interior point (single basin)
             best_label = -1
@@ -129,6 +136,7 @@ def get_weight_assignments(
             # to multiple basins. We add it to our list.
             else:
                 edge_sorted_indices.append(sorted_idx)
+
         else:
 
             # Skip if this maximum was already processed
@@ -190,7 +198,6 @@ def get_weight_assignments(
         total_flux = 0.0
         neigh_labels = neigh_array[edge_idx]
         neigh_fluxes = flux_array[edge_idx]
-        # no_exterior_neighs = True
         neigh_num = 0
         for (si, sj, sk), alpha in zip(neighbor_transforms, neighbor_alpha):
             # get neighbor and wrap around periodic boundary

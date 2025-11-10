@@ -32,8 +32,7 @@ from .elf_radii import ElfRadiiTools
 Self = TypeVar("Self", bound="ElfLabeler")
 # TODO:
 
-# - Add more bond types, i.e. metal bonds, atoms surrounded by electride?
-# Also add types for bonds between electrides and atoms?
+# - Add more bond types: metal and metal/covalent
 
 # - add a method to print a more traditional bifurcation plot?
 # - create method to get all radii around each atom using new radii method:
