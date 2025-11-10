@@ -60,7 +60,8 @@ class ElfLabeler:
         charge_grid: Grid,
         reference_grid: Grid,
         ignore_low_pseudopotentials: bool = False,
-        shared_shell_ratio: float = 1 / 3,
+        shared_shell_ratio: float = 0.75,
+        covalent_molecule_ratio: float = 0.2,
         combine_shells: bool = True,
         min_covalent_charge: float = 0.6,
         min_covalent_angle: float = 135,
@@ -88,6 +89,7 @@ class ElfLabeler:
         # define cutoff variables
         # TODO: These should be hidden variables to allow for setter methods
         self.shared_shell_ratio = shared_shell_ratio
+        self.covalent_molecule_ratio = covalent_molecule_ratio
         self.combine_shells = combine_shells
         self.min_covalent_charge = min_covalent_charge
         self.min_covalent_angle = min_covalent_angle
@@ -1096,33 +1098,30 @@ class ElfLabeler:
 
     def _mark_shells(self):
         logging.info("Marking atomic shells")
-        # shells are "reducible" features that surround exactly one atom. 
-        # Often they shouldn't really be reducible, but appear to be so due to
-        # the inability of the voxel grid to represent a sphere well
-        # The main difficulty is distinguishing them from heterogeneous covalent
-        # bonds.
+        # shells are reducible domains that surround exactly one atom. 
+        # In a vacuum, an atoms shells are spherical due to symmetry. In a
+        # molecule/solid they will warp due to interactions with neighboring
+        # atoms. If a neighbor has a strong enough attraction, the shell will
+        # break into multiple child domains (covalent/lone-pairs). If its even
+        # stronger, the shell will move fully to the neighbor (ionic bond) and
+        # form a shell there.
+        
+        # Our criteria for a shell domain is as follows:
+            # 1. Surrounds 1 atom
+            # 2. Is 0D (finite)
+            # 3. Exists as a shell in a much larger range than as individual child
+            # domains
 
-        # as a first step, we label any features that were combined when the
-        # graph was generated due to being very shallow. These will be marked
-        # as irreducible cages and contain one atom.
-        # BUG-FIX: There is also a possibility if the bader basin reduction tolerance
-        # is too high that a cage will be combined during the bader algorithm and
-        # marked as a point. We mark this as well
+        # First, we label any nodes that surround 1 atom but don't have a maximum
+        # at the atoms nucleus. This often happens for particularly shallow shells
+        # if they are combined when our graph is first generated
         for node in self.bifurcation_graph.unassigned_nodes:
-            if (
-                node.domain_subtype in [DomainSubtype.irreducible_cage, DomainSubtype.irreducible_point]
-                and len(node.contained_atoms) == 1
-            ):
+            if len(node.contained_atoms) == 1:
                 node.feature_type = "shell"
 
-        # Now we label shells that may be slightly deeper. Regardless of depth,
-        # shells will always surround a single atom. To distinguish them from
-        # heterogenous covalent bonds (which also may surround 1 atom), we gauge
-        # the degree to which the potential shell features belong to the atom's
-        # shell vs. another atoms shell. This can be thought of as a measure of
-        # ionicity. To measure this, we compare the highest ELF value where
-        # the feature fully surrounds the single atom to the highest value where
-        # it surrounds at least one other atom
+        # Now we label shells that may be slightly deeper. We compare the range
+        # where the domain surrounds 1 atom to the range itself or any of its children
+        # exist. The ratio is compared to our cutoff
 
         shell_nodes = []
         for node in self.bifurcation_graph.reducible_nodes:
@@ -1133,40 +1132,21 @@ class ElfLabeler:
             if any([len(i.contained_atoms) == 1 for i in node.children]):
                 continue
 
-            # we want to find the highest ELF value where these features contribute
-            # to another atoms outer shell. This isn't always the first
-            # parent that contains multiple atoms, as shells and heterogenous
-            # covalent bonds usually connect to each other before surrounding
-            # a different atom. Instead we want the first ancestor that surrounds
-            # a new atom without being in contact with that atoms shells/core
-
-            found_parent = False
-            included_atoms = node.contained_atoms
-            for parent in node.ancestors:
-                if len(parent.contained_atoms) == len(included_atoms):
-                    continue
-                # check if all atoms are included in at least one child
-                distinct_atoms = []
-                for child in parent.children:
-                    distinct_atoms.extend(child.contained_atoms)
-                if not all([i in distinct_atoms for i in parent.contained_atoms]):
-                    highest_neighbor_shell = parent.max_value
-                    found_parent = True
-                    break
-                included_atoms = parent.contained_atoms
-
-            if not found_parent:
-                # There is no appropriate parent and this must be a shell
+            # Get the depth of the domain
+            shared_shell_depth = node.depth
+            
+            # Get the total range this node or its children exist
+            max_elf = 0.0
+            for child in node.deep_children:
+                if child.max_value>max_elf:
+                    max_elf=child.max_value
+            total_depth = max_elf - node.min_value
+            
+            ratio = shared_shell_depth/total_depth
+            if ratio > self.shared_shell_ratio:
                 shell_nodes.append(node)
-                continue
-            # get the highest point where this feature contains the atom
-            highest_nearest_shell = node.max_value
-            # check if the ratio is below our cutoff
-            if (
-                highest_neighbor_shell / highest_nearest_shell
-            ) < self.shared_shell_ratio:
-                shell_nodes.append(node)
-
+        
+        # mark nodes as shells
         for node in shell_nodes:
             if self.combine_shells:
                 # convert to an irreducible node
@@ -1228,14 +1208,14 @@ class ElfLabeler:
 
             # Sometimes a lone pair happens to align well with an atom that
             # is not part of our covalent system (e.g. CaC2). Similar to shells,
-            # These atoms won't connect until a much lower value
+            # the range of values containing both atoms should be comparable to
+            # the rane of values containing at least one of them.
             # POSSIBLE BUG: Atoms with translational symmetry might be counted
             # as part of multiple covalent systems and break this in small
             # unit cells. This would require knowing which atom image is contained
             # which we currently don't track and would require a large rework
 
-            # find the first parent containing at least one of the neighboring
-            # atoms and containing both
+            # find range of values containing at least one and both of the atoms
             one_atom = None
             both_atoms = None
             for parent in node.ancestors:
@@ -1247,11 +1227,8 @@ class ElfLabeler:
                     if both_atoms is None:
                         both_atoms = parent.max_value
                         break
-            if not one_atom is None and not both_atoms is None:
-                if (both_atoms / one_atom) < self.shared_shell_ratio:
-                    is_covalent = False
-                else:
-                    is_covalent = True
+                    
+            is_covalent = ((both_atoms / one_atom) >= self.covalent_molecule_ratio)
 
             if is_covalent:
                 # label as covalent or metallic covalent depending on the species'

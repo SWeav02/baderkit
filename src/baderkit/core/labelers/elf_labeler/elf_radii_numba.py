@@ -91,19 +91,31 @@ def get_elf_radius(
 
     # SITUATION 3:
     # The atom is ionically bonded to its nearest neighbor. The radius is
-    # at the first point not labeled as belonging to this atom.
+    # at the first point that does not belong to this atom.
     # NOTE: If we have not labeled metals/electrides yet, this also captures
     # the situation where we treat metal features as separate from the atom
     else:
         use_maximum = False
-        radius_index = -1
+        midpoint = -1
         # find the first point that doesn't belong to the current atom
         for i, label in enumerate(labels):
             if label != atom_idx:
-                radius_index = i
+                midpoint = i
                 break
-        # make sure we found an assignment
-        assert radius_index != -1
+        radius_index = -1
+        # get the minimum along the line closest to this point
+        minima_dist = 1.0e6
+        for i, (value, label) in enumerate(zip(values, labels)):
+            # check if the point is a minimum
+            if ((i == 0) or (values[i - 1] >= value)) and (
+                (i == len(values) - 1) or (value < values[i + 1])
+            ):
+                # if the minimum is closer to the midpoint than previous points,
+                # update our best distance
+                dist = abs(i - midpoint)
+                if dist < minima_dist:
+                    minima_dist = dist
+                    radius_index = i
 
     # Now we want to refine the radius. First, we get the coordinate of the
     # current radius
@@ -148,13 +160,14 @@ def get_elf_radius(
                 current_coord = ucoord
                 # update index
                 radius_index += step_mult
-            elif down_val >= current_value:
+            elif down_val < current_value:
                 current_value = down_val
                 current_coord = dcoord
                 radius_index -= step_mult
 
     # We now have a refined radius. Calculate the actual bond distance
     bond_frac = radius_index / (num_points - 1)
+
     return bond_frac * bond_dist, covalent
 
 
