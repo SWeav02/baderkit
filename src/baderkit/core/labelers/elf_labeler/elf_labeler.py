@@ -70,7 +70,11 @@ class ElfLabeler:
         min_electride_charge: float = 0.5,
         min_electride_volume: float = 10,
         min_electride_dist_beyond_atom: float = 0.3,
-        crystalnn_kwargs: dict = {"distance_cutoffs": None},
+        crystalnn_kwargs: dict = {
+            "distance_cutoffs": None,
+            "x_diff_weight": 0.0,
+            "porous_adjustment": False,
+            },
         **kwargs,
     ):
         # ensure the reference file is ELF
@@ -189,6 +193,7 @@ class ElfLabeler:
     def atom_elf_radii_types(self) -> NDArray[np.float64]:
         if self._atom_elf_radii_types is None:
             # run labeling and radii calc by calling our bifurcation graph
+            self._atom_elf_radii = None
             self.atom_elf_radii
         return np.where(self._atom_elf_radii_types, "covalent", "ionic")
 
@@ -1048,6 +1053,7 @@ class ElfLabeler:
         # Recalculate radii with our updated markers
         logging.info("Re-calculating atomic radii")
         self._atom_elf_radii = None
+        self._atom_elf_radii_types = None
         self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure)
         
         # Re-mark metallic/electrides
