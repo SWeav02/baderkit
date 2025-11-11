@@ -1291,11 +1291,21 @@ class ElfLabeler:
             # shells
             all_labeled = True
             none_labeled = True
+            some_covalent = False
+            some_atom = False
             for child in node.deep_children:
                 if child.is_reducible:
                     continue
+                # note if we have a covalent feature
+                if child.feature_type in [FeatureType.covalent, FeatureType.covalent_metallic]:
+                    some_covalent = True
+                # note if we have some shell feature
+                if child.feature_type in FeatureType.atomic_types:
+                    some_atom = True
+                # If this node is assigned, note that not all are unlabeled
                 if child.key in assigned_nodes:
                     none_labeled = False
+                # If this node isn't assigned, note not all are labeled
                 else:
                     all_labeled = False
 
@@ -1303,14 +1313,38 @@ class ElfLabeler:
             if all_labeled:
                 continue
 
-            # if none are labeled, check if this should be a shell. If not, these
-            # are some form of metal bond so we continue
-            if none_labeled:
-                if len(node.contained_atoms) == 1 and not node.is_infinite:
+            # if we have exactly one atom in this domain, we may have an atom
+            # that's ionically bonded with a lone-pair (e.g. SnO). We may also
+            # have mislabeled a shell earlier due to a particularly deep feature
+            if len(node.contained_atoms) == 1 and not node.is_infinite:
+                # if none are labeled these are mislabeled shells
+                if none_labeled:
                     for child in node.deep_children:
                         child.feature_type = FeatureType.deep_shell
+                        assigned_nodes.append(child.key)
+                # if some are atomic and none are covalent, we have ionic
+                # lone-pairs or small metallic features. We check that they
+                # have reasonable charge
+                elif some_atom and not some_covalent:
+                    for child in node.deep_children:
+                        if child.charge > self.min_covalent_charge:
+                            child.feature_type = FeatureType.lone_pair
+                            assigned_nodes.append(child.key)
+                # otherwise these features are some form of metallic and we just
+                # continue
+                continue
+            
+            # if nothing is labeled and we surround more than one atom, we have
+            # a group of metal features. We mark them as assigned and continue
+            if none_labeled:
                 for child in node.deep_children:
                     assigned_nodes.append(child.key)
+                continue
+
+            # Any other lone-pairs must come along with a covalent bond. If we
+            # don't have one we continue
+            # NOTE: Should I mark these as checked?
+            if not some_covalent:
                 continue
 
             # otherwise, check each unassigned node to see if it has exactly
