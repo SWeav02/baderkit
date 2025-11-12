@@ -248,7 +248,10 @@ def read_vasp(filename, total_only: bool):
 
             # 4) collect augmentation bytes (lines) until next numeric start
             aug_lines = []
-            mm.seek(pos)
+            try:
+                mm.seek(pos)
+            except:
+                breakpoint()
             while True:
                 line = mm.readline()  # returns bytes (fast)
                 if not line:
@@ -316,6 +319,8 @@ def read_vasp(filename, total_only: bool):
 
 @njit(cache=True)
 def format_fortran(mant, exp):
+    if mant == 0:
+        return "0.00000000000E+00"
     abs_exp = abs(exp)
     pre = " 0." if mant >= 0 else " -."
     if exp >= 0:
