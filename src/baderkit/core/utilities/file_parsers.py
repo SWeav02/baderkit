@@ -320,7 +320,7 @@ def read_vasp(filename, total_only: bool):
 @njit(cache=True)
 def format_fortran(mant, exp):
     if mant == 0:
-        return "0.00000000000E+00"
+        return " 0.00000000000E+00"
     abs_exp = abs(exp)
     pre = " 0." if mant >= 0 else " -."
     if exp >= 0:
