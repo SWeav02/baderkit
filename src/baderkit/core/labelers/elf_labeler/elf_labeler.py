@@ -75,6 +75,7 @@ class ElfLabeler:
             "x_diff_weight": 0.0,
             "porous_adjustment": False,
             },
+        vacuum_tol = False,
         **kwargs,
     ):
         # ensure the reference file is ELF
@@ -89,6 +90,15 @@ class ElfLabeler:
         self.ignore_low_pseudopotentials = ignore_low_pseudopotentials
         self.crystalnn_kwargs = crystalnn_kwargs
         self.cnn = CrystalNN(**crystalnn_kwargs)
+        # BUGFIX: We use a separate cnn with very loose rules to find neighbors
+        # that may potentially have the smallest radius. This is intentionally 
+        # separate from the cnn used to calculate NNs for features
+        self._radii_cnn = CrystalNN(
+            weighted_cn=True,
+            distance_cutoffs=None,
+            x_diff_weight=0.0,
+            porous_adjustment=False,
+            )
 
         # define cutoff variables
         # TODO: These should be hidden variables to allow for setter methods
@@ -126,7 +136,10 @@ class ElfLabeler:
 
         # create a bader object
         self.bader = Bader(
-            charge_grid=charge_grid, reference_grid=reference_grid, **kwargs
+            charge_grid=charge_grid, 
+            reference_grid=reference_grid,
+            vacuum_tol=vacuum_tol,
+            **kwargs
         )
 
     ###########################################################################
@@ -600,7 +613,9 @@ class ElfLabeler:
     ###########################################################################
     
     def _get_nearest_neighbor_data(self, structure: Structure):
-        nearest_neighs = self.cnn.get_all_nn_info(structure)
+        # use cnn specifically made for high nns
+        nearest_neighs = self._radii_cnn.get_all_nn_info(structure)
+
         # we just want the species and frac coords of each atom's neighbors
         sites = []
         neighs = []
@@ -637,7 +652,6 @@ class ElfLabeler:
         feature_labels, feature_structure = self.get_feature_labels(
             included_features=included_types
         )
-
         # Calculate all radii
         radii_tools = ElfRadiiTools(
             grid=self.reference_grid,

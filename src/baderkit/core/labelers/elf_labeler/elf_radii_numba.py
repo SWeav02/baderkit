@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 from baderkit.core.utilities.interpolation import interp_nearest, interp_spline
 
 
-@njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True, )
 def get_elf_radius(
     data,
     feature_labels,
@@ -94,6 +94,10 @@ def get_elf_radius(
         midpoint = -1
         # find the first point that doesn't belong to the current atom
         for i, label in enumerate(labels):
+            # skip points with no label. Doesn't typically happen but might if
+            # the ELF is very low around an atom center
+            if label == -1:
+                continue 
             if label != atom_idx:
                 midpoint = i
                 break
@@ -111,6 +115,28 @@ def get_elf_radius(
                 if dist < minima_dist:
                     minima_dist = dist
                     radius_index = i
+                    
+    # Situation 4: If we've still failed to find a radius, we are likely using
+    # too few valence electrons and have no core/shell around our atom. In this
+    # case we use the maximum closest to the center of the bond
+    if radius_index == -1 or radius_index == 0:
+        raise Exception()
+        # use_maximum = True
+        # # create placeholders for best maxima
+        # radius_index = -1
+        # maxima_dist = 1.0e6
+        # # get local maximum closest to center
+        # midpoint = (len(values) - 1) / 2
+        # for i, (value, label) in enumerate(zip(values, labels)):
+        #     # check if the point is a maximum
+        #     if ((i == 0) or (values[i - 1] <= value)) and (
+        #         (i == len(values) - 1) or (value > values[i + 1])
+        #     ):
+        #         # if the maximum is closer to the midpoint than previous points,
+        #         # update our best distance
+        #         dist = abs(i - midpoint)
+        #         if dist < maxima_dist:
+        #             maxima_dist = dist
 
     # Now we want to refine the radius. First, we get the coordinate of the
     # current radius
@@ -162,7 +188,6 @@ def get_elf_radius(
 
     # We now have a refined radius. Calculate the actual bond distance
     bond_frac = radius_index / (num_points - 1)
-
     return bond_frac * bond_dist, covalent
 
 
