@@ -220,7 +220,7 @@ class ElfLabeler:
         if self._atom_nn_elf_radii is None:
             if self._labeled_covalent is None:
                 self.bifurcation_graph
-            self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure)
+            self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure, self.nearest_neighbor_data)
         return self._atom_nn_elf_radii
 
     @property
@@ -242,7 +242,7 @@ class ElfLabeler:
                 self._quasi_atom_nn_elf_radii = self.atom_nn_elf_radii
                 self._quasi_atom_nn_elf_radii_types = self._atom_nn_elf_radii_types
             else:
-                self._quasi_atom_nn_elf_radii, self._quasi_atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.quasi_atom_structure)
+                self._quasi_atom_nn_elf_radii, self._quasi_atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.quasi_atom_structure, self.quasi_atom_nearest_neighbor_data)
         return self._quasi_atom_nn_elf_radii
     
     @property
@@ -624,14 +624,12 @@ class ElfLabeler:
 
         return (sites, neighs, frac_coords, dists)
     
-    def _get_nn_atom_elf_radii(self, structure: Structure):
+    def _get_nn_atom_elf_radii(self, structure: Structure, nn_data):
         if not self._labeled_covalent:
             raise Exception("Covalent features must be labeled for reliable radii.")
         
         # First we get our neighbor arrays
-        site_indices, neigh_indices, neigh_frac_coords, neigh_dists = (
-            self.quasi_atom_nearest_neighbor_data
-        )
+        site_indices, neigh_indices, neigh_frac_coords, neigh_dists = nn_data
 
         # Now we get a labeled structure including covalent, metallic, and bare
         # electron features
@@ -1038,7 +1036,7 @@ class ElfLabeler:
         # bonds. For electrides, we would treat maxima as part of a separate
         # "quasi atom"
         logging.info("Calculating atomic radii")
-        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure)
+        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure, self.nearest_neighbor_data)
 
         # Next we mark our metallic/bare electrons. These currently have a set
         # of rather arbitrary cutoffs to distinguish between them. In the future
@@ -1054,7 +1052,7 @@ class ElfLabeler:
         logging.info("Re-calculating atomic radii")
         self._atom_elf_radii = None
         self._atom_elf_radii_types = None
-        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure)
+        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure, self.nearest_neighbor_data)
         
         # Re-mark metallic/electrides
         self._mark_metallic_or_bare()
@@ -1235,6 +1233,10 @@ class ElfLabeler:
                         break
                     
             is_covalent = ((both_atoms / one_atom) >= self.covalent_molecule_ratio)
+
+            # check that we truly only have two nearest neighbors
+            if is_covalent and not node.coord_number == 2:
+                is_covalent = False
 
             if is_covalent:
                 # label as covalent or metallic covalent depending on the species'

@@ -25,7 +25,7 @@ def get_elf_radius(
     # I want this to always be odd because it is common for the exact midpoint
     # to be the correct fraction. This isn't required, but results in clean
     # values in these cases
-    if num_points % 2 == 1:
+    if num_points % 2 == 0:
         num_points += 1
 
     # get the vector pointing from each point along the line to the next
@@ -62,17 +62,12 @@ def get_elf_radius(
         # create placeholders for best maxima
         radius_index = -1
         maxima_dist = 1.0e6
-        # create a tracker for the last point that belongs to this site
-        last_idx = 0
         # get local maxima that are covalent
         midpoint = (len(values) - 1) / 2
         for i, (value, label) in enumerate(zip(values, labels)):
             # skip points that aren't part of the covalent bond
             if not covalent_labels[label]:
                 continue
-            # if this point is assigned to the current atom, update our idx
-            if label == atom_idx:
-                last_idx = i
             # check if the point is a maximum
             if ((i == 0) or (values[i - 1] <= value)) and (
                 (i == len(values) - 1) or (value > values[i + 1])
@@ -83,18 +78,18 @@ def get_elf_radius(
                 if dist < maxima_dist:
                     maxima_dist = dist
                     radius_index = i
-        # make sure we found a maximum. If not, default to the last point that
-        # belongs to the current atom
+        # make sure we found a maximum. If not, default to the third method which
+        # finds the minimum closest to the last label belonging to the atom along
+        # this line
         if radius_index == -1:
-            radius_index = last_idx
-            use_maximum = False
+            covalent = False
 
     # SITUATION 3:
     # The atom is ionically bonded to its nearest neighbor. The radius is
     # at the first point that does not belong to this atom.
     # NOTE: If we have not labeled metals/electrides yet, this also captures
     # the situation where we treat metal features as separate from the atom
-    else:
+    if not covalent:
         use_maximum = False
         midpoint = -1
         # find the first point that doesn't belong to the current atom
