@@ -168,7 +168,7 @@ def read_vasp(filename, total_only: bool):
         f.readline()
 
         coords = np.array(
-            [list(map(float, f.readline().split())) for _ in range(total_atoms)]
+            [list(map(float, f.readline().split()[:3])) for _ in range(total_atoms)]
         )
 
         # Skip empty line
