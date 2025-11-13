@@ -231,9 +231,7 @@ class ElfLabeler:
     @property
     def atom_nn_elf_radii(self) -> NDArray[np.float64]:
         if self._atom_nn_elf_radii is None:
-            if self._labeled_covalent is None:
-                self.bifurcation_graph
-            self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure, self.nearest_neighbor_data)
+            self.bifurcation_graph
         return self._atom_nn_elf_radii
 
     @property
@@ -255,7 +253,7 @@ class ElfLabeler:
                 self._quasi_atom_nn_elf_radii = self.atom_nn_elf_radii
                 self._quasi_atom_nn_elf_radii_types = self._atom_nn_elf_radii_types
             else:
-                self._quasi_atom_nn_elf_radii, self._quasi_atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.quasi_atom_structure, self.quasi_atom_nearest_neighbor_data)
+                self._quasi_atom_nn_elf_radii, self._quasi_atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(use_quasi_atoms=True)
         return self._quasi_atom_nn_elf_radii
     
     @property
@@ -639,9 +637,23 @@ class ElfLabeler:
 
         return (sites, neighs, frac_coords, dists)
     
-    def _get_nn_atom_elf_radii(self, structure: Structure, nn_data):
+    def _get_nn_atom_elf_radii(
+            self, 
+            use_quasi_atoms: bool = False,
+            ):
         if not self._labeled_covalent:
             raise Exception("Covalent features must be labeled for reliable radii.")
+        # get appropriate structure and neighbor data
+        if use_quasi_atoms:
+            structure = self.quasi_atom_structure
+            nn_data = self.quasi_atom_nearest_neighbor_data
+            # we don't treat quasi atoms as metals in this case
+            covalent_types = [i for i in FeatureType.valence_types if i not in FeatureType.bare_types]
+        else:
+            structure = self.structure
+            nn_data = self.nearest_neighbor_data
+            # we do treat quasi atoms as metals/covalent features
+            covalent_types = FeatureType.valence_types
         
         # First we get our neighbor arrays
         site_indices, neigh_indices, neigh_frac_coords, neigh_dists = nn_data
@@ -652,12 +664,14 @@ class ElfLabeler:
         feature_labels, feature_structure = self.get_feature_labels(
             included_features=included_types
         )
+        covalent_symbols = np.unique([i.dummy_species for i in covalent_types])
         # Calculate all radii
         radii_tools = ElfRadiiTools(
             grid=self.reference_grid,
             feature_labels=feature_labels,
             feature_structure=feature_structure,
             override_structure=structure,
+            covalent_symbols=covalent_symbols,
         )
         return (
             radii_tools.get_all_neigh_elf_radii_and_type(
@@ -1050,7 +1064,7 @@ class ElfLabeler:
         # bonds. For electrides, we would treat maxima as part of a separate
         # "quasi atom"
         logging.info("Calculating atomic radii")
-        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure, self.nearest_neighbor_data)
+        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(use_quasi_atoms=False)
 
         # Next we mark our metallic/bare electrons. These currently have a set
         # of rather arbitrary cutoffs to distinguish between them. In the future
@@ -1063,13 +1077,13 @@ class ElfLabeler:
         # through the "dist_beyond_atom" cutoff. Then we recalculate and relabel
         # so that metallic systems have the proper label
         # Recalculate radii with our updated markers
-        logging.info("Re-calculating atomic radii")
-        self._atom_elf_radii = None
-        self._atom_elf_radii_types = None
-        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure, self.nearest_neighbor_data)
+        # logging.info("Re-calculating atomic radii")
+        # self._atom_elf_radii = None
+        # self._atom_elf_radii_types = None
+        # self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(self.structure, self.nearest_neighbor_data)
         
-        # Re-mark metallic/electrides
-        self._mark_metallic_or_bare()
+        # # Re-mark metallic/electrides
+        # self._mark_metallic_or_bare()
 
         # In some cases, the user may not have used a pseudopotential with enough core electrons.
         # This can result in an atom having no assigned core/shell, which will
