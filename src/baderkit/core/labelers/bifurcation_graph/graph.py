@@ -409,7 +409,7 @@ class BifurcationGraph:
         return graph
 
     @staticmethod
-    def _remove_shallow_reducible_nodes(graph, cutoff=0.02):
+    def _remove_shallow_reducible_nodes(graph, cutoff=0.05):
         # iterate over nodes from low to high
         reducible_nodes = graph.sorted_reducible_nodes
         for node in reducible_nodes[1:]:

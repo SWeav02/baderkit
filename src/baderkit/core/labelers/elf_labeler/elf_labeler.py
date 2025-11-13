@@ -1343,6 +1343,8 @@ class ElfLabeler:
                 # have reasonable charge
                 elif some_atom and not some_covalent:
                     for child in node.deep_children:
+                        if child.is_reducible or child.key in assigned_nodes:
+                            continue
                         if child.charge > self.min_covalent_charge:
                             child.feature_type = FeatureType.lone_pair
                             assigned_nodes.append(child.key)
