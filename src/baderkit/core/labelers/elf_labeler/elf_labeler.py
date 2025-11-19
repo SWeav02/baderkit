@@ -865,7 +865,7 @@ class ElfLabeler:
             prefix_override = data_type.prefix
 
         for feat_idx in feature_indices:
-            basins = self.bader.feature_basins[feat_idx]
+            basins = self.feature_basins[feat_idx]
             # get mask where this feature is NOT
             mask = np.isin(self.bader.basin_labels, basins, invert=True)
             # copy data to avoid overwriting. Set data off of basin to 0
@@ -976,6 +976,8 @@ class ElfLabeler:
     def write_features_by_type(
         self,
         included_types: list[FeatureType],
+        prefix_override = None,
+        write_reference: bool = True,
         **kwargs,
     ):
         """
@@ -991,11 +993,23 @@ class ElfLabeler:
         None.
 
         """
-        feature_indices = self.feature_indices_by_type(included_types)
-        self.write_feature_basins(
-            feature_indices=feature_indices,
-            **kwargs,
-        )
+        # get the data to use
+        if write_reference:
+            data_type = self.reference_grid.data_type
+        else:
+            data_type = self.charge_grid.data_type
+        # get prefix
+        if prefix_override is None:
+            prefix_override = data_type.prefix
+        for feature_type in included_types:
+            feature_type = FeatureType(feature_type)
+            feature_indices = self.feature_indices_by_type([feature_type])
+            prefix = prefix_override + f"_{feature_type.value}"
+            self.write_feature_basins_sum(
+                feature_indices=feature_indices,
+                prefix_override=prefix,
+                **kwargs,
+            )
 
     def write_features_by_type_sum(
         self,
