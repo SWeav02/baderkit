@@ -156,6 +156,15 @@ class FeatureType(str, Enum):
             cls.covalent_metallic,
             cls.shallow_covalent_metallic,
         ]
+    
+    @classproperty
+    def shared_types(cls):
+        return [
+            cls.covalent,
+            cls.covalent_metallic,
+            cls.shallow_covalent_metallic,
+            cls.metallic,
+        ]
 
     @property
     def plot_color(self):

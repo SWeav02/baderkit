@@ -130,9 +130,13 @@ class ElfLabeler:
         self._quasi_atom_nn_elf_radii_types = None
         self._nearest_neighbor_data = None
         self._quasi_atom_nearest_neighbor_data = None
+        self._atom_features = None
+        self._quasi_atom_features = None
+        self._atom_max_values = None
+        self._quasi_atom_max_values = None
 
-        self._feature_labels = None
-        self._feature_structure = None
+        # TODO
+        self._results_summary = None        
 
         # create a bader object
         self.bader = Bader(
@@ -263,6 +267,50 @@ class ElfLabeler:
             self.quasi_atom_nn_elf_radii
         return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
 
+    @property
+    def atom_features(self) -> NDArray[np.int64]:
+        # For each atom, a list of feature indices that belong solely to that
+        # atom
+        if self._atom_features is None:
+            atom_features = [[] for i in range(len(self.structure))]
+            for feat_idx, node in enumerate(self.bifurcation_graph.irreducible_nodes):
+                if node.coord_number == 1:
+                    atom_features[node.coord_atom_indices[0]].append(feat_idx)
+            self._atom_features = atom_features
+        return self._atom_features
+    
+    @property
+    def quasi_atom_features(self) -> NDArray[np.int64]:
+        # For each atom, a list of feature indices that belong solely to that
+        # atom
+        if self._quasi_atom_features is None:
+            atom_features = [[] for i in range(len(self.quasi_atom_structure))]
+            for feat_idx, node in enumerate(self.bifurcation_graph.irreducible_nodes):
+                if node.coord_number == 1:
+                    atom_features[node.coord_quasi_atom_indices[0]].append(feat_idx)
+            self._quasi_atom_features = atom_features
+        return self._quasi_atom_features
+    
+    @property
+    def atom_max_values(self) -> NDArray[np.float64]:
+        if self._atom_max_values is None:
+            feature_max_values = self.feature_max_values
+            max_values = []
+            for i, feature_indices in enumerate(self.atom_features):
+                max_values.append(np.max(feature_max_values[feature_indices]))
+            self._atom_max_values = np.array(max_values)
+        return self._atom_max_values
+            
+    @property
+    def quasi_atom_max_values(self) -> NDArray[np.float64]:
+        if self._quasi_atom_max_values is None:
+            feature_max_values = self.feature_max_values
+            max_values = []
+            for i, feature_indices in enumerate(self.quasi_atom_features):
+                max_values.append(np.max(feature_max_values[feature_indices]))
+            self._quasi_atom_max_values = np.array(max_values)
+        return self._quasi_atom_max_values
+
     ###########################################################################
     # Feature Properties
     ###########################################################################
@@ -288,6 +336,14 @@ class ElfLabeler:
     @property
     def feature_average_frac_coords(self):
         return np.array(self._get_feature_properties("average_frac_coords"))
+    
+    @property
+    def feature_max_values(self):
+        return np.array(self._get_feature_properties("max_value"))
+    
+    @property
+    def feature_min_values(self):
+        return np.array(self._get_feature_properties("min_value"))
 
     @property
     def feature_charges(self):
@@ -299,17 +355,23 @@ class ElfLabeler:
 
     @property
     def feature_coord_atoms(self):
-
         return self._get_feature_properties("coord_atom_indices")
+    
+    @property
+    def feature_coord_nums(self):
+        return self._get_feature_properties("coord_number")
 
     @property
     def feature_coord_atom_dists(self):
-
         return self._get_feature_properties("coord_atom_dists")
 
     @property
     def feature_quasi_coord_atoms(self):
         return self._get_feature_properties("coord_quasi_atom_indices")
+    
+    @property
+    def feature_quasi_coord_nums(self):
+        return self._get_feature_properties("quasi_coord_number")
 
     @property
     def feature_quasi_coord_atom_dists(self):
@@ -523,12 +585,7 @@ class ElfLabeler:
 
     def get_feature_labels(
         self,
-        included_features: list[str] = [
-            "covalent",
-            "metallic",
-            "bare electron",
-            "electride",
-        ],
+        included_features: list[str] = FeatureType.valence_types,
         return_structure: bool = True,
     ):
 
@@ -562,12 +619,7 @@ class ElfLabeler:
 
     def get_feature_structure(
         self,
-        included_features: list[str] = [
-            "covalent",
-            "metallic",
-            "bare electron",
-            "electride",
-        ],
+        included_features: list[str] = FeatureType.valence_types,
     ):
         """
         Generates a PyMatGen Structure object with dummy atoms for each requested
@@ -792,6 +844,7 @@ class ElfLabeler:
     ###########################################################################
     # Methods for writing results
     ###########################################################################
+            
     def write_bifurcation_plot(
         self,
         filename: str | Path,
