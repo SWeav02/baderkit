@@ -213,6 +213,63 @@ def sum(
     # write to file
     summed_grid.write(filename=output_path, output_format=output_format)
 
+@baderkit_app.command(no_args_is_help=True)
+def regrid(
+    file: Path = typer.Argument(
+        ...,
+        help="The path to the file to sum",
+    ),
+    resolution: int = typer.Option(
+        1200,
+        "--resolution",
+        "-r",
+        help="The resolution in pts/A^3 to interpolate to",
+        case_sensitive=True,
+    ),
+    output_path: Path = typer.Option(
+        None,
+        "--output-path",
+        "-o",
+        help="The path to write the converted grid to. If None, appends 'regrid' to input name",
+        case_sensitive=True,
+    ),
+    input_format: Format = typer.Option(
+        None,
+        "--input-format",
+        "-if",
+        help="The input format of the file. If None, this will be guessed from the file.",
+        case_sensitive=False,
+    ),
+    output_format: Format = typer.Option(
+        None,
+        "--output-format",
+        "-of",
+        help="The output format of the files. If None, the input format will be used.",
+        case_sensitive=False,
+    ),
+):
+    """
+    A helper function for generating a grid file at a different voxel resolution.
+    Particularly useful for creating files with lower resolution for easier plotting.
+    """
+    from baderkit.core import Grid
+
+    # make sure files are paths
+    file = Path(file)
+    logging.info(f"Regriding file {file.name} to a resolution of {resolution} pts/A^3")
+
+    # load grids dynamically
+    grid = Grid.from_dynamic(file, format=input_format, total_only=False)
+    
+    # regrid
+    grid = grid.regrid(desired_resolution=resolution)
+
+    # convert output to path
+    if output_path is None:
+        output_path = file.parent / (str(file.stem) + "_regrid")
+    output_path = Path(output_path)
+    # write to file
+    grid.write(filename=output_path, output_format=output_format)
 
 @baderkit_app.command(no_args_is_help=True)
 def split(
