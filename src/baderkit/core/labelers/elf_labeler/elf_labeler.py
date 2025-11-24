@@ -629,12 +629,18 @@ class ElfLabeler:
         # Create a new structure without oxidation states
         structure = self.structure.copy()
         structure.remove_oxidation_states()
-
-        # Add dummy atoms of each type in list
+        
+        # Add any quasi atoms first
         for feature_type, frac_coords in zip(
             self.feature_types, self.feature_average_frac_coords
         ):
-            if feature_type in included_features:
+            if feature_type in included_features and feature_type in FeatureType.bare_types:
+                structure.append(feature_type.dummy_species, frac_coords)
+        # Add other features
+        for feature_type, frac_coords in zip(
+            self.feature_types, self.feature_average_frac_coords
+        ):
+            if feature_type in included_features and feature_type not in FeatureType.bare_types:
                 structure.append(feature_type.dummy_species, frac_coords)
 
         return structure
@@ -860,7 +866,7 @@ class ElfLabeler:
         self,
         feature_indices: list[int],
         directory: str | Path = None,
-        include_dummy_atoms: bool = False,
+        include_dummy_atoms: bool = True,
         write_reference: bool = True,
         output_format: str | Format = None,
         prefix_override: str = None,
