@@ -52,16 +52,16 @@ class SpinElfLabeler:
             logging.info(
                 "Spin grids are found to be equal. Only spin-up system will be used."
             )
-            self._equal_spin = True
+            self.equal_spin = True
         else:
-            self._equal_spin = False
+            self.equal_spin = False
         # create spin up and spin down elf analyzer instances
         self.elf_labeler_up = ElfLabeler(
             reference_grid=self.reference_grid_up,
             charge_grid=self.charge_grid_up,
             **kwargs,
         )
-        if not self._equal_spin:
+        if not self.equal_spin:
             self.elf_labeler_down = ElfLabeler(
                 reference_grid=self.reference_grid_down,
                 charge_grid=self.charge_grid_down,
