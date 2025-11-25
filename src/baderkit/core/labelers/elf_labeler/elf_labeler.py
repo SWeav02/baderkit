@@ -587,20 +587,39 @@ class ElfLabeler:
         self,
         included_features: list[str] = FeatureType.valence_types,
         return_structure: bool = True,
+        return_feat_indices: bool = False,
+        order_by_type: bool = True,
     ):
 
         # Get the original basin atom assignments
-        basin_atoms = self.bader.basin_atoms
+        basin_atoms = self.bader.basin_atoms.copy()
 
         # get indices of requested type
         feature_indices = self.feature_indices_by_type(included_features)
+        
+        # reorder features so that electrides are first if requested
+        if order_by_type:
+            bare_feature_indices = []
+            other_feature_indices = []
+            for feat_idx in feature_indices:
+                if self.feature_types[feat_idx] in FeatureType.bare_types:
+                    bare_feature_indices.append(feat_idx)
+                else:
+                    other_feature_indices.append(feat_idx)
+            feature_indices = bare_feature_indices + other_feature_indices
 
-        # reassign basin atoms
+        # reassign basin atoms and get structure
+        feature_structure = self.structure.copy()
         new_atom_idx = len(self.structure)
-        for feat_idx in feature_indices:
+        for sorted_idx, feat_idx in enumerate(feature_indices):
+            # update basin labels
             basins = self.feature_basins[feat_idx]
             basin_atoms[basins] = new_atom_idx
             new_atom_idx += 1
+            # add feature to structure
+            species = self.feature_types[feat_idx].dummy_species
+            coords = self.feature_average_frac_coords[feat_idx]
+            feature_structure.append(species, coords)
 
         # NOTE: append -1 so that vacuum gets assigned to -1 in the atom_labels
         # array
@@ -609,40 +628,49 @@ class ElfLabeler:
         # reassign labels
         feature_labels = basin_atoms[self.bader.basin_labels]
 
-        # get corresponding structure if requested
+        # get requested results
+        if not return_structure and not return_feat_indices:
+            return feature_labels
+        results = [feature_labels]
         if return_structure:
-            feature_structure = self.get_feature_structure(included_features)
-            return feature_labels, feature_structure
+            results.append(feature_structure)
+        
+        if return_feat_indices:
+            results.append(feature_indices)
 
         # return labels
-        return feature_labels
+        return tuple(results)
 
     def get_feature_structure(
         self,
         included_features: list[str] = FeatureType.valence_types,
+        return_feat_indices: bool = False,
+        order_by_type: bool = True,
     ):
         """
         Generates a PyMatGen Structure object with dummy atoms for each requested
         feature.
         """
-
-        # Create a new structure without oxidation states
-        structure = self.structure.copy()
-        structure.remove_oxidation_states()
+        # get indices of requested type
+        feature_indices = self.feature_indices_by_type(included_features)
         
-        # Add any quasi atoms first
-        for feature_type, frac_coords in zip(
-            self.feature_types, self.feature_average_frac_coords
-        ):
-            if feature_type in included_features and feature_type in FeatureType.bare_types:
-                structure.append(feature_type.dummy_species, frac_coords)
-        # Add other features
-        for feature_type, frac_coords in zip(
-            self.feature_types, self.feature_average_frac_coords
-        ):
-            if feature_type in included_features and feature_type not in FeatureType.bare_types:
-                structure.append(feature_type.dummy_species, frac_coords)
-
+        # reorder features so that electrides are first if requested
+        if order_by_type:
+            bare_feature_indices = []
+            other_feature_indices = []
+            for feat_idx in feature_indices:
+                if self.feature_types[feat_idx] in FeatureType.bare_types:
+                    bare_feature_indices.append(feat_idx)
+                else:
+                    other_feature_indices.append(feat_idx)
+            feature_indices = bare_feature_indices + other_feature_indices
+        
+        # get structure from indices
+        structure = self.get_feature_structure_by_index(feature_indices)
+        
+        if return_feat_indices:
+            return structure, feature_indices
+        
         return structure
 
     def get_feature_structure_by_index(self, feature_indices: list[int]):
