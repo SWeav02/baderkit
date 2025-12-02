@@ -32,7 +32,7 @@ from .elf_radii import ElfRadiiTools
 Self = TypeVar("Self", bound="ElfLabeler")
 # TODO:
 
-# - Add more bond types: metal and metal/covalent
+# - Add option for calculating atom radius from volume rather than bonds
 
 # - add a method to print a more traditional bifurcation plot?
 # - create method to get all radii around each atom using new radii method:

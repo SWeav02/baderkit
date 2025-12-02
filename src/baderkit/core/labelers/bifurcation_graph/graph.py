@@ -27,8 +27,29 @@ from .nodes import IrreducibleNode, NodeBase, ReducibleNode
 
 class BifurcationGraph:
     """
-    A class for storing the nodes of a bifurcation graph. The nodes themselves
-    contain the information on their connectivity.
+    A convenience class for storing the nodes of a bifurcation graph and gathering
+    data on them.
+    
+    The nodes themselves contain the information on their connectivity.
+    
+    Parameters
+    ----------
+    structure : Structure
+        The PyMatGen structure of the chemical system.
+    labeler_type : str
+        The type of labeler used to mark irreducible features in the graph.
+    basin_maxima_frac : NDArray[float]
+        The fractional coordinates of the Bader basins in the system.
+    basin_charges : NDArray[float]
+        The integrated charges of the Bader basins in the system.
+    basin_volumes : NDArray[float]
+        The volumes of the Bader basins in the system.
+    crystalnn_kwargs : dict
+        The keyword arguments for the CrystalNN object used for finding neighbors.
+        Particularly important when calculating charges assigned to each atom.
+    atomic_radii : NDArray[float], optional
+        The radii of each atom in the system used to calculate distance beyond
+        the atom for each feature. The default is None.
     """
 
     def __init__(
@@ -41,6 +62,7 @@ class BifurcationGraph:
         crystalnn_kwargs: dict,
         atomic_radii: NDArray[float] = None,
     ):
+
         self._root_nodes = []
         self._nodes = []
         self._node_keys = {}
@@ -69,26 +91,82 @@ class BifurcationGraph:
         return f"BifurcationGraph(num_nodes={len(self._nodes)})"
 
     @property
-    def root_nodes(self):
+    def root_nodes(self) -> list:
+        """
+
+        Returns
+        -------
+        list
+            A list of nodes that have no parents
+
+        """
         return self._root_nodes
 
     @property
-    def nodes(self):
+    def nodes(self) -> list:
+        """
+
+        Returns
+        -------
+        list
+            The list of nodes in the graph.
+
+        """
         return self._nodes
 
-    def node_from_key(self, key):
+    def node_from_key(self, key: int) -> list:
+        """
+        Returns a node in the graph given its key.
+
+        Parameters
+        ----------
+        key : int
+            The integer key of the node.
+
+        Returns
+        -------
+        Node
+            The node with the corresponding key.
+
+        """
         return self._node_keys[key]
 
     @property
-    def irreducible_nodes(self):
+    def irreducible_nodes(self) -> list:
+        """
+
+        Returns
+        -------
+        list
+            The list of irreducible nodes in the graph i.e. the nodes that do
+            not have any children.
+
+        """
         return [i for i in self if not i.is_reducible]
 
     @property
-    def reducible_nodes(self):
+    def reducible_nodes(self) -> list:
+        """
+
+        Returns
+        -------
+        list
+            The list of reducible nodes in the graph i.e. the nodes that have
+            child nodes.
+
+        """
         return [i for i in self if i.is_reducible]
 
     @property
-    def sorted_reducible_nodes(self):
+    def sorted_reducible_nodes(self) -> list:
+        """
+
+        Returns
+        -------
+        list
+            A list of reducible nodes sorted by minimum value.
+
+        """
         nodes = self.reducible_nodes
         min_vals = [i.min_value for i in nodes]
         sorted_indices = np.argsort(min_vals)
@@ -96,7 +174,15 @@ class BifurcationGraph:
         return [nodes[i] for i in sorted_indices]
 
     @property
-    def unassigned_nodes(self):
+    def unassigned_nodes(self) -> list:
+        """
+
+        Returns
+        -------
+        list
+            The list of irreducible nodes that don't have an assigned feature type.
+
+        """
         return [
             i
             for i in self
@@ -104,14 +190,34 @@ class BifurcationGraph:
         ]
 
     @property
-    def quasi_atom_structure(self):
+    def quasi_atom_structure(self) -> Structure:
+        """
+
+        Returns
+        -------
+        structure : Structure
+            The PyMatGen Structure of the material with dummy atoms placed at 
+            highly localized off atom electrons that may behave like quasi-atoms.
+            (e.g. electrides)
+
+        """
         structure = self.structure.copy()
         for node in self.get_feature_nodes(feature_types=FeatureType.bare_types):
             structure.append(node.feature_type.dummy_species, node.average_frac_coords)
         return structure
 
     @property
-    def _quasi_hatom_structure(self):
+    def _quasi_hatom_structure(self) -> Structure:
+        """
+
+        Returns
+        -------
+        structure : Structure
+            The PyMatGen Structure of the material with H- dummy atoms placed at 
+            highly localized off atom electrons that may behave like quasi-atoms.
+            (e.g. electrides)
+
+        """
         # same as above, but with H- dummy atoms for approximate radii in crystalNN
         structure = self.structure.copy()
         for node in self.get_feature_nodes(feature_types=FeatureType.bare_types):
@@ -119,18 +225,50 @@ class BifurcationGraph:
         return structure
 
     @property
-    def labeled_structure(self):
+    def labeled_structure(self) -> Structure:
+        """
+
+        Returns
+        -------
+        structure : Structure
+            The PyMatGen Structure of the material with dummy atoms placed at 
+            the maximum of each labeled feature.
+
+        """
         structure = self.structure.copy()
         for node in self.irreducible_nodes:
             structure.append(node.feature_type.dummy_species, node.average_frac_coords)
         return structure
 
-    def get_feature_nodes(self, feature_types: list[str]):
+    def get_feature_nodes(self, feature_types: list[FeatureType]):
+        """
+        Gets a list of nodes from the requested list of FeatureType
+
+        Parameters
+        ----------
+        feature_types : list[FeatureType]
+            The list of FeatureTypes to get nodes from.
+
+        Returns
+        -------
+        list
+            The list of nodes of the requested type.
+
+        """
         return [
             i for i in self if not i.is_reducible and i.feature_type in feature_types
         ]
 
     def to_dict(self) -> dict:
+        """
+        Gets a dictionary representation of the BifurcationGraph
+
+        Returns
+        -------
+        dict
+            The dictionary representation of the BifurcationGraph.
+
+        """
         graph_dict = {
             "nodes": [i.to_dict() for i in self],
             "structure": self.structure.to_json(),
@@ -153,6 +291,21 @@ class BifurcationGraph:
 
     @classmethod
     def from_dict(cls, graph_dict: dict):
+        """
+        Creates a BifurcationGraph object from a dictionary representation.
+
+        Parameters
+        ----------
+        graph_dict : dict
+            A dictionary representation of the graph.
+
+        Returns
+        -------
+        graph : BifurcationGraph
+            The graph object created from the dictionary representation.
+
+        """
+
         nodes = graph_dict.pop("nodes")
         graph_dict["structure"] = Structure.from_str(
             graph_dict["structure"], fmt="json"
@@ -177,15 +330,52 @@ class BifurcationGraph:
         return graph
 
     def to_json(self) -> str:
+        """
+        Creates a json string representation of the graph.
+
+        Returns
+        -------
+        str
+            A json string representation of the graph.
+
+        """
         return json.dumps(self.to_dict())
 
     @classmethod
     def from_json(cls, json_str: str):
+        """
+        Creates a BifurcationGraph from a json string representation.
+
+        Parameters
+        ----------
+        json_str : str
+            A json string representation of a graph.
+
+        Returns
+        -------
+        BifurcationGraph
+            The graph object created from the json representation.
+
+        """
         graph_dict = json.loads(json_str)
         return cls.from_dict(graph_dict)
 
     @classmethod
     def from_labeler(cls, labeler: Bader):
+        """
+        Creates a BifurcationGraph from a labeler object.
+
+        Parameters
+        ----------
+        labeler : Bader
+            A labeler object to create a graph from.
+
+        Returns
+        -------
+        graph : BifurcationGraph
+            The graph object created from a labeler.
+
+        """
         reference_grid = labeler.reference_grid
         neighbor_transforms, _ = reference_grid.point_neighbor_transforms
 
@@ -410,6 +600,18 @@ class BifurcationGraph:
 
     @staticmethod
     def _remove_shallow_reducible_nodes(graph, cutoff=0.05):
+        """
+        Removes reducible nodes that are significantly more shallow than their
+        parent nodes.
+
+        Parameters
+        ----------
+        graph : BifurcationGraph
+            The graph to remove shallow nodes from.
+        cutoff : TYPE, optional
+            The cutoff ratio for a node to be considered shallow. The default is 0.05.
+
+        """
         # iterate over nodes from low to high
         reducible_nodes = graph.sorted_reducible_nodes
         for node in reducible_nodes[1:]:
@@ -422,6 +624,18 @@ class BifurcationGraph:
 
     @staticmethod
     def _combine_shallow_irreducible_nodes(graph, cutoff=0.1):
+        """
+        Combines irreducible nodes that are significantly more shallow than their
+        parent node (i.e. are essentially a single feature)
+
+        Parameters
+        ----------
+        graph : BifurcationGraph
+            The graph to combine shallow nodes in.
+        cutoff : TYPE, optional
+            The cutoff ratio for nodes to be considered shallow. The default is 0.1.
+
+        """
         # TODO: Add check that nodes are at relatively similar values
         # iterate from highest to lowest
         reducible_nodes = graph.sorted_reducible_nodes.copy()
@@ -452,7 +666,12 @@ class BifurcationGraph:
 
     def get_plot(self) -> go.Figure:
         """
-        Returns a plotly figure
+
+        Returns
+        -------
+        fig : go.Figure
+            Returns a plotly graph object representing the BifurcationGraph.
+
         """
 
         #######################################################################

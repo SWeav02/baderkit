@@ -333,7 +333,7 @@ def format_fortran(mant, exp):
             pre_es = "E-0"
         else:
             pre_es = "E-"
-    return pre + str(mant) + pre_es + str(abs_exp)
+    return pre + str(abs(mant)) + pre_es + str(abs_exp)
 
 
 @njit(cache=True)

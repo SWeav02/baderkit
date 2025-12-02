@@ -687,22 +687,55 @@ class Grid(VolumetricData):
         return self.total[np.ix_(slices[0], slices[1], slices[2])]
 
     @staticmethod
-    def get_2x_supercell(data: NDArray | None = None) -> NDArray:
+    def _tile_data(data: NDArray, shape: NDArray):
+        # stack data n-times for each shape n
+        for i, n in enumerate(shape):
+            data = np.concatenate([data for j in range(n)], axis=i)
+        return data
+
+    def make_supercell(self, scaling_matrix: int | NDArray = 2) -> Self:
         """
-        Duplicates data to make a 2x2x2 supercell
+        Duplicates data to make a supercell
 
         Parameters
         ----------
-        data : NDArray | None, optional
-            The data to duplicate. The default is None.
+        scaling_matrix : int | NDArray, optional
+            A scaling matrix for transforming the lattice and grid data. Two
+            options are possible:
+                
+                1. A sequence of three scaling factors. E.g., [2, 1, 1] specifies 
+                that the supercell should have dimensions 2a x b x c.
+
+                2. An integer, which simply scales all lattice vectors by the 
+                same factor.
+                
+            Note that a full 3x3 scaling matrix like that used in PyMatGen's Structure
+            make_supercell method is not currently supported.
 
         Returns
         -------
         NDArray
-            A new array with the data doubled in each direction
+            A new array with the data duplicated as requested
         """
-        new_data = np.tile(data, (2, 2, 2))
-        return new_data
+        
+        # convert to array for consistency
+        scaling_matrix = np.array(scaling_matrix)
+        
+        # if an int is provided, convert to a 1d scaling matrix
+        if scaling_matrix.ndim == 0:
+            scaling_matrix = np.array([scaling_matrix, scaling_matrix, scaling_matrix], dtype=int)
+        
+        x, y, z = scaling_matrix
+        # duplicate data
+        self.total = self._tile_data(self.total, scaling_matrix)
+        if self.diff:
+            new_diff = self._tile_data(self.diff, scaling_matrix)
+            self.diff = new_diff
+        
+        # duplicate structure
+        self.structure.make_supercell(scaling_matrix=scaling_matrix)
+
+        return self
 
     def get_points_in_radius(
         self,
