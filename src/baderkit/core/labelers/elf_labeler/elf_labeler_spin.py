@@ -75,7 +75,7 @@ class SpinElfLabeler:
 
         # calculated properties
         self._labeled_structure = None
-        self._quasi_atom_structure = None
+        self._electride_structure = None
         self._atom_elf_radii = None
         self._atom_elf_radii_types = None
         self._atom_nn_elf_radii = None
@@ -189,18 +189,18 @@ class SpinElfLabeler:
         return self._labeled_structure
 
     @property
-    def quasi_atom_structure(self) -> Structure:
+    def electride_structure(self) -> Structure:
         """
         The combined quasi atom structure from both the spin-up and spin-down system. Features
         found at the same fractional coordinates are combined, while those at
         different coordinates are labeled separately
         """
-        if self._quasi_atom_structure is None:
+        if self._electride_structure is None:
             # start with only atoms
             labeled_structure = self.structure.copy()
             # get up and downs structures
-            structure_up = self.elf_labeler_up.quasi_atom_structure
-            structure_down = self.elf_labeler_down.quasi_atom_structure
+            structure_up = self.elf_labeler_up.electride_structure
+            structure_down = self.elf_labeler_down.electride_structure
             # get species from the spin up system
             new_species = []
             new_coords = []
@@ -225,13 +225,13 @@ class SpinElfLabeler:
             # add our sites
             for species, coords in zip(new_species, new_coords):
                 labeled_structure.append(species, coords)
-            self._quasi_atom_structure = labeled_structure
+            self._electride_structure = labeled_structure
 
-        return self._quasi_atom_structure
+        return self._electride_structure
 
     def get_charges_and_volumes(
         self,
-        use_quasi_atoms: bool = True,
+        use_electrides: bool = True,
         **kwargs,
     ):
         """
@@ -241,7 +241,7 @@ class SpinElfLabeler:
         """
         # get the initial charges/volumes from the spin up system
         charges, volumes = self.elf_labeler_up.get_charges_and_volumes(
-            use_quasi_atoms=use_quasi_atoms, **kwargs
+            use_electrides=use_electrides, **kwargs
         )
         # convert to lists
         charges = charges.tolist()
@@ -249,12 +249,12 @@ class SpinElfLabeler:
 
         # get the charges from the spin down system
         charges_down, volumes_down = self.elf_labeler_down.get_charges_and_volumes(
-            use_quasi_atoms=use_quasi_atoms, **kwargs
+            use_electrides=use_electrides, **kwargs
         )
         # get structures from each system
-        if use_quasi_atoms:
-            structure_up = self.elf_labeler_up.quasi_atom_structure
-            structure_down = self.elf_labeler_down.quasi_atom_structure
+        if use_electrides:
+            structure_up = self.elf_labeler_up.electride_structure
+            structure_down = self.elf_labeler_down.electride_structure
         else:
             structure_up = self.structure
             structure_down = self.structure
@@ -270,7 +270,7 @@ class SpinElfLabeler:
         return np.array(charges), np.array(volumes) / 2
 
     def get_oxidation_and_volumes_from_potcar(
-        self, potcar_path: Path = "POTCAR", use_quasi_atoms: bool = True, **kwargs
+        self, potcar_path: Path = "POTCAR", use_electrides: bool = True, **kwargs
     ):
         """
         NOTE: Volumes may not have a physical meaning when differences are found
@@ -278,7 +278,7 @@ class SpinElfLabeler:
         """
         # get the charges/volumes
         charges, volumes = self.get_charges_and_volumes(
-            use_quasi_atoms=use_quasi_atoms, **kwargs
+            use_electrides=use_electrides, **kwargs
         )
         # convert to path
         potcar_path = Path(potcar_path)
@@ -291,8 +291,8 @@ class SpinElfLabeler:
         for potcar in potcars:
             nelectron_data.update({potcar.element: potcar.nelectrons})
         # calculate oxidation states
-        if use_quasi_atoms:
-            structure = self.quasi_atom_structure
+        if use_electrides:
+            structure = self.electride_structure
         else:
             structure = self.structure
 

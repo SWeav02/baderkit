@@ -48,9 +48,9 @@ Self = TypeVar("Self", bound="ElfLabeler")
 
 class ElfLabeler:
     """
+    
     Labels chemical features present in the ELF and collects various properties
     e.g charge, volume, elf value, etc.
-    
     
     """
 
@@ -81,6 +81,8 @@ class ElfLabeler:
         vacuum_tol = False,
         **kwargs,
     ):
+        
+        
         # ensure the reference file is ELF
         if reference_grid.data_type != "elf":
             logging.warning(
@@ -125,18 +127,18 @@ class ElfLabeler:
         self._bifurcation_plot = None
         self._atom_elf_radii = None
         self._atom_elf_radii_types = None
-        self._quasi_atom_elf_radii = None
-        self._quasi_atom_elf_radii_types = None
+        self._electride_elf_radii = None
+        self._electride_elf_radii_types = None
         self._atom_nn_elf_radii = None
-        self._quasi_atom_nn_elf_radii = None
+        self._electride_nn_elf_radii = None
         self._atom_nn_elf_radii_types = None
-        self._quasi_atom_nn_elf_radii_types = None
+        self._electride_nn_elf_radii_types = None
         self._nearest_neighbor_data = None
-        self._quasi_atom_nearest_neighbor_data = None
+        self._electride_nearest_neighbor_data = None
         self._atom_features = None
-        self._quasi_atom_features = None
+        self._electride_features = None
         self._atom_max_values = None
-        self._quasi_atom_max_values = None
+        self._electride_max_values = None
 
         # TODO
         self._results_summary = None        
@@ -160,12 +162,29 @@ class ElfLabeler:
 
     @property
     def bifurcation_graph(self) -> BifurcationGraph:
+        """
+
+        Returns
+        -------
+        BifurcationGraph
+            A BifurcationGraph class representing features and bifurcations in the
+            ELF.
+
+        """
         if self._bifurcation_graph is None:
             self._get_bifurcation_graph()
         return self._bifurcation_graph
 
     @property
     def bifurcation_plot(self) -> go.Figure:
+        """
+
+        Returns
+        -------
+        go.Figure
+            A plotly graph object representing the bifurcation graph.
+
+        """
         if self._bifurcation_plot is None:
             self._bifurcation_plot = self.bifurcation_graph.get_plot()
         return self._bifurcation_plot
@@ -175,11 +194,19 @@ class ElfLabeler:
     ###########################################################################
     @property
     def structure(self) -> Structure:
+        """
+
+        Returns
+        -------
+        Structure
+            The PyMatGen Structure representing the system.
+
+        """
         return self.reference_grid.structure
 
     @property
-    def quasi_atom_structure(self) -> Structure:
-        return self.bifurcation_graph.quasi_atom_structure
+    def electride_structure(self) -> Structure:
+        return self.bifurcation_graph.electride_structure
 
     @property
     def labeled_structure(self) -> Structure:
@@ -192,10 +219,10 @@ class ElfLabeler:
         return self._nearest_neighbor_data
     
     @property
-    def quasi_atom_nearest_neighbor_data(self):
-        if self._quasi_atom_nearest_neighbor_data is None:
-            self._quasi_atom_nearest_neighbor_data = self._get_nearest_neighbor_data(self.quasi_atom_structure)
-        return self._quasi_atom_nearest_neighbor_data
+    def electride_nearest_neighbor_data(self):
+        if self._electride_nearest_neighbor_data is None:
+            self._electride_nearest_neighbor_data = self._get_nearest_neighbor_data(self.electride_structure)
+        return self._electride_nearest_neighbor_data
 
     @property
     def atom_elf_radii(self) -> NDArray[np.float64]:
@@ -218,22 +245,22 @@ class ElfLabeler:
         return np.where(self._atom_elf_radii_types, "covalent", "ionic")
 
     @property
-    def quasi_atom_elf_radii(self) -> NDArray[np.float64]:
-        if self._quasi_atom_elf_radii is None:
-            self._quasi_atom_elf_radii, self._quasi_atom_elf_radii_types = self._get_atom_elf_radii(
-                self.quasi_atom_structure, 
-                self.quasi_atom_nn_elf_radii, 
-                self._quasi_atom_nn_elf_radii_types, 
-                self.quasi_atom_nearest_neighbor_data,
+    def electride_elf_radii(self) -> NDArray[np.float64]:
+        if self._electride_elf_radii is None:
+            self._electride_elf_radii, self._electride_elf_radii_types = self._get_atom_elf_radii(
+                self.electride_structure, 
+                self.electride_nn_elf_radii, 
+                self._electride_nn_elf_radii_types, 
+                self.electride_nearest_neighbor_data,
                 )
-        return self._quasi_atom_elf_radii
+        return self._electride_elf_radii
     
     @property
-    def quasi_atom_elf_radii_types(self) -> NDArray[np.float64]:
-        if self._quasi_atom_elf_radii_types is None:
+    def electride_elf_radii_types(self) -> NDArray[np.float64]:
+        if self._electride_elf_radii_types is None:
             # run labeling and radii calc by calling our bifurcation graph
-            self.quasi_atom_elf_radii
-        return np.where(self._quasi_atom_elf_radii_types, "covalent", "ionic")
+            self.electride_elf_radii
+        return np.where(self._electride_elf_radii_types, "covalent", "ionic")
 
     @property
     def atom_nn_elf_radii(self) -> NDArray[np.float64]:
@@ -249,25 +276,25 @@ class ElfLabeler:
         return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
     
     @property
-    def quasi_atom_nn_elf_radii(self) -> NDArray[np.float64]:
-        if self._quasi_atom_nn_elf_radii is None:
+    def electride_nn_elf_radii(self) -> NDArray[np.float64]:
+        if self._electride_nn_elf_radii is None:
             # make sure labeled bifurcation graph exists
             if self._labeled_covalent is None:
                 self.bifurcation_graph
             # if there are no quasi atoms, just return the results for the base
             # structure (avoid repeat calc)
-            if len(self.structure) == len(self.quasi_atom_structure):
-                self._quasi_atom_nn_elf_radii = self.atom_nn_elf_radii
-                self._quasi_atom_nn_elf_radii_types = self._atom_nn_elf_radii_types
+            if len(self.structure) == len(self.electride_structure):
+                self._electride_nn_elf_radii = self.atom_nn_elf_radii
+                self._electride_nn_elf_radii_types = self._atom_nn_elf_radii_types
             else:
-                self._quasi_atom_nn_elf_radii, self._quasi_atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(use_quasi_atoms=True)
-        return self._quasi_atom_nn_elf_radii
+                self._electride_nn_elf_radii, self._electride_nn_elf_radii_types = self._get_nn_atom_elf_radii(use_electrides=True)
+        return self._electride_nn_elf_radii
     
     @property
-    def quasi_atom_nn_elf_radii_types(self) -> NDArray[np.float64]:
-        if self._quasi_atom_nn_elf_radii_types is None:
+    def electride_nn_elf_radii_types(self) -> NDArray[np.float64]:
+        if self._electride_nn_elf_radii_types is None:
             # call radii method
-            self.quasi_atom_nn_elf_radii
+            self.electride_nn_elf_radii
         return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
 
     @property
@@ -283,16 +310,16 @@ class ElfLabeler:
         return self._atom_features
     
     @property
-    def quasi_atom_features(self) -> NDArray[np.int64]:
+    def electride_features(self) -> NDArray[np.int64]:
         # For each atom, a list of feature indices that belong solely to that
         # atom
-        if self._quasi_atom_features is None:
-            atom_features = [[] for i in range(len(self.quasi_atom_structure))]
+        if self._electride_features is None:
+            atom_features = [[] for i in range(len(self.electride_structure))]
             for feat_idx, node in enumerate(self.bifurcation_graph.irreducible_nodes):
                 if node.coord_number == 1:
-                    atom_features[node.coord_quasi_atom_indices[0]].append(feat_idx)
-            self._quasi_atom_features = atom_features
-        return self._quasi_atom_features
+                    atom_features[node.coord_electride_indices[0]].append(feat_idx)
+            self._electride_features = atom_features
+        return self._electride_features
     
     @property
     def atom_max_values(self) -> NDArray[np.float64]:
@@ -305,14 +332,14 @@ class ElfLabeler:
         return self._atom_max_values
             
     @property
-    def quasi_atom_max_values(self) -> NDArray[np.float64]:
-        if self._quasi_atom_max_values is None:
+    def electride_max_values(self) -> NDArray[np.float64]:
+        if self._electride_max_values is None:
             feature_max_values = self.feature_max_values
             max_values = []
-            for i, feature_indices in enumerate(self.quasi_atom_features):
+            for i, feature_indices in enumerate(self.electride_features):
                 max_values.append(np.max(feature_max_values[feature_indices]))
-            self._quasi_atom_max_values = np.array(max_values)
-        return self._quasi_atom_max_values
+            self._electride_max_values = np.array(max_values)
+        return self._electride_max_values
 
     ###########################################################################
     # Feature Properties
@@ -370,7 +397,7 @@ class ElfLabeler:
 
     @property
     def feature_quasi_coord_atoms(self):
-        return self._get_feature_properties("coord_quasi_atom_indices")
+        return self._get_feature_properties("coord_electride_indices")
     
     @property
     def feature_quasi_coord_nums(self):
@@ -378,7 +405,7 @@ class ElfLabeler:
 
     @property
     def feature_quasi_coord_atom_dists(self):
-        return self._get_feature_properties("coord_quasi_atom_dists")
+        return self._get_feature_properties("coord_electride_dists")
 
     @property
     def feature_min_surface_dists(self):
@@ -398,10 +425,10 @@ class ElfLabeler:
         )
 
     def get_oxidation_and_volumes_from_potcar(
-        self, potcar_path: Path = "POTCAR", use_quasi_atoms: bool = True, **kwargs
+        self, potcar_path: Path = "POTCAR", use_electrides: bool = True, **kwargs
     ):
         charges, volumes = self.get_charges_and_volumes(
-            use_quasi_atoms=use_quasi_atoms, **kwargs
+            use_electrides=use_electrides, **kwargs
         )
         # convert to path
         potcar_path = Path(potcar_path)
@@ -414,8 +441,8 @@ class ElfLabeler:
         for potcar in potcars:
             nelectron_data.update({potcar.element: potcar.nelectrons})
         # calculate oxidation states
-        if use_quasi_atoms:
-            structure = self.quasi_atom_structure
+        if use_electrides:
+            structure = self.electride_structure
         else:
             structure = self.structure
 
@@ -433,14 +460,14 @@ class ElfLabeler:
         splitting_method: Literal[
             "weighted_dist", "pauling", "equal", "dist", "nearest"
         ] = "pauling",
-        use_quasi_atoms: bool = True,
+        use_electrides: bool = True,
         **kwargs,
     ):
         """
         Assign charge from each feature to their associated atoms. For features
         that have multiple neighbors (e.g. covalent bonds), several options
         are provided for how to divide the charge to nearby neighbors.
-        If use_quasi_atoms is set to True, features with electride like character
+        If use_electrides is set to True, features with electride like character
         will be treated as atoms and
 
         Parameters
@@ -465,7 +492,7 @@ class ElfLabeler:
                 'nearest'
                     All charge is assigned to the features nearest atom.
 
-        use_quasi_atoms : bool, optional
+        use_electrides : bool, optional
             If True, features labeled as bare electrons will be treated as quasi
             atoms. They will receive partial charge from other shared features
             and their charge/volume will be appended after the atoms'.
@@ -475,8 +502,8 @@ class ElfLabeler:
         None.
 
         """
-        if use_quasi_atoms:
-            structure = self.quasi_atom_structure
+        if use_electrides:
+            structure = self.electride_structure
         else:
             structure = self.structure
 
@@ -494,7 +521,7 @@ class ElfLabeler:
             charge = self.feature_charges[feature_idx]
             volume = self.feature_volumes[feature_idx]
             if (
-                use_quasi_atoms
+                use_electrides
                 and self.feature_types[feature_idx] in FeatureType.bare_types
             ):
                 # assign charge/volume to self
@@ -545,7 +572,7 @@ class ElfLabeler:
 
             elif splitting_method == "dist":
                 # get the dist to each coordinated atom
-                if use_quasi_atoms:
+                if use_electrides:
                     dists = self.feature_quasi_coord_atom_dists[feature_idx].copy()
                 else:
                     dists = self.feature_coord_atom_dists[feature_idx].copy()
@@ -559,9 +586,9 @@ class ElfLabeler:
 
             elif splitting_method == "weighted_dist":
                 # get the dist to each coordinated atom and their radii
-                if use_quasi_atoms:
+                if use_electrides:
                     dists = self.feature_quasi_coord_atom_dists[feature_idx].copy()
-                    atom_radii = self.quasi_atom_elf_radii[coord_atoms]
+                    atom_radii = self.electride_elf_radii[coord_atoms]
                 else:
                     dists = self.feature_coord_atom_dists[feature_idx].copy()
                     atom_radii = self.atom_elf_radii[coord_atoms]
@@ -728,14 +755,14 @@ class ElfLabeler:
     
     def _get_nn_atom_elf_radii(
             self, 
-            use_quasi_atoms: bool = False,
+            use_electrides: bool = False,
             ):
         if not self._labeled_covalent:
             raise Exception("Covalent features must be labeled for reliable radii.")
         # get appropriate structure and neighbor data
-        if use_quasi_atoms:
-            structure = self.quasi_atom_structure
-            nn_data = self.quasi_atom_nearest_neighbor_data
+        if use_electrides:
+            structure = self.electride_structure
+            nn_data = self.electride_nearest_neighbor_data
             # we don't treat quasi atoms as metals in this case
             covalent_types = [i for i in FeatureType.valence_types if i not in FeatureType.bare_types]
         else:
@@ -1168,7 +1195,7 @@ class ElfLabeler:
         # bonds. For electrides, we would treat maxima as part of a separate
         # "quasi atom"
         logging.info("Calculating atomic radii")
-        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(use_quasi_atoms=False)
+        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(use_electrides=False)
 
         # Next we mark our metallic/bare electrons. These currently have a set
         # of rather arbitrary cutoffs to distinguish between them. In the future
