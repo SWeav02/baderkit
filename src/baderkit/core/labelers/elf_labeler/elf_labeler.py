@@ -48,9 +48,9 @@ Self = TypeVar("Self", bound="ElfLabeler")
 
 class ElfLabeler:
     """
-    
     Labels chemical features present in the ELF and collects various properties
     e.g charge, volume, elf value, etc.
+    
     
     """
 
