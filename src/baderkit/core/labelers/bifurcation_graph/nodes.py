@@ -371,7 +371,7 @@ class IrreducibleNode(NodeBase):
         self._avg_surface_dist = avg_surface_dist
 
         self._coord_atom_indices = None
-        self._coord_quasi_atom_indices = None
+        self._coord_electride_indices = None
 
     @property
     def feature_type(self) -> FeatureType | None:
@@ -410,12 +410,12 @@ class IrreducibleNode(NodeBase):
         )
 
     @cached_property
-    def quasi_atom_dists(self) -> NDArray[int]:
+    def electride_dists(self) -> NDArray[int]:
         return get_dists_to_atoms(
             self.average_frac_coords,
-            self.bifurcation_graph.quasi_atom_structure.frac_coords,
-            self.bifurcation_graph.quasi_atom_structure.cart_coords,
-            self.bifurcation_graph.quasi_atom_structure.lattice.matrix,
+            self.bifurcation_graph.electride_structure.frac_coords,
+            self.bifurcation_graph.electride_structure.cart_coords,
+            self.bifurcation_graph.electride_structure.lattice.matrix,
         )
 
     @cached_property
@@ -480,16 +480,16 @@ class IrreducibleNode(NodeBase):
         return self.atom_dists[self.coord_atom_indices]
 
     @property
-    def quasi_coord_number(self) -> int:
-        return len(self.coord_quasi_atom_indices)
+    def electride_coord_number(self) -> int:
+        return len(self.coord_electride_indices)
 
     @property
-    def coord_quasi_atom_indices(self) -> list[int]:
-        if self._coord_quasi_atom_indices is None:
+    def coord_electride_indices(self) -> list[int]:
+        if self._coord_electride_indices is None:
             if self.feature_type in FeatureType.atomic_types:
-                self._coord_quasi_atom_indices = [int(self.nearest_atom)]
+                self._coord_electride_indices = [int(self.nearest_atom)]
             else:
-                feature_structure = self.bifurcation_graph._quasi_hatom_structure.copy()
+                feature_structure = self.bifurcation_graph._electride_hatom_structure.copy()
                 if self.feature_type in FeatureType.bare_types:
                     # this feature is already in our structure. just find the index
                     try:
@@ -506,20 +506,20 @@ class IrreducibleNode(NodeBase):
                 coordination = self.bifurcation_graph.cnn.get_nn_info(
                     feature_structure, struc_idx
                 )
-                self._coord_quasi_atom_indices = [
+                self._coord_electride_indices = [
                     int(i["site_index"]) for i in coordination
                 ]
 
-        return self._coord_quasi_atom_indices
+        return self._coord_electride_indices
 
     @property
-    def coord_quasi_atom_species(self) -> list[str]:
-        structure = self.bifurcation_graph.quasi_atom_structure
-        return [structure[i].species_string for i in self.coord_quasi_atom_indices]
+    def coord_electride_species(self) -> list[str]:
+        structure = self.bifurcation_graph.electride_structure
+        return [structure[i].species_string for i in self.coord_electride_indices]
 
     @property
-    def coord_quasi_atom_dists(self) -> list[float]:
-        return self.quasi_atom_dists[self.coord_quasi_atom_indices]
+    def coord_electride_dists(self) -> list[float]:
+        return self.electride_dists[self.coord_electride_indices]
 
     def remove(self) -> None:
         # remove this node from the current parent's children

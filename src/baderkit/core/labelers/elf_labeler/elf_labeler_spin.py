@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 
-"""
-Extends the ElfLabeler to spin polarized calculations
-"""
-
 import logging
 import warnings
 from pathlib import Path
-from typing import TypeVar
+from typing import Literal, TypeVar
+import json
 
 import numpy as np
 from numpy.typing import NDArray
@@ -21,8 +18,28 @@ Self = TypeVar("Self", bound="ElfLabeler")
 
 
 class SpinElfLabeler:
+    
+    """
+    Labels chemical features present in the ELF and collects various properties
+    e.g charge, volume, elf value, etc. The spin-up and spin-down systems are
+    treated separately and results can be viewed combined or independently.
 
-    _spin_system = "combined"
+    Parameters
+    ----------
+    charge_grid : Grid
+        A charge density Grid object. The total charge density (spin-up + spin-down)
+        should be stored in the 'total' property and the difference (spin-up - spin-down)
+        should be stored in the 'diff' property.
+    reference_grid : Grid
+        An ELF Grid object. The spin-up ELF should be stored in the 'total' property
+        and the spin-down ELF should be stored in the 'diff' property.
+    **kwargs : dict
+        Any keyword argumetns to pass to the child ElfLabeler classes used for
+        each spin.
+
+    """
+
+    spin_system = "combined"
 
     def __init__(
         self,
@@ -30,6 +47,7 @@ class SpinElfLabeler:
         reference_grid: Grid,
         **kwargs,
     ):
+        
         # First make sure the grids are actually spin polarized
         assert (
             reference_grid.is_spin_polarized and charge_grid.is_spin_polarized
@@ -67,11 +85,11 @@ class SpinElfLabeler:
                 charge_grid=self.charge_grid_down,
                 **kwargs,
             )
-            self.elf_labeler_up._spin_system = "up"
-            self.elf_labeler_down._spin_system = "down"
+            self.elf_labeler_up.spin_system = "up"
+            self.elf_labeler_down.spin_system = "down"
         else:
             self.elf_labeler_down = self.elf_labeler_up
-            self.elf_labeler_up._spin_system = "half"  # same up/down
+            self.elf_labeler_up.spin_system = "half"  # same up/down
 
         # calculated properties
         self._labeled_structure = None
@@ -81,6 +99,8 @@ class SpinElfLabeler:
         self._atom_nn_elf_radii = None
         self._atom_nn_elf_radii_types = None
         self._nearest_neighbor_data = None
+        self._electrides_per_formula = None
+        self._electrides_per_reduced_formula = None
 
     ###########################################################################
     # Properties combining spin up and spin down systems
@@ -89,13 +109,29 @@ class SpinElfLabeler:
     @property
     def structure(self) -> Structure:
         """
-        Shortcut to grid's structure object
+
+        Returns
+        -------
+        Structure
+            The PyMatGen Structure representing the system.
+
         """
         structure = self.original_reference_grid.structure.copy()
         return structure
 
     @property
     def nearest_neighbor_data(self) -> list:
+        """
+
+        Returns
+        -------
+        tuple
+            The nearest neighbor data for the atoms in the system represented as
+            a tuple of arrays. The arrays represent, in order, the central
+            atoms index, its neighbors index, the fractional coordinates of the
+            neighbor, and the distance between the two sites.
+
+        """
         if self._nearest_neighbor_data is None:
             # get nearest neighbors from spin up labeler
             nearest_neighbor_data = self.elf_labeler_up.nearest_neighbor_data
@@ -106,6 +142,16 @@ class SpinElfLabeler:
 
     @property
     def atom_elf_radii(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray
+            The radius of each atom calculated from the ELF using the closest
+            neighboring atom in the structure. This is taken as the average value
+            from both spin systems.
+
+        """
         if self._atom_elf_radii is None:
             # get the atomic radii from the spin up/down systems
             spin_up_radii = self.elf_labeler_up.atom_elf_radii
@@ -115,6 +161,18 @@ class SpinElfLabeler:
 
     @property
     def atom_elf_radii_types(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray
+            The type of radius of each elf radius. Covalent indicates that the
+            bond crosses through some covalent or metallic region, and the radius
+            is placed at the maximum in the ELF in this region. Ionic indicates
+            that the bond does not pass through the covalent/metallic region and
+            the radius is placed at the minimum between the two atoms.
+
+        """
         if self._atom_elf_radii_types is None:
             # make sure spin up/down labelers have calculated radii
             self.atom_elf_radii
@@ -128,6 +186,16 @@ class SpinElfLabeler:
 
     @property
     def atom_nn_elf_radii(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray
+            The elf radii for each atom and its neighboring atoms in the same
+            order as the nearest_neighbor_data property. Radii are taken as
+            averages between the spin-up and spin-down systems.
+
+        """
         if self._atom_nn_elf_radii is None:
             # get the atomic radii from the spin up/down systems
             spin_up_radii = self.elf_labeler_up.atom_nn_elf_radii
@@ -137,6 +205,15 @@ class SpinElfLabeler:
 
     @property
     def atom_nn_elf_radii_types(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray
+            The type of radius for each atom and its neighboring atoms in the same
+            order as the nearest_neighbor_data property.
+
+        """
         if self._atom_nn_elf_radii_types is None:
             # make sure spin up/down labelers have calculated radii
             self.atom_nn_elf_radii
@@ -151,9 +228,15 @@ class SpinElfLabeler:
     @property
     def labeled_structure(self) -> Structure:
         """
-        The combined labeled structure from both the spin-up and spin-down system. Features
-        found at the same fractional coordinates are combined, while those at
-        different coordinates are labeled separately
+
+        Returns
+        -------
+        Structure
+            The system's structure including dummy atoms representing electride
+            sites and covalent/metallic bonds. Features unique to the spin-up/spin-down
+            systems will have xu or xd appended to the species name respectively.
+            Features that exist in both will have nothing appended.
+
         """
         if self._labeled_structure is None:
             # start with only atoms
@@ -191,9 +274,15 @@ class SpinElfLabeler:
     @property
     def electride_structure(self) -> Structure:
         """
-        The combined quasi atom structure from both the spin-up and spin-down system. Features
-        found at the same fractional coordinates are combined, while those at
-        different coordinates are labeled separately
+
+        Returns
+        -------
+        Structure
+            The system's structure including dummy atoms representing electride
+            sites. Electrides unique to the spin-up/spin-down
+            systems will have xu or xd appended to the species name respectively.
+            Electrides that exist in both will have nothing appended.
+
         """
         if self._electride_structure is None:
             # start with only atoms
@@ -228,6 +317,64 @@ class SpinElfLabeler:
             self._electride_structure = labeled_structure
 
         return self._electride_structure
+    
+    @property
+    def nelectrides(self) -> int:
+        """
+
+        Returns
+        -------
+        int
+            The number of electride sites in the structure
+
+        """
+        return len(self.electride_structure) - len(self.structure)
+    
+    @property
+    def electride_formula(self):
+        """
+
+        Returns
+        -------
+        str
+            A string representation of the electride formula, rounding partial charge
+            to the nearest integer.
+
+        """
+        return f"{self.structure.formula} e{round(self.electrides_per_formula)}"
+    
+    @property
+    def electrides_per_formula(self):
+        """
+
+        Returns
+        -------
+        float
+            The number of electride electrons for the full structure formula.
+
+        """
+        if self._electrides_per_formula is None:
+            electrides_per_unit = self.elf_labeler_up.electrides_per_formula + self.elf_labeler_down.electrides_per_formula
+            self._electrides_per_formula = electrides_per_unit
+        return self._electrides_per_formula
+    
+    @property
+    def electrides_per_reduced_formula(self):
+        """
+
+        Returns
+        -------
+        float
+            The number of electrons in the reduced formula of the structure.
+
+        """
+        if self._electrides_per_reduced_formula is None:
+            (
+                _,
+                formula_reduction_factor,
+            ) = self.structure.composition.get_reduced_composition_and_factor()
+            self._electrides_per_reduced_formula = self.electrides_per_formula / formula_reduction_factor
+        return self._electrides_per_reduced_formula
 
     def get_charges_and_volumes(
         self,
@@ -235,10 +382,28 @@ class SpinElfLabeler:
         **kwargs,
     ):
         """
+        Calculates charges and volumes by splitting feature charges/volumes to 
+        their neighboring atoms.
+        
         NOTE: Volumes may not have a physical meaning when differences are found
         between spin up/down systems. They are calculated as the average between
         the systems.
+
+        Parameters
+        ----------
+        use_electrides : bool, optional
+            Whether or not to consider electrides as quasi-atoms. The default is True.
+        **kwargs : dict
+            Any keyword arguments to use in the corresponding ElfLabeler method
+            for each spin system.
+
+        Returns
+        -------
+        tuple
+            The charges and volumes calculated for each atom.
+
         """
+
         # get the initial charges/volumes from the spin up system
         charges, volumes = self.elf_labeler_up.get_charges_and_volumes(
             use_electrides=use_electrides, **kwargs
@@ -270,18 +435,48 @@ class SpinElfLabeler:
         return np.array(charges), np.array(volumes) / 2
 
     def get_oxidation_and_volumes_from_potcar(
-        self, potcar_path: Path = "POTCAR", use_electrides: bool = True, **kwargs
+        self, 
+        potcar_path: Path = "POTCAR", 
+        use_electrides: bool = True, 
+        **kwargs
     ):
         """
+        Calculates oxidation states, charges, and volumes by splitting feature 
+        charges/volumes to their neighboring atoms and comparing to the valence
+        electrons in the POTCAR.
+        
         NOTE: Volumes may not have a physical meaning when differences are found
-        between spin up/down systems
+        between spin up/down systems. They are calculated as the average between
+        the systems.
+
+        Parameters
+        ----------
+        potcar_path : Path | str, optional
+            The Path to the POTCAR file. The default is "POTCAR".
+        use_electrides : bool, optional
+            Whether or not to consider electrides as quasi-atoms. The default is True.
+        **kwargs : dict
+            Any keyword arguments to use in the corresponding ElfLabeler method
+            for each spin system.
+
+        Returns
+        -------
+        tuple
+            The oxidation states, charges, and volumes calculated for each atom.
+
         """
+        
         # get the charges/volumes
         charges, volumes = self.get_charges_and_volumes(
             use_electrides=use_electrides, **kwargs
         )
         # convert to path
         potcar_path = Path(potcar_path)
+        # check if potcar exists. If not, return None and a warning
+        if not potcar_path.exists():
+            logging.warning("No POTCAR found at provided path. No oxidation states will be calculated.")
+            return None, charges, volumes
+        
         # load
         with warnings.catch_warnings(record=True):
             potcars = Potcar.from_file(potcar_path)
@@ -364,3 +559,129 @@ class SpinElfLabeler:
     # TODO: Currently this class is only useful for VASP because .cube files
     # typically only contain a single grid. Is there a reason to create a convenience
     # function for cube files?
+
+    def to_dict(
+            self, 
+            potcar_path: Path | str = "POTCAR", 
+            use_json: bool = True,
+            splitting_method: Literal["equal", "pauling", "dist", "weighted_dist", "nearest"] = "weighted_dist",
+            ) -> dict:
+        """
+        
+        Gets a dictionary summary of the ElfLabeler analysis.
+
+        Parameters
+        ----------
+        potcar_path : Path | str, optional
+            The Path to a POTCAR file. This must be provided for oxidation states
+            to be calculated, and they will be None otherwise. The default is "POTCAR".
+        use_json : bool, optional
+            Convert all entries to JSONable data types. The default is True.
+        splitting_method : Literal["equal", "pauling", "dist", "weighted_dist", "nearest"], optional
+            See :meth:`write_feature_basins`.
+
+        Returns
+        -------
+        dict
+            A summary of the ElfLabeler analysis in dictionary form.
+
+        """
+        results = {}
+        # collect method kwargs
+        results["method_kwargs"] = {
+            "splitting_method": splitting_method,
+        }
+        
+        oxidation_states, charges, volumes = self.get_oxidation_and_volumes_from_potcar(
+            potcar_path=potcar_path,
+            use_electrides=False
+            )
+        oxidation_states_e, charges_e, volumes_e = self.get_oxidation_and_volumes_from_potcar(
+            potcar_path=potcar_path,
+            use_electrides=True
+            )
+
+        results["oxidation_states"] = oxidation_states.tolist()
+        results["oxidation_states_e"] = oxidation_states_e.tolist()
+        results["charges"] = charges.tolist()
+        results["charges_e"] = charges_e.tolist()
+        results["volumes"] = volumes.tolist()
+        results["volumes_e"] = volumes_e.tolist()
+        
+        # add objects that can convert to json
+        for result in [
+            "structure",
+            "labeled_structure",
+            "electride_structure",
+                ]:
+            result_obj = getattr(self, result, None)
+            if result_obj is not None and use_json:
+                result_obj = result_obj.to_json()
+            results[result] = result_obj
+        
+        # add objects that are arrays
+        for result in [
+            "atom_elf_radii",
+            "atom_elf_radii_types",
+            "electride_elf_radii",
+            "electride_elf_radii_types",
+                ]:
+            result_obj = getattr(self, result, None)
+            if use_json and result_obj is not None:
+                result_obj = result_obj.tolist()
+            results[result] = result_obj
+        
+        # add other objects that are already jsonable
+        for result in [
+            "spin_system",
+            "nelectrides",
+            "feature_types",
+            "electride_formula",
+            "electrides_per_formula",
+            "electrides_per_reduced_formula",
+                ]:
+            results[result] = getattr(self, result, None)
+        
+        return results
+
+                
+    def to_json(self, **kwargs) -> str:
+        """
+        Creates a JSON string representation of the results, typically for writing
+        results to file.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Keyword arguments for the to_dict method.
+
+        Returns
+        -------
+        str
+            A JSON string representation of the BadELF results.
+
+        """
+        return json.dumps(self.to_dict(use_json=True, **kwargs))
+    
+    def write_results_summary(self, filepath: Path | str = "elf_labeler_results_summary.json", **kwargs) -> None:
+        """
+        Writes results of the analysis to file in a JSON format.
+
+        Parameters
+        ----------
+        filepath : Path | str, optional
+            The Path to write the results to. The default is "badelf_results_summary.json".
+        **kwargs : dict
+            keyword arguments for the to_dict method.
+
+        """
+        filepath = Path(filepath)
+        # write spin up and spin down summaries
+        filepath_up = filepath.parent / f"{filepath.stem}_up{filepath.suffix}"
+        filepath_down = filepath.parent / f"{filepath.stem}_down{filepath.suffix}"
+        self.elf_labeler_up.write_results_summary(filepath=filepath_up, **kwargs)
+        self.elf_labeler_down.write_results_summary(filepath=filepath_down, **kwargs)
+        
+        # write total spin summary
+        with open(filepath, "w") as json_file:
+            json.dump(self.to_dict(use_json=True, **kwargs), json_file, indent=4)

@@ -190,14 +190,14 @@ class BifurcationGraph:
         ]
 
     @property
-    def quasi_atom_structure(self) -> Structure:
+    def electride_structure(self) -> Structure:
         """
 
         Returns
         -------
         structure : Structure
             The PyMatGen Structure of the material with dummy atoms placed at 
-            highly localized off atom electrons that may behave like quasi-atoms.
+            highly localized off atom electrons that may behave like electride-atoms.
             (e.g. electrides)
 
         """
@@ -207,14 +207,14 @@ class BifurcationGraph:
         return structure
 
     @property
-    def _quasi_hatom_structure(self) -> Structure:
+    def _electride_hatom_structure(self) -> Structure:
         """
 
         Returns
         -------
         structure : Structure
             The PyMatGen Structure of the material with H- dummy atoms placed at 
-            highly localized off atom electrons that may behave like quasi-atoms.
+            highly localized off atom electrons that may behave like electride-atoms.
             (e.g. electrides)
 
         """
