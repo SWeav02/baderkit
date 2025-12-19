@@ -124,7 +124,7 @@ def satisfies_all_planes(
             return False
     return True
 
-@njit(cache=True)
+@njit(cache=True, parallel=True)
 def get_voronoi_planes_exact(
     site_indices,
     plane_points,
@@ -137,7 +137,8 @@ def get_voronoi_planes_exact(
     # create new important mask assuming none important
     important = np.zeros_like(important, dtype=np.bool_)
 
-    for i in important_indices:
+    for ii in prange(len(important_indices)):
+        i = important_indices[ii]
         # if we've already found this plane to be important, we can skip
         if important[i]:
             continue
@@ -153,15 +154,15 @@ def get_voronoi_planes_exact(
             # if this index is lower than i and doesn't correspond to an important
             # plane, we've already determined this plane to not be part of the
             # partitioning and can skip
-            if j < i and not important[j]:
-                continue
+            # if j < i and not important[j]:
+            #     continue
 
             for k in important_indices[jj:]:
                 if site_indices[k] != si or k == i:
                     continue
                 
-                if k < i and not important[k]:
-                    continue
+                # if k < i and not important[k]:
+                #     continue
                 
                 # find the intersection of these three planes
                 ok, x = intersect_three_planes(

@@ -277,7 +277,8 @@ def get_elf_radii(
     # create array to store radii and their type
     atomic_radii = np.empty(len(atom_frac_coords), dtype=np.float64)
     radius_is_covalent = np.empty(len(atom_frac_coords), dtype=np.bool_)
-
+    
+    some_failed = False
     # get the radius for each atom. NOTE: We don't do this in parallel because
     # we want the interpolation to be done in parallel instead
     for unique_idx in prange(len(unique_atoms)):
@@ -301,12 +302,16 @@ def get_elf_radii(
             bond_dist,
         )
         if failed:
-            print("""At least one atoms radius could not be calculated. This is usually
-                  due to the atom having no core electrons, likely caused by the use
-                  of too small of a pseudopotential. The radius will default to 1/2 the bond length""")
-
+            some_failed = True
+            
         atomic_radii[atom_idx] = radius
         radius_is_covalent[atom_idx] = is_covalent
+
+    if some_failed:
+        print("""At least one atoms radius could not be calculated. This is usually
+              due to the atom having no core electrons, likely caused by the use
+              of too small of a pseudopotential. The radius will default to 1/2 the bond length""")
+
 
     # update values for equivalent atoms
     for atom_idx in prange(len(atomic_radii)):
@@ -337,7 +342,8 @@ def get_all_atom_elf_radii(
     # create array to store radii
     atomic_radii = np.empty(len(site_indices), dtype=np.float64)
     radius_is_covalent = np.empty(len(site_indices), dtype=np.bool_)
-
+    
+    some_failed = False
     # get the radius for each unique bond
     for unique_idx in prange(len(unique_bonds)):
         pair_idx = unique_bonds[unique_idx]
@@ -355,12 +361,15 @@ def get_all_atom_elf_radii(
             bond_dist,
         )
         if failed:
-            print("""At least one atoms radius could not be calculated. This is usually
-                  due to the atom having no core electrons, likely caused by the use
-                  of too small of a pseudopotential. The radius will default to 1/2 the bond length""")
-
+            some_failed = True
         atomic_radii[pair_idx] = radius
         radius_is_covalent[pair_idx] = is_covalent
+
+    if some_failed:
+        print("""At least one atoms radius could not be calculated. This is usually
+              due to the atom having no core electrons, likely caused by the use
+              of too small of a pseudopotential. The radius will default to 1/2 the bond length""")
+
 
     # update values for equivalent bonds
     for pair_idx in prange(len(atomic_radii)):

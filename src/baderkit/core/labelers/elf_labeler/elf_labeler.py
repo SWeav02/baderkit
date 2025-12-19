@@ -939,7 +939,7 @@ class ElfLabeler:
         self,
         splitting_method: Literal[
             "weighted_dist", "pauling", "equal", "dist", "nearest"
-        ] = "pauling",
+        ] = "weighted_dist",
         use_electrides: bool = True,
         **kwargs,
     ) -> tuple[NDArray]:

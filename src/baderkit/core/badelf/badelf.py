@@ -2,7 +2,6 @@
 
 import json
 import logging
-import math
 import os
 import warnings
 from pathlib import Path
@@ -10,17 +9,14 @@ from typing import Literal
 
 import numpy as np
 from numpy.typing import NDArray
-import psutil
-from pymatgen.analysis.local_env import CrystalNN
 from pymatgen.io.vasp import Potcar
 from scipy.ndimage import label
 from tqdm import tqdm
 
 from baderkit.core.utilities.file_parsers import Format
-from baderkit.core import Structure, ElfLabeler, Grid, Bader, SpinElfLabeler
+from baderkit.core import Structure, ElfLabeler, Grid, SpinElfLabeler
 from baderkit.core.labelers.bifurcation_graph.enum_and_styling import FeatureType, FEATURE_DUMMY_ATOMS
 from baderkit.core.bader.methods.shared_numba import get_min_avg_surface_dists, get_edges
-from baderkit.core.labelers.elf_labeler.elf_radii import ElfRadiiTools
 from baderkit.core.badelf.badelf_numba import get_badelf_assignments
 
 class Badelf:
@@ -41,34 +37,33 @@ class Badelf:
     charge_grid : Grid
         A badelf app Grid like object used for summing charge. Usually
         contains charge density.
-    threads : int, optional
-        The number of threads to use for voxel assignment.
-        Defaults to 0.9*the total number of threads available.
-    algorithm : Literal["badelf", "voronelf", "zero-flux"], optional
-        The algorithm to use for partitioning electrides from the nearby
+    method : Literal["badelf", "voronelf", "zero-flux"], optional
+        The method to use for partitioning electrides from the nearby
         atoms.
             'badelf' (default)
                 Separates electrides using zero-flux surfaces then uses
                 planes at atom radii to separate atoms. This may give more reasonable
-                results for atoms, particularly in ionic solids.
+                results for atoms, particularly in ionic solids. Radii are
+                calculated directly from the ELF.
             'voronelf'
                 Separates both electrides and atoms using planes at atomic/electride
                 radii. This is not recommended for electrides that are not
                 spherical, but may provide better results for those that are.
+                Radii are calculated directly from the ELF.
             'zero-flux'
                 Separates electrides and atoms using zero-flux surface. This
                 is the most traditional ELF analysis, but may display some
                 bias towards atoms with higher ELF values. Results for electride
                 sites are identical to BadELF, and the method can be significantly
                 faster.
-    shared_feature_splitting_method : Literal["plane", "pauling", "equal", "dist", "nearest"], optional
+    shared_feature_splitting_method : Literal["pauling", "equal", "dist", "nearest"], optional
         The method of assigning charge from shared ELF features
-        such as covalent or metallic bonds. The default is "plane".
-            'plane' (default)
-                Distributes charge based on the voronoi surface belonging to 
-                each atom. Charge will not be assigned to electrides unless
-                the voronelf method is used, and this method cannot be used
-                with the zero-flux method.
+        such as covalent or metallic bonds. This parameter is only used with the
+        zero-flux method.
+            'weighted_dist' (default)
+                Fraction increases with decreasing distance to each atom. The
+                fraction is further weighted by the radius of each atom
+                calculated from the ELF
             'pauling'
                 Distributes charge to neighboring atoms (calculated using CrystalNN)
                 based on the pualing electronegativity of each species normalized
@@ -83,24 +78,6 @@ class Badelf:
                 of (1/dist) to each neighboring atom.
             'nearest'
                 Gives all charge to the nearest atom or electride site.
-    labeled_structure : Structure, optional
-        A pymatgen structure object with dummy atoms representing
-        electride, covalent, and metallic features. If provided, the ElfLabeler
-        will not be used.
-        
-        Symbols must be as follows:
-            electride: "Le"
-            covalent: "Z"
-            metallic: "M"
-            
-    crystalnn_kwargs : dict, optional
-        The keyword arguments for CrystalNN to determine which atoms/electrides
-        neighbor metallic/covalent bonds.
-        The default is {
-            "distance_cutoffs": None,
-            "x_diff_weight": 0.0,
-            "porous_adjustment": False,            
-            }.
     elf_labeler : dict | ElfLabeler, optional
         Keyword arguments to pass to the ElfLabeler class. This includes
         parameters controlling cutoffs for electrides. Alternatively, an
@@ -114,98 +91,53 @@ class Badelf:
         self,
         reference_grid: Grid,
         charge_grid: Grid,
-        threads: int = None,
-        algorithm: Literal["badelf", "voronelf", "zero-flux"] = "badelf",
+        method: Literal["badelf", "voronelf", "zero-flux"] = "badelf",
         shared_feature_splitting_method: Literal[
-            "plane", "pauling", "equal", "dist", "nearest"
-        ] = "plane",
-        labeled_structure: Structure = None,
-        crystalnn_kwargs: dict = {
-            "distance_cutoffs": None,
-            "x_diff_weight": 0.0,
-            "porous_adjustment": False,
-            },
+            "weighted_dist", "pauling", "equal", "dist", "nearest"
+        ] = "weigthed_dist",
         elf_labeler: dict | ElfLabeler = {},
         **kwargs
     ):
         assert reference_grid.structure == charge_grid.structure, "Grid structures must be the same."
-        
-        if threads is None:
-            self.threads = math.floor(psutil.Process().num_threads() * 0.9 / 2)
-        else:
-            self.threads = threads
-            
-        self.crystalnn_kwargs = crystalnn_kwargs
-        self.cnn = CrystalNN(**crystalnn_kwargs)
 
-        if algorithm not in ["badelf", "voronelf", "zero-flux"]:
+        if method not in ["badelf", "voronelf", "zero-flux"]:
             raise ValueError(
-                """The algorithm setting you chose does not exist. Please select
+                """The method setting you chose does not exist. Please select
                   either 'badelf', 'voronelf', or 'zero-flux'.
                   """
             )
 
         self.reference_grid = reference_grid
         self.charge_grid = charge_grid
-        self.algorithm = algorithm
-
-        # make sure the user isn't trying to split features with the plane method
-        # while using the zero-flux method
-        if shared_feature_splitting_method == "plane" and algorithm == "zero-flux":
-            logging.warning(
-                "The `plane` separation method cannot be used with the zero-flux algorithm. Defaulting to pauling method."
-            )
-            self.shared_feature_splitting_method = "pauling"
-
-        else:
-            self.shared_feature_splitting_method = shared_feature_splitting_method
+        self.method = method
+        self.shared_feature_splitting_method = shared_feature_splitting_method
 
         
-        # if a labeled structure is provided, use that instead of the elf labeler
-        if labeled_structure is not None:
-            # set the structure and set elf_labeler to None
-            self._labeled_structure = self._get_sorted_structure(labeled_structure)
-            self.elf_labeler = None
-            # if we have elf_labeler kwargs, pass them to the necessary Bader object
-            if type(elf_labeler) == dict:
-                self.bader = Bader(**elf_labeler)
-                self.elf_labeler_kwargs = elf_labeler
-            else:
-                self.bader = Bader()
-                self.elf_labeler_kwargs = None
+        # We want to use the ElfLabeler. We check if an ElfLabeler class is
+        # provided or a dict of kwargs
+        self._labeled_structure = None
+        if type(elf_labeler) == dict:
+            self.elf_labeler_kwargs = elf_labeler
+            self.elf_labeler = ElfLabeler(
+                charge_grid=charge_grid,
+                reference_grid=reference_grid,
+                **elf_labeler
+                )
         else:
-            # We want to use the ElfLabeler. We check if an ElfLabeler class is
-            # provided or a dict of kwargs
-            self._labeled_structure = None
-            if type(elf_labeler) == dict:
-                self.elf_labeler_kwargs = elf_labeler
-                self.elf_labeler = ElfLabeler(
-                    charge_grid=charge_grid,
-                    reference_grid=reference_grid,
-                    crystalnn_kwargs=crystalnn_kwargs,
-                    **elf_labeler
-                    )
-            else:
-                # use provided elf labeler
-                self.elf_labeler_kwargs = None
-                self.elf_labeler = elf_labeler
-            # connect the same bader class.
-            self.bader = self.elf_labeler.bader
+            # use provided elf labeler
+            self.elf_labeler_kwargs = None
+            self.elf_labeler = elf_labeler
+        # connect the same bader class.
+        self.bader = self.elf_labeler.bader
             
         # Properties that will be calculated and cached
         self._structure = None
-        self._plane_partitioning_structure = None
         self._electride_structure = None
         self._species = None
 
-        self._partitioning = None
-        self._plane_distance_polynomials = None
-        self._zero_flux_feature_labels = None
-        self._feature_charges = None
-        self._feature_volumes = None
+        self._partitioning_planes = None
+        self._zero_flux_feature_labels_cache = None
         self._atom_labels = None
-        self._multi_atom_mask = None
-        self._multi_atom_fracs = None
         
         self._electride_dim = None
         self._all_electride_dims = None
@@ -364,36 +296,35 @@ class Badelf:
         return [i.specie.symbol for i in self.electride_structure]
     
     @property
-    def plane_partitioning_structure(self) -> Structure:
+    def charges(self) -> NDArray:
         """
 
         Returns
         -------
-        Structure
-            A structure including each atom/dummy atom that is separated using a
-            plane rather than zero-flux surface.
+        NDArray
+            The charge associated with each atom and electride site in the system.
 
         """
-        if self._plane_partitioning_structure is None:
-            # we want a structure that contains all of the atoms and features
-            # we plan to separate using planes.
-            if self.algorithm == "zero-flux":
-                self._plane_partitioning_structure = None
-            elif self.algorithm == "voronelf":
-                # we always want to separate both atoms and electrides with planes
-                # with this method. If the "plane" method is not selected, we
-                # also want to separate shared features
-                if self.shared_feature_splitting_method == "plane":
-                    self._plane_partitioning_structure = self.electride_structure
-                else:
-                    self._plane_partitioning_structure = self.labeled_structure
-            elif self.algorithm == "badelf":
-                # We only want to separate the atoms with planes
-                self._plane_partitioning_structure = self.structure
-        return self._plane_partitioning_structure
+        if self._charges is None:
+            self._get_voxel_assignments()
+        return self._charges
     
     @property
-    def zero_flux_feature_labels(self) -> NDArray:
+    def volumes(self) -> NDArray:
+        """
+
+        Returns
+        -------
+        NDArray
+            The volume associated with each atom and electride site in the system.
+
+        """
+        if self._volumes is None:
+            self._get_voxel_assignments()
+        return self._volumes
+    
+    @property
+    def _zero_flux_feature_labels(self) -> NDArray:
         """
 
         Returns
@@ -403,32 +334,18 @@ class Badelf:
             assigned to.
 
         """
-        if self._zero_flux_feature_labels is None:
-            if self.elf_labeler is not None:
-                # Use the ElfLabeler as it assigns basins more accurately rather
-                # than simply assigning to the nearest atom.
-                (
-                    self._zero_flux_feature_labels, 
-                    self._feature_charges, 
-                    self._feature_volumes
-                    ) = self.elf_labeler.get_feature_labels(
-                    included_features=FeatureType.valence_types,
-                    return_structure=False,
-                    return_charge_volume=True,
-                    )
-                
-            else:
-                (
-                    self._zero_flux_feature_labels, 
-                    self._feature_charges, 
-                    self._feature_volumes, 
-                    _,_
-                    ) = self.bader.assign_basins_to_structure(self.labeled_structure)
-                
-        return self._zero_flux_feature_labels
+        if self._zero_flux_feature_labels_cache is None:
+            # Use the ElfLabeler's assignments.
+                self._zero_flux_feature_labels_cache = self.elf_labeler.get_feature_labels(
+                included_features=FeatureType.valence_types,
+                return_structure=False,
+                return_charge_volume=False,
+                )
+
+        return self._zero_flux_feature_labels_cache
 
     @property
-    def partitioning(self) -> tuple | None:
+    def partitioning_planes(self) -> tuple | None:
         """
 
         Returns
@@ -440,44 +357,20 @@ class Badelf:
             None if the zero-flux method is selected.
 
         """
-        if self.algorithm == "zero-flux":
-            print(
-                """
-                There is no partitioning property for the zero-flux algorithm as
-                the partitioning is handled by [BaderKit](https://github.com/SWeav02/baderkit)
-                """
-            )
+        if self.method == "zero-flux":
             return None
         
-        if self._partitioning is None:
+        if self._partitioning_planes is None:
             logging.info("Finding partitioning planes")
+            
             # if we have an elf labeler, use its results to get partitioning
-            if self.elf_labeler is not None:
-                if self.algorithm == "badelf":
-                    site_indices, neigh_indices, _, _ = self.elf_labeler.nearest_neighbor_data
-                    plane_points, plane_vectors = self.elf_labeler._atom_nn_planes
-                elif self.algorithm == "voronelf":
-                    site_indices, neigh_indices, _, _ = self.elf_labeler.electride_nearest_neighbor_data
-                    plane_points, plane_vectors = self.elf_labeler._electride_nn_planes
-                
-            else:
-                # otherwise, we manually calculate them
-                radii_tools = ElfRadiiTools(
-                    grid=self.reference_grid, 
-                    feature_labels=self.zero_flux_feature_labels, 
-                    feature_structure=self.labeled_structure,
-                    override_structure=self.plane_partitioning_structure,
-                    )
-                (
-                    site_indices,
-                    neigh_indices,
-                    neigh_coords,
-                    pair_dists,
-                    radii,
-                    bond_types,
-                    plane_points,
-                    plane_vectors,
-                    ) = radii_tools.get_voronoi_radii()
+            if self.method == "badelf":
+                site_indices, neigh_indices, _, _ = self.elf_labeler.nearest_neighbor_data
+                plane_points, plane_vectors = self.elf_labeler._atom_nn_planes
+            elif self.method == "voronelf":
+                site_indices, neigh_indices, _, _ = self.elf_labeler.electride_nearest_neighbor_data
+                plane_points, plane_vectors = self.elf_labeler._electride_nn_planes
+            
 
             # we want to transform our planes to the 26 nearest neighbor cells
             # to ensure that we cover our unit cell. For speed, it is ideal to
@@ -549,14 +442,14 @@ class Badelf:
             site_transforms = np.append(site_transforms, new_site_transforms)
 
             
-            self._partitioning = (
+            self._partitioning_planes = (
                 site_indices, 
                 neigh_indices, 
                 plane_points, 
                 plane_vectors, 
                 site_transforms,
                 )
-        return self._partitioning
+        return self._partitioning_planes
     
 
     @property
@@ -584,11 +477,6 @@ class Badelf:
             [x, y, z, charge, sites].
 
         """
-        algorithm = self.algorithm
-        if algorithm == "zero-flux":
-            # we can just use the zero-flux results for labels, charges, and volumes
-            self._atom_labels = self.zero_flux_feature_labels
-            return
         # make sure we've run our partitioning (for logging clarity)
         (
             site_indices, 
@@ -596,73 +484,78 @@ class Badelf:
             plane_points, 
             plane_vectors, 
             site_transforms,
-            ) = self.partitioning
-        
+            ) = self.partitioning_planes
         logging.info("Beginning voxel assignment")
         
-        # Get the zero-flux voxel assignments for all labeled features
-        labels = self.zero_flux_feature_labels.copy()
+        # get the zero-flux labels as a starting point
+        labels = self._zero_flux_feature_labels.copy()
         
-        # Depending on our charge splitting method, we need to overwrite parts
-        # of our labels
-        if self.shared_feature_splitting_method != "plane":
-            # get a mask at labels associated with metal/covalent/electride features
-            indices = np.array([i for i in range(len(self.structure), len(self.labeled_structure))])
-        elif algorithm == "badelf":
-            # get a mask only at electride indices
-            indices = np.array([i for i in range(len(self.structure), len(self.electride_structure))])
-        else:
-            # we are using the voronoi method with the plane method and don't want
-            # to override anything
-            indices = np.array([], np.int64)
-        mask = np.isin(labels, indices, invert = True)
-        # set regions where we don't want to use zero-flux results to -1
-        labels[mask] = -1
-        
-        # calculate the maximum distance in fractional coords from the center of
-        # a voxel to its edges
-        voxel_dist = self.reference_grid.max_point_dist + 1e-12
-        
-        # get the transforms within a set radius
-        min_radius = voxel_dist * 2
-        max_radius = (np.array(self.structure.lattice.abc) / 2).min()
-        max_radius = min(max_radius, 3.0) # cap radius for large cells
-        sphere_transforms, transform_dists = self.reference_grid.get_radial_neighbor_transforms(
-            r = max_radius
-            )
-        valid_mask = transform_dists >= min_radius
-        sphere_transforms = sphere_transforms[np.where(valid_mask)[0]]
-        transform_dists = transform_dists[valid_mask]
-        
-        # get the indices at which new transform dists occur
-        transform_breaks = np.where(transform_dists[:-1] != transform_dists[1:])[0]
-        
-        # Now calculate labels, charges, and volumes assigned to each feature        
-        labels, charges, volumes = get_badelf_assignments(
-            data = self.charge_grid.total,
-            labels = labels,
-            site_indices = site_indices,
-            site_transforms = site_transforms,
-            plane_points = plane_points,
-            plane_vectors = plane_vectors,
-            vacuum_mask = self.bader.vacuum_mask,
-            min_plane_dist = voxel_dist,
-            num_assignments = len(self.labeled_structure),
-            lattice_matrix = self.reference_grid.matrix,
-            sphere_transforms = sphere_transforms,
-            transform_dists = transform_dists,
-            transform_breaks = transform_breaks,
-            max_label = len(self.plane_partitioning_structure),
-            )
-        
-        # convert charges/volumes to correct units
-        charges /= self.charge_grid.ngridpts
-        volumes = volumes * self.structure.volume / self.charge_grid.ngridpts
-
-        # overwrite zero-flux feature charges/volumes
-        self._atom_labels = labels
-        self._feature_charges = charges
-        self._feature_volumes = volumes
+        if self.method == "zero-flux":
+            # we are done here and can assign charges/volumes immediately
+            self._atom_labels = labels
+            self._charges, self._volumes = self.elf_labeler.get_charges_and_volumes(
+                splitting_method=self.shared_feature_splitting_method,
+                use_electrides=True
+                )
+        else:           
+            # In badelf, we want to label our electride basins ahead of time
+            if self.method == "badelf":
+                # get a mask only at electride indices
+                indices = np.array([i for i in range(len(self.structure), len(self.electride_structure))])
+                mask = np.isin(labels, indices, invert = True)
+                # set regions where we don't want to use zero-flux results to -1
+                labels[mask] = -1
+                # get the number of atoms in the partitioning structure
+                structure_len = len(self.structure)
+            elif self.method == "voronelf":
+                # we are using the voronoi method with the plane method and don't want
+                # to override anything
+                structure_len = len(self.electride_structure)
+            
+            # calculate the maximum distance in fractional coords from the center of
+            # a voxel to its edges
+            voxel_dist = self.reference_grid.max_point_dist + 1e-12
+            
+            # get the transforms within a set radius
+            min_radius = voxel_dist * 2
+            max_radius = (np.array(self.structure.lattice.abc) / 2).min()
+            max_radius = min(max_radius, 3.0) # cap radius for large cells
+            sphere_transforms, transform_dists = self.reference_grid.get_radial_neighbor_transforms(
+                r = max_radius
+                )
+            valid_mask = transform_dists >= min_radius
+            sphere_transforms = sphere_transforms[np.where(valid_mask)[0]]
+            transform_dists = transform_dists[valid_mask]
+            
+            # get the indices at which new transform dists occur
+            transform_breaks = np.where(transform_dists[:-1] != transform_dists[1:])[0]
+            
+            # Now calculate labels, charges, and volumes assigned to each feature        
+            labels, charges, volumes = get_badelf_assignments(
+                data = self.charge_grid.total,
+                labels = labels,
+                site_indices = site_indices,
+                site_transforms = site_transforms,
+                plane_points = plane_points,
+                plane_vectors = plane_vectors,
+                vacuum_mask = self.bader.vacuum_mask,
+                min_plane_dist = voxel_dist,
+                num_assignments = len(self.labeled_structure),
+                lattice_matrix = self.reference_grid.matrix,
+                sphere_transforms = sphere_transforms,
+                transform_dists = transform_dists,
+                transform_breaks = transform_breaks,
+                max_label = structure_len,
+                )
+            
+            # convert charges/volumes to correct units
+            charges /= self.charge_grid.ngridpts
+            volumes = volumes * self.structure.volume / self.charge_grid.ngridpts
+    
+            # overwrite zero-flux feature charges/volumes
+            self._atom_labels = labels
+            self._charges = charges
+            self._volumes = volumes
 
 
         logging.info("Finished voxel assignment")
@@ -915,150 +808,6 @@ class Badelf:
         self._all_electride_dims = final_dimensions
         self._all_electride_dim_cutoffs = final_connections
         
-    @property
-    def charges(self) -> NDArray:
-        """
-
-        Returns
-        -------
-        NDArray
-            The charge associated with each atom and electride site in the system.
-
-        """
-        if self._charges is None:
-            self._get_charges_volumes()
-        return self._charges
-    
-    @property
-    def volumes(self) -> NDArray:
-        """
-
-        Returns
-        -------
-        NDArray
-            The volume associated with each atom and electride site in the system.
-
-        """
-        if self._volumes is None:
-            self._get_charges_volumes()
-        return self._volumes
-    
-    def _get_site_coordination(self, site_idx: int) -> list:
-        """
-        Gets the coordination of a site in the labeled structure using CrystalNN.
-        Only atoms/electrides are considered as potential neighbors.
-
-        Parameters
-        ----------
-        site_idx : int
-            The index of the labeled structure.
-
-        Returns
-        -------
-        list
-            The indices (in the electride_structure property) coordinated with 
-            the requested species.
-
-        """
-        # for atoms/electrides we use the electride structure
-        if site_idx < len(self.electride_structure):
-            coordination = self.cnn.get_nn_info(
-                self.electride_structure, site_idx
-            )
-        # for covalent/metallic features we use a dummy atom
-        else:
-            structure = self.electride_structure.copy()
-            structure.append("H-", self.labeled_structure.frac_coords[site_idx])
-            coordination = self.cnn.get_nn_info(
-                structure, -1
-            )
-        return [int(i["site_index"]) for i in coordination]
-    
-    def _get_charges_volumes(self) -> None:
-        """
-        
-        Calculates the charge and volume associated with each atom/electride
-
-        """
-        # make sure assignments have been made
-        self.atom_labels
-        
-        # get feature charges
-        all_charges = self._feature_charges
-        all_volumes = self._feature_volumes
-        
-        
-
-        # TODO: Add weighted dist like in elf labeler method
-        # assign covalent/metallic charges to atoms/electrides
-        charges = all_charges[:len(self.electride_structure)]
-        volumes = all_volumes[:len(self.electride_structure)]
-        if self.shared_feature_splitting_method == "plane":
-            # we shouldn't find any charge/volume for our shared features because
-            # we assigned them based on planes. We can just return
-            self._charges = charges
-            self._volumes = volumes
-        
-        for site_idx in range(len(self.electride_structure), len(self.labeled_structure)):
-            charge = all_charges[site_idx]
-            volume = all_volumes[site_idx]
-            coord_atoms = self._get_site_coordination(site_idx)
-            
-            method = self.shared_feature_splitting_method
-            if method == "equal":
-                # The charge should be shared equally between all atoms
-                charge_section = charge / len(coord_atoms)
-                volume_section = volume / len(coord_atoms)
-                for neigh_idx in coord_atoms:
-                    charges[neigh_idx] += charge_section
-                    volumes[neigh_idx] += volume_section
-            elif method == "pauling":
-                # We want to separate charge based on pauling electronegativity
-                # First, we get the electronegativities of each species. We note
-                # that the electride electrons do not have electronegativities.
-                # We have chosen to use the EN of hydrogen in these cases
-                ens = []
-                for neigh_idx in coord_atoms:
-                    species = self.electride_structure[neigh_idx].specie
-                    en = species.X
-                    if math.isnan(en) or en == 0.0:
-                        # we don't have an en for this species and we default to
-                        # a guess (2.2)
-                        ens.append(2.2)
-                    else:
-                        ens.append(en)
-
-                # Now we convert the electronegativites to a fraction for each
-                # atom. The larger the EN, the more charge the atom will recieve
-                ens = np.array(ens)
-                ens /= ens.sum()
-                for neigh_idx, en_frac in zip(coord_atoms, ens):
-                    charges[neigh_idx] += charge * en_frac
-                    volumes[neigh_idx] += volume * en_frac
-            elif method == "dist":
-                # get the dist to each coordinated atom
-                dist_matrix = self.labeled_structure.distance_matrix
-                site_row = dist_matrix[site_idx]
-                dists = site_row[coord_atoms]
-                # invert and normalize
-                dists = 1 / dists
-                dists /= dists.sum()
-                # add for each atom
-                for coord_idx, atom in enumerate(coord_atoms):
-                    charges[atom] += charge * dists[coord_idx]
-                    volumes[atom] += volume * dists[coord_idx]
-            elif method == "nearest":
-                # just assign all charge to the nearest atom
-                dist_matrix = self.labeled_structure.distance_matrix
-                site_row = dist_matrix[site_idx]
-                min_val = np.min(site_row[site_row>0])
-                best_neigh = np.where(site_row==min_val)[0][0]
-                charges[best_neigh] += charge
-                volumes[best_neigh] += volume
-
-        self._charges = charges
-        self._volumes = volumes
-        
     def get_oxidation_states(self, potcar_path: Path | str = "POTCAR"):
         """
         Calculates the oxidation state of each atom/electride using the
@@ -1104,11 +853,6 @@ class Badelf:
         to the partitioning surface.
 
         """
-        if self.shared_feature_splitting_method != "plane":
-            logging.warning("""
-Shared feature splitting methods other than 'plane' result in surfaces surrounding
-the shared features. Atom/electride surface distances may be smaller than expected.
-            """)
         neigh_transforms, _ = self.charge_grid.point_neighbor_transforms
         edges = get_edges(
             labeled_array=self.atom_labels,
@@ -1254,9 +998,8 @@ the shared features. Atom/electride surface distances may be smaller than expect
         results = {}
         # collect method kwargs
         method_kwargs = {
-            "algorithm": self.algorithm,
+            "method": self.method,
             "shared_feature_splitting_method": self.shared_feature_splitting_method,
-            "crystalnn_kwargs": self.crystalnn_kwargs,
             "elf_labeler_kwargs": self.elf_labeler_kwargs,
         }
         results["method_kwargs"] = method_kwargs
@@ -1511,13 +1254,6 @@ class SpinBadelf:
         self,
         reference_grid: Grid,
         charge_grid: Grid,
-        labeled_structure_up: Structure = None,
-        labeled_structure_down: Structure = None,
-        crystalnn_kwargs: dict = {
-            "distance_cutoffs": None,
-            "x_diff_weight": 0.0,
-            "porous_adjustment": False,
-            },
         elf_labeler: SpinElfLabeler | dict = {},
         **kwargs
     ):
@@ -1533,24 +1269,6 @@ class SpinBadelf:
         charge_grid : Grid
             A badelf app Grid like object used for summing charge. Usually
             contains charge density.
-        labeled_structure_up : Structure, optional
-            A pymatgen structure object with dummy atoms representing
-            electride, covalent, and metallic features in the spin-up system. 
-            If provided, the ElfLabeler will not be used. Symbols should follow
-            the same conventions as in the ElfLabeler.
-        labeled_structure_down : Structure, optional
-            A pymatgen structure object with dummy atoms representing
-            electride, covalent, and metallic features in the spin-down system. 
-            If provided, the ElfLabeler will not be used. Symbols should follow
-            the same conventions as in the ElfLabeler.
-        crystalnn_kwargs : dict, optional
-            The keyword arguments for CrystalNN to determine which atoms/electrides
-            neighbor metallic/covalent bonds.
-            The default is {
-                "distance_cutoffs": None,
-                "x_diff_weight": 0.0,
-                "porous_adjustment": False,            
-                }.elf_labeler_kwargs : dict, optional
         elf_labeler : dict | SpinElfLabeler, optional
             Keyword arguments to pass to the SpinElfLabeler class. This includes
             parameters controlling cutoffs for electrides. Alternatively, a
@@ -1565,66 +1283,38 @@ class SpinBadelf:
         self.reference_grid = reference_grid
         self.charge_grid = charge_grid
         
-        # if a labeled structure is provided, use that instead of the elf labeler
-        if labeled_structure_up is not None or labeled_structure_down is not None:
-            assert labeled_structure_up is not None and labeled_structure_down is not None, "If providing a labeled structure, both up and down systems must be provided."
         # If no labeled structures are provided, we want to use the spin elf
         # labeler and link it to our badelf objects
-        if labeled_structure_up is None:
-            # we want to attach a SpinElfLabeler to our badelf objects
-            if type(elf_labeler) is dict:
-                elf_labeler = SpinElfLabeler(
-                    charge_grid=charge_grid,
-                    reference_grid=reference_grid,
-                    crystalnn_kwargs=crystalnn_kwargs,
-                    **elf_labeler
-                    )
-
-            self.elf_labeler = elf_labeler
-            # link charge grids
-            self.reference_grid_up = elf_labeler.reference_grid_up
-            self.reference_grid_down = elf_labeler.reference_grid_down
-            self.charge_grid_up = elf_labeler.charge_grid_up
-            self.charge_grid_down = elf_labeler.charge_grid_down
-            self.equal_spin = elf_labeler.equal_spin
-            # link labelers
-            self.elf_labeler_up = elf_labeler.elf_labeler_up
-            self.elf_labeler_down = elf_labeler.elf_labeler_down
-        else:
-            # We won't be using a labeler so we need to split the grids
-            self.elf_labeler_up = None
-            self.elf_labeler_down = None
-            self.equal_spin = False
-            if reference_grid.is_spin_polarized:
-                self.reference_grid_up, self.reference_grid_down = (
-                    reference_grid.split_to_spin()
+        # we want to attach a SpinElfLabeler to our badelf objects
+        if type(elf_labeler) is dict:
+            elf_labeler = SpinElfLabeler(
+                charge_grid=charge_grid,
+                reference_grid=reference_grid,
+                **elf_labeler
                 )
 
-                self.charge_grid_up, self.charge_grid_down = charge_grid.split_to_spin("charge")
-
-                # check that our ELF isn't identical. If it is, we can perform a
-                # single non-polarized calculation
-                if not np.allclose(
-                    self.reference_grid_up.total,
-                    self.reference_grid_down.total,
-                    rtol=0,
-                    atol=0.001,
-                ):
-                    self.equal_spin = True
+        self.elf_labeler = elf_labeler
+        # link charge grids
+        self.reference_grid_up = elf_labeler.reference_grid_up
+        self.reference_grid_down = elf_labeler.reference_grid_down
+        self.charge_grid_up = elf_labeler.charge_grid_up
+        self.charge_grid_down = elf_labeler.charge_grid_down
+        self.equal_spin = elf_labeler.equal_spin
+        # link labelers
+        self.elf_labeler_up = elf_labeler.elf_labeler_up
+        self.elf_labeler_down = elf_labeler.elf_labeler_down
                 
         # Now check if we should run a spin polarized badelf calc or not
         if not self.equal_spin:
             self.badelf_up = Badelf(
                 reference_grid=self.reference_grid_up,
                 charge_grid=self.charge_grid_up,
-                labeled_structure=labeled_structure_up,
                 elf_labeler=self.elf_labeler_up,
                 **kwargs
             )
             self.badelf_down = Badelf(
                 reference_grid=self.reference_grid_down,
                 charge_grid=self.charge_grid_down,
-                labeled_structure=labeled_structure_down,
                 elf_labeler=self.elf_labeler_down,
                 **kwargs
             )
@@ -1634,7 +1324,6 @@ class SpinBadelf:
             self.badelf_up = Badelf(
                 reference_grid=self.reference_grid_up,
                 charge_grid=self.charge_grid_up,
-                labeled_structure=labeled_structure_up,
                 elf_labeler=self.elf_labeler_up,
                 **kwargs
             )

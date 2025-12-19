@@ -49,7 +49,6 @@ class ElfRadiiTools:
         # currently allow np.unique axis argument
         # 1. get equivalent indices by symmetry for each atom/neighbor
         equivalent_atoms = self.structure.equivalent_atoms
-        # equivalent_atoms = np.array([i for i in range(len(self.structure))])
         equiv_sites = equivalent_atoms[site_indices]
         equiv_neighs = equivalent_atoms[neigh_indices]
 
@@ -137,7 +136,7 @@ class ElfRadiiTools:
         site_indices = np.array(site_indices, dtype=np.int64)
         neigh_indices = np.array(neigh_indices, dtype=np.int64)
         neigh_coords = np.array(neigh_coords, dtype=np.float64)
-        pair_dists = np.array(pair_dists, dtype=np.float64).round(12)
+        pair_dists = np.array(pair_dists, dtype=np.float64).round(5)
         
         # remove site-site pairs
         site_site_mask = pair_dists != 0
