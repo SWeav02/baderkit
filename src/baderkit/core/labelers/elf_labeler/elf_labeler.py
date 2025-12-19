@@ -19,7 +19,7 @@ from baderkit.core.labelers.bifurcation_graph import (
     DomainSubtype,
     FeatureType,
 )
-from baderkit.core.utilities.basic import mutiple_dists
+
 from baderkit.core.utilities.coord_env import check_all_covalent
 from baderkit.core.utilities.file_parsers import Format
 
@@ -222,6 +222,8 @@ class ElfLabeler:
         self._electride_nearest_neighbor_data = None
         self._atom_feature_indices = None
         self._atom_max_values = None
+        self._atom_nn_planes = None
+        self._electride_nn_planes = None
         
         self._electrides_per_formula = None
         self._electrides_per_reduced_formula = None
@@ -391,7 +393,8 @@ class ElfLabeler:
 
         """
         if self._nearest_neighbor_data is None:
-            self._nearest_neighbor_data = self._get_nearest_neighbor_data(self.structure)
+            # run bifurcation assignment
+            self.bifurcation_graph
         return self._nearest_neighbor_data
     
     @property
@@ -408,7 +411,8 @@ class ElfLabeler:
 
         """
         if self._electride_nearest_neighbor_data is None:
-            self._electride_nearest_neighbor_data = self._get_nearest_neighbor_data(self.electride_structure)
+            # run assignment
+            self.electride_nn_elf_radii
         return self._electride_nearest_neighbor_data
 
     ###########################################################################
@@ -548,7 +552,21 @@ class ElfLabeler:
                 self._electride_nn_elf_radii = self.atom_nn_elf_radii
                 self._electride_nn_elf_radii_types = self._atom_nn_elf_radii_types
             else:
-                self._electride_nn_elf_radii, self._electride_nn_elf_radii_types = self._get_nn_atom_elf_radii(use_electrides=True)
+                (
+                    site_indices,
+                    neigh_indices,
+                    neigh_coords,
+                    pair_dists,
+                    radii,
+                    bond_types,
+                    plane_points,
+                    plane_vectors,
+                    ) = self._get_nn_atom_elf_radii(use_electrides=True)
+                self._electride_nn_elf_radii = radii
+                self._electride_nn_elf_radii = bond_types
+                self._electride_nearest_neighbor_data = (site_indices, neigh_indices, neigh_coords, pair_dists)
+                self._electride_nn_planes = (plane_points, plane_vectors)
+                
         return self._electride_nn_elf_radii
     
     @property
@@ -1081,6 +1099,7 @@ class ElfLabeler:
         included_features: list[str] = FeatureType.valence_types,
         return_structure: bool = True,
         return_feat_indices: bool = False,
+        return_charge_volume: bool = False,
         order_by_type: bool = True,
     ) -> tuple:
         """
@@ -1110,6 +1129,9 @@ class ElfLabeler:
         order_by_type : bool, optional
             Whether or not to reorder the structure prior to assigning to
             grid points. The default is True.
+        return_charge_volume : bool, optional
+            Whether or not to return the corresponding charge/volume associated
+            with each feature
 
         Returns
         -------
@@ -1159,7 +1181,7 @@ class ElfLabeler:
         feature_labels = basin_atoms[self.bader.basin_labels]
 
         # get requested results
-        if not return_structure and not return_feat_indices:
+        if not any((return_structure, return_feat_indices, return_charge_volume)):
             return feature_labels
         results = [feature_labels]
         if return_structure:
@@ -1167,6 +1189,18 @@ class ElfLabeler:
         
         if return_feat_indices:
             results.append(feature_indices)
+            
+        if return_charge_volume:
+            basin_atoms = basin_atoms[:-1]
+            
+            atom_charges = np.bincount(
+                basin_atoms, weights=self.bader.basin_charges, minlength=len(feature_structure)
+            )
+            atom_volumes = np.bincount(
+                basin_atoms, weights=self.bader.basin_volumes, minlength=len(feature_structure)
+            )
+            results.append(atom_charges)
+            results.append(atom_volumes)
 
         # return labels
         return tuple(results)
@@ -1257,56 +1291,14 @@ class ElfLabeler:
     # Hidden Utility Methods
     ###########################################################################
     
-    def _get_nearest_neighbor_data(self, structure: Structure) -> tuple[NDArray]:
-        """
-        
-        Calculates neighbor information for all atoms in the system using CrystalNN.
-
-        Parameters
-        ----------
-        structure : Structure
-            The PyMatGen Structure to use.
-
-        Returns
-        -------
-        tuple[NDArray]
-            Four arrays representing the atom indices, neighbor indices, neighbor
-            fractional coordinates, and site/neighbor distances.
-
-        """
-        # use cnn specifically made for high nns
-        nearest_neighs = self._radii_cnn.get_all_nn_info(structure)
-
-        # we just want the species and frac coords of each atom's neighbors
-        sites = []
-        neighs = []
-        frac_coords = []
-        cart_coords = []
-        for site_idx, neigh_list in enumerate(nearest_neighs):
-            for neigh_dict in neigh_list:
-                sites.append(site_idx)
-                neighs.append(neigh_dict["site_index"])
-                frac_coords.append(neigh_dict["site"].frac_coords)
-                cart_coords.append(neigh_dict["site"].coords)
-        # convert to arrays
-        sites = np.array(sites, dtype=np.uint32)
-        neighs = np.array(neighs, dtype=np.uint32)
-        frac_coords = np.array(frac_coords, dtype=np.float64)
-        cart_coords = np.array(cart_coords, dtype=np.float64)
-        # calculate distances (since pymatgen doesn't include these in the
-        # summary for some reason)
-        site_cart_coords = structure.cart_coords[sites]
-        dists = mutiple_dists(site_cart_coords, cart_coords)
-
-        return (sites, neighs, frac_coords, dists)
-    
     def _get_nn_atom_elf_radii(
             self, 
             use_electrides: bool = False,
             ) -> tuple:
         """
         
-        Calculate the ELF radius for all atom neighbor pairs (as determined by CrystalNN)
+        Calculate the ELF radius for all atom neighbor pairs that result in partitioning
+        planes lying on the voronoi surface
 
         Parameters
         ----------
@@ -1324,26 +1316,22 @@ class ElfLabeler:
         # get appropriate structure and neighbor data
         if use_electrides:
             structure = self.electride_structure
-            nn_data = self.electride_nearest_neighbor_data
-            # we don't treat electride atoms as metals in this case
+            # we don't treat electride atoms as metals in this case, as we are
+            # treating them like quasi atoms
             covalent_types = [i for i in FeatureType.valence_types if i not in FeatureType.bare_types]
         else:
             structure = self.structure
-            nn_data = self.nearest_neighbor_data
             # we do treat electride atoms as metals/covalent features
             covalent_types = FeatureType.valence_types
-        
-        # First we get our neighbor arrays
-        site_indices, neigh_indices, neigh_frac_coords, neigh_dists = nn_data
 
-        # Now we get a labeled structure including covalent, metallic, and bare
+        # Get a labeled structure including covalent, metallic, and bare
         # electron features
         included_types = FeatureType.valence_types.copy()
         feature_labels, feature_structure = self.get_feature_labels(
             included_features=included_types
         )
         covalent_symbols = np.unique([i.dummy_species for i in covalent_types])
-        # Calculate all radii
+        # Calculate all radii on the voronoi surface
         radii_tools = ElfRadiiTools(
             grid=self.reference_grid,
             feature_labels=feature_labels,
@@ -1351,14 +1339,8 @@ class ElfLabeler:
             override_structure=structure,
             covalent_symbols=covalent_symbols,
         )
-        return (
-            radii_tools.get_all_neigh_elf_radii_and_type(
-                site_indices,
-                neigh_indices,
-                neigh_frac_coords,
-                neigh_dists,
-            )
-        )
+        return radii_tools.get_voronoi_radii()
+        
         
     @staticmethod
     def _get_atom_elf_radii(structure, all_radii, all_radii_types, nn_data) -> tuple:
@@ -1952,8 +1934,21 @@ class ElfLabeler:
         # bonds. For electrides, we would treat maxima as part of a separate
         # "electride atom"
         logging.info("Calculating atomic radii")
-        self._atom_nn_elf_radii, self._atom_nn_elf_radii_types = self._get_nn_atom_elf_radii(use_electrides=False)
-
+        (
+            site_indices,
+            neigh_indices,
+            neigh_coords,
+            pair_dists,
+            radii,
+            bond_types,
+            plane_points,
+            plane_vectors,
+            ) = self._get_nn_atom_elf_radii(use_electrides=False)
+        self._atom_nn_elf_radii = radii
+        self._atom_nn_elf_radii_types = bond_types
+        self._nearest_neighbor_data = (site_indices, neigh_indices, neigh_coords, pair_dists)
+        self._atom_nn_planes = (plane_points, plane_vectors)
+        
         # Next we mark our metallic/bare electrons. These currently have a set
         # of rather arbitrary cutoffs to distinguish between them. In the future
         # I would like to perform a comprehensive study.

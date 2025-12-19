@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
+import math
 
 import numpy as np
 from numba import njit, prange
+from numpy.typing import NDArray
 
 
 @njit(cache=True, inline="always")
@@ -192,3 +194,80 @@ def merge_frac_coords_weighted(
         total2 += un2 * weight
 
     return np.array((total0 % 1.0, total1 % 1.0, total2 % 1.0), dtype=np.float64)
+
+@njit(parallel=True)
+def get_transforms_in_radius(
+    r: float,
+    nx, ny, nz,
+    lattice_matrix: NDArray,
+        ):
+    """
+    Generates all transforms within a radius r for a given grid. Results are sorted
+    by distance
+
+    Parameters
+    ----------
+    r : float
+        The radius to consider.
+    nx : int
+        The number of grid points along the x lattice direction
+    ny : int
+        The number of grid points along the y lattice direction
+    nz : int
+        The number of grid points along the z lattice direction
+    lattice_matrix : NDArray
+        The row matrix representing the lattice.
+
+    Returns
+    -------
+    offsets : NDArray
+        The offsets up to the requested radius.
+    dists : NDArray
+        The distances up to the requested radius.
+
+    """
+    shape = (nx, ny, nz)
+    # row lattice vectors
+    a1, a2, a3 = lattice_matrix
+    
+    # get fraction along each vector that matches radius
+    f1 = r / np.linalg.norm(a1)
+    f2 = r / np.linalg.norm(a2)
+    f3 = r / np.linalg.norm(a3)
+    # get the maximum corresponding number of grid points
+    nmax = np.ceil(np.array((f1*nx, f2*ny, f3*nz))).astype(np.int64)
+    
+    
+    # get matrix map from grid points to cartesian
+    grid2cart = np.empty((3,3), dtype=np.float64)
+    for i in range(3):
+        for j in range(3):
+            grid2cart[i, j] = lattice_matrix[i, j] / shape[i]
+    
+    offsets = []
+    dists = []
+    
+    for i in range(-nmax[0], nmax[0]+1):
+        for j in range(-nmax[1], nmax[1]+1):
+            for k in range(-nmax[2], nmax[2]+1):
+                ci = i * grid2cart[0,0] + j * grid2cart[1,0] + k * grid2cart[2,0]
+                cj = i * grid2cart[0,1] + j * grid2cart[1,1] + k * grid2cart[2,1]
+                ck = i * grid2cart[0,2] + j * grid2cart[1,2] + k * grid2cart[2,2]
+                
+                d = (ci*ci + cj*cj + ck*ck) ** 0.5
+                # round for stability
+                d = round(d, 12)
+
+                if d <= r:
+                    dists.append(d)
+                    offsets.append((i,j,k))
+    offsets = np.array(offsets, dtype=np.int32)
+    dists = np.array(dists, dtype=np.float64)
+    
+    # sort by distance
+    sorted_indices = np.argsort(dists)
+    offsets = offsets[sorted_indices]
+    dists = dists[sorted_indices]
+    return offsets, dists
+
+

@@ -24,6 +24,7 @@ class Structure(PymatgenStructure):
         lattice: Lattice,
         species: list[Species],
         frac_coords: list[NDArray],
+        symmetry_kwargs: dict = {},
         **kwargs,
     ):
         super().__init__(lattice, species, frac_coords, **kwargs)
@@ -33,8 +34,10 @@ class Structure(PymatgenStructure):
             site.label = site.specie.symbol
 
         # cache for symmetry data
+        self._symmetry_kwargs = symmetry_kwargs
         self._symmetry_data = None
         self._last_symmetry_save = None
+        self._spacegroup_analyzer = None
 
     @property
     def labels(self) -> list[str]:
@@ -159,7 +162,41 @@ class Structure(PymatgenStructure):
                 site.label = f"{label}_{idx + 1}"
 
         return self
+    
+    @property
+    def symmetry_kwargs(self) -> dict:
+        """
 
+        Returns
+        -------
+        dict
+            The keyword arguments used in the SpaceGroupAnalyzer for finding 
+            symmetry data.
+
+        """
+        return self._symmetry_kwargs
+    
+    @symmetry_kwargs.setter
+    def symmetry_kwargs(self, value: dict):
+        # set kwargs and reset symmetry
+        self._symmetry_kwargs = value
+        self._symmetry_data = None
+        
+    @property
+    def spacegroup_analyzer(self) -> SpacegroupAnalyzer:
+        """
+
+        Returns
+        -------
+        SpacegroupAnalyzer
+            A spacegroup analyzer for this structure
+
+        """
+        if self._spacegroup_analyzer is None or self._last_symmetry_save != tuple(self):
+            self._last_symmetry_save = tuple(self)
+            self._spacegroup_analyzer = SpacegroupAnalyzer(self, **self.symmetry_kwargs)
+        return self._spacegroup_analyzer
+        
     @property
     def symmetry_data(self):
         """
@@ -171,8 +208,7 @@ class Structure(PymatgenStructure):
 
         """
         if self._symmetry_data is None or self._last_symmetry_save != tuple(self):
-            self._last_symmetry_save = tuple(self)
-            self._symmetry_data = SpacegroupAnalyzer(self).get_symmetry_dataset()
+            self._symmetry_data = self.spacegroup_analyzer.get_symmetry_dataset()
         return self._symmetry_data
 
     @property
@@ -201,3 +237,7 @@ class Structure(PymatgenStructure):
             return merge_frac_coords(frac_coords)
         else:
             raise Exception("Frac coords must have Nx3 shape")
+            
+    @property
+    def site_symbols(self):
+        return np.array([i.specie.symbol for i in self])

@@ -26,6 +26,7 @@ from baderkit.core.utilities.file_parsers import (
     read_cube,
     read_vasp,
 )
+from baderkit.core.utilities.basic import get_transforms_in_radius
 from baderkit.core.utilities.file_parsers import write_cube as write_cube_file
 from baderkit.core.utilities.file_parsers import write_vasp as write_vasp_file
 
@@ -98,9 +99,12 @@ class Grid(VolumetricData):
     ):
         # The following is copied directly from pymatgen, but replaces their
         # creation of a RegularGridInterpolator to avoid some overhead
-        self.structure = Structure.from_dict(
+        structure = Structure.from_dict(
             structure.as_dict()
         )  # convert to baderkit structure
+        
+        self.structure = structure
+        
         self.is_spin_polarized = len(data) >= 2
         self.is_soc = len(data) >= 4
         # convert data to numpy arrays in case they were jsanitized as lists
@@ -737,81 +741,110 @@ class Grid(VolumetricData):
 
         return self
 
-    def get_points_in_radius(
-        self,
-        point: NDArray,
-        radius: float,
-    ) -> NDArray[int]:
+    # def get_points_in_radius(
+    #     self,
+    #     point: NDArray,
+    #     radius: float,
+    # ) -> NDArray[int]:
+    #     """
+    #     Gets the indices of the points in a radius around a point
+
+    #     Parameters
+    #     ----------
+    #     radius : float
+    #         The radius in cartesian distance units to find indices around the
+    #         point.
+    #     point : NDArray
+    #         The indices of the point to perform the operation on.
+
+    #     Returns
+    #     -------
+    #     NDArray[int]
+    #         The point indices in the sphere around the provided point.
+
+    #     """
+    #     point = np.array(point)
+    #     # Get the distance from each point to the origin
+    #     point_distances = self.point_dists
+
+    #     # Get the indices that are within the radius
+    #     sphere_indices = np.where(point_distances <= radius)
+    #     sphere_indices = np.column_stack(sphere_indices)
+
+    #     # Get indices relative to the point
+    #     sphere_indices = sphere_indices + point
+    #     # adjust points to wrap around grid
+    #     # line = [[round(float(a % b), 12) for a, b in zip(position, grid_data.shape)]]
+    #     new_x = (sphere_indices[:, 0] % self.shape[0]).astype(int)
+    #     new_y = (sphere_indices[:, 1] % self.shape[1]).astype(int)
+    #     new_z = (sphere_indices[:, 2] % self.shape[2]).astype(int)
+    #     sphere_indices = np.column_stack([new_x, new_y, new_z])
+    #     # return new_x, new_y, new_z
+    #     return sphere_indices
+
+    # def get_transformations_in_radius(self, radius: float) -> NDArray[int]:
+    #     """
+    #     Gets the transformations required to move from a point to the points
+    #     surrounding it within the provided radius
+
+    #     Parameters
+    #     ----------
+    #     radius : float
+    #         The radius in cartesian distance units around the voxel.
+
+    #     Returns
+    #     -------
+    #     NDArray[int]
+    #         An array of transformations to add to a point to get to each of the
+    #         points within the radius surrounding it.
+
+    #     """
+    #     # Get voxels around origin
+    #     voxel_distances = self.point_dists
+    #     # sphere_grid = np.where(voxel_distances <= radius, True, False)
+    #     # eroded_grid = binary_erosion(sphere_grid)
+    #     # shell_indices = np.where(sphere_grid!=eroded_grid)
+    #     shell_indices = np.where(voxel_distances <= radius)
+    #     # Now we want to translate these indices to next to the corner so that
+    #     # we can use them as transformations to move a voxel to the edge
+    #     final_shell_indices = []
+    #     for a, x in zip(self.shape, shell_indices):
+    #         new_x = x - a
+    #         abs_new_x = np.abs(new_x)
+    #         new_x_filter = abs_new_x < x
+    #         final_x = np.where(new_x_filter, new_x, x)
+    #         final_shell_indices.append(final_x)
+
+    #     return np.column_stack(final_shell_indices)
+    
+    def get_radial_neighbor_transforms(self, r: float) -> tuple:
         """
-        Gets the indices of the points in a radius around a point
+        Gets the transformations from each grid point to its neighbors within a
+        radius r. transforms are sorted by distance
 
         Parameters
         ----------
-        radius : float
-            The radius in cartesian distance units to find indices around the
-            point.
-        point : NDArray
-            The indices of the point to perform the operation on.
+        r : float
+            The radius to get transforms within
 
         Returns
         -------
-        NDArray[int]
-            The point indices in the sphere around the provided point.
+        tuple
+            Two arrays. The first is the transforms to each neighbor in the radius.
+            The second is the distance to each neighbor in the radius.
 
         """
-        point = np.array(point)
-        # Get the distance from each point to the origin
-        point_distances = self.point_dists
-
-        # Get the indices that are within the radius
-        sphere_indices = np.where(point_distances <= radius)
-        sphere_indices = np.column_stack(sphere_indices)
-
-        # Get indices relative to the point
-        sphere_indices = sphere_indices + point
-        # adjust points to wrap around grid
-        # line = [[round(float(a % b), 12) for a, b in zip(position, grid_data.shape)]]
-        new_x = (sphere_indices[:, 0] % self.shape[0]).astype(int)
-        new_y = (sphere_indices[:, 1] % self.shape[1]).astype(int)
-        new_z = (sphere_indices[:, 2] % self.shape[2]).astype(int)
-        sphere_indices = np.column_stack([new_x, new_y, new_z])
-        # return new_x, new_y, new_z
-        return sphere_indices
-
-    def get_transformations_in_radius(self, radius: float) -> NDArray[int]:
-        """
-        Gets the transformations required to move from a point to the points
-        surrounding it within the provided radius
-
-        Parameters
-        ----------
-        radius : float
-            The radius in cartesian distance units around the voxel.
-
-        Returns
-        -------
-        NDArray[int]
-            An array of transformations to add to a point to get to each of the
-            points within the radius surrounding it.
-
-        """
-        # Get voxels around origin
-        voxel_distances = self.point_dists
-        # sphere_grid = np.where(voxel_distances <= radius, True, False)
-        # eroded_grid = binary_erosion(sphere_grid)
-        # shell_indices = np.where(sphere_grid!=eroded_grid)
-        shell_indices = np.where(voxel_distances <= radius)
-        # Now we want to translate these indices to next to the corner so that
-        # we can use them as transformations to move a voxel to the edge
-        final_shell_indices = []
-        for a, x in zip(self.shape, shell_indices):
-            new_x = x - a
-            abs_new_x = np.abs(new_x)
-            new_x_filter = abs_new_x < x
-            final_x = np.where(new_x_filter, new_x, x)
-            final_shell_indices.append(final_x)
-
-        return np.column_stack(final_shell_indices)
+        
+        nx,ny,nz = self.shape
+        
+        transforms, dists = get_transforms_in_radius(
+            r=r,
+            nx=nx,
+            ny=ny,
+            nz=nz,
+            lattice_matrix=self.matrix            
+            )
+        return transforms, dists
 
     def copy(self) -> Self:
         """
