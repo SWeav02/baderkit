@@ -18,6 +18,14 @@ from baderkit.core import Structure, ElfLabeler, Grid, SpinElfLabeler
 from baderkit.core.labelers.bifurcation_graph.enum_and_styling import FeatureType, FEATURE_DUMMY_ATOMS
 from baderkit.core.bader.methods.shared_numba import get_min_avg_surface_dists, get_edges
 from baderkit.core.badelf.badelf_numba import get_badelf_assignments
+from baderkit.core.utilities.voronoi import get_cell_wrapped_voronoi
+
+# TODO:
+    # 0. See if atomic radii finder can be sped up. Seems too slow in mayenite
+    # 1. Update Simmate workflows and remove old badelf
+    # 2. Add tests for badelf and elf labeler
+    # 3. Update docs in both simmate/baderkit with badelf/labeler info
+    # 4. Update warrenapp to point to BaderKit primarily and Simmate for workflows
 
 class Badelf:
     """
@@ -365,89 +373,52 @@ class Badelf:
             
             # if we have an elf labeler, use its results to get partitioning
             if self.method == "badelf":
-                site_indices, neigh_indices, _, _ = self.elf_labeler.nearest_neighbor_data
+                site_indices, neigh_indices, _ = self.elf_labeler.nearest_neighbor_data
                 plane_points, plane_vectors = self.elf_labeler._atom_nn_planes
             elif self.method == "voronelf":
-                site_indices, neigh_indices, _, _ = self.elf_labeler.electride_nearest_neighbor_data
+                site_indices, neigh_indices, _ = self.elf_labeler.electride_nearest_neighbor_data
                 plane_points, plane_vectors = self.elf_labeler._electride_nn_planes
             
 
             # we want to transform our planes to the 26 nearest neighbor cells
-            # to ensure that we cover our unit cell. For speed, it is ideal to
-            # have the planes that are closest to the unit cell come first. This
-            # is so most voxels only need to check against this plane to determine
-            # that they do not belong to the transformed site. We approximate this
-            # simply be checking the distance to the center of the unit cell
-            
-            # TODO: I should be able to reduce further by removing transformations
-            # if none of its planes contain part of the unit cell. This would
-            # still leave some unnecessary transformations but should be fairly
-            # cheap (project lattice points onto vector and compare to position of
-            # plane point). I could even further reduce by explicitly calculating
-            # what portion of the cell is contained
-            
-            # find the indices where our sites start and end
-            change_indices = np.where(site_indices[:-1] != site_indices[1:])[0] + 1
-            change_indices = np.insert(change_indices, [0, len(change_indices)], [0, len(site_indices)])
-            
-            # get the total number of sites
-            num_sites = len(change_indices) - 1
-            
-            # get the center of the cell in cartesian coordinates
-            cell_center = self.reference_grid.frac_to_cart([0.5,0.5,0.5])
-            
-            # get transforms to the neighboring cells in cartesian coordinates
-            neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
-            neighbor_transforms = self.reference_grid.frac_to_cart(neighbor_transforms)
-            
-            site_transforms = np.zeros_like(site_indices, dtype=np.uint8)
-            # Add each set of neighbors sorted by distance
-            new_sites = []
-            new_neighs = []
-            new_plane_points = []
-            new_plane_vectors = []
-            new_site_transforms = []
-            for site in range(num_sites):
-                # get the range of indices that belong to this site
-                min_idx = change_indices[site]
-                max_idx = change_indices[site+1]
-                # get the plane points for this site and apply the transform
-                current_plane_points = plane_points[min_idx:max_idx]
-                current_plane_vectors = plane_vectors[min_idx:max_idx]
-                current_neighbors = neigh_indices[min_idx:max_idx]
-                for idx, transform in enumerate(neighbor_transforms):
-                    # get the transformed coordinates
-                    trans_plane_points = transform + current_plane_points
-                    # calculate the squared distances to the cell center
-                    dist2 = np.sum((trans_plane_points - cell_center)**2, axis=1)
-                    # sort low to high
-                    plane_indices = np.argsort(dist2)
-                    # get sorted planes and neighbors
-                    trans_plane_points = trans_plane_points[plane_indices]
-                    trans_plane_vectors = current_plane_vectors[plane_indices]
-                    trans_neighs = current_neighbors[plane_indices]
-                    # add new info
-                    new_plane_points.extend(trans_plane_points)
-                    new_plane_vectors.extend(trans_plane_vectors)
-                    new_sites.extend(site_indices[min_idx:max_idx])
-                    new_neighs.extend(trans_neighs)
-                    new_site_transforms.extend([idx for i in range(len(current_plane_points))])
-                    
+            # to ensure that we cover our unit cell. 
+            # For speed, we can remove planes that contain the entire unit cell
+            # and we can remove a full set of planes if none of them contain any
+            # part of the unit cell.
+            # Finally, we can sort each plane by how much of the unit cell it slices
+            # such that planes that are likely to reject a grid point come first
 
-            # Add to the previous planes
-            site_indices = np.append(site_indices, new_sites)
-            neigh_indices = np.append(neigh_indices, new_neighs)
-            plane_points = np.append(plane_points, new_plane_points, axis=0)
-            plane_vectors = np.append(plane_vectors, new_plane_vectors, axis=0)
-            site_transforms = np.append(site_transforms, new_site_transforms)
+            # first we get wrapped planes
+            site_indices, transforms, plane_points, plane_vectors, plane_volumes = get_cell_wrapped_voronoi(
+                site_indices=site_indices,
+                plane_points=plane_points,
+                plane_vectors=plane_vectors
+                )
 
+            # sort planes by site, transform, and volume.
+            combined_sort = np.column_stack((plane_volumes, transforms, site_indices))
+            sorted_indices = np.lexsort(combined_sort.T)
+            transforms = transforms[sorted_indices]
+            plane_points = plane_points[sorted_indices]
+            plane_vectors = plane_vectors[sorted_indices]
+            plane_volumes = plane_volumes[sorted_indices]
+
+            # get plane equations in cartesian coordinates
+            plane_vectors = self.reference_grid.frac_to_cart(plane_vectors)
+            plane_points = self.reference_grid.frac_to_cart(plane_points)
             
+            # normalize vectors
+            plane_vectors = (plane_vectors.T / np.linalg.norm(plane_vectors, axis=1)).T
+                        
+            # calculate plane equations
+            b = -np.einsum("ij,ij->i", plane_vectors, plane_points)
+                        
+            plane_equations = np.column_stack((plane_vectors, b))
+
             self._partitioning_planes = (
-                site_indices, 
-                neigh_indices, 
-                plane_points, 
-                plane_vectors, 
-                site_transforms,
+                site_indices,
+                transforms,
+                plane_equations
                 )
         return self._partitioning_planes
     
@@ -480,10 +451,8 @@ class Badelf:
         # make sure we've run our partitioning (for logging clarity)
         (
             site_indices, 
-            neigh_indices, 
-            plane_points, 
-            plane_vectors, 
             site_transforms,
+            plane_equations,
             ) = self.partitioning_planes
         logging.info("Beginning voxel assignment")
         
@@ -536,11 +505,10 @@ class Badelf:
                 labels = labels,
                 site_indices = site_indices,
                 site_transforms = site_transforms,
-                plane_points = plane_points,
-                plane_vectors = plane_vectors,
+                plane_equations = plane_equations,
                 vacuum_mask = self.bader.vacuum_mask,
                 min_plane_dist = voxel_dist,
-                num_assignments = len(self.labeled_structure),
+                num_assignments = len(self.electride_structure),
                 lattice_matrix = self.reference_grid.matrix,
                 sphere_transforms = sphere_transforms,
                 transform_dists = transform_dists,

@@ -15,6 +15,7 @@ def get_elf_radius_frac(
     atom_idx,
     atom_coords,
     neigh_coords,
+    all_frac_coords,
     covalent_labels,
     bond_dist,
     line_res: int = 20,
@@ -36,6 +37,8 @@ def get_elf_radius_frac(
         The fractional coordinates of the first atom in the bond.
     neigh_coords : NDArray
         The fractional coordinates of the second atom in the bond.
+    all_frac_coords : NDArray
+        The fractional coordinates of all atoms/dummy atoms in the structure
     covalent_labels : NDArray
         The indices in the feature_labels array that should be considered covalent.
     bond_dist : float
@@ -50,6 +53,8 @@ def get_elf_radius_frac(
         radius was able to be found.
 
     """
+    num_atoms = len(all_frac_coords)
+    
     # get the number of points to interpolate
     num_points = int(round(bond_dist * line_res))
     # I want this to always be odd because it is common for the exact midpoint
@@ -66,10 +71,20 @@ def get_elf_radius_frac(
     labels = np.empty(num_points, dtype=np.int64)
     # calculate the positions, values, and labels along the line in parallel
     for point_idx in prange(num_points):
-        x, y, z = atom_coords + float(point_idx) * step_vec
+        point = atom_coords + float(point_idx) * step_vec
+        x, y, z = point
         values[point_idx] = interp_spline(x, y, z, data)
-        labels[point_idx] = int(interp_nearest(x, y, z, feature_labels))
-
+        label = int(interp_nearest(x, y, z, feature_labels))
+        # For small cells its possible for this label to be incorrect.
+        # In poarticular it may assign to a translation of the actual atom. To
+        # test for this, we check if the vector from the point to the site is
+        # less than half a unit cell in any direction. This assumes the atom is
+        # fairly spherical (which is also an assumption of badelf itself).
+        vec = all_frac_coords[label] - point
+        if np.max(np.abs(vec)) > 0.5:
+            label += num_atoms
+        
+        labels[point_idx] = label
     # get the unique labels
     unique_labels = np.unique(labels)
 
@@ -78,15 +93,27 @@ def get_elf_radius_frac(
     # must always be halfway between the two and the bond must be covalent
     if len(unique_labels) == 1:
         return 0.5, True, False
-
+    
     # SITUATION 2:
-    # The atom has a covalent or metallic bond with its nearest neighbor, the 
-    # radius is the closest local maximum to the center of the bond
+    # The bond passes through labels that are not the current site or neighbor.
+    # This means we either pass through a covalent/metallic bond or we pass through
+    # another atom. In the later case, this probably isn't a valid radius and
+    # we just return 0.5. In the former case, we return the maximum in the bond.
+
     covalent = False
+    other_atoms = False
+    site_idx = labels[0]
+    neigh_idx = labels[-1]
     for label in unique_labels:
-        if covalent_labels[label]:
+        equiv_label = label % num_atoms
+        if covalent_labels[equiv_label]:
             covalent = True
+        elif label != site_idx and label != neigh_idx:
+            other_atoms = True
             break
+    if other_atoms:
+        return 0.5, True, False
+        
     if covalent:
         use_maximum = True
         # create placeholders for best maxima
@@ -212,6 +239,7 @@ def get_elf_radius(
     atom_idx,
     atom_coords,
     neigh_coords,
+    all_frac_coords,
     covalent_labels,
     bond_dist,
     line_res: int = 20,
@@ -253,11 +281,12 @@ def get_elf_radius(
         atom_idx,
         atom_coords,
         neigh_coords,
+        all_frac_coords,
         covalent_labels,
         bond_dist,
         line_res,
         )
-    return bond_dist*bond_frac, covalent, failed
+    return bond_dist*bond_frac, bond_frac, covalent, failed
 
 
 @njit(cache=True)
@@ -276,6 +305,7 @@ def get_elf_radii(
 
     # create array to store radii and their type
     atomic_radii = np.empty(len(atom_frac_coords), dtype=np.float64)
+    bond_fracs = np.empty(len(atom_frac_coords), dtype=np.float64)
     radius_is_covalent = np.empty(len(atom_frac_coords), dtype=np.bool_)
     
     some_failed = False
@@ -292,12 +322,13 @@ def get_elf_radii(
         neigh_coords = atom_frac_coords[neigh_idx] + neigh_image
 
         # get the radius for this atom
-        radius, is_covalent, failed = get_elf_radius(
+        radius, frac, is_covalent, failed = get_elf_radius(
             data,
             feature_labels,
             atom_idx,
             atom_coords,
             neigh_coords,
+            atom_frac_coords,
             covalent_labels,
             bond_dist,
         )
@@ -305,6 +336,7 @@ def get_elf_radii(
             some_failed = True
             
         atomic_radii[atom_idx] = radius
+        bond_fracs[atom_idx] = frac
         radius_is_covalent[atom_idx] = is_covalent
 
     if some_failed:
@@ -317,9 +349,10 @@ def get_elf_radii(
     for atom_idx in prange(len(atomic_radii)):
         equiv_atom = equivalent_atoms[atom_idx]
         atomic_radii[atom_idx] = atomic_radii[equiv_atom]
+        bond_fracs[atom_idx] = bond_fracs[equiv_atom]
         radius_is_covalent[atom_idx] = radius_is_covalent[equiv_atom]
 
-    return atomic_radii, radius_is_covalent
+    return atomic_radii, bond_fracs, radius_is_covalent
 
 
 @njit(cache=True, parallel=True)
@@ -329,40 +362,51 @@ def get_all_atom_elf_radii(
     site_frac_coords,
     neigh_frac_coords,
     neigh_dists,
-    equivalent_bonds,
     reversed_bonds,
     data,
     feature_labels,
     covalent_labels,
+    equivalent_atoms,
 ):
-
-    # get the unique bonds
-    unique_bonds = np.unique(equivalent_bonds)
 
     # create array to store radii
     atomic_radii = np.empty(len(site_indices), dtype=np.float64)
+    bond_fracs = np.empty(len(site_indices), dtype=np.float64)
     radius_is_covalent = np.empty(len(site_indices), dtype=np.bool_)
     
     some_failed = False
-    # get the radius for each unique bond
-    for unique_idx in prange(len(unique_bonds)):
-        pair_idx = unique_bonds[unique_idx]
+    # get the radius for each bond
+    for pair_idx in prange(len(site_indices)):
         site_idx = site_indices[pair_idx]
-        site_frac = site_frac_coords[site_idx]
-        neigh_frac = neigh_frac_coords[pair_idx]
+        neigh_idx = neigh_indices[pair_idx]
         bond_dist = neigh_dists[pair_idx]
-        radius, is_covalent, failed = get_elf_radius(
+        # if these are equivalent atoms we can skip the process entirely and
+        # return a bond exactly halfway
+        if equivalent_atoms[site_idx] == equivalent_atoms[neigh_idx]:
+            atomic_radii[pair_idx] = bond_dist*0.5
+            bond_fracs[pair_idx] = 0.5
+            radius_is_covalent[pair_idx] = True
+            continue
+        
+        site_frac = site_frac_coords[site_idx] # taken from structure to avoid larger array
+        neigh_frac = neigh_frac_coords[pair_idx]
+        radius, frac, is_covalent, failed = get_elf_radius(
             data,
             feature_labels,
             site_idx,
             site_frac,
             neigh_frac,
+            site_frac_coords,
             covalent_labels,
             bond_dist,
         )
         if failed:
             some_failed = True
+        if reversed_bonds[pair_idx]:
+            radius = bond_dist - radius
+            frac = 1-frac
         atomic_radii[pair_idx] = radius
+        bond_fracs[pair_idx] = frac
         radius_is_covalent[pair_idx] = is_covalent
 
     if some_failed:
@@ -370,17 +414,5 @@ def get_all_atom_elf_radii(
               due to the atom having no core electrons, likely caused by the use
               of too small of a pseudopotential. The radius will default to 1/2 the bond length""")
 
-
-    # update values for equivalent bonds
-    for pair_idx in prange(len(atomic_radii)):
-        equiv_bond = equivalent_bonds[pair_idx]
-        atomic_radii[pair_idx] = atomic_radii[equiv_bond]
-        radius_is_covalent[pair_idx] = radius_is_covalent[equiv_bond]
-        
-    # reverse bonds
-    for pair_idx in prange(len(atomic_radii)):
-        if reversed_bonds[pair_idx]:
-            atomic_radii[pair_idx] = neigh_dists[pair_idx]-atomic_radii[pair_idx]
-
-    return atomic_radii, radius_is_covalent
+    return atomic_radii, bond_fracs, radius_is_covalent
 

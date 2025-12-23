@@ -556,15 +556,14 @@ class ElfLabeler:
                     site_indices,
                     neigh_indices,
                     neigh_coords,
-                    pair_dists,
                     radii,
                     bond_types,
                     plane_points,
-                    plane_vectors,
+                    plane_vectors
                     ) = self._get_nn_atom_elf_radii(use_electrides=True)
                 self._electride_nn_elf_radii = radii
                 self._electride_nn_elf_radii = bond_types
-                self._electride_nearest_neighbor_data = (site_indices, neigh_indices, neigh_coords, pair_dists)
+                self._electride_nearest_neighbor_data = (site_indices, neigh_indices, neigh_coords)
                 self._electride_nn_planes = (plane_points, plane_vectors)
                 
         return self._electride_nn_elf_radii
@@ -1340,6 +1339,7 @@ class ElfLabeler:
             covalent_symbols=covalent_symbols,
         )
         return radii_tools.get_voronoi_radii()
+        # return radii_tools.get_crystalnn_radii()
         
         
     @staticmethod
@@ -1370,7 +1370,7 @@ class ElfLabeler:
         # example CdPt3 has 2 Pt atoms with a Cd an dPt atom tied for the
         # nearest.
 
-        site_indices, neigh_indices, neigh_coords, neigh_dists = nn_data
+        site_indices, neigh_indices, neigh_coords = nn_data
 
         # sort radii
         sorted_indices = np.argsort(all_radii)
@@ -1938,15 +1938,14 @@ class ElfLabeler:
             site_indices,
             neigh_indices,
             neigh_coords,
-            pair_dists,
             radii,
             bond_types,
             plane_points,
-            plane_vectors,
+            plane_vectors
             ) = self._get_nn_atom_elf_radii(use_electrides=False)
         self._atom_nn_elf_radii = radii
         self._atom_nn_elf_radii_types = bond_types
-        self._nearest_neighbor_data = (site_indices, neigh_indices, neigh_coords, pair_dists)
+        self._nearest_neighbor_data = (site_indices, neigh_indices, neigh_coords)
         self._atom_nn_planes = (plane_points, plane_vectors)
         
         # Next we mark our metallic/bare electrons. These currently have a set
@@ -1992,6 +1991,7 @@ class ElfLabeler:
 
         # calculate feature surface distances
         self._calculate_feature_surface_dists()
+        logging.info("Finished labeling ELF")
 
     def _initialize_bifurcation_graph(self):
         """

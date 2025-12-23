@@ -13,8 +13,7 @@ def get_in_partition_assignments(
         labels: NDArray, # previous assignments
         site_indices: NDArray,
         site_transforms: NDArray,
-        plane_points: NDArray,
-        plane_vectors: NDArray,
+        plane_equations: NDArray,
         vacuum_mask: NDArray,
         min_plane_dist: float,
         num_assignments: int, #total possible regions with assigned charge/volume
@@ -54,13 +53,11 @@ def get_in_partition_assignments(
                 for plane_idx, (
                         site_idx, 
                         site_transform, 
-                        plane_point, 
-                        plane_vector
+                        plane_equation,
                         ) in enumerate(zip(
                             site_indices, 
                             site_transforms, 
-                            plane_points, 
-                            plane_vectors)):
+                            plane_equations)):
                     # if our site index is new, check if we successfully assigned
                     # to our previous atom
                     if site_idx != current_site or current_transform != site_transform:
@@ -86,14 +83,12 @@ def get_in_partition_assignments(
                     # calculate the distance to the plane
                     dist = get_plane_dist(
                         point=(ci, cj, ck),
-                        plane_vector=plane_vector,
-                        plane_point=plane_point,
+                        plane_equation=plane_equation,
                         )
-                    dist = round(dist, 12)
-                    
+
                     # If we are under the plane and not close enough to intersect
-                    # it, we can continue. "Under" corresponds to a positive value
-                    if dist < min_plane_dist:
+                    # it, we can continue. "Under" corresponds to a negative value
+                    if dist > -min_plane_dist:
                         atom_assigned = False
 
                 if atom_assigned:
@@ -285,8 +280,7 @@ def get_badelf_assignments(
         labels: NDArray, # previous assignments
         site_indices: NDArray,
         site_transforms: NDArray,
-        plane_points: NDArray,
-        plane_vectors: NDArray,
+        plane_equations: NDArray,
         vacuum_mask: NDArray,
         min_plane_dist: float,
         num_assignments: int, #total possible regions with assigned charge/volume
@@ -303,8 +297,7 @@ def get_badelf_assignments(
         labels=labels,
         site_indices=site_indices,
         site_transforms=site_transforms,
-        plane_points=plane_points,
-        plane_vectors=plane_vectors,
+        plane_equations=plane_equations,
         vacuum_mask=vacuum_mask,
         min_plane_dist=min_plane_dist,
         num_assignments=num_assignments, #total possible regions with assigned charge/volume
