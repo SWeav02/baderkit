@@ -27,6 +27,9 @@ class Structure(PymatgenStructure):
         symmetry_kwargs: dict = {},
         **kwargs,
     ):
+        # clean frac coords
+        for coord in frac_coords:
+            coord %= 1.0
         super().__init__(lattice, species, frac_coords, **kwargs)
         # add labels to sites. This is to add backwards compatability to the
         # relabel_sites method that doesn't exist in earlier versions of pymatgen

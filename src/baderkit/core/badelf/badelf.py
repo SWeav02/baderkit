@@ -498,7 +498,7 @@ class Badelf:
             
             # get the indices at which new transform dists occur
             transform_breaks = np.where(transform_dists[:-1] != transform_dists[1:])[0]
-            
+
             # Now calculate labels, charges, and volumes assigned to each feature        
             labels, charges, volumes = get_badelf_assignments(
                 data = self.charge_grid.total,

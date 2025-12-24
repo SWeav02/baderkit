@@ -1303,6 +1303,7 @@ class Grid(VolumetricData):
         grid_file: str | Path,
         data_type: str | DataType = None,
         total_only: bool = True,
+        poscar_file: str | Path = None,
         **kwargs,
     ) -> Self:
         """
@@ -1322,6 +1323,9 @@ class Grid(VolumetricData):
             increases speed and reduced memory usage for methods that do not
             use the spin data.
             Defaults to True.
+        poscar_file: str | Path
+            The POSCAR file to override the grids structure with. This is useful
+            if the POSCAR contains more precise atom positions.
 
         Returns
         -------
@@ -1338,6 +1342,8 @@ class Grid(VolumetricData):
         structure, data, data_aug, sig_figs = read_vasp(
             grid_file, total_only=total_only
         )
+        if poscar_file is not None:
+            structure = Structure.from_file(poscar_file)
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
         return cls(

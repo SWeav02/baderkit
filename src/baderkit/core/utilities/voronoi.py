@@ -279,7 +279,7 @@ def find_site_in_tol(
     for j, chunked_coord in enumerate(chunked_coords):
         
         d = chunked - chunked_coord
-        if np.sum(d) == 0:
+        if np.sum(np.abs(d)) == 0:
             index = j
             break
 
@@ -326,6 +326,7 @@ def get_canonical_bond(
     # create a placeholder for the best canonical bond
     best_rep = np.full(7, np.iinfo(np.int64).max, dtype=np.int64)
     
+    # initially use the current site/neighbor pair
     if equivalent_atoms[site_idx] <= equivalent_atoms[neigh_idx]:
         best_rep[0] = 0 # bond is not inverted
         best_rep[1] = equivalent_atoms[site_idx]
@@ -334,7 +335,7 @@ def get_canonical_bond(
         best_rep[0] = 1 # bond is inverted
         best_rep[2] = equivalent_atoms[site_idx]
         best_rep[1] = equivalent_atoms[neigh_idx]
-    
+    best_rep[3:6] = get_canonical_displacement(neigh_coords-site_coords, tol)
     # get quantized pair distance to retain information on bond length
     best_rep[6] = round(pair_dist/tol)
 
@@ -404,17 +405,21 @@ def get_canonical_bonds(
             trans_site_coords = matrix @ site_coords + vector
             # wrap into cell
             trans_site_coords %= 1
+
             # get index after operation
-            new_idx = find_site_in_tol(chunked_coords, trans_site_coords, tol)
+            new_idx = find_site_in_tol(
+                chunked_coords, 
+                trans_site_coords, 
+                tol,
+                )
 
             # if this is the lowest equivalent atom, we will include this operation
             if new_idx == equiv_idx:
                 symm_op_mask[unique_idx, op_idx] = True
 
-    
     # create an array to store canonical bonds
     canonical_bonds = np.empty((len(site_indices), 7), dtype=np.int64)
-    
+
     # each row is in order of:
         # 1. whether or not the canonical rep is the reverse of the original bond
         # 2. The lower site index in the bond
@@ -464,7 +469,7 @@ def generate_symmetric_bonds(
     all_bonds = np.empty((n_transforms*len(site_indices), 13), dtype=np.float64)
     
     chunked_coords = np.round(all_frac_coords/tol).astype(np.int64)
-    
+
     for pair_idx in prange(len(site_indices)):
         site_idx = site_indices[pair_idx]
         neigh_idx = neigh_indices[pair_idx]
@@ -481,27 +486,43 @@ def generate_symmetric_bonds(
             trans_neigh_coord = matrix @ neigh_coord + vector
             
             # get image of new site
-            site_image = np.floor(trans_site_coord + tol).astype(np.int64)
-            # move site and neighbor
-            trans_site_coord = trans_site_coord - site_image
+            site_image = np.floor(trans_site_coord).astype(np.int64)
+            # move site and get index
+            test_trans_site_coord = trans_site_coord - site_image
+            site_idx = find_site_in_tol(
+                chunked_coords=chunked_coords,
+                site_coords=test_trans_site_coord,
+                tol=tol,
+                )
+            # if that didn't work, try again with tolerance before wrap
+            if site_idx == -1:
+                site_image = np.floor(trans_site_coord+tol).astype(np.int64)
+                test_trans_site_coord = trans_site_coord - site_image
+                site_idx = find_site_in_tol(
+                    chunked_coords=chunked_coords,
+                    site_coords=test_trans_site_coord,
+                    tol=tol,
+                    )
+            # do the same for the neighbor after shifting it           
             trans_neigh_coord = trans_neigh_coord - site_image
             
             # get neigh image
-            neigh_image = np.floor(trans_neigh_coord + tol).astype(np.int64)
+            neigh_image = np.floor(trans_neigh_coord).astype(np.int64)
             # wrap neigh
-            trans_neigh_coord = trans_neigh_coord - neigh_image
-            
-            # get the indices of each site/neigh
-            site_idx = find_site_in_tol(
-                chunked_coords=chunked_coords,
-                site_coords=trans_site_coord,
-                tol=tol,
-                )
+            test_trans_neigh_coord = trans_neigh_coord - neigh_image
             neigh_idx = find_site_in_tol(
                 chunked_coords=chunked_coords,
-                site_coords=trans_neigh_coord,
+                site_coords=test_trans_neigh_coord,
                 tol=tol,
                 )
+            if neigh_idx == -1:
+                neigh_image = np.floor(trans_neigh_coord+tol).astype(np.int64)
+                test_trans_neigh_coord = trans_neigh_coord - neigh_image
+                neigh_idx = find_site_in_tol(
+                    chunked_coords=chunked_coords,
+                    site_coords=test_trans_neigh_coord,
+                    tol=tol,
+                    )
             
             # get the exact site/neigh coords
             trans_site_coord = all_frac_coords[site_idx]

@@ -216,7 +216,7 @@ class ElfRadiiTools:
         neigh_images = np.concatenate(neigh_images)
         neigh_coords = np.concatenate(neigh_coords)
         pair_dists = np.concatenate(pair_dists)
-
+        
         canonical_bonds = get_canonical_bonds(
             site_indices = site_indices,
             neigh_indices = neigh_indices,
@@ -355,7 +355,12 @@ class ElfRadiiTools:
         plane_points = all_bonds[:, 4:7]
         plane_vectors = all_bonds[:, 7:10]
         neigh_coords = all_bonds[:, 10:]
-
+        
+        if -1 in site_indices:
+            raise Exception(
+                "Bond generation failed. This is a bug! Please report to our github: https://github.com/SWeav02/baderkit/issues"
+                )
+        
         return (
             site_indices,
             neigh_indices,
