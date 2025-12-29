@@ -1,16 +1,20 @@
 # -*- coding: utf-8 -*-
 
+import json
 import logging
+import os
 import warnings
 from pathlib import Path
 from typing import Literal, TypeVar
-import json
 
 import numpy as np
 from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
 
 from baderkit.core import Grid, Structure
+from baderkit.core.labelers.bifurcation_graph import (
+    FeatureType,
+)
 
 from .elf_labeler import ElfLabeler
 
@@ -18,7 +22,6 @@ Self = TypeVar("Self", bound="ElfLabeler")
 
 
 class SpinElfLabeler:
-    
     """
     Labels chemical features present in the ELF and collects various properties
     e.g charge, volume, elf value, etc. The spin-up and spin-down systems are
@@ -47,7 +50,7 @@ class SpinElfLabeler:
         reference_grid: Grid,
         **kwargs,
     ):
-        
+
         # First make sure the grids are actually spin polarized
         assert (
             reference_grid.is_spin_polarized and charge_grid.is_spin_polarized
@@ -317,7 +320,7 @@ class SpinElfLabeler:
             self._electride_structure = labeled_structure
 
         return self._electride_structure
-    
+
     @property
     def nelectrides(self) -> int:
         """
@@ -329,7 +332,7 @@ class SpinElfLabeler:
 
         """
         return len(self.electride_structure) - len(self.structure)
-    
+
     @property
     def electride_formula(self):
         """
@@ -342,7 +345,7 @@ class SpinElfLabeler:
 
         """
         return f"{self.structure.formula} e{round(self.electrides_per_formula)}"
-    
+
     @property
     def electrides_per_formula(self):
         """
@@ -354,10 +357,13 @@ class SpinElfLabeler:
 
         """
         if self._electrides_per_formula is None:
-            electrides_per_unit = self.elf_labeler_up.electrides_per_formula + self.elf_labeler_down.electrides_per_formula
+            electrides_per_unit = (
+                self.elf_labeler_up.electrides_per_formula
+                + self.elf_labeler_down.electrides_per_formula
+            )
             self._electrides_per_formula = electrides_per_unit
         return self._electrides_per_formula
-    
+
     @property
     def electrides_per_reduced_formula(self):
         """
@@ -373,7 +379,9 @@ class SpinElfLabeler:
                 _,
                 formula_reduction_factor,
             ) = self.structure.composition.get_reduced_composition_and_factor()
-            self._electrides_per_reduced_formula = self.electrides_per_formula / formula_reduction_factor
+            self._electrides_per_reduced_formula = (
+                self.electrides_per_formula / formula_reduction_factor
+            )
         return self._electrides_per_reduced_formula
 
     def get_charges_and_volumes(
@@ -382,9 +390,9 @@ class SpinElfLabeler:
         **kwargs,
     ):
         """
-        Calculates charges and volumes by splitting feature charges/volumes to 
+        Calculates charges and volumes by splitting feature charges/volumes to
         their neighboring atoms.
-        
+
         NOTE: Volumes may not have a physical meaning when differences are found
         between spin up/down systems. They are calculated as the average between
         the systems.
@@ -435,16 +443,13 @@ class SpinElfLabeler:
         return np.array(charges), np.array(volumes) / 2
 
     def get_oxidation_and_volumes_from_potcar(
-        self, 
-        potcar_path: Path = "POTCAR", 
-        use_electrides: bool = True, 
-        **kwargs
+        self, potcar_path: Path = "POTCAR", use_electrides: bool = True, **kwargs
     ):
         """
-        Calculates oxidation states, charges, and volumes by splitting feature 
+        Calculates oxidation states, charges, and volumes by splitting feature
         charges/volumes to their neighboring atoms and comparing to the valence
         electrons in the POTCAR.
-        
+
         NOTE: Volumes may not have a physical meaning when differences are found
         between spin up/down systems. They are calculated as the average between
         the systems.
@@ -465,7 +470,7 @@ class SpinElfLabeler:
             The oxidation states, charges, and volumes calculated for each atom.
 
         """
-        
+
         # get the charges/volumes
         charges, volumes = self.get_charges_and_volumes(
             use_electrides=use_electrides, **kwargs
@@ -474,9 +479,11 @@ class SpinElfLabeler:
         potcar_path = Path(potcar_path)
         # check if potcar exists. If not, return None and a warning
         if not potcar_path.exists():
-            logging.warning("No POTCAR found at provided path. No oxidation states will be calculated.")
+            logging.warning(
+                "No POTCAR found at provided path. No oxidation states will be calculated."
+            )
             return None, charges, volumes
-        
+
         # load
         with warnings.catch_warnings(record=True):
             potcars = Potcar.from_file(potcar_path)
@@ -500,7 +507,16 @@ class SpinElfLabeler:
 
         return np.array(oxi_state_data), charges, volumes
 
-    def write_bifurcation_plots(self, filename: str | Path):
+    def write_bifurcation_plot(self, filename: str | Path):
+        """
+        Writes an html plot representing the bifurcation graph.
+
+        Parameters
+        ----------
+        filename : str | Path
+            The file to write the bifurcation plot to.
+
+        """
         filename = Path(filename)
 
         if filename.suffix:
@@ -561,13 +577,15 @@ class SpinElfLabeler:
     # function for cube files?
 
     def to_dict(
-            self, 
-            potcar_path: Path | str = "POTCAR", 
-            use_json: bool = True,
-            splitting_method: Literal["equal", "pauling", "dist", "weighted_dist", "nearest"] = "weighted_dist",
-            ) -> dict:
+        self,
+        potcar_path: Path | str = "POTCAR",
+        use_json: bool = True,
+        splitting_method: Literal[
+            "equal", "pauling", "dist", "weighted_dist", "nearest"
+        ] = "weighted_dist",
+    ) -> dict:
         """
-        
+
         Gets a dictionary summary of the ElfLabeler analysis.
 
         Parameters
@@ -591,46 +609,50 @@ class SpinElfLabeler:
         results["method_kwargs"] = {
             "splitting_method": splitting_method,
         }
-        
-        oxidation_states, charges, volumes = self.get_oxidation_and_volumes_from_potcar(
-            potcar_path=potcar_path,
-            use_electrides=False
-            )
-        oxidation_states_e, charges_e, volumes_e = self.get_oxidation_and_volumes_from_potcar(
-            potcar_path=potcar_path,
-            use_electrides=True
-            )
 
-        results["oxidation_states"] = oxidation_states.tolist()
-        results["oxidation_states_e"] = oxidation_states_e.tolist()
+        oxidation_states, charges, volumes = self.get_oxidation_and_volumes_from_potcar(
+            potcar_path=potcar_path, use_electrides=False
+        )
+        oxidation_states_e, charges_e, volumes_e = (
+            self.get_oxidation_and_volumes_from_potcar(
+                potcar_path=potcar_path, use_electrides=True
+            )
+        )
+
+        if oxidation_states is not None:
+            oxidation_states = oxidation_states.tolist()
+            oxidation_states_e = oxidation_states_e.tolist()
+
+        results["oxidation_states"] = oxidation_states
+        results["oxidation_states_e"] = oxidation_states_e
         results["charges"] = charges.tolist()
         results["charges_e"] = charges_e.tolist()
         results["volumes"] = volumes.tolist()
         results["volumes_e"] = volumes_e.tolist()
-        
+
         # add objects that can convert to json
         for result in [
             "structure",
             "labeled_structure",
             "electride_structure",
-                ]:
+        ]:
             result_obj = getattr(self, result, None)
             if result_obj is not None and use_json:
                 result_obj = result_obj.to_json()
             results[result] = result_obj
-        
+
         # add objects that are arrays
         for result in [
             "atom_elf_radii",
             "atom_elf_radii_types",
             "electride_elf_radii",
             "electride_elf_radii_types",
-                ]:
+        ]:
             result_obj = getattr(self, result, None)
             if use_json and result_obj is not None:
                 result_obj = result_obj.tolist()
             results[result] = result_obj
-        
+
         # add other objects that are already jsonable
         for result in [
             "spin_system",
@@ -639,12 +661,11 @@ class SpinElfLabeler:
             "electride_formula",
             "electrides_per_formula",
             "electrides_per_reduced_formula",
-                ]:
+        ]:
             results[result] = getattr(self, result, None)
-        
+
         return results
 
-                
     def to_json(self, **kwargs) -> str:
         """
         Creates a JSON string representation of the results, typically for writing
@@ -662,8 +683,8 @@ class SpinElfLabeler:
 
         """
         return json.dumps(self.to_dict(use_json=True, **kwargs))
-    
-    def write_results_summary(self, filepath: Path | str = "elf_labeler_results_summary.json", **kwargs) -> None:
+
+    def write_json(self, filepath: Path | str = "elf_labeler.json", **kwargs) -> None:
         """
         Writes results of the analysis to file in a JSON format.
 
@@ -679,9 +700,237 @@ class SpinElfLabeler:
         # write spin up and spin down summaries
         filepath_up = filepath.parent / f"{filepath.stem}_up{filepath.suffix}"
         filepath_down = filepath.parent / f"{filepath.stem}_down{filepath.suffix}"
-        self.elf_labeler_up.write_results_summary(filepath=filepath_up, **kwargs)
-        self.elf_labeler_down.write_results_summary(filepath=filepath_down, **kwargs)
-        
+        self.elf_labeler_up.write_json(filepath=filepath_up, **kwargs)
+        self.elf_labeler_down.write_json(filepath=filepath_down, **kwargs)
+
         # write total spin summary
         with open(filepath, "w") as json_file:
             json.dump(self.to_dict(use_json=True, **kwargs), json_file, indent=4)
+
+    def write_all_features(
+        self,
+        directory: str | Path = None,
+        write_reference: bool = True,
+        prefix_override: str = None,
+        **kwargs,
+    ):
+        """
+        Writes the bader basins associated with all features
+
+        Parameters
+        ----------
+        directory : str | Path, optional
+            The directory to write to. The default is None.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge
+            density. The default is True.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid. The default is None.
+        **kwargs : dict
+            Keyword arguments to pass to the ElfLabeler write method.
+
+        """
+
+        if directory is None:
+            directory = Path(".")
+
+        # get prefix
+        if prefix_override is None:
+            if write_reference:
+                prefix_override = self.original_reference_grid.data_type.prefix
+            else:
+                prefix_override = self.original_charge_grid.data_type.prefix
+
+        # temporarily update prefix override to avoid overwriting
+        if self.equal_spin:
+            temp_prefix = f"{prefix_override}_temp"
+        else:
+            temp_prefix = prefix_override
+
+        for feat_idx in range(len(self.elf_labeler_up.feature_charges)):
+            self.elf_labeler_up.write_feature_basins(
+                feature_indices=[feat_idx],
+                directory=directory,
+                write_reference=write_reference,
+                prefix_override=temp_prefix,
+                **kwargs,
+            )
+            if not self.equal_spin:
+                # rename with "up" so we don't overwrite
+                os.rename(
+                    directory / f"{temp_prefix}_f{feat_idx}",
+                    directory / f"{prefix_override}_f{feat_idx}_up",
+                )
+        if not self.equal_spin:
+            return
+        # Write the spin down file and change the name
+        for feat_idx in range(len(self.elf_labeler_down.feature_charges)):
+            self.elf_labeler_down.write_feature_basins(
+                feature_indices=[feat_idx],
+                directory=directory,
+                write_reference=write_reference,
+                prefix_override=temp_prefix,
+                **kwargs,
+            )
+            if not self.equal_spin:
+                # rename with "up" so we don't overwrite
+                os.rename(
+                    directory / f"{temp_prefix}_f{feat_idx}",
+                    directory / f"{prefix_override}_f{feat_idx}_down",
+                )
+
+    def write_features_by_type(
+        self,
+        included_types: list[FeatureType],
+        directory: str | Path = None,
+        prefix_override=None,
+        write_reference: bool = True,
+        **kwargs,
+    ):
+        """
+
+        Writes the reference ELF or charge-density for the the union of the
+        given atoms to a single file.
+
+        Parameters
+        ----------
+        included_types : list[FeatureType]
+            The types of features to include, e.g. metallic, lone-pair, etc.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is True.
+        **kwargs :
+            See :meth:`write_feature_basins`.
+
+        """
+        if directory is None:
+            directory = Path(".")
+
+        # get prefix
+        if prefix_override is None:
+            if write_reference:
+                prefix_override = self.original_reference_grid.data_type.prefix
+            else:
+                prefix_override = self.original_charge_grid.data_type.prefix
+
+        # temporarily update prefix override to avoid overwriting
+        if self.equal_spin:
+            temp_prefix = f"{prefix_override}_temp"
+        else:
+            temp_prefix = prefix_override
+
+        for feat_type in included_types:
+            feat_type = FeatureType(feat_type)
+            self.elf_labeler_up.write_features_by_type(
+                included_types=[feat_type],
+                directory=directory,
+                write_reference=write_reference,
+                prefix_override=temp_prefix,
+                **kwargs,
+            )
+            if not self.equal_spin:
+                # rename with "up" so we don't overwrite
+                os.rename(
+                    directory / f"{temp_prefix}_{feat_type.value}_fsum",
+                    directory / f"{prefix_override}_{feat_type.value}_fsum_up",
+                )
+                # Write the spin down file and change the name
+            # temporarily update prefix override to avoid overwriting
+            self.elf_labeler_down.write_features_by_type(
+                included_types=[feat_type],
+                directory=directory,
+                write_reference=write_reference,
+                prefix_override=temp_prefix,
+                **kwargs,
+            )
+            if not self.equal_spin:
+                # rename with "up" so we don't overwrite
+                os.rename(
+                    directory / f"{temp_prefix}_{feat_type.value}_fsum",
+                    directory / f"{prefix_override}_{feat_type.value}_fsum_down",
+                )
+
+    def write_features_by_type_sum(
+        self,
+        included_types: list[FeatureType],
+        directory: str | Path = None,
+        prefix_override=None,
+        write_reference: bool = True,
+        **kwargs,
+    ):
+        """
+
+        Writes the reference ELF or charge-density for the the union of the
+        given atoms to a single file.
+
+        Parameters
+        ----------
+        included_types : list[FeatureType]
+            The types of features to include, e.g. metallic, lone-pair, etc.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is True.
+        **kwargs :
+            See :meth:`write_feature_basins`.
+
+        """
+        if directory is None:
+            directory = Path(".")
+
+        # get prefix
+        if prefix_override is None:
+            if write_reference:
+                prefix_override = self.original_reference_grid.data_type.prefix
+            else:
+                prefix_override = self.original_charge_grid.data_type.prefix
+
+        # temporarily update prefix override to avoid overwriting
+        if self.equal_spin:
+            temp_prefix = f"{prefix_override}_temp"
+        else:
+            temp_prefix = prefix_override
+
+        self.elf_labeler_up.write_features_by_type_sum(
+            included_types=included_types,
+            directory=directory,
+            write_reference=write_reference,
+            prefix_override=temp_prefix,
+            **kwargs,
+        )
+        if not self.equal_spin:
+            # rename with "up" so we don't overwrite
+            os.rename(
+                directory / f"{temp_prefix}_fsum",
+                directory / f"{prefix_override}_fsum_up",
+            )
+            # Write the spin down file and change the name
+        # temporarily update prefix override to avoid overwriting
+        self.elf_labeler_down.write_features_by_type_sum(
+            included_types=included_types,
+            directory=directory,
+            write_reference=write_reference,
+            prefix_override=temp_prefix,
+            **kwargs,
+        )
+        if not self.equal_spin:
+            # rename with "up" so we don't overwrite
+            os.rename(
+                directory / f"{temp_prefix}_fsum",
+                directory / f"{prefix_override}_fsum_down",
+            )

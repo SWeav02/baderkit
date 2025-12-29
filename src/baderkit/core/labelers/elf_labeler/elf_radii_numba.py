@@ -8,7 +8,11 @@ from numpy.typing import NDArray
 
 from baderkit.core.utilities.interpolation import interp_nearest, interp_spline
 
-@njit(parallel=True, cache=True, )
+
+@njit(
+    parallel=True,
+    cache=True,
+)
 def get_elf_radius_frac(
     data,
     feature_labels,
@@ -54,7 +58,7 @@ def get_elf_radius_frac(
 
     """
     num_atoms = len(all_frac_coords)
-    
+
     # get the number of points to interpolate
     num_points = int(round(bond_dist * line_res))
     # I want this to always be odd because it is common for the exact midpoint
@@ -83,7 +87,7 @@ def get_elf_radius_frac(
         vec = all_frac_coords[label] - point
         if np.max(np.abs(vec)) > 0.5:
             label += num_atoms
-        
+
         labels[point_idx] = label
     # get the unique labels
     unique_labels = np.unique(labels)
@@ -93,7 +97,7 @@ def get_elf_radius_frac(
     # must always be halfway between the two and the bond must be covalent
     if len(unique_labels) == 1:
         return 0.5, True, False
-    
+
     # SITUATION 2:
     # The bond passes through labels that are not the current site or neighbor.
     # This means we either pass through a covalent/metallic bond or we pass through
@@ -113,7 +117,7 @@ def get_elf_radius_frac(
             break
     if other_atoms:
         return 0.5, True, False
-        
+
     if covalent:
         use_maximum = True
         # create placeholders for best maxima
@@ -154,7 +158,7 @@ def get_elf_radius_frac(
             # skip points with no label. Doesn't typically happen but might if
             # the ELF is very low around an atom center
             if label == -1:
-                continue 
+                continue
             if label != atom_idx:
                 midpoint = i
                 break
@@ -172,7 +176,7 @@ def get_elf_radius_frac(
                 if dist < minima_dist:
                     minima_dist = dist
                     radius_index = i
-                    
+
     # Situation 4: If we've still failed to find a radius, we are likely using
     # too few valence electrons and have no core/shell around our atom. In this
     # case we default to a radius halfway between the atoms which in many cases is
@@ -232,6 +236,7 @@ def get_elf_radius_frac(
     bond_frac = radius_index / (num_points - 1)
     return bond_frac, covalent, False
 
+
 @njit(cache=True)
 def get_elf_radius(
     data,
@@ -285,8 +290,8 @@ def get_elf_radius(
         covalent_labels,
         bond_dist,
         line_res,
-        )
-    return bond_dist*bond_frac, bond_frac, covalent, failed
+    )
+    return bond_dist * bond_frac, bond_frac, covalent, failed
 
 
 @njit(cache=True)
@@ -307,7 +312,7 @@ def get_elf_radii(
     atomic_radii = np.empty(len(atom_frac_coords), dtype=np.float64)
     bond_fracs = np.empty(len(atom_frac_coords), dtype=np.float64)
     radius_is_covalent = np.empty(len(atom_frac_coords), dtype=np.bool_)
-    
+
     some_failed = False
     # get the radius for each atom. NOTE: We don't do this in parallel because
     # we want the interpolation to be done in parallel instead
@@ -334,16 +339,17 @@ def get_elf_radii(
         )
         if failed:
             some_failed = True
-            
+
         atomic_radii[atom_idx] = radius
         bond_fracs[atom_idx] = frac
         radius_is_covalent[atom_idx] = is_covalent
 
     if some_failed:
-        print("""At least one atoms radius could not be calculated. This is usually
+        print(
+            """At least one atoms radius could not be calculated. This is usually
               due to the atom having no core electrons, likely caused by the use
-              of too small of a pseudopotential. The radius will default to 1/2 the bond length""")
-
+              of too small of a pseudopotential. The radius will default to 1/2 the bond length"""
+        )
 
     # update values for equivalent atoms
     for atom_idx in prange(len(atomic_radii)):
@@ -373,7 +379,7 @@ def get_all_atom_elf_radii(
     atomic_radii = np.empty(len(site_indices), dtype=np.float64)
     bond_fracs = np.empty(len(site_indices), dtype=np.float64)
     radius_is_covalent = np.empty(len(site_indices), dtype=np.bool_)
-    
+
     some_failed = False
     # get the radius for each bond
     for pair_idx in prange(len(site_indices)):
@@ -383,12 +389,14 @@ def get_all_atom_elf_radii(
         # if these are equivalent atoms we can skip the process entirely and
         # return a bond exactly halfway
         if equivalent_atoms[site_idx] == equivalent_atoms[neigh_idx]:
-            atomic_radii[pair_idx] = bond_dist*0.5
+            atomic_radii[pair_idx] = bond_dist * 0.5
             bond_fracs[pair_idx] = 0.5
             radius_is_covalent[pair_idx] = True
             continue
-        
-        site_frac = site_frac_coords[site_idx] # taken from structure to avoid larger array
+
+        site_frac = site_frac_coords[
+            site_idx
+        ]  # taken from structure to avoid larger array
         neigh_frac = neigh_frac_coords[pair_idx]
         radius, frac, is_covalent, failed = get_elf_radius(
             data,
@@ -404,15 +412,16 @@ def get_all_atom_elf_radii(
             some_failed = True
         if reversed_bonds[pair_idx]:
             radius = bond_dist - radius
-            frac = 1-frac
+            frac = 1 - frac
         atomic_radii[pair_idx] = radius
         bond_fracs[pair_idx] = frac
         radius_is_covalent[pair_idx] = is_covalent
 
     if some_failed:
-        print("""At least one atoms radius could not be calculated. This is usually
+        print(
+            """At least one atoms radius could not be calculated. This is usually
               due to the atom having no core electrons, likely caused by the use
-              of too small of a pseudopotential. The radius will default to 1/2 the bond length""")
+              of too small of a pseudopotential. The radius will default to 1/2 the bond length"""
+        )
 
     return atomic_radii, bond_fracs, radius_is_covalent
-

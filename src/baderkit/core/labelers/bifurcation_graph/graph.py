@@ -29,9 +29,9 @@ class BifurcationGraph:
     """
     A convenience class for storing the nodes of a bifurcation graph and gathering
     data on them.
-    
+
     The nodes themselves contain the information on their connectivity.
-    
+
     Parameters
     ----------
     structure : Structure
@@ -196,7 +196,7 @@ class BifurcationGraph:
         Returns
         -------
         structure : Structure
-            The PyMatGen Structure of the material with dummy atoms placed at 
+            The PyMatGen Structure of the material with dummy atoms placed at
             highly localized off atom electrons that may behave like electride-atoms.
             (e.g. electrides)
 
@@ -213,7 +213,7 @@ class BifurcationGraph:
         Returns
         -------
         structure : Structure
-            The PyMatGen Structure of the material with H- dummy atoms placed at 
+            The PyMatGen Structure of the material with H- dummy atoms placed at
             highly localized off atom electrons that may behave like electride-atoms.
             (e.g. electrides)
 
@@ -231,7 +231,7 @@ class BifurcationGraph:
         Returns
         -------
         structure : Structure
-            The PyMatGen Structure of the material with dummy atoms placed at 
+            The PyMatGen Structure of the material with dummy atoms placed at
             the maximum of each labeled feature.
 
         """

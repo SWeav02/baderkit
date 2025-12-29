@@ -8,11 +8,11 @@ voxels that lie outside the plane is rather difficult.
 
 # @njit
 # def volume_fraction(
-#         d, 
-#         normal, 
+#         d,
+#         normal,
 #         dx,
 #         dy,
-#         dz, 
+#         dz,
 #         voxel_volume,
 #         ):
 #     """
@@ -60,10 +60,10 @@ voxels that lie outside the plane is rather difficult.
 
 #     return vol / voxel_volume
 
-    
+
 # @njit
 # def precompute_piecewise_volume_fraction(
-#         normal: NDArray, 
+#         normal: NDArray,
 #         grid_shape: NDArray,
 #         ):
 #     """
@@ -126,8 +126,8 @@ voxels that lie outside the plane is rather difficult.
 #         # calculate the volume fraction at each d
 #         for didx, d in enumerate(ds):
 #             fs[didx] = volume_fraction(
-#                 d=d, 
-#                 normal=normal, 
+#                 d=d,
+#                 normal=normal,
 #                 dx=x_range,
 #                 dy=y_range,
 #                 dz=z_range,
@@ -166,7 +166,7 @@ voxels that lie outside the plane is rather difficult.
 #                 )
 #             unique_dbreaks.append(d_breaks)
 #             unique_polynomials.append(polynomials)
-            
+
 #         # get all dbreaks/polynomials for non-unique planes
 #         all_d_breaks = [unique_dbreaks[i] for i in inverse]
 #         all_polynomials = [unique_polynomials[i] for i in inverse]
@@ -177,7 +177,7 @@ voxels that lie outside the plane is rather difficult.
 # @njit
 # def fast_volume_fraction(d, breaks, coeffs):
 #     """
-#     Calculates the volume fraction on each side of a plane based on the distance 
+#     Calculates the volume fraction on each side of a plane based on the distance
 #     to the plane and precomputed break points and coefficients. Units should be
 #     in fractional coordinates
 
@@ -219,7 +219,7 @@ voxels that lie outside the plane is rather difficult.
 #     # Edge assignments
 #     ###########################################################################
 #     nx, ny, nz = data.shape
-    
+
 #     labeled_idx = np.iinfo(unassigned_mask.dtype).max
 #     edge_idx = labeled_idx - 1
 #     outside_idx = labeled_idx - 2
@@ -230,7 +230,7 @@ voxels that lie outside the plane is rather difficult.
 #     # that are not edges
 #     partial_voxels = np.argwhere(unassigned_mask != labeled_idx)
 #     n_partial = len(partial_voxels)
-    
+
 #     # create arrays to store the assignments and fraction of the voxels going to them
 #     partial_assignments = np.full((n_partial, len(neighbor_transforms)), labeled_idx, dtype=np.uint32)
 #     partial_fractions = np.full((n_partial, len(neighbor_transforms)), 0, dtype=np.float64)
@@ -240,7 +240,7 @@ voxels that lie outside the plane is rather difficult.
 #     nearest_atom = np.empty(n_partial, dtype=np.uint32)
 #     nearest_plane = np.empty(n_partial, dtype=np.uint32)
 #     plane_dists = np.empty(n_partial, dtype=np.float32)
-    
+
 #     # Now we iterate over each partially assigned point and calculate how much
 #     # volume goes to each splitting neighbor
 #     for partial_idx in prange(n_partial):
@@ -258,15 +258,15 @@ voxels that lie outside the plane is rather difficult.
 #         fi = i / nx
 #         fj = j / ny
 #         fk = k / nz
-        
+
 #         # get this points site and transform (stored in the labels and unassigend_mask
 #         # arrays) to determine which planes we need to use
 #         label = labels[i,j,k]
 #         transform = unassigned_mask[i,j,k]
-        
+
 #         # mark the the index associated with this point (overwrites transform)
 #         unassigned_mask[i,j,k] = partial_idx
-        
+
 #         # Now we need to collect the planes that intersect this point. First we
 #         # find the atoms neighboring the assigned site, then we check for combinations
 #         # of the found atoms.
@@ -278,18 +278,18 @@ voxels that lie outside the plane is rather difficult.
 #         current_site = -1
 #         current_plane = -1
 #         for (
-#                 site_idx, 
-#                 site_transform, 
+#                 site_idx,
+#                 site_transform,
 #                 neigh_idx,
-#                 plane_point, 
+#                 plane_point,
 #                 plane_vector,
 #                 breaks,
 #                 coeffs,
 #                 ) in zip(
-#                     site_indices, 
-#                     site_transforms, 
+#                     site_indices,
+#                     site_transforms,
 #                     neigh_indices,
-#                     plane_points, 
+#                     plane_points,
 #                     plane_vectors,
 #                     d_breaks,
 #                     polynomials,
@@ -300,7 +300,7 @@ voxels that lie outside the plane is rather difficult.
 #                 current_plane = 0
 #             else:
 #                 current_plane += 1
-            
+
 #             # skip planes that do not belong to our atom
 #             if site_idx != label or site_transform != transform:
 #                 continue
@@ -314,10 +314,10 @@ voxels that lie outside the plane is rather difficult.
 #             if abs(dist) < lowest_dist:
 #                 lowest_dist = abs(dist)
 #                 closest_plane = current_plane
-            
+
 #             fraction = fast_volume_fraction(
-#                 d=dist, 
-#                 breaks=breaks, 
+#                 d=dist,
+#                 breaks=breaks,
 #                 coeffs=coeffs,
 #                 )
 #             # if the full fraction is contained, this is not an important plane
@@ -328,11 +328,11 @@ voxels that lie outside the plane is rather difficult.
 #             # sits outside the voronoi cells
 #             neigh_found = False
 #             for (
-#                     neigh_idx1, 
+#                     neigh_idx1,
 #                     site_idx1,
 #                     plane_vector1,
 #                     ) in zip(
-#                         site_indices, 
+#                         site_indices,
 #                         neigh_indices,
 #                         plane_vectors
 #                         ):
@@ -349,34 +349,34 @@ voxels that lie outside the plane is rather difficult.
 #             # that neighbor and continue
 #             if not neigh_found:
 #                 continue
-            
+
 #             # otherwise, this neighbor is important
 #             neighboring_atoms.append(neigh_idx)
 #             pairs.append((site_idx, neigh_idx))
 #             fractions.append(fraction)
-        
+
 #         # set closest plane
 #         nearest_atom[partial_idx] = label
 #         nearest_plane[partial_idx] = closest_plane
 #         plane_dists[partial_idx] = lowest_dist
-        
+
 #         # Now we need to check between the important neighbors to see if they share
 #         # a partitioning surface passing through the voxel
 #         for nidx in range(len(neighboring_atoms)-1):
 #             neigh = neighboring_atoms[nidx]
 #             for (
-#                     site_idx, 
-#                     site_transform, 
+#                     site_idx,
+#                     site_transform,
 #                     neigh_idx,
-#                     plane_point, 
+#                     plane_point,
 #                     plane_vector,
 #                     breaks,
 #                     coeffs,
 #                     ) in zip(
-#                         site_indices, 
-#                         site_transforms, 
+#                         site_indices,
+#                         site_transforms,
 #                         neigh_indices,
-#                         plane_points, 
+#                         plane_points,
 #                         plane_vectors,
 #                         d_breaks,
 #                         polynomials,
@@ -395,8 +395,8 @@ voxels that lie outside the plane is rather difficult.
 #                     plane_point=plane_point,
 #                     )
 #                 fraction = fast_volume_fraction(
-#                     d=dist, 
-#                     breaks=breaks, 
+#                     d=dist,
+#                     breaks=breaks,
 #                     coeffs=coeffs,
 #                     )
 #                 # ignore fractions that do not intersect the voxel
@@ -406,12 +406,12 @@ voxels that lie outside the plane is rather difficult.
 #                 fractions.append(fraction)
 #                 # TODO: Do I need to check all planes in case a neighbor has its
 #                 # own neighbor that the dominant site does not have?
-        
+
 #         # If we found no neighbors (e.g. we sit on an edge of a region with no assignment)
 #         # we just assign all charge to the current assignment
 #         partial_assignments[partial_idx][0] = label
 #         partial_fractions[partial_idx][0] = 1.0
-        
+
 #         # Now that we can calculate the portion of the voxel going to each competing
 #         # neighbor. We can do this but starting with the full voxel and subtracting
 #         # off the portions belonging to other sites. The remaining volume belongs
@@ -440,7 +440,7 @@ voxels that lie outside the plane is rather difficult.
 #         # assign largest fraction
 #         partial_assignments[partial_idx][neigh_num] = label
 #         partial_fractions[partial_idx][neigh_num] = remaining_fraction
-    
+
 # def get_badelf_assignments(
 #     data: NDArray,
 #     labels: NDArray, # previous assignments
@@ -463,7 +463,7 @@ voxels that lie outside the plane is rather difficult.
 #     outside_idx = labeled_idx - 2
 #     outside_idx1 = labeled_idx - 3
 #     unassigned_mask = np.full(data.shape, labeled_idx, dtype=np.uint32)
-    
+
 #     labels, charges, volumes, unassigned_mask = get_in_partition_assignments(
 #         data=data,
 #         labels=labels,
@@ -478,7 +478,7 @@ voxels that lie outside the plane is rather difficult.
 #         unassigned_mask=unassigned_mask,
 #         )
 #     breakpoint()
-    
+
 
 #     ###########################################################################
 #     # Outside Partitioning Assignments
@@ -488,7 +488,7 @@ voxels that lie outside the plane is rather difficult.
 #     # from the points closest to the partitioning surfaces, we will calculate the
 #     # portion flowing to adjacent points, and from there calculate the portion
 #     # flowing to each basin.
-    
+
 #     # First we need to calculate the distance of each remaining voxel to the nearest
 #     # partitioning plane. This is actually somewhat complicated, as an unrelated
 #     # plane from across the cell may travel close by. Instead what we do is iterate
@@ -507,10 +507,10 @@ voxels that lie outside the plane is rather difficult.
 #             # skip points that are assigned
 #             if labels[i,j,k] != -1:
 #                 continue
-            
+
 #             # note this point has been checked
 #             unassigned_mask[i,j,k] = outside_idx1
-            
+
 #             # collect possible neighboring sites/planes
 #             possible_sites = []
 #             possible_planes = []
@@ -527,7 +527,7 @@ voxels that lie outside the plane is rather difficult.
 #                 # if we're still here, this is a previous edge point.
 #                 possible_sites.append(nearest_atom[mask_value])
 #                 possible_planes.append(nearest_plane[mask_value])
-            
+
 #             # get the closest site/plane
 #             lowest_dist = 1.0e300
 #             closest_site = -1
@@ -536,18 +536,18 @@ voxels that lie outside the plane is rather difficult.
 #                 current_site = -1
 #                 current_plane = -1
 #                 for (
-#                         site_idx, 
-#                         site_transform, 
+#                         site_idx,
+#                         site_transform,
 #                         neigh_idx,
-#                         plane_point, 
+#                         plane_point,
 #                         plane_vector,
 #                         breaks,
 #                         coeffs,
 #                         ) in zip(
-#                             site_indices, 
-#                             site_transforms, 
+#                             site_indices,
+#                             site_transforms,
 #                             neigh_indices,
-#                             plane_points, 
+#                             plane_points,
 #                             plane_vectors,
 #                             d_breaks,
 #                             polynomials,
@@ -599,7 +599,7 @@ voxels that lie outside the plane is rather difficult.
 #             # skip unassigned points
 #             if labels[ni,nj,nk] == -1:
 #                 continue
-            
+
 #             neigh_part_idx = unassigned_mask[i,j,k]
 #             if neigh_part_idx == labeled_idx:
 #                 # this is not a partially assigned point. We assign the full
@@ -609,7 +609,7 @@ voxels that lie outside the plane is rather difficult.
 #                     partial_sites.append(site)
 #                 site_scratch[site] += 1/neigh_dist
 #                 continue
-            
+
 #             # get partial assignments
 #             for site, frac in zip(partial_assignments[neigh_part_idx], neigh_partial_fracs = partial_fractions[neigh_part_idx]):
 #                 if frac == 0.0:
@@ -631,7 +631,7 @@ voxels that lie outside the plane is rather difficult.
 #         # set assighments
 #         partial_assignments[partial_idx] = partial_sites_array
 #         partial_fractions[partial_idx] = partial_fracs_array / partial_fracs_array.sum()
-        
+
 #     ###########################################################################
 #     # Integrate charges and volumes
 #     ###########################################################################
@@ -642,7 +642,7 @@ voxels that lie outside the plane is rather difficult.
 #         charge = charges[partial_idx]
 #         sites = partial_assignments[partial_idx]
 #         fracs = partial_fractions[partial_idx]
-        
+
 #         best_label = -1
 #         best_frac = 0.0
 #         tied_labels = False
@@ -653,14 +653,14 @@ voxels that lie outside the plane is rather difficult.
 #                 break
 #             charges[label] += charge * frac
 #             volumes[label] += frac
-    
+
 #             if frac > best_frac + tol:  # greater than with a tolerance
 #                 best_label = label
 #                 best_frac = frac
 #                 tied_labels = False
 #             elif frac > best_frac - tol:  # equal to with a tolerance
 #                 tied_labels == True
-    
+
 #         # Now we want to assign our label. If there wasn't a tie in our labels,
 #         # we assign to highest weight
 #         if not tied_labels:
@@ -686,5 +686,5 @@ voxels that lie outside the plane is rather difficult.
 #                     best_label = label
 #             labels[i,j,k] = best_label
 #             approx_charges[best_label] += charge
-    
+
 #     return labels, charges, volumes

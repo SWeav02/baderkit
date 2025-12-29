@@ -2,30 +2,39 @@
 
 import json
 import logging
-import os
 import warnings
 from pathlib import Path
 from typing import Literal
 
 import numpy as np
+import pandas as pd
 from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
 from scipy.ndimage import label
 from tqdm import tqdm
 
-from baderkit.core.utilities.file_parsers import Format
-from baderkit.core import Structure, ElfLabeler, Grid, SpinElfLabeler
-from baderkit.core.labelers.bifurcation_graph.enum_and_styling import FeatureType, FEATURE_DUMMY_ATOMS
-from baderkit.core.bader.methods.shared_numba import get_min_avg_surface_dists, get_edges
+from baderkit.core import ElfLabeler, Grid, Structure
 from baderkit.core.badelf.badelf_numba import get_badelf_assignments
+from baderkit.core.bader.methods.shared_numba import (
+    get_edges,
+    get_min_avg_surface_dists,
+)
+from baderkit.core.labelers.bifurcation_graph.enum_and_styling import (
+    FEATURE_DUMMY_ATOMS,
+    FeatureType,
+)
+from baderkit.core.utilities.file_parsers import Format
 from baderkit.core.utilities.voronoi import get_cell_wrapped_voronoi
 
 # TODO:
-    # 0. See if atomic radii finder can be sped up. Seems too slow in mayenite
-    # 1. Update Simmate workflows and remove old badelf
-    # 2. Add tests for badelf and elf labeler
-    # 3. Update docs in both simmate/baderkit with badelf/labeler info
-    # 4. Update warrenapp to point to BaderKit primarily and Simmate for workflows
+# 2. add testing for elf labeler and badelf
+# 2.1 organize classes for easier readability
+# 3. update docs to include elf labeler and badelf
+# 4. push new release and update warrenapp info
+# 5. update simmate workflows/database
+# 6. update simmate docs
+# 7. request new release from Jack
+
 
 class Badelf:
     """
@@ -34,7 +43,7 @@ class Badelf:
     labeling ELF features, to locating separating planes at atom radii, to integrating
     charge. For more traditional ELF analysis, we recommend using the ElfLabeler
     class in the [BaderKit](https://github.com/SWeav02/baderkit) package.
-    
+
     This class only performs analysis on one spin system.
 
     Parameters
@@ -92,7 +101,7 @@ class Badelf:
         ElfLabeler class can be passed directly. The default is {}.
 
     """
-    
+
     spin_system = "total"
 
     def __init__(
@@ -102,11 +111,13 @@ class Badelf:
         method: Literal["badelf", "voronelf", "zero-flux"] = "badelf",
         shared_feature_splitting_method: Literal[
             "weighted_dist", "pauling", "equal", "dist", "nearest"
-        ] = "weigthed_dist",
+        ] = "weighted_dist",
         elf_labeler: dict | ElfLabeler = {},
-        **kwargs
+        **kwargs,
     ):
-        assert reference_grid.structure == charge_grid.structure, "Grid structures must be the same."
+        assert (
+            reference_grid.structure == charge_grid.structure
+        ), "Grid structures must be the same."
 
         if method not in ["badelf", "voronelf", "zero-flux"]:
             raise ValueError(
@@ -120,24 +131,21 @@ class Badelf:
         self.method = method
         self.shared_feature_splitting_method = shared_feature_splitting_method
 
-        
         # We want to use the ElfLabeler. We check if an ElfLabeler class is
         # provided or a dict of kwargs
         self._labeled_structure = None
         if type(elf_labeler) == dict:
             self.elf_labeler_kwargs = elf_labeler
             self.elf_labeler = ElfLabeler(
-                charge_grid=charge_grid,
-                reference_grid=reference_grid,
-                **elf_labeler
-                )
+                charge_grid=charge_grid, reference_grid=reference_grid, **elf_labeler
+            )
         else:
             # use provided elf labeler
             self.elf_labeler_kwargs = None
             self.elf_labeler = elf_labeler
         # connect the same bader class.
         self.bader = self.elf_labeler.bader
-            
+
         # Properties that will be calculated and cached
         self._structure = None
         self._electride_structure = None
@@ -146,27 +154,27 @@ class Badelf:
         self._partitioning_planes = None
         self._zero_flux_feature_labels_cache = None
         self._atom_labels = None
-        
+
         self._electride_dim = None
         self._all_electride_dims = None
         self._all_electride_dim_cutoffs = None
-        
+
         self._nelectrons = None
         self._charges = None
         self._volumes = None
-        
-        self._min_surface_dists = None
-        self._avg_surface_dists = None
+
+        self._min_surface_distances = None
+        self._avg_surface_distances = None
 
         self._electrides_per_formula = None
         self._electrides_per_reduced_formula = None
-        
+
         self._total_charge = None
         self._total_volume = None
         # TODO: Add vacuum handling to Elf Analyzer and BadELF
         # self._vacuum_charge = None
         # self._vacuum_volume = None
-        
+
         self._results_summary = None
 
     ###########################################################################
@@ -216,7 +224,7 @@ class Badelf:
                 coord = site.frac_coords
                 new_structure.append(symbol, coord)
         return new_structure
-        
+
     @property
     def labeled_structure(self) -> Structure:
         """
@@ -230,10 +238,11 @@ class Badelf:
         """
         if self._labeled_structure is None:
             labeled_structure = self.elf_labeler.get_feature_structure(
-                included_features=FeatureType.valence_types)
+                included_features=FeatureType.valence_types
+            )
             self._labeled_structure = labeled_structure
         return self._labeled_structure
-    
+
     @property
     def structure(self) -> Structure:
         """
@@ -254,8 +263,10 @@ class Badelf:
             for symbol in FEATURE_DUMMY_ATOMS.values():
                 if symbol in structure.symbol_set:
                     structure.remove_species([symbol])
-        return structure
-    
+            structure.relabel_sites(ignore_uniq=True)
+            self._structure = structure
+        return self._structure
+
     @property
     def electride_structure(self) -> Structure:
         """
@@ -274,10 +285,14 @@ class Badelf:
             electride_structure = self.structure.copy()
             for site in self.labeled_structure:
                 if site.specie.symbol in FeatureType.bare_species:
-                    electride_structure.append(FeatureType.bare_electron.dummy_species, site.frac_coords)
+                    electride_structure.append(
+                        FeatureType.bare_electron.dummy_species, site.frac_coords
+                    )
+
+            electride_structure.relabel_sites(ignore_uniq=True)
             self._electride_structure = electride_structure
         return self._electride_structure
-    
+
     @property
     def nelectrides(self) -> int:
         """
@@ -289,7 +304,7 @@ class Badelf:
 
         """
         return len(self.electride_structure) - len(self.structure)
-    
+
     @property
     def species(self) -> list[str]:
         """
@@ -302,7 +317,7 @@ class Badelf:
 
         """
         return [i.specie.symbol for i in self.electride_structure]
-    
+
     @property
     def charges(self) -> NDArray:
         """
@@ -316,7 +331,7 @@ class Badelf:
         if self._charges is None:
             self._get_voxel_assignments()
         return self._charges
-    
+
     @property
     def volumes(self) -> NDArray:
         """
@@ -330,7 +345,23 @@ class Badelf:
         if self._volumes is None:
             self._get_voxel_assignments()
         return self._volumes
-    
+
+    @property
+    def total_electron_number(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total number of electrons in the system calculated from the
+            atom charges. If this does not match the true
+            total electron number within reasonable floating point error,
+            there is a major problem.
+
+        """
+
+        return self.charges.sum()
+
     @property
     def _zero_flux_feature_labels(self) -> NDArray:
         """
@@ -338,17 +369,17 @@ class Badelf:
         Returns
         -------
         NDArray
-            An array representing which atoms/dummy atoms each voxel point is 
+            An array representing which atoms/dummy atoms each voxel point is
             assigned to.
 
         """
         if self._zero_flux_feature_labels_cache is None:
             # Use the ElfLabeler's assignments.
-                self._zero_flux_feature_labels_cache = self.elf_labeler.get_feature_labels(
+            self._zero_flux_feature_labels_cache = self.elf_labeler.get_feature_labels(
                 included_features=FeatureType.valence_types,
                 return_structure=False,
                 return_charge_volume=False,
-                )
+            )
 
         return self._zero_flux_feature_labels_cache
 
@@ -366,22 +397,23 @@ class Badelf:
 
         """
         if self.method == "zero-flux":
-            return None
-        
+            return None, None, None
+
         if self._partitioning_planes is None:
             logging.info("Finding partitioning planes")
-            
+
             # if we have an elf labeler, use its results to get partitioning
             if self.method == "badelf":
                 site_indices, neigh_indices, _ = self.elf_labeler.nearest_neighbor_data
                 plane_points, plane_vectors = self.elf_labeler._atom_nn_planes
             elif self.method == "voronelf":
-                site_indices, neigh_indices, _ = self.elf_labeler.electride_nearest_neighbor_data
+                site_indices, neigh_indices, _ = (
+                    self.elf_labeler.electride_nearest_neighbor_data
+                )
                 plane_points, plane_vectors = self.elf_labeler._electride_nn_planes
-            
 
             # we want to transform our planes to the 26 nearest neighbor cells
-            # to ensure that we cover our unit cell. 
+            # to ensure that we cover our unit cell.
             # For speed, we can remove planes that contain the entire unit cell
             # and we can remove a full set of planes if none of them contain any
             # part of the unit cell.
@@ -389,11 +421,13 @@ class Badelf:
             # such that planes that are likely to reject a grid point come first
 
             # first we get wrapped planes
-            site_indices, transforms, plane_points, plane_vectors, plane_volumes = get_cell_wrapped_voronoi(
-                site_indices=site_indices,
-                plane_points=plane_points,
-                plane_vectors=plane_vectors
+            site_indices, transforms, plane_points, plane_vectors, plane_volumes = (
+                get_cell_wrapped_voronoi(
+                    site_indices=site_indices,
+                    plane_points=plane_points,
+                    plane_vectors=plane_vectors,
                 )
+            )
 
             # sort planes by site, transform, and volume.
             combined_sort = np.column_stack((plane_volumes, transforms, site_indices))
@@ -406,22 +440,17 @@ class Badelf:
             # get plane equations in cartesian coordinates
             plane_vectors = self.reference_grid.frac_to_cart(plane_vectors)
             plane_points = self.reference_grid.frac_to_cart(plane_points)
-            
+
             # normalize vectors
             plane_vectors = (plane_vectors.T / np.linalg.norm(plane_vectors, axis=1)).T
-                        
+
             # calculate plane equations
             b = -np.einsum("ij,ij->i", plane_vectors, plane_points)
-                        
+
             plane_equations = np.column_stack((plane_vectors, b))
 
-            self._partitioning_planes = (
-                site_indices,
-                transforms,
-                plane_equations
-                )
+            self._partitioning_planes = (site_indices, transforms, plane_equations)
         return self._partitioning_planes
-    
 
     @property
     def atom_labels(self) -> NDArray:
@@ -450,28 +479,35 @@ class Badelf:
         """
         # make sure we've run our partitioning (for logging clarity)
         (
-            site_indices, 
+            site_indices,
             site_transforms,
             plane_equations,
-            ) = self.partitioning_planes
+        ) = self.partitioning_planes
         logging.info("Beginning voxel assignment")
-        
+
         # get the zero-flux labels as a starting point
         labels = self._zero_flux_feature_labels.copy()
-        
+
         if self.method == "zero-flux":
             # we are done here and can assign charges/volumes immediately
             self._atom_labels = labels
             self._charges, self._volumes = self.elf_labeler.get_charges_and_volumes(
                 splitting_method=self.shared_feature_splitting_method,
-                use_electrides=True
-                )
-        else:           
+                use_electrides=True,
+            )
+        else:
             # In badelf, we want to label our electride basins ahead of time
             if self.method == "badelf":
                 # get a mask only at electride indices
-                indices = np.array([i for i in range(len(self.structure), len(self.electride_structure))])
-                mask = np.isin(labels, indices, invert = True)
+                indices = np.array(
+                    [
+                        i
+                        for i in range(
+                            len(self.structure), len(self.electride_structure)
+                        )
+                    ]
+                )
+                mask = np.isin(labels, indices, invert=True)
                 # set regions where we don't want to use zero-flux results to -1
                 labels[mask] = -1
                 # get the number of atoms in the partitioning structure
@@ -480,54 +516,53 @@ class Badelf:
                 # we are using the voronoi method with the plane method and don't want
                 # to override anything
                 structure_len = len(self.electride_structure)
-            
+
             # calculate the maximum distance in fractional coords from the center of
             # a voxel to its edges
             voxel_dist = self.reference_grid.max_point_dist + 1e-12
-            
+
             # get the transforms within a set radius
             min_radius = voxel_dist * 2
             max_radius = (np.array(self.structure.lattice.abc) / 2).min()
-            max_radius = min(max_radius, 3.0) # cap radius for large cells
-            sphere_transforms, transform_dists = self.reference_grid.get_radial_neighbor_transforms(
-                r = max_radius
-                )
+            max_radius = min(max_radius, 3.0)  # cap radius for large cells
+            sphere_transforms, transform_dists = (
+                self.reference_grid.get_radial_neighbor_transforms(r=max_radius)
+            )
             valid_mask = transform_dists >= min_radius
             sphere_transforms = sphere_transforms[np.where(valid_mask)[0]]
             transform_dists = transform_dists[valid_mask]
-            
+
             # get the indices at which new transform dists occur
             transform_breaks = np.where(transform_dists[:-1] != transform_dists[1:])[0]
 
-            # Now calculate labels, charges, and volumes assigned to each feature        
+            # Now calculate labels, charges, and volumes assigned to each feature
             labels, charges, volumes = get_badelf_assignments(
-                data = self.charge_grid.total,
-                labels = labels,
-                site_indices = site_indices,
-                site_transforms = site_transforms,
-                plane_equations = plane_equations,
-                vacuum_mask = self.bader.vacuum_mask,
-                min_plane_dist = voxel_dist,
-                num_assignments = len(self.electride_structure),
-                lattice_matrix = self.reference_grid.matrix,
-                sphere_transforms = sphere_transforms,
-                transform_dists = transform_dists,
-                transform_breaks = transform_breaks,
-                max_label = structure_len,
-                )
-            
+                data=self.charge_grid.total,
+                labels=labels,
+                site_indices=site_indices,
+                site_transforms=site_transforms,
+                plane_equations=plane_equations,
+                vacuum_mask=self.bader.vacuum_mask,
+                min_plane_dist=voxel_dist,
+                num_assignments=len(self.electride_structure),
+                lattice_matrix=self.reference_grid.matrix,
+                sphere_transforms=sphere_transforms,
+                transform_dists=transform_dists,
+                transform_breaks=transform_breaks,
+                max_label=structure_len,
+            )
+
             # convert charges/volumes to correct units
             charges /= self.charge_grid.ngridpts
             volumes = volumes * self.structure.volume / self.charge_grid.ngridpts
-    
+
             # overwrite zero-flux feature charges/volumes
             self._atom_labels = labels
             self._charges = charges
             self._volumes = volumes
 
-
         logging.info("Finished voxel assignment")
-    
+
     @property
     def all_electride_dims(self) -> list | None:
         """
@@ -546,7 +581,7 @@ class Badelf:
         if self._all_electride_dims == -1:
             return None
         return self._all_electride_dims
-    
+
     @property
     def all_electride_dim_cutoffs(self) -> list:
         """
@@ -563,7 +598,7 @@ class Badelf:
         if self._all_electride_dim_cutoffs == -1:
             return None
         return self._all_electride_dim_cutoffs
-            
+
     @property
     def electride_dimensionality(self) -> int:
         """
@@ -580,12 +615,12 @@ class Badelf:
         return self._electride_dim
 
     def _get_ELF_dimensionality(
-            self,
-            electride_mask: NDArray,
-            cutoff: float,
-            ) -> int:
+        self,
+        electride_mask: NDArray,
+        cutoff: float,
+    ) -> int:
         """
-        
+
         This algorithm works by checking if the voxels with values above the cutoff
         are connected to the equivalent voxel in the unit cell one transformation
         over. This is done primarily using scipy.ndimage.label which determines
@@ -595,7 +630,7 @@ class Badelf:
         and corners. If a connection in that direction is found, the total number
         of connections increases. Dimensionalities of 0,1,2, and 3 are represented
         by 0,1,4,and 13 connections respectively.
-        
+
         NOTE: This can be made much faster with numba using an algorithm similar
         to that used in BaderKit to determine which atoms are surrounded. However,
         this would require a lot of time.
@@ -615,25 +650,27 @@ class Badelf:
         """
         # Remove data below our cutoff
         mask = electride_mask & (self.reference_grid.total >= cutoff)
-        
+
         # if we have no features, return 0 immediately
         if not np.any(mask):
             return 0
 
         # get the features that sit in the mask at this value
-        feature_indices = self.electride_structure.frac_coords[len(self.structure):]
-        feature_indices = np.round(self.charge_grid.frac_to_grid(feature_indices)).astype(int)
+        feature_indices = self.electride_structure.frac_coords[len(self.structure) :]
+        feature_indices = np.round(
+            self.charge_grid.frac_to_grid(feature_indices)
+        ).astype(int)
         # only use indices that are not 0
-        feature_indices = [i for i in feature_indices if mask[i[0],i[1],i[2]]]
+        feature_indices = [i for i in feature_indices if mask[i[0], i[1], i[2]]]
 
         # if we have no electride features in the mask, immediately return 0
         if len(feature_indices) == 0:
             return 0
 
         # create a supercell mask and label it
-        supercell_mask = np.tile(mask, [2,2,2])
+        supercell_mask = np.tile(mask, [2, 2, 2])
         labels, num_features = label(supercell_mask, structure=np.ones([3, 3, 3]))
-        
+
         # We are going to need to translate the above voxels and the entire unit
         # cell so we create a list of desired transformations
         transformations = [
@@ -686,9 +723,9 @@ class Badelf:
             # get the labels at each transformation
             trans_labels = []
             for trans in transformations:
-                x,y,z = trans + coord
-                trans_labels.append(labels[x,y,z])
-            
+                x, y, z = trans + coord
+                trans_labels.append(labels[x, y, z])
+
             # count number of connections
             connections_num = 0
             for connection in connections:
@@ -712,7 +749,7 @@ class Badelf:
 
     def _get_electride_dimensionality(self) -> None:
         """
-        
+
         Gets the electride dimensionalities and range of ELF values that they
         exist at.
 
@@ -730,11 +767,12 @@ class Badelf:
         ###############################################################################
 
         # Create a mask at electrides
-        electride_indices = [i for i in range(len(self.structure), len(self.electride_structure))]
+        electride_indices = [
+            i for i in range(len(self.structure), len(self.electride_structure))
+        ]
         # NOTE: even if we have shared features, these indices are still correct
         # so long as the electride sites come first
         electride_mask = np.isin(self.atom_labels, electride_indices)
-
 
         #######################################################################
         # This section scans across different cutoffs to determine what dimensionalities
@@ -775,8 +813,8 @@ class Badelf:
                 final_dimensions.append(dimension)
         self._all_electride_dims = final_dimensions
         self._all_electride_dim_cutoffs = final_connections
-        
-    def get_oxidation_states(self, potcar_path: Path | str = "POTCAR"):
+
+    def get_oxidation_from_potcar(self, potcar_path: Path | str = "POTCAR"):
         """
         Calculates the oxidation state of each atom/electride using the
         electron counts of the neutral atoms provided in a POTCAR.
@@ -795,7 +833,9 @@ class Badelf:
         # Check if POTCAR exists in path. If not, throw warning
         potcar_path = Path(potcar_path)
         if not potcar_path.exists():
-            logging.warning("No POTCAR file found in the requested directory. Oxidation states cannot be calculated")
+            logging.warning(
+                "No POTCAR file found in the requested directory. Oxidation states cannot be calculated"
+            )
             return
         # get POTCAR info
         with warnings.catch_warnings():
@@ -813,10 +853,10 @@ class Badelf:
         # subtract charges from valence to get oxidation
         oxidation = valence - self.charges
         return oxidation
-        
+
     def _get_min_avg_surface_dists(self) -> None:
         """
-        
+
         Calculates the minimum and average distance from each atom and electride
         to the partitioning surface.
 
@@ -825,18 +865,20 @@ class Badelf:
         edges = get_edges(
             labeled_array=self.atom_labels,
             neighbor_transforms=neigh_transforms,
-            vacuum_mask=self.bader.vacuum_mask
+            vacuum_mask=self.bader.vacuum_mask,
+        )
+        self._min_surface_distances, self._avg_surface_distances = (
+            get_min_avg_surface_dists(
+                labels=self.atom_labels,
+                frac_coords=self.electride_structure.frac_coords,
+                edge_mask=edges,
+                matrix=self.charge_grid.matrix,
+                max_value=np.max(self.structure.lattice.abc) * 2,
             )
-        self._min_surface_dists, self._avg_surface_dists = get_min_avg_surface_dists(
-            labels=self.atom_labels,
-            frac_coords=self.electride_structure.frac_coords,
-            edge_mask=edges,
-            matrix=self.charge_grid.matrix,
-            max_value=np.max(self.structure.lattice.abc) * 2,
         )
 
     @property
-    def min_surface_dists(self) -> NDArray:
+    def min_surface_distances(self) -> NDArray:
         """
 
         Returns
@@ -846,12 +888,12 @@ class Badelf:
             surface.
 
         """
-        if self._min_surface_dists is None:
+        if self._min_surface_distances is None:
             self._get_min_avg_surface_dists()
-        return self._min_surface_dists
-    
+        return self._min_surface_distances
+
     @property
-    def avg_surface_dists(self) -> NDArray:
+    def avg_surface_distances(self) -> NDArray:
         """
 
         Returns
@@ -861,10 +903,10 @@ class Badelf:
             surface.
 
         """
-        if self._avg_surface_dists is None:
+        if self._avg_surface_distances is None:
             self._get_min_avg_surface_dists()
-        return self._avg_surface_dists
-    
+        return self._avg_surface_distances
+
     @property
     def electrides_per_formula(self) -> float:
         """
@@ -877,11 +919,11 @@ class Badelf:
         """
         if self._electrides_per_formula is None:
             electrides_per_unit = 0
-            for i in range(len(self.structure),len(self.electride_structure)):
+            for i in range(len(self.structure), len(self.electride_structure)):
                 electrides_per_unit += self.charges[i]
             self._electrides_per_formula = electrides_per_unit
         return self._electrides_per_formula
-    
+
     @property
     def electrides_per_reduced_formula(self) -> float:
         """
@@ -897,9 +939,11 @@ class Badelf:
                 _,
                 formula_reduction_factor,
             ) = self.structure.composition.get_reduced_composition_and_factor()
-            self._electrides_per_reduced_formula = self.electrides_per_formula / formula_reduction_factor
+            self._electrides_per_reduced_formula = (
+                self.electrides_per_formula / formula_reduction_factor
+            )
         return self._electrides_per_reduced_formula
-    
+
     @property
     def electride_formula(self) -> str:
         """
@@ -912,7 +956,7 @@ class Badelf:
 
         """
         return f"{self.structure.formula} e{round(self.electrides_per_formula)}"
-    
+
     @property
     def total_charge(self) -> float:
         """
@@ -928,7 +972,7 @@ class Badelf:
         if self._total_charge is None:
             self._total_charge = self.charges.sum()
         return self._total_charge
-    
+
     @property
     def total_volume(self):
         """
@@ -943,10 +987,12 @@ class Badelf:
         if self._total_volume is None:
             self._total_volume = self.volumes.sum()
         return self._total_volume
-                
-    def to_dict(self, potcar_path: Path | str = "POTCAR", use_json: bool = True) -> dict:
+
+    def to_dict(
+        self, potcar_path: Path | str = "POTCAR", use_json: bool = True
+    ) -> dict:
         """
-        
+
         Gets a dictionary summary of the BadELF analysis.
 
         Parameters
@@ -971,16 +1017,16 @@ class Badelf:
             "elf_labeler_kwargs": self.elf_labeler_kwargs,
         }
         results["method_kwargs"] = method_kwargs
-        
+
         # only try to calculate oxidation state if this was a spin dependent system
         if self.spin_system == "total":
-            results["oxidation_states"] = self.get_oxidation_states(potcar_path)
+            results["oxidation_states"] = self.get_oxidation_from_potcar(potcar_path)
         else:
             results["oxidation_states"] = None
-        
+
         # get charges first to ensure good logging
         self.charges
-        
+
         for result in [
             "species",
             "structure",
@@ -993,26 +1039,32 @@ class Badelf:
             "species",
             "charges",
             "volumes",
-            "min_surface_dists",
-            "avg_surface_dists",
+            "min_surface_distances",
+            "avg_surface_distances",
             "electride_formula",
             "electrides_per_formula",
             "electrides_per_reduced_formula",
             "total_charge",
             "total_volume",
             "spin_system",
-                ]:
+        ]:
             results[result] = getattr(self, result, None)
         if use_json:
             # get serializable versions of each attribute
             for key in ["structure", "labeled_structure", "electride_structure"]:
                 results[key] = results[key].to(fmt="POSCAR")
-            for key in ["charges", "volumes", "oxidation_states", "min_surface_dists", "avg_surface_dists"]:
+            for key in [
+                "charges",
+                "volumes",
+                "oxidation_states",
+                "min_surface_distances",
+                "avg_surface_distances",
+            ]:
                 if results[key] is None:
-                    continue # skip oxidation states if they fail
-                results[key] = results[key].tolist()        
+                    continue  # skip oxidation states if they fail
+                results[key] = results[key].tolist()
         return results
-                
+
     def to_json(self, **kwargs) -> str:
         """
         Creates a JSON string representation of the results, typically for writing
@@ -1030,15 +1082,15 @@ class Badelf:
 
         """
         return json.dumps(self.to_dict(use_json=True, **kwargs))
-    
-    def write_results_summary(self, filepath: Path | str = "badelf_results_summary.json", **kwargs) -> None:
+
+    def write_json(self, filepath: Path | str = "badelf.json", **kwargs) -> None:
         """
         Writes results of the analysis to file in a JSON format.
 
         Parameters
         ----------
         filepath : Path | str, optional
-            The Path to write the results to. The default is "badelf_results_summary.json".
+            The Path to write the results to. The default is "badelf.json".
         **kwargs : dict
             keyword arguments for the to_dict method.
 
@@ -1077,77 +1129,11 @@ class Badelf:
 
         reference_grid = Grid.from_vasp(reference_file, **kwargs)
         charge_grid = Grid.from_vasp(charge_file, **kwargs)
-        return cls(
-            reference_grid=reference_grid,
-            charge_grid=charge_grid,
-            **kwargs
-        )
+        return cls(reference_grid=reference_grid, charge_grid=charge_grid, **kwargs)
 
-    def write_species_file(
-            self, 
-            directory: str | Path = None,
-            write_reference: bool = True,
-            species: str = FeatureType.bare_electron.dummy_species,
-            include_dummy_atoms: bool = True,
-            output_format: str | Format = None,
-            prefix_override: str = None,
-            ):
-
-        """
-        Writes an ELFCAR or CHGCAR for a given species.
-
-        Parameters
-        ----------
-        directory : str | Path, optional
-            The directory to write the result to. The default is None.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data. 
-            The default is True.
-        species : str, optional
-            The species to write. The default is "Le" (the electrides).
-        include_dummy_atoms : bool, optional
-            Whether or not to include . The default is True.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-
-        """
-        if directory is None:
-            directory = Path(".")
-        
-        # Get voxel assignments and data
-        voxel_assignment_array = self.atom_labels
-        if write_reference:
-            grid = self.reference_grid.copy()
-        else:
-            grid = self.charge_grid.copy()
-        
-        # add dummy atoms if desired
-        indices = self.electride_structure.indices_from_symbol(species)
-        if include_dummy_atoms:
-            grid.structure = self.electride_structure
-        # Get mask where the grid belongs to requested species
-        mask = np.isin(voxel_assignment_array, indices,invert=True)
-        grid.total[mask] = 0
-        if grid.diff is not None:
-            grid.diff[mask] = 0
-
-        # get prefix
-        if prefix_override is None:
-            prefix_override = grid.data_type.prefix
-        
-        file_path = directory / f"{prefix_override}_{species}"
-        # write file
-        grid.write(filename=file_path, output_format=output_format)
-
-    def write_atom_file(
-        self, 
-        atom_index: int,
+    def write_atom_volumes(
+        self,
+        atom_indices: list[int],
         directory: str | Path = None,
         write_reference: bool = True,
         include_dummy_atoms: bool = True,
@@ -1155,13 +1141,14 @@ class Badelf:
         prefix_override: str = None,
     ):
         """
-        
-        Writes an ELFCAR or CHGCAR for a given atom/electride. Writes to the default
-        directory provided to the BadelfToolkit class.
+
+        Writes an the reference ELF or charge-density for the given atoms to
+        separate files. Electrides found during the calculation are appended to
+        the end of the structure.
 
         Parameters
         ----------
-        atom_index : int
+        atom_indices : int
             The index of the atom/electride to write for.
         directory : str | Path
             The directory to write the files in. If None, the active directory
@@ -1183,596 +1170,159 @@ class Badelf:
         """
         if directory is None:
             directory = Path(".")
-            
+
         # Get voxel assignments and data
         voxel_assignment_array = self.atom_labels
         if write_reference:
             grid = self.reference_grid.copy()
         else:
             grid = self.charge_grid.copy()
-        
+
         # add dummy atoms if desired
         if include_dummy_atoms:
             grid.structure = self.electride_structure
-        
-        # Get mask where the grid belongs to requested species
-        mask = voxel_assignment_array == atom_index
-        grid.total[mask] = 0
-        if grid.diff is not None:
-            grid.diff[mask] = 0
 
         # get prefix
         if prefix_override is None:
             prefix_override = grid.data_type.prefix
-        
-        file_path = directory / f"{prefix_override}_{atom_index}"
-        # write file
-        grid.write(filename=file_path, output_format=output_format)
-        
 
-class SpinBadelf:
-    """
-    This class is a wrapper for the BadElfToolkit adding the capability
-    to individually handle spin-up and spin-down components of the
-    ELF and charge density.
-    """
-    spin_system = "combined"
+        # Get mask where the grid belongs to requested species
+        for atom_index in atom_indices:
+            mask = voxel_assignment_array == atom_index
+            grid.total[mask] = 0
+            if grid.diff is not None:
+                grid.diff[mask] = 0
 
-    def __init__(
+            file_path = directory / f"{prefix_override}_a{atom_index}"
+            # write file
+            grid.write(filename=file_path, output_format=output_format)
+
+    def write_all_atom_volumes(
         self,
-        reference_grid: Grid,
-        charge_grid: Grid,
-        elf_labeler: SpinElfLabeler | dict = {},
-        **kwargs
+        directory: str | Path = None,
+        write_reference: bool = True,
+        output_format: str | Format = None,
+        include_dummy_atoms: bool = True,
+        prefix_override: str = None,
+        **writer_kwargs,
     ):
         """
-        An extension of the BadElfToolkit that performs separate calculations on
-        the spin-up and spin-down systems.
+        Writes all atomic basins.
 
         Parameters
         ----------
-        reference_grid : Grid
-            A badelf app Grid like object used for partitioning the unit cell
-            volume. Usually contains ELF.
-        charge_grid : Grid
-            A badelf app Grid like object used for summing charge. Usually
-            contains charge density.
-        elf_labeler : dict | SpinElfLabeler, optional
-            Keyword arguments to pass to the SpinElfLabeler class. This includes
-            parameters controlling cutoffs for electrides. Alternatively, a
-            SpinElfLabeler class can be passed directly. The default is {}.
-        **kwargs : dict
-            Any additional keyword arguments to pass to the ElfLabeler class.
-
-        """
-        # make sure our grids are spin polarized
-        assert reference_grid.is_spin_polarized, "Provided grid is not spin polarized. Use the standard BadElfToolkit."
-
-        self.reference_grid = reference_grid
-        self.charge_grid = charge_grid
-        
-        # If no labeled structures are provided, we want to use the spin elf
-        # labeler and link it to our badelf objects
-        # we want to attach a SpinElfLabeler to our badelf objects
-        if type(elf_labeler) is dict:
-            elf_labeler = SpinElfLabeler(
-                charge_grid=charge_grid,
-                reference_grid=reference_grid,
-                **elf_labeler
-                )
-
-        self.elf_labeler = elf_labeler
-        # link charge grids
-        self.reference_grid_up = elf_labeler.reference_grid_up
-        self.reference_grid_down = elf_labeler.reference_grid_down
-        self.charge_grid_up = elf_labeler.charge_grid_up
-        self.charge_grid_down = elf_labeler.charge_grid_down
-        self.equal_spin = elf_labeler.equal_spin
-        # link labelers
-        self.elf_labeler_up = elf_labeler.elf_labeler_up
-        self.elf_labeler_down = elf_labeler.elf_labeler_down
-                
-        # Now check if we should run a spin polarized badelf calc or not
-        if not self.equal_spin:
-            self.badelf_up = Badelf(
-                reference_grid=self.reference_grid_up,
-                charge_grid=self.charge_grid_up,
-                elf_labeler=self.elf_labeler_up,
-                **kwargs
-            )
-            self.badelf_down = Badelf(
-                reference_grid=self.reference_grid_down,
-                charge_grid=self.charge_grid_down,
-                elf_labeler=self.elf_labeler_down,
-                **kwargs
-            )
-            self.badelf_up.spin_system = "up"
-            self.badelf_down.spin_system = "down"
-        else:
-            self.badelf_up = Badelf(
-                reference_grid=self.reference_grid_up,
-                charge_grid=self.charge_grid_up,
-                elf_labeler=self.elf_labeler_up,
-                **kwargs
-            )
-            self.badelf_up.spin_system = "half"
-            self.badelf_down = self.badelf_up
-            
-        # Properties that will be calculated and cached
-        self._electride_structure = None
-        self._labeled_structure = None
-        self._species = None
-        
-        self._electride_dim = None
-        
-        self._nelectrons = None
-        self._charges = None
-        self._volumes = None
-        
-        self._min_surface_dists = None
-        self._avg_surface_dists = None
-
-        self._electrides_per_formula = None
-        self._electrides_per_reduced_formula = None
-        
-        self._total_charge = None
-        self._total_volume = None
-        # TODO: Add vacuum handling to Elf Analyzer and BadELF
-        # self._vacuum_charge = None
-        # self._vacuum_volume = None
-        
-        self._results_summary = None
-        
-    @property
-    def structure(self):
-        """
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is False.
+        output_format : str | Format, optional
+            The format to write with. If None, writes to source format stored in
+            the Grid objects metadata.
+            Defaults to None.
+        include_dummy_atoms : bool, optional
+            Whether or not to include . The default is True.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
 
         Returns
         -------
-        Structure
-            The unlabeled structure representing the system, i.e. the structure
-            with no dummy atoms.
+        None.
 
         """
-        return self.badelf_up.structure
-    
-    @property
-    def labeled_structure(self):
-        """
-
-        Returns
-        -------
-        Structure
-            The system's structure including dummy atoms representing electride
-            sites and covalent/metallic bonds. Features unique to the spin-up/spin-down
-            systems will have xu or xd appended to the species name respectively.
-            Features that exist in both will have nothing appended.
-
-        """
-        if self._labeled_structure is None:
-            # start with only atoms
-            labeled_structure = self.structure.copy()
-            # get up and downs structures
-            structure_up = self.badelf_up.labeled_structure
-            structure_down = self.badelf_down.labeled_structure
-            # get species from the spin up system
-            new_species = []
-            new_coords = []
-            for site in structure_up[len(self.structure) :]:
-                species = site.specie.symbol
-                # add frac coords no matter what
-                new_coords.append(site.frac_coords)
-                # if this site is in the spin-down structure, it exists in both and
-                # we add the site with the original species name
-                if site in structure_down:
-                    new_species.append(species)
-                else:
-                    # otherwise, we rename the species
-                    new_species.append(species + "xu")
-            # do the same for the spin down system
-            for site in structure_down[len(self.structure) :]:
-                # only add the structure if it didn't exist in the spin up system
-                if site not in structure_up:
-                    species = site.specie.symbol
-                    new_species.append(species + "xd")
-                    new_coords.append(site.frac_coords)
-            # add our sites
-            for species, coords in zip(new_species, new_coords):
-                labeled_structure.append(species, coords)
-            self._labeled_structure = labeled_structure
-        return self._labeled_structure
-    
-    @property
-    def electride_structure(self) -> Structure:
-        """
-
-        Returns
-        -------
-        Structure
-            The system's structure including dummy atoms representing electride
-            sites. Electrides unique to the spin-up/spin-down
-            systems will have xu or xd appended to the species name respectively.
-            Electrides that exist in both will have nothing appended.
-
-        """
-        if self._electride_structure is None:
-            # create our elecride structure from our labeled structure.
-            # NOTE: We don't just use the structure from the elf labeler in
-            # case the user provided their own
-            electride_structure = self.structure.copy()
-            # get bare species including up/down spin
-            all_bare_species = []
-            for species in FeatureType.bare_species:
-                all_bare_species.append(species)
-                all_bare_species.append(species + "xu")
-                all_bare_species.append(species + "xd")
-            # add any bare electron/electrides to our structure
-            for site in self.labeled_structure:
-                if site.specie.symbol in all_bare_species:
-                    electride_structure.append(site.specie.symbol, site.frac_coords)
-            self._electride_structure = electride_structure
-        return self._electride_structure
-    
-    @property
-    def nelectrides(self):
-        """
-
-        Returns
-        -------
-        int
-            The number of electride sites (electride maxima) present in the system.
-
-        """
-        return len(self.electride_structure) - len(self.structure)
-    
-    @property
-    def species(self) -> list[str]:
-        """
-
-        Returns
-        -------
-        list[str]
-            The species of each atom/dummy atom in the electride structure. Covalent
-            and metallic features are not included.
-
-        """
-        return [i.specie.symbol for i in self.electride_structure]
-    
-    @property
-    def electride_dimensionality(self):
-        """
-
-        Returns
-        -------
-        int
-            The dimensionality of the electride volume at a value of 0 ELF. If
-            the dimensionality differes between the spin-up/spin-down results, the
-            largest dimensionality is selected.
-
-        """
-        return max(self.badelf_up.electride_dimensionality, self.badelf_down.electride_dimensionality)
-
-    def _get_charges_and_volumes(self):
-        """
-        NOTE: Volumes may not have a physical meaning when differences are found
-        between spin up/down systems. They are calculated as the average between
-        the systems.
-        """
-        # get the initial charges/volumes from the spin up system
-        charges = self.badelf_up.charges.tolist()
-        volumes = self.badelf_up.volumes.tolist()
-
-        # get the charges from the spin down system
-        charges_down = self.badelf_down.charges.tolist()
-        volumes_down = self.badelf_down.volumes.tolist()
-
-        # get structures from each system
-        structure_up = self.badelf_up.electride_structure
-        structure_down = self.badelf_down.electride_structure
-        
-        # add charge from spin down structure
-        for site, charge, volume in zip(structure_down, charges_down, volumes_down):
-            if site in structure_up:
-                index = structure_up.index(site)
-                charges[index] += charge
-                volumes[index] += volume
-            else:
-                charges.append(charge)
-                volumes.append(volume)
-        self._charges = np.array(charges)
-        self._volumes = np.array(volumes) / 2
-    
-    @property
-    def charges(self):
-        """
-
-        Returns
-        -------
-        NDArray
-            The charge associated with each atom and electride site in the system.
-            If an electride site appears in both spin systems, the assigned charge
-            is the sum.
-
-        """
-        if self._charges is None:
-            self._get_charges_and_volumes()
-        return self._charges
-    
-    @property
-    def volumes(self):
-        """
-
-        Returns
-        -------
-        NDArray
-            The volume associated with each atom and electride site in the system.
-            The volume is taken as the average of the two systems, and may not have
-            a physical meaning.
-
-        """
-        if self._volumes is None:
-            self._get_charges_and_volumes()
-        return self._volumes
-    
-    def get_oxidation_states(self, potcar_path: Path | str = "POTCAR"):
-        """
-        Calculates the oxidation state of each atom/electride using the
-        electron counts of the neutral atoms provided in a POTCAR.
-
-        Parameters
-        ----------
-        potcar_path : Path | str, optional
-            The Path to the POTCAR file. The default is "POTCAR".
-
-        Returns
-        -------
-        oxidation : list
-            The oxidation states of each atom/electride.
-
-        """
-        # Check if POTCAR exists in path. If not, throw warning
-        potcar_path = Path(potcar_path)
-        if not potcar_path.exists():
-            logging.warning("No POTCAR file found in the requested directory. Oxidation states cannot be calculated")
-            return
-        # get POTCAR info
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            potcars = Potcar.from_file(potcar_path)
-        nelectron_data = {}
-        # the result is a list because there can be multiple element potcars
-        # in the file (e.g. for NaCl, POTCAR = POTCAR_Na + POTCAR_Cl)
-        for potcar in potcars:
-            nelectron_data[potcar.element] = potcar.nelectrons
-        # get valence electrons for each site in the structure
-        valence = np.zeros(len(self.electride_structure), dtype=np.float64)
-        for i, site in enumerate(self.structure):
-            valence[i] = nelectron_data[site.specie.symbol]
-        # subtract charges from valence to get oxidation
-        oxidation = valence - self.charges
-        return oxidation
-
-    @property
-    def electrides_per_formula(self):
-        """
-
-        Returns
-        -------
-        float
-            The number of electride electrons for the full structure formula.
-
-        """
-        if self._electrides_per_formula is None:
-            electrides_per_unit = 0
-            for i in range(len(self.structure),len(self.electride_structure)):
-                electrides_per_unit += self.charges[i]
-            self._electrides_per_formula = electrides_per_unit
-        return self._electrides_per_formula
-    
-    @property
-    def electrides_per_reduced_formula(self):
-        """
-
-        Returns
-        -------
-        float
-            The number of electrons in the reduced formula of the structure.
-
-        """
-        if self._electrides_per_reduced_formula is None:
-            (
-                _,
-                formula_reduction_factor,
-            ) = self.structure.composition.get_reduced_composition_and_factor()
-            self._electrides_per_reduced_formula = self.electrides_per_formula / formula_reduction_factor
-        return self._electrides_per_reduced_formula
-    
-    @property
-    def electride_formula(self):
-        """
-
-        Returns
-        -------
-        str
-            A string representation of the electride formula, rounding partial charge
-            to the nearest integer.
-
-        """
-        return f"{self.structure.formula} e{round(self.electrides_per_formula)}"
-    
-    
-    @property
-    def total_charge(self):
-        """
-
-        Returns
-        -------
-        float
-            The total charge integrated in the system. This should match the
-            number of electrons from the POTCAR. If it does not there may be a
-            serious problem.
-
-        """
-        if self._total_charge is None:
-            self._total_charge = self.charges.sum()
-        return self._total_charge
-    
-    @property
-    def total_volume(self):
-        """
-
-        Returns
-        -------
-        float
-            The total volume integrated in the system. This should match the
-            volume of the structure. If it does not there may be a serious problem.
-
-        """
-        if self._total_volume is None:
-            self._total_volume = self.volumes.sum()
-        return self._total_volume
-
-    def to_dict(
-            self, 
-            potcar_path: Path | str = "POTCAR", 
-            use_json: bool = True):
-        """
-        
-        Gets a dictionary summary of the BadELF analysis.
-
-        Parameters
-        ----------
-        potcar_path : Path | str, optional
-            The Path to a POTCAR file. This must be provided for oxidation states
-            to be calculated, and they will be None otherwise. The default is "POTCAR".
-        use_json : bool, optional
-            Convert all entries to JSONable data types. The default is True.
-
-        Returns
-        -------
-        dict
-            A summary of the BadELF analysis in dictionary form.
-
-        """
-        results = {}
-
-        results["method_kwargs"] = self.badelf_up.to_dict()["method_kwargs"]
-        
-        results["oxidation_states"] = self.get_oxidation_states(potcar_path)
-        
-        for result in [
-            "species",
-            "structure",
-            "labeled_structure",
-            "electride_structure",
-            "nelectrides",
-            "electride_dimensionality",
-            "charges",
-            "volumes",
-            "electride_formula",
-            "electrides_per_formula",
-            "electrides_per_reduced_formula",
-            "total_charge",
-            "total_volume",
-            "spin_system",
-                ]:
-            results[result] = getattr(self, result, None)
-        if use_json:
-            # get serializable versions of each attribute
-            for key in ["structure", "labeled_structure", "electride_structure"]:
-                results[key] = results[key].to(fmt="POSCAR")
-            for key in ["charges", "volumes", "oxidation_states"]:
-                if results[key] is None:
-                    continue
-                results[key] = results[key].tolist()        
-        return results
-                
-    def to_json(self, **kwargs):
-        """
-        Creates a JSON string representation of the results, typically for writing
-        results to file.
-
-        Parameters
-        ----------
-        **kwargs : dict
-            Keyword arguments for the to_dict method.
-
-        Returns
-        -------
-        str
-            A JSON string representation of the BadELF results.
-
-        """
-        return json.dumps(self.to_dict(use_json=True, **kwargs))
-    
-    def write_results_summary(self, filepath: Path | str = "badelf_results_summary.json", **kwargs):
-        """
-        Writes results of the analysis to file in a JSON format.
-
-        Parameters
-        ----------
-        filepath : Path | str, optional
-            The Path to write the results to. The default is "badelf_results_summary.json".
-        **kwargs : dict
-            keyword arguments for the to_dict method.
-
-        """
-        filepath = Path(filepath)
-
-        # write total summary
-        with open(filepath, "w") as json_file:
-            json.dump(self.to_dict(use_json=True, **kwargs), json_file, indent=4)
-        # write spin up and spin down summaries
-        filepath_up = filepath.parent / f"{filepath.stem}_up{filepath.suffix}"
-        filepath_down = filepath.parent / f"{filepath.stem}_down{filepath.suffix}"
-        self.badelf_up.write_results_summary(filepath=filepath_up)
-        self.badelf_down.write_results_summary(filepath=filepath_down)
-
-
-    @classmethod
-    def from_vasp(
-        cls,
-        reference_file: str | Path = "ELFCAR",
-        charge_file: str | Path = "CHGCAR",
-        **kwargs,
-    ):
-        """
-        Creates a SpinBadElfToolkit instance from the requested partitioning file
-        and charge file.
-
-        Parameters
-        ----------
-        reference_file : str | Path, optional
-            The path to the file to use for partitioning. Must be a VASP
-            CHGCAR or ELFCAR type file. The default is "ELFCAR".
-        charge_file : str | Path, optional
-            The path to the file containing the charge density. Must be a VASP
-            CHGCAR or ELFCAR type file. The default is "CHGCAR".
-        **kwargs : any
-            Additional keyword arguments for the SpinBadElfToolkit class.
-
-        Returns
-        -------
-        SpinBadElfToolkit
-            A SpinBadElfToolkit instance.
-        """
-
-        reference_grid = Grid.from_vasp(reference_file, total_only=False)
-        charge_grid = Grid.from_vasp(charge_file, total_only=False)
-        return cls(
-            reference_grid=reference_grid,
-            charge_grid=charge_grid,
-            **kwargs
+        atom_indices = np.array(range(len(self.electride_structure)))
+        self.write_volumes(
+            atom_indices=atom_indices,
+            directory=directory,
+            write_reference=write_reference,
+            include_dummy_atoms=include_dummy_atoms,
+            output_format=output_format,
+            prefix_override=prefix_override,
+            **writer_kwargs,
         )
 
-    def write_species_file(
-            self, 
-            directory: str | Path = None,
-            species: str = FeatureType.bare_electron.dummy_species,
-            prefix_override: str = None,
-            write_reference: bool = True,
-            **kwargs,
-            ):
+    def write_atom_volumes_sum(
+        self,
+        atom_indices: NDArray,
+        directory: str | Path = None,
+        write_reference: bool = True,
+        output_format: str | Format = None,
+        include_dummy_atoms: bool = True,
+        prefix_override: str = None,
+        **writer_kwargs,
+    ):
+        """
+
+        Writes the reference ELF or charge-density for the the union of the
+        given atoms to a single file.
+
+        Parameters
+        ----------
+        atom_indices : int
+            The index of the atom/electride to write for.
+        directory : str | Path
+            The directory to write the files in. If None, the active directory
+            is used.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            Default is True.
+        include_dummy_atoms : bool, optional
+            Whether or not to add dummy files to the structure. The default is False.
+        output_format : str | Format, optional
+            The format to write with. If None, writes to source format stored in
+            the Grid objects metadata.
+            Defaults to None.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
+
+        """
+        # get the data to use
+        if write_reference:
+            data_array = self.reference_grid.total
+            data_type = self.reference_grid.data_type
+        else:
+            data_array = self.charge_grid.total
+            data_type = self.charge_grid.data_type
+
+        if directory is None:
+            directory = Path(".")
+        mask = np.isin(self.atom_labels, atom_indices)
+        data_array_copy = data_array.copy()
+        data_array_copy[~mask] = 0.0
+        grid = Grid(
+            structure=self.structure,
+            data={"total": data_array_copy},
+            data_type=data_type,
+        )
+        # add dummy atoms if desired
+        if include_dummy_atoms:
+            grid.structure = self.electride_structure
+            
+        # get prefix
+        if prefix_override is None:
+            prefix_override = grid.data_type.prefix
+            
+        file_path = directory / f"{prefix_override}_asum"
+        # write file
+        grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+
+    def write_species_volume(
+        self,
+        directory: str | Path = None,
+        write_reference: bool = True,
+        species: str = FeatureType.bare_electron.dummy_species,
+        include_dummy_atoms: bool = True,
+        output_format: str | Format = None,
+        prefix_override: str = None,
+    ):
         """
         Writes an ELFCAR or CHGCAR for a given species.
 
@@ -1781,7 +1331,7 @@ class SpinBadelf:
         directory : str | Path, optional
             The directory to write the result to. The default is None.
         write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data. 
+            Whether or not to write the reference data rather than the charge data.
             The default is True.
         species : str, optional
             The species to write. The default is "Le" (the electrides).
@@ -1797,38 +1347,104 @@ class SpinBadelf:
             grid.
 
         """
-        
         if directory is None:
             directory = Path(".")
-            
+
+        # Get voxel assignments and data
+        voxel_assignment_array = self.atom_labels
+        if write_reference:
+            grid = self.reference_grid.copy()
+        else:
+            grid = self.charge_grid.copy()
+
+        # add dummy atoms if desired
+        indices = self.electride_structure.indices_from_symbol(species)
+        if include_dummy_atoms:
+            grid.structure = self.electride_structure
+        # Get mask where the grid belongs to requested species
+        mask = np.isin(voxel_assignment_array, indices, invert=True)
+        grid.total[mask] = 0
+        if grid.diff is not None:
+            grid.diff[mask] = 0
+
         # get prefix
         if prefix_override is None:
-            if write_reference:
-                prefix_override = self.reference_grid.data_type.prefix
-            else:
-                prefix_override = self.charge_grid.data_type.prefix
-        
-        self.badelf_up.write_species_file(
-            species=species,
-            directory=directory,
-            prefix_override=prefix_override,
-            **kwargs
-            )
-        if self.spin_polarized:
-            # rename with "up" so we don't overwrite
-            os.rename(
-                directory / f"{prefix_override}_{species}",
-                directory / f"{prefix_override}_{species}_up",
-            )
-            # Write the spin down file and change the name
-            self.badelf_down.write_species_file(
-                species=species,
-                directory=directory,
-                prefix_override=prefix_override,
-                **kwargs
-                )
-            os.rename(
-                directory / f"{prefix_override}_{species}",
-                directory / f"{prefix_override}_{species}_down",
-            )
+            prefix_override = grid.data_type.prefix
 
+        file_path = directory / f"{prefix_override}_{species}"
+        # write file
+        grid.write(filename=file_path, output_format=output_format)
+
+    def get_atom_results_dataframe(self) -> pd.DataFrame:
+        """
+        Collects a summary of results for the atoms in a pandas DataFrame.
+
+        Returns
+        -------
+        atoms_df : pd.DataFrame
+            A table summarizing the atomic basins.
+
+        """
+        # Get atom results summary
+        atom_frac_coords = self.electride_structure.frac_coords
+        atoms_df = pd.DataFrame(
+            {
+                "label": self.electride_structure.labels,
+                "x": atom_frac_coords[:, 0],
+                "y": atom_frac_coords[:, 1],
+                "z": atom_frac_coords[:, 2],
+                "charge": self.charges,
+                "volume": self.volumes,
+                "surface_dist": self.min_surface_distances,
+            }
+        )
+        return atoms_df
+
+    def write_atom_tsv(self, filepath: Path | str = "badelf_atoms.tsv"):
+        """
+        Writes a summary of atom results to .tsv files.
+
+        Parameters
+        ----------
+        filepath : str | Path
+            The Path to write the results to. The default is "badelf_atoms.tsv".
+
+        """
+        filepath = Path(filepath)
+
+        # Get atom results summary
+        atoms_df = self.get_atom_results_dataframe()
+        formatted_atoms_df = atoms_df.copy()
+        numeric_cols = formatted_atoms_df.select_dtypes(include="number").columns
+        formatted_atoms_df[numeric_cols] = formatted_atoms_df[numeric_cols].map(
+            lambda x: f"{x:.5f}"
+        )
+
+        # Determine max width per column including header
+        col_widths = {
+            col: max(len(col), formatted_atoms_df[col].map(len).max())
+            for col in atoms_df.columns
+        }
+
+        # Note what we're writing in log
+        logging.info(f"Writing Atom Summary to {filepath}")
+
+        # write output summaries
+        with open(filepath, "w") as f:
+            # Write header
+            header = "\t".join(
+                f"{col:<{col_widths[col]}}" for col in formatted_atoms_df.columns
+            )
+            f.write(header + "\n")
+
+            # Write rows
+            for _, row in formatted_atoms_df.iterrows():
+                line = "\t".join(
+                    f"{val:<{col_widths[col]}}" for col, val in row.items()
+                )
+                f.write(line + "\n")
+
+            f.write("\n")
+            # f.write(f"Vacuum Charge:\t\t{self.vacuum_charge:.5f}\n")
+            # f.write(f"Vacuum Volume:\t\t{self.vacuum_volume:.5f}\n")
+            f.write(f"Total Electrons:\t{self.total_electron_number:.5f}\n")

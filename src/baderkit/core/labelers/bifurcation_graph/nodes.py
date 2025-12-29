@@ -489,7 +489,9 @@ class IrreducibleNode(NodeBase):
             if self.feature_type in FeatureType.atomic_types:
                 self._coord_electride_indices = [int(self.nearest_atom)]
             else:
-                feature_structure = self.bifurcation_graph._electride_hatom_structure.copy()
+                feature_structure = (
+                    self.bifurcation_graph._electride_hatom_structure.copy()
+                )
                 if self.feature_type in FeatureType.bare_types:
                     # this feature is already in our structure. just find the index
                     try:

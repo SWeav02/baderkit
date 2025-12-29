@@ -85,7 +85,7 @@ def test_run():
                 "vasp",
                 "-p",
                 "sel_atoms",
-                "0",
+                "[0]",
             ],
         )
         time.sleep(0)

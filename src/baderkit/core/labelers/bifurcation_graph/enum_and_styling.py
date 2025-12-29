@@ -131,7 +131,7 @@ class FeatureType(str, Enum):
     @classproperty
     def atomic_types(cls):
         return [cls.shell, cls.deep_shell, cls.core, cls.lone_pair]
-    
+
     @classproperty
     def atomic_species(cls):
         return [i.dummy_species for i in cls.atomic_types]
@@ -148,7 +148,7 @@ class FeatureType(str, Enum):
             cls.bare_electron,
             cls.unknown,
         ]
-    
+
     @classproperty
     def valence_species(cls):
         return [i.dummy_species for i in cls.valence_types]
@@ -168,11 +168,11 @@ class FeatureType(str, Enum):
             cls.covalent_metallic,
             cls.shallow_covalent_metallic,
         ]
-    
+
     @classproperty
     def covalent_species(cls):
         return [i.dummy_species for i in cls.covalent_types]
-    
+
     @classproperty
     def shared_types(cls):
         return [
@@ -181,7 +181,7 @@ class FeatureType(str, Enum):
             cls.shallow_covalent_metallic,
             cls.metallic,
         ]
-    
+
     @classproperty
     def shared_species(cls):
         return [i.dummy_species for i in cls.shared_types]

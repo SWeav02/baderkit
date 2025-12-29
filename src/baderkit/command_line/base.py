@@ -41,6 +41,7 @@ class PrintOptions(str, Enum):
     all_basins = "all_basins"
     sel_basins = "sel_basins"
     sum_basins = "sum_basins"
+    sel_spec = "sel_spec"
 
 
 def float_or_bool(value: str):
@@ -72,7 +73,7 @@ def run(
         help="The path to the reference file",
     ),
     method: Method = typer.Option(
-        Method.neargrid,
+        Method.weight,
         "--method",
         "-m",
         help="The method to use for separating bader basins",
@@ -111,9 +112,9 @@ def run(
         help="Optional printing of atom or bader basins",
         case_sensitive=False,
     ),
-    indices=typer.Argument(
-        default=[],
-        help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins 0 1 2`",
+    indices: str = typer.Argument(
+        default="",
+        help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins [1,2,3]`",
     ),
 ):
     """
@@ -134,7 +135,13 @@ def run(
         basin_tol=basin_tolerance,
     )
     # write summary
-    bader.write_results_summary()
+    bader.write_json()
+
+    # convert indices from string to list
+    try:
+        indices = [int(i) for i in indices.strip("[] ").split(",")]
+    except:
+        indices = [i.strip() for i in indices.strip("[] ").split(",")]
 
     # write basins
     if indices is None:
@@ -151,6 +158,9 @@ def run(
         bader.write_atom_volumes_sum(atom_indices=indices)
     elif print == "sum_basins":
         bader.write_basin_volumes_sum(basin_indices=indices)
+    elif print == "sel_spec":
+        for species in indices:
+            bader.write_species_volume(species=species)
 
 
 @baderkit_app.command(no_args_is_help=True)
@@ -213,6 +223,7 @@ def sum(
     # write to file
     summed_grid.write(filename=output_path, output_format=output_format)
 
+
 @baderkit_app.command(no_args_is_help=True)
 def regrid(
     file: Path = typer.Argument(
@@ -260,7 +271,7 @@ def regrid(
 
     # load grids dynamically
     grid = Grid.from_dynamic(file, format=input_format, total_only=False)
-    
+
     # regrid
     grid = grid.regrid(desired_resolution=resolution)
 
@@ -270,6 +281,7 @@ def regrid(
     output_path = Path(output_path)
     # write to file
     grid.write(filename=output_path, output_format=output_format)
+
 
 @baderkit_app.command(no_args_is_help=True)
 def split(
@@ -405,3 +417,193 @@ def gui():
     from baderkit.plotting.gui.main import run_app
 
     run_app()
+
+
+class BadelfPrintOptions(str, Enum):
+    all_atoms = "all_atoms"
+    sel_atoms = "sel_atoms"
+    sum_atoms = "sum_atoms"
+    sel_spec = "sel_spec"
+
+
+class BadelfMethod(str, Enum):
+    badelf = "badelf"
+    voronelf = "voronelf"
+    zero_flux = "zero-flux"
+
+
+@baderkit_app.command(no_args_is_help=True)
+def badelf(
+    charge_file: Path = typer.Argument(
+        default=...,
+        help="The path to the charge density file",
+    ),
+    reference_file: Path = typer.Argument(
+        default=...,
+        help="The path to the reference file",
+    ),
+    method: BadelfMethod = typer.Option(
+        BadelfMethod.badelf,
+        "--method",
+        "-m",
+        help="The method to use for separating atoms and electrides",
+        case_sensitive=False,
+    ),
+    bader_method: Method = typer.Option(
+        Method.weight,
+        "--bader-method",
+        "-bm",
+        help="The method to use for bader portions of the algorithm",
+        case_sensitive=False,
+    ),
+    # Currently only vasp is supported for badelf
+    # format: Format = typer.Option(
+    #     None,
+    #     "--format",
+    #     "-f",
+    #     help="The format of the files to read in",
+    #     case_sensitive=False,
+    # ),
+    print: BadelfPrintOptions = typer.Option(
+        None,
+        "--print",
+        "-p",
+        help="Optional printing of atom basins",
+        case_sensitive=False,
+    ),
+    spin: bool = typer.Option(
+        True,
+        "--spin",
+        "-s",
+        help="Whether to separate the spin-up/spin-down systems",
+    ),
+    indices: str = typer.Argument(
+        default="",
+        help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins [1,2,3]`",
+    ),
+):
+    """
+    Runs a BadELF analysis on the provided files. Currently only VASP files are
+    accepted.
+    """
+    if not spin:
+        from baderkit.core import Badelf
+    else:
+        from baderkit.core import SpinBadelf as Badelf
+
+    # instance bader
+    badelf = Badelf.from_vasp(
+        charge_filename=charge_file,
+        reference_filename=reference_file,
+        method=method,
+        elf_labeler={"method": bader_method},
+        # format=format,
+    )
+    # write summary
+    badelf.write_json()
+
+    # convert indices from string to list
+    try:
+        indices = [int(i) for i in indices.strip("[] ").split(",")]
+    except:
+        indices = [i.strip() for i in indices.strip("[] ").split(",")]
+
+    # write basins
+    if indices is None:
+        indices = []
+    if print == "all_atoms":
+        badelf.write_all_atom_volumes()
+    elif print == "sel_atoms":
+        badelf.write_atom_volumes(atom_indices=indices)
+    elif print == "sum_atoms":
+        badelf.write_atom_volumes_sum(atom_indices=indices)
+    elif print == "sel_spec":
+        for species in indices:
+            badelf.write_species_volume(species=species)
+
+
+class LabelerPrintOptions(str, Enum):
+    all_atoms = "all_feat"
+    sel_atoms = "sel_feat"
+    sum_atoms = "sum_feat"
+
+
+@baderkit_app.command(no_args_is_help=True)
+def label(
+    charge_file: Path = typer.Argument(
+        default=...,
+        help="The path to the charge density file",
+    ),
+    reference_file: Path = typer.Argument(
+        default=...,
+        help="The path to the reference file",
+    ),
+    method: Method = typer.Option(
+        Method.weight,
+        "--method",
+        "-m",
+        help="The bader method to use for partitioning the ELF",
+        case_sensitive=False,
+    ),
+    # Currently only vasp is supported for badelf
+    # format: Format = typer.Option(
+    #     None,
+    #     "--format",
+    #     "-f",
+    #     help="The format of the files to read in",
+    #     case_sensitive=False,
+    # ),
+    print: LabelerPrintOptions = typer.Option(
+        None,
+        "--print",
+        "-p",
+        help="Optional printing of atom basins",
+        case_sensitive=False,
+    ),
+    spin: bool = typer.Option(
+        True,
+        "--spin",
+        "-s",
+        help="Whether to separate the spin-up/spin-down systems",
+    ),
+    features: str = typer.Argument(
+        default="",
+        help="The feature labels used for print method. Can be added at the end of the call. For example: `baderkit label CHGCAR ELFCAR -p sel_feat [metallic, electride]`",
+    ),
+):
+    """
+    Labels the ELF features in the provided files. Currently only VASP files are
+    accepted.
+    """
+    if not spin:
+        from baderkit.core import ElfLabeler
+    else:
+        from baderkit.core import SpinElfLabeler as ElfLabeler
+
+    # instance bader
+    labeler = ElfLabeler.from_vasp(
+        charge_filename=charge_file,
+        reference_filename=reference_file,
+        method=method,
+        # format=format,
+    )
+    # write summary
+    labeler.write_json()
+
+    labeler.labeled_structure.to("POSCAR_labeled", "POSCAR")
+
+    # convert indices from string to list
+    try:
+        features = [int(i) for i in features.strip("[] ").split(",")]
+    except:
+        features = [i.strip() for i in features.strip("[] ").split(",")]
+
+    # write basins
+    if features is None:
+        features = []
+    if print == "all_feat":
+        labeler.write_all_features()
+    elif print == "sel_feat":
+        labeler.write_features_by_type(included_types=features)
+    elif print == "sum_feat":
+        labeler.write_features_by_type_sum(included_types=features)

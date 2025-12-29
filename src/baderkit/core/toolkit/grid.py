@@ -19,6 +19,7 @@ from scipy.spatial import Voronoi
 
 from baderkit.core.toolkit.interpolator import Interpolator
 from baderkit.core.toolkit.structure import Structure
+from baderkit.core.utilities.basic import get_transforms_in_radius
 from baderkit.core.utilities.file_parsers import (
     Format,
     detect_format,
@@ -26,7 +27,6 @@ from baderkit.core.utilities.file_parsers import (
     read_cube,
     read_vasp,
 )
-from baderkit.core.utilities.basic import get_transforms_in_radius
 from baderkit.core.utilities.file_parsers import write_cube as write_cube_file
 from baderkit.core.utilities.file_parsers import write_vasp as write_vasp_file
 
@@ -102,9 +102,9 @@ class Grid(VolumetricData):
         structure = Structure.from_dict(
             structure.as_dict()
         )  # convert to baderkit structure
-        
+
         self.structure = structure
-        
+
         self.is_spin_polarized = len(data) >= 2
         self.is_soc = len(data) >= 4
         # convert data to numpy arrays in case they were jsanitized as lists
@@ -706,13 +706,13 @@ class Grid(VolumetricData):
         scaling_matrix : int | NDArray, optional
             A scaling matrix for transforming the lattice and grid data. Two
             options are possible:
-                
-                1. A sequence of three scaling factors. E.g., [2, 1, 1] specifies 
+
+                1. A sequence of three scaling factors. E.g., [2, 1, 1] specifies
                 that the supercell should have dimensions 2a x b x c.
 
-                2. An integer, which simply scales all lattice vectors by the 
+                2. An integer, which simply scales all lattice vectors by the
                 same factor.
-                
+
             Note that a full 3x3 scaling matrix like that used in PyMatGen's Structure
             make_supercell method is not currently supported.
 
@@ -721,21 +721,23 @@ class Grid(VolumetricData):
         NDArray
             A new array with the data duplicated as requested
         """
-        
+
         # convert to array for consistency
         scaling_matrix = np.array(scaling_matrix)
-        
+
         # if an int is provided, convert to a 1d scaling matrix
         if scaling_matrix.ndim == 0:
-            scaling_matrix = np.array([scaling_matrix, scaling_matrix, scaling_matrix], dtype=int)
-        
+            scaling_matrix = np.array(
+                [scaling_matrix, scaling_matrix, scaling_matrix], dtype=int
+            )
+
         x, y, z = scaling_matrix
         # duplicate data
         self.total = self._tile_data(self.total, scaling_matrix)
         if self.diff:
             new_diff = self._tile_data(self.diff, scaling_matrix)
             self.diff = new_diff
-        
+
         # duplicate structure
         self.structure.make_supercell(scaling_matrix=scaling_matrix)
 
@@ -816,7 +818,7 @@ class Grid(VolumetricData):
     #         final_shell_indices.append(final_x)
 
     #     return np.column_stack(final_shell_indices)
-    
+
     def get_radial_neighbor_transforms(self, r: float) -> tuple:
         """
         Gets the transformations from each grid point to its neighbors within a
@@ -834,16 +836,12 @@ class Grid(VolumetricData):
             The second is the distance to each neighbor in the radius.
 
         """
-        
-        nx,ny,nz = self.shape
-        
+
+        nx, ny, nz = self.shape
+
         transforms, dists = get_transforms_in_radius(
-            r=r,
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            lattice_matrix=self.matrix            
-            )
+            r=r, nx=nx, ny=ny, nz=nz, lattice_matrix=self.matrix
+        )
         return transforms, dists
 
     def copy(self) -> Self:

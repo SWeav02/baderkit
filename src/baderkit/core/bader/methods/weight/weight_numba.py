@@ -38,7 +38,7 @@ def get_weight_assignments(
     ###########################################################################
     # Get neighbors
     ###########################################################################
-    
+
     # loop over points in parallel and calculate neighbors
     for sorted_idx in prange(num_coords):
         idx = sorted_indices[sorted_idx]
@@ -48,21 +48,21 @@ def get_weight_assignments(
         base_value = reference_data[i, j, k]
         # set flat charge
         flat_charge[idx] = charge_data[i, j, k]
-        
+
         # BUGFIX: In rare cases, the voronoi neighbors might include a neighbor
         # more than 1 voxel away. In this case it's possible we labeled a maximum
         # earlier that wouldn't be found as a maximum here. We default to the
         # maxima found earlier as we used interpolation to confirm or reject
         # them. Here we need to check for these first to make sure they get
         # assigned properly
-        if maxima_mask[i,j,k]:
+        if maxima_mask[i, j, k]:
             # Note this is a maximum
             neigh_nums[sorted_idx] = 0
             # assign the first value to the current label. This will allow us
             # to check if the maximum is the root max in the next section
             neigh_array[sorted_idx, 0] = labels[idx]
             continue
-        
+
         # get higher neighbors at each point
         neigh_num = 0
         for si, sj, sk in neighbor_transforms:
@@ -95,7 +95,6 @@ def get_weight_assignments(
         else:
             neigh_nums[sorted_idx] = neigh_num
 
-
     ###########################################################################
     # Assign interior
     ###########################################################################
@@ -108,7 +107,7 @@ def get_weight_assignments(
     for sorted_idx, (idx, neighs, neigh_num) in enumerate(
         zip(sorted_indices, neigh_array, neigh_nums)
     ):
-        
+
         if neigh_num > 0:
             # This is not a maximum. Check if interior point (single basin)
             best_label = -1

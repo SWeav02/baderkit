@@ -2,6 +2,7 @@
 
 import copy
 import importlib
+import json
 import logging
 import time
 import warnings
@@ -141,7 +142,8 @@ class Bader:
                 "atom_charges",
                 "atom_volumes",
                 "atom_min_surface_distances",
-                "atom_avg_surface_distances" "total_electron_number",
+                "atom_avg_surface_distances",
+                "total_electron_number",
             ]
         # get our final list of properties
         reset_properties = [
@@ -150,6 +152,34 @@ class Bader:
         # set corresponding hidden variable to None
         for prop in reset_properties:
             setattr(self, f"_{prop}", None)
+
+    @property
+    def structure(self) -> Structure:
+        """
+
+        Returns
+        -------
+        Structure
+            The pymatgen structure basins are assigned to.
+
+        """
+        if self._structure is None:
+            self._structure = self.reference_grid.structure.copy()
+            self._structure.relabel_sites(ignore_uniq=True)
+        return self._structure
+
+    @property
+    def species(self) -> list[str]:
+        """
+
+        Returns
+        -------
+        list[str]
+            The species of each atom/dummy atom in the electride structure. Covalent
+            and metallic features are not included.
+
+        """
+        return [i.specie.symbol for i in self.structure]
 
     @property
     def charge_grid(self) -> Grid:
@@ -532,21 +562,6 @@ class Bader:
         return self._atom_avg_surface_distances
 
     @property
-    def structure(self) -> Structure:
-        """
-
-        Returns
-        -------
-        Structure
-            The pymatgen structure basins are assigned to.
-
-        """
-        if self._structure is None:
-            self._structure = self.reference_grid.structure.copy()
-            self._structure.relabel_sites(ignore_uniq=True)
-        return self._structure
-
-    @property
     def basin_edges(self) -> NDArray[np.bool_]:
         """
 
@@ -680,45 +695,41 @@ class Bader:
 
         return [i.value for i in Method]
 
-    @property
-    def results_summary(self) -> dict:
-        """
+    # @property
+    # def results_summary(self) -> dict:
+    #     """
 
-        Returns
-        -------
-        results_dict : dict
-            A dictionary summary of all results
+    #     Returns
+    #     -------
+    #     results_dict : dict
+    #         A dictionary summary of all results
 
-        """
-        results_dict = {
-            "method": self.method,
-            "basin_maxima_frac": self.basin_maxima_frac,
-            "basin_maxima_vox": self.basin_maxima_vox,
-            "basin_charges": self.basin_charges,
-            "basin_volumes": self.basin_volumes,
-            "basin_min_surface_distances": self.basin_min_surface_distances,
-            "basin_avg_surface_distances": self.basin_avg_surface_distances,
-            "basin_atoms": self.basin_atoms,
-            "basin_atom_dists": self.basin_atom_dists,
-            "atom_charges": self.atom_charges,
-            "atom_volumes": self.atom_volumes,
-            "atom_min_surface_distances": self.atom_min_surface_distances,
-            "atom_avg_surface_distances": self.atom_avg_surface_distances,
-            "structure": self.structure,
-            "vacuum_charge": self.vacuum_charge,
-            "vacuum_volume": self.vacuum_volume,
-            "significant_basins": self.significant_basins,
-            "total_electron_num": self.total_electron_number,
-        }
-        return results_dict
+    #     """
+    #     results_dict = {
+    #         "method": self.method,
+    #         "basin_maxima_frac": self.basin_maxima_frac,
+    #         "basin_maxima_vox": self.basin_maxima_vox,
+    #         "basin_charges": self.basin_charges,
+    #         "basin_volumes": self.basin_volumes,
+    #         "basin_min_surface_distances": self.basin_min_surface_distances,
+    #         "basin_avg_surface_distances": self.basin_avg_surface_distances,
+    #         "basin_atoms": self.basin_atoms,
+    #         "basin_atom_dists": self.basin_atom_dists,
+    #         "atom_charges": self.atom_charges,
+    #         "atom_volumes": self.atom_volumes,
+    #         "atom_min_surface_distances": self.atom_min_surface_distances,
+    #         "atom_avg_surface_distances": self.atom_avg_surface_distances,
+    #         "structure": self.structure,
+    #         "vacuum_charge": self.vacuum_charge,
+    #         "vacuum_volume": self.vacuum_volume,
+    #         "significant_basins": self.significant_basins,
+    #         "total_electron_num": self.total_electron_number,
+    #     }
+    #     return results_dict
 
     def run_bader(self) -> None:
         """
         Runs the entire Bader process and saves results to class variables.
-
-        Returns
-        -------
-        None
 
         """
         t0 = time.time()
@@ -781,7 +792,7 @@ class Bader:
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
         atom_labels = basin_atoms[self.basin_labels]
         basin_atoms = basin_atoms[:-1]
-        
+
         atom_charges = np.bincount(
             basin_atoms, weights=self.basin_charges, minlength=len(structure)
         )
@@ -795,10 +806,6 @@ class Bader:
         """
         Assigns bader basins to this Bader objects structure.
 
-        Returns
-        -------
-        None.
-
         """
         # ensure bader has run (otherwise our time will include the bader time)
         self.basin_maxima_frac
@@ -809,8 +816,8 @@ class Bader:
         t0 = time.time()
         logging.info("Assigning Atom Properties")
         # get basin assignments for this bader objects structure
-        atom_labels, atom_charges, atom_volumes, basin_atoms, basin_atom_dists = self.assign_basins_to_structure(
-            structure
+        atom_labels, atom_charges, atom_volumes, basin_atoms, basin_atom_dists = (
+            self.assign_basins_to_structure(structure)
         )
 
         # Store everything
@@ -841,6 +848,11 @@ class Bader:
         """
         # convert to path
         potcar_path = Path(potcar_path)
+        if not potcar_path.exists():
+            logging.warning(
+                "No POTCAR file found in the requested directory. Oxidation states cannot be calculated"
+            )
+            return
         # load
         with warnings.catch_warnings(record=True):
             potcars = Potcar.from_file(potcar_path)
@@ -864,10 +876,6 @@ class Bader:
         automatically called during the atom assignment and generally should
         not be called manually.
 
-        Returns
-        -------
-        None.
-
         """
         self._atom_min_surface_distances, self._atom_avg_surface_distances = (
             get_min_avg_surface_dists(
@@ -884,10 +892,6 @@ class Bader:
         Calculates the distance from each basin maxima to the nearest surface.
         This is automatically called during the atom assignment and generally
         should not be called manually.
-
-        Returns
-        -------
-        None.
 
         """
         # get the minimum distances
@@ -1043,6 +1047,7 @@ class Bader:
         basin_indices: NDArray,
         directory: str | Path = None,
         write_reference: bool = False,
+        prefix_override: str = None,
         output_format: str | Format = None,
         **writer_kwargs,
     ):
@@ -1061,14 +1066,14 @@ class Bader:
         write_reference : bool, optional
             Whether or not to write the reference data rather than the charge data.
             Default is False.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
         output_format : str | Format, optional
             The format to write with. If None, writes to source format stored in
             the Grid objects metadata.
             Defaults to None.
-
-        Returns
-        -------
-        None.
 
         """
         # get the data to use
@@ -1092,7 +1097,11 @@ class Bader:
                 data={"total": data_array_copy},
                 data_type=data_type,
             )
-            file_path = directory / f"{grid.data_type.prefix}_b{basin}"
+            # get prefix
+            if prefix_override is None:
+                prefix_override = grid.data_type.prefix
+
+            file_path = directory / f"{prefix_override}_b{basin}"
             # write file
             grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
 
@@ -1100,6 +1109,7 @@ class Bader:
         self,
         directory: str | Path = None,
         write_reference: bool = False,
+        prefix_override: str = None,
         output_format: str | Format = None,
         **writer_kwargs,
     ):
@@ -1116,14 +1126,14 @@ class Bader:
         write_reference : bool, optional
             Whether or not to write the reference data rather than the charge data.
             Default is False.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
         output_format : str | Format, optional
             The format to write with. If None, writes to source format stored in
             the Grid objects metadata.
             Defaults to None.
-
-        Returns
-        -------
-        None.
 
         """
         basin_indices = np.where(self.significant_basins)[0]
@@ -1131,6 +1141,7 @@ class Bader:
             basin_indices=basin_indices,
             directory=directory,
             write_reference=write_reference,
+            prefix_override=prefix_override,
             output_format=output_format,
             **writer_kwargs,
         )
@@ -1140,6 +1151,7 @@ class Bader:
         basin_indices: NDArray,
         directory: str | Path = None,
         write_reference: bool = False,
+        prefix_override: str = None,
         output_format: str | Format = None,
         **writer_kwargs,
     ):
@@ -1158,14 +1170,14 @@ class Bader:
         write_reference : bool, optional
             Whether or not to write the reference data rather than the charge data.
             Default is False.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
         output_format : str | Format, optional
             The format to write with. If None, writes to source format stored in
             the Grid objects metadata.
             Defaults to None.
-
-        Returns
-        -------
-        None.
 
         """
         # get the data to use
@@ -1188,7 +1200,12 @@ class Bader:
             data={"total": data_array_copy},
             data_type=data_type,
         )
-        file_path = directory / f"{grid.data_type.prefix}_bsum"
+        # get prefix
+        if prefix_override is None:
+            prefix_override = grid.data_type.prefix
+
+        file_path = directory / f"{prefix_override}_bsum"
+
         # write file
         grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
 
@@ -1197,6 +1214,7 @@ class Bader:
         atom_indices: NDArray,
         directory: str | Path = None,
         write_reference: bool = False,
+        prefix_override: str = None,
         output_format: str | Format = None,
         **writer_kwargs,
     ):
@@ -1215,14 +1233,14 @@ class Bader:
         write_reference : bool, optional
             Whether or not to write the reference data rather than the charge data.
             Default is False.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
         output_format : str | Format, optional
             The format to write with. If None, writes to source format stored in
             the Grid objects metadata.
             Defaults to None.
-
-        Returns
-        -------
-        None.
 
         """
         # get the data to use
@@ -1246,7 +1264,12 @@ class Bader:
                 data={"total": data_array_copy},
                 data_type=data_type,
             )
-            file_path = directory / f"{grid.data_type.prefix}_a{atom_index}"
+
+            # get prefix
+            if prefix_override is None:
+                prefix_override = grid.data_type.prefix
+
+            file_path = directory / f"{prefix_override}_a{atom_index}"
             # write file
             grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
 
@@ -1254,6 +1277,7 @@ class Bader:
         self,
         directory: str | Path = None,
         write_reference: bool = False,
+        prefix_override: str = None,
         output_format: str | Format = None,
         **writer_kwargs,
     ):
@@ -1273,14 +1297,14 @@ class Bader:
         write_reference : bool, optional
             Whether or not to write the reference data rather than the charge data.
             Default is False.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
         output_format : str | Format, optional
             The format to write with. If None, writes to source format stored in
             the Grid objects metadata.
             Defaults to None.
-
-        Returns
-        -------
-        None.
 
         """
         atom_indices = np.array(range(len(self.structure)))
@@ -1288,6 +1312,7 @@ class Bader:
             atom_indices=atom_indices,
             directory=directory,
             write_reference=write_reference,
+            prefix_override=prefix_override,
             output_format=output_format,
             **writer_kwargs,
         )
@@ -1297,6 +1322,7 @@ class Bader:
         atom_indices: NDArray,
         directory: str | Path = None,
         write_reference: bool = False,
+        prefix_override: str = None,
         output_format: str | Format = None,
         **writer_kwargs,
     ):
@@ -1315,14 +1341,14 @@ class Bader:
         write_reference : bool, optional
             Whether or not to write the reference data rather than the charge data.
             Default is False.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
         output_format : str | Format, optional
             The format to write with. If None, writes to source format stored in
             the Grid objects metadata.
             Defaults to None.
-
-        Returns
-        -------
-        None.
 
         """
         # get the data to use
@@ -1343,9 +1369,72 @@ class Bader:
             data={"total": data_array_copy},
             data_type=data_type,
         )
-        file_path = directory / f"{grid.data_type.prefix}_asum"
+
+        # get prefix
+        if prefix_override is None:
+            prefix_override = grid.data_type.prefix
+
+        file_path = directory / f"{prefix_override}_asum"
         # write file
         grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+
+    def write_species_volume(
+        self,
+        species: str,
+        directory: str | Path = None,
+        write_reference: bool = True,
+        prefix_override: str = None,
+        output_format: str | Format = None,
+    ):
+        """
+        Writes the charge density or reference file for all atoms of the given
+        species to a single file.
+
+        Parameters
+        ----------
+        species : str, optional
+            The species to write.
+        directory : str | Path, optional
+            The directory to write the result to. The default is None.
+        write_reference : bool, optional
+            Whether or not to write the reference data rather than the charge data.
+            The default is True.
+        prefix_override : str, optional
+            The string to add at the front of the output path. If None, defaults
+            to the VASP file name equivalent to the data type stored in the
+            grid.
+        output_format : str | Format, optional
+            The format to write with. If None, writes to source format stored in
+            the Grid objects metadata.
+            Defaults to None.
+
+        """
+        if directory is None:
+            directory = Path(".")
+
+        # Get voxel assignments and data
+        voxel_assignment_array = self.atom_labels
+        if write_reference:
+            grid = self.reference_grid.copy()
+        else:
+            grid = self.charge_grid.copy()
+
+        # add dummy atoms if desired
+        indices = self.structure.indices_from_symbol(species)
+
+        # Get mask where the grid belongs to requested species
+        mask = np.isin(voxel_assignment_array, indices, invert=True)
+        grid.total[mask] = 0
+        if grid.diff is not None:
+            grid.diff[mask] = 0
+
+        # get prefix
+        if prefix_override is None:
+            prefix_override = grid.data_type.prefix
+
+        file_path = directory / f"{prefix_override}_{species}"
+        # write file
+        grid.write(filename=file_path, output_format=output_format)
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """
@@ -1398,26 +1487,18 @@ class Bader:
         )
         return basin_df
 
-    def write_results_summary(
-        self,
-        directory: Path | str | None = None,
-    ):
+    def write_atom_tsv(self, filepath: Path | str = "bader_atoms.tsv"):
         """
-        Writes a summary of atom and basin results to .tsv files.
+        Writes a summary of atom results to .tsv files.
 
         Parameters
         ----------
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
+        filepath : str | Path
+            The Path to write the results to. The default is "bader_atoms.tsv".
 
-        Returns
-        -------
-        None.
 
         """
-        if directory is None:
-            directory = Path(".")
+        filepath = Path(filepath)
 
         # Get atom results summary
         atoms_df = self.get_atom_results_dataframe()
@@ -1426,6 +1507,47 @@ class Bader:
         formatted_atoms_df[numeric_cols] = formatted_atoms_df[numeric_cols].map(
             lambda x: f"{x:.5f}"
         )
+
+        # Determine max width per column including header
+        col_widths = {
+            col: max(len(col), formatted_atoms_df[col].map(len).max())
+            for col in atoms_df.columns
+        }
+
+        # Note what we're writing in log
+        logging.info(f"Writing Atom Summary to {filepath}")
+
+        # write output summaries
+        with open(filepath, "w") as f:
+            # Write header
+            header = "\t".join(
+                f"{col:<{col_widths[col]}}" for col in formatted_atoms_df.columns
+            )
+            f.write(header + "\n")
+
+            # Write rows
+            for _, row in formatted_atoms_df.iterrows():
+                line = "\t".join(
+                    f"{val:<{col_widths[col]}}" for col, val in row.items()
+                )
+                f.write(line + "\n")
+            # write vacuum summary to atom file
+            f.write("\n")
+            f.write(f"Vacuum Charge:\t\t{self.vacuum_charge:.5f}\n")
+            f.write(f"Vacuum Volume:\t\t{self.vacuum_volume:.5f}\n")
+            f.write(f"Total Electrons:\t{self.total_electron_number:.5f}\n")
+
+    def write_basin_tsv(self, filepath: Path | str = "bader_basins.tsv"):
+        """
+        Writes a summary of basin results to .tsv files.
+
+        Parameters
+        ----------
+        filepath : str | Path
+            The Path to write the results to. The default is "bader_basins.tsv".
+
+        """
+        filepath = Path(filepath)
 
         # Get basin results summary
         basin_df = self.get_basin_results_dataframe()
@@ -1436,42 +1558,165 @@ class Bader:
         )
 
         # Determine max width per column including header
-        atom_col_widths = {
-            col: max(len(col), formatted_atoms_df[col].map(len).max())
-            for col in atoms_df.columns
-        }
-        basin_col_widths = {
+        col_widths = {
             col: max(len(col), formatted_basin_df[col].map(len).max())
             for col in basin_df.columns
         }
 
         # Write to file with aligned columns using tab as separator
-        for df, col_widths, name in zip(
-            [formatted_atoms_df, formatted_basin_df],
-            [atom_col_widths, basin_col_widths],
-            ["bader_atom_summary.tsv", "bader_basin_summary.tsv"],
-        ):
-            # Note what we're writing in log
-            if "atom" in name:
-                logging.info(f"Writing Atom Summary to {name}")
-            else:
-                logging.info(f"Writing Basin Summary to {name}")
 
-            # write output summaries
-            with open(directory / name, "w") as f:
-                # Write header
-                header = "\t".join(f"{col:<{col_widths[col]}}" for col in df.columns)
-                f.write(header + "\n")
+        # Note what we're writing in log
 
-                # Write rows
-                for _, row in df.iterrows():
-                    line = "\t".join(
-                        f"{val:<{col_widths[col]}}" for col, val in row.items()
-                    )
-                    f.write(line + "\n")
-                # write vacuum summary to atom file
-                if name == "bader_atom_summary.tsv":
-                    f.write("\n")
-                    f.write(f"Vacuum Charge:\t\t{self.vacuum_charge:.5f}\n")
-                    f.write(f"Vacuum Volume:\t\t{self.vacuum_volume:.5f}\n")
-                    f.write(f"Total Electrons:\t{self.total_electron_number:.5f}\n")
+        logging.info(f"Writing Basin Summary to {filepath}")
+
+        # write output summaries
+        with open(filepath, "w") as f:
+            # Write header
+            header = "\t".join(f"{col:<{col_widths[col]}}" for col in basin_df.columns)
+            f.write(header + "\n")
+
+            # Write rows
+            for _, row in formatted_basin_df.iterrows():
+                line = "\t".join(
+                    f"{val:<{col_widths[col]}}" for col, val in row.items()
+                )
+                f.write(line + "\n")
+
+    def to_dict(
+        self,
+        potcar_path: Path | str = "POTCAR",
+        use_json: bool = True,
+    ) -> dict:
+        """
+
+        Gets a dictionary summary of the Bader analysis.
+
+        Parameters
+        ----------
+        potcar_path : Path | str, optional
+            The Path to a POTCAR file. This must be provided for oxidation states
+            to be calculated, and they will be None otherwise. The default is "POTCAR".
+        use_json : bool, optional
+            Convert all entries to JSONable data types. The default is True.
+
+        Returns
+        -------
+        dict
+            A summary of the BadELF analysis in dictionary form.
+
+        """
+        # get charges first to ensure good logging
+        self.atom_charges
+        results = {}
+        # collect method kwargs
+        method_kwargs = {
+            "method": self.method,
+            "vacuum_tol": self.vacuum_tol,
+            "basin_tol": self.basin_tol,
+        }
+        results["method_kwargs"] = method_kwargs
+        results["oxidation_states"] = self.get_oxidation_from_potcar(potcar_path)
+
+        # split into basin and atom sections
+        atom_results = {}
+        for result in [
+            "species",
+            "atom_charges",
+            "atom_volumes",
+            "atom_min_surface_distances",
+            "atom_avg_surface_distances",
+        ]:
+            atom_results[result] = getattr(self, result, None)
+
+        basin_results = {}
+        for result in [
+            "basin_atoms",
+            "basin_atom_dists",
+            "basin_charges",
+            "basin_volumes",
+            "basin_maxima_frac",
+            "basin_maxima_charge_values",
+            "basin_maxima_ref_values",
+            "basin_maxima_vox",
+            "significant_basins",
+            "basin_min_surface_distances",
+            "basin_avg_surface_distances",
+        ]:
+            basin_results[result] = getattr(self, result, None)
+
+        for result in [
+            "structure",
+            "vacuum_charge",
+            "vacuum_volume",
+            "num_vacuum",
+            "total_electron_number",
+        ]:
+            results[result] = getattr(self, result, None)
+
+        if use_json:
+            # get serializable versions of each attribute
+            results["structure"] = results["structure"].to(fmt="POSCAR")
+            for key in [
+                "basin_maxima_frac",
+                "basin_maxima_charge_values",
+                "basin_maxima_ref_values",
+                "basin_maxima_vox",
+                "basin_charges",
+                "basin_volumes",
+                "significant_basins",
+                "basin_min_surface_distances",
+                "basin_avg_surface_distances",
+                "basin_atoms",
+                "basin_atom_dists",
+            ]:
+                if basin_results[key] is None:
+                    continue  # skip oxidation states if they fail
+                basin_results[key] = basin_results[key].tolist()
+            for key in [
+                "atom_charges",
+                "atom_volumes",
+                "atom_min_surface_distances",
+                "atom_avg_surface_distances",
+            ]:
+                if atom_results[key] is None:
+                    continue  # skip oxidation states if they fail
+                atom_results[key] = atom_results[key].tolist()
+
+        results["atom_results"] = atom_results
+        results["basin_results"] = basin_results
+
+        return results
+
+    def to_json(self, **kwargs) -> str:
+        """
+        Creates a JSON string representation of the results, typically for writing
+        results to file.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Keyword arguments for the to_dict method.
+
+        Returns
+        -------
+        str
+            A JSON string representation of the BadELF results.
+
+        """
+        return json.dumps(self.to_dict(use_json=True, **kwargs))
+
+    def write_json(self, filepath: Path | str = "bader.json", **kwargs) -> None:
+        """
+        Writes results of the analysis to file in a JSON format.
+
+        Parameters
+        ----------
+        filepath : Path | str, optional
+            The Path to write the results to. The default is "bader.json".
+        **kwargs : dict
+            keyword arguments for the to_dict method.
+
+        """
+        filepath = Path(filepath)
+        with open(filepath, "w") as json_file:
+            json.dump(self.to_dict(use_json=True, **kwargs), json_file, indent=4)
