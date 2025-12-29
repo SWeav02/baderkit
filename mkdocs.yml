@@ -67,6 +67,10 @@ nav:
     - Core:
       - Bader: api_reference/core/bader.md
       - Grid: api_reference/core/grid.md
+      - ElfLabeler: api_reference/core/labeler.md
+      - SpinElfLabeler: api_reference/core/labeler_spin.md
+      - Badelf: api_reference/core/badelf.md
+      - SpinBadelf: api_reference/core/badelf_spin.md
     - Plotting:
       - Structure: api_reference/plotting/structure.md
       - Grid: api_reference/plotting/grid.md

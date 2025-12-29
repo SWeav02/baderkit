@@ -472,7 +472,7 @@ def badelf(
         case_sensitive=False,
     ),
     spin: bool = typer.Option(
-        True,
+        False,
         "--spin",
         "-s",
         help="Whether to separate the spin-up/spin-down systems",
@@ -561,7 +561,7 @@ def label(
         case_sensitive=False,
     ),
     spin: bool = typer.Option(
-        True,
+        False,
         "--spin",
         "-s",
         help="Whether to separate the spin-up/spin-down systems",

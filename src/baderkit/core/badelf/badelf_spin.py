@@ -19,7 +19,7 @@ from baderkit.core.utilities.file_parsers import Format
 
 class SpinBadelf:
     """
-    This class is a wrapper for the BadElfToolkit adding the capability
+    This class is a wrapper for the Badelf class adding the capability
     to individually handle spin-up and spin-down components of the
     ELF and charge density.
     """
@@ -592,7 +592,7 @@ class SpinBadelf:
         charge_grid = Grid.from_vasp(charge_file, total_only=False)
         return cls(reference_grid=reference_grid, charge_grid=charge_grid, **kwargs)
 
-    def write_volumes(
+    def write_atom_volumes(
         self,
         atom_indices: NDArray,
         directory: str | Path = None,
@@ -605,7 +605,8 @@ class SpinBadelf:
         """
         Writes the reference ELF or charge-density for the given atoms to
         separate files. Electrides found during the calculation are appended to
-        the end of the structure.
+        the end of the structure. Note that non-atomic features of the same index 
+        in different spin systems may not correspond to the same feature.
 
         Parameters
         ----------
@@ -646,7 +647,7 @@ class SpinBadelf:
             temp_prefix = prefix_override
 
         for atom_index in atom_indices:
-            self.badelf_up.write_volumes(
+            self.badelf_up.write_atom_volumes(
                 atom_indices=[atom_index],
                 directory=directory,
                 prefix_override=temp_prefix,
@@ -661,7 +662,7 @@ class SpinBadelf:
                     directory / f"{prefix_override}_a{atom_index}_up",
                 )
                 # Write the spin down file and change the name
-                self.badelf_down.write_volumes(
+                self.badelf_down.write_atom_volumes(
                     atom_indices=[atom_index],
                     directory=directory,
                     prefix_override=temp_prefix,
@@ -674,7 +675,7 @@ class SpinBadelf:
                     directory / f"{prefix_override}_a{atom_index}_down",
                 )
 
-    def write_all_volumes(
+    def write_all_atom_volumes(
         self,
         directory: str | Path = None,
         write_reference: bool = True,
@@ -686,7 +687,8 @@ class SpinBadelf:
         """
         Writes the reference ELF or charge-density for the each atom to
         separate files. Electrides found during the calculation are appended to
-        the end of the structure.
+        the end of the structure. Note that non-atomic features of the same index 
+        in different spin systems may not correspond to the same feature.
 
         Parameters
         ----------
@@ -725,7 +727,7 @@ class SpinBadelf:
             temp_prefix = prefix_override
 
         for atom_index in range(len(self.electride_structure)):
-            self.badelf_up.write_volumes(
+            self.badelf_up.write_atom_volumes(
                 atom_indices=[atom_index],
                 directory=directory,
                 write_reference=write_reference,
@@ -740,7 +742,7 @@ class SpinBadelf:
                     directory / f"{prefix_override}_a{atom_index}_up",
                 )
                 # Write the spin down file and change the name
-                self.badelf_down.write_volumes(
+                self.badelf_down.write_atom_volumes(
                     atom_indices=[atom_index],
                     directory=directory,
                     write_reference=write_reference,
@@ -753,7 +755,7 @@ class SpinBadelf:
                     directory / f"{prefix_override}_a{atom_index}_down",
                 )
 
-    def write_volumes_sum(
+    def write_atom_volumes_sum(
         self,
         atom_indices: NDArray,
         directory: str | Path = None,
@@ -766,7 +768,8 @@ class SpinBadelf:
         """
 
         Writes the reference ELF or charge-density for the the union of the
-        given atoms to a single file.
+        given atoms to a single file. Note that non-atomic features of the same index 
+        in different spin systems may not correspond to the same feature.
 
         Parameters
         ----------
@@ -801,7 +804,7 @@ class SpinBadelf:
                 prefix_override = self.charge_grid.data_type.prefix
 
         temp_prefix = f"{prefix_override}_temp"
-        self.badelf_up.write_volumes_sum(
+        self.badelf_up.write_atom_volumes_sum(
             atom_indices=atom_indices,
             directory=directory,
             write_reference=write_reference,
@@ -816,7 +819,7 @@ class SpinBadelf:
                 directory / f"{prefix_override}_asum_up",
             )
             # Write the spin down file and change the name
-            self.badelf_down.write_volumes_sum(
+            self.badelf_down.write_atom_volumes_sum(
                 atom_indices=atom_indices,
                 directory=directory,
                 write_reference=write_reference,

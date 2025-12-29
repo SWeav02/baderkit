@@ -27,8 +27,7 @@ from baderkit.core.utilities.file_parsers import Format
 from baderkit.core.utilities.voronoi import get_cell_wrapped_voronoi
 
 # TODO:
-# 2. add testing for elf labeler and badelf
-# 2.1 organize classes for easier readability
+
 # 3. update docs to include elf labeler and badelf
 # 4. push new release and update warrenapp info
 # 5. update simmate workflows/database
@@ -38,11 +37,10 @@ from baderkit.core.utilities.voronoi import get_cell_wrapped_voronoi
 
 class Badelf:
     """
-    A set of tools for performing BadELF, VoronELF, or Zero-Flux analysis on
-    outputs from a VASP calculation. This class handles the full workflow from
-    labeling ELF features, to locating separating planes at atom radii, to integrating
-    charge. For more traditional ELF analysis, we recommend using the ElfLabeler
-    class in the [BaderKit](https://github.com/SWeav02/baderkit) package.
+    Class for performing charge analysis using the electron localization function
+    (ELF). For information on specific methods, see our [docs](https://sweav02.github.io/baderkit/).
+    
+    For more in-depth ELF analysis we recommend using the ElfLabeler class.
 
     This class only performs analysis on one spin system.
 
