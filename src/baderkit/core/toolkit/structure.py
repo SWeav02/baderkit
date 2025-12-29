@@ -77,7 +77,7 @@ class Structure(PymatgenStructure):
             properties["label"] = str(species)
 
         super().insert(
-            i=i,
+            i,
             species=species,
             coords=coords,
             coords_are_cartesian=coords_are_cartesian,

@@ -605,7 +605,7 @@ class SpinBadelf:
         """
         Writes the reference ELF or charge-density for the given atoms to
         separate files. Electrides found during the calculation are appended to
-        the end of the structure. Note that non-atomic features of the same index 
+        the end of the structure. Note that non-atomic features of the same index
         in different spin systems may not correspond to the same feature.
 
         Parameters
@@ -687,7 +687,7 @@ class SpinBadelf:
         """
         Writes the reference ELF or charge-density for the each atom to
         separate files. Electrides found during the calculation are appended to
-        the end of the structure. Note that non-atomic features of the same index 
+        the end of the structure. Note that non-atomic features of the same index
         in different spin systems may not correspond to the same feature.
 
         Parameters
@@ -768,7 +768,7 @@ class SpinBadelf:
         """
 
         Writes the reference ELF or charge-density for the the union of the
-        given atoms to a single file. Note that non-atomic features of the same index 
+        given atoms to a single file. Note that non-atomic features of the same index
         in different spin systems may not correspond to the same feature.
 
         Parameters

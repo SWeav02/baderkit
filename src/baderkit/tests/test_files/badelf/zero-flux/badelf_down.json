@@ -22,14 +22,14 @@
     ],
     "electride_dimensionality": 0,
     "charges": [
-        4.301400292316437,
-        4.301400291939677,
+        4.301400292316436,
+        4.301400291939676,
         3.699553019644112
     ],
     "volumes": [
         22.5035061806162,
-        22.503506154126327,
-        26.822510770598548
+        22.503506154126324,
+        26.82251077059854
     ],
     "min_surface_distances": [
         0.9440387260352899,
@@ -44,7 +44,7 @@
     "electride_formula": "Ca2 N1 e0",
     "electrides_per_formula": 0,
     "electrides_per_reduced_formula": 0.0,
-    "total_charge": 12.302353603900226,
-    "total_volume": 71.82952310534108,
+    "total_charge": 12.302353603900224,
+    "total_volume": 71.82952310534107,
     "spin_system": "down"
 }

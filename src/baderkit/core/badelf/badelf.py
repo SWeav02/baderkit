@@ -39,7 +39,7 @@ class Badelf:
     """
     Class for performing charge analysis using the electron localization function
     (ELF). For information on specific methods, see our [docs](https://sweav02.github.io/baderkit/).
-    
+
     For more in-depth ELF analysis we recommend using the ElfLabeler class.
 
     This class only performs analysis on one spin system.
@@ -1303,11 +1303,11 @@ class Badelf:
         # add dummy atoms if desired
         if include_dummy_atoms:
             grid.structure = self.electride_structure
-            
+
         # get prefix
         if prefix_override is None:
             prefix_override = grid.data_type.prefix
-            
+
         file_path = directory / f"{prefix_override}_asum"
         # write file
         grid.write(filename=file_path, output_format=output_format, **writer_kwargs)

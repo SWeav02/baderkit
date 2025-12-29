@@ -25,13 +25,13 @@
     "volumes": [
         16.1547920770903,
         16.15479206384536,
-        25.471466152666004,
+        25.471466152666,
         14.048472811739858
     ],
     "electride_formula": "Ca2 N1 e1",
     "electrides_per_formula": 0.6736902216372626,
     "electrides_per_reduced_formula": 0.6736902216372626,
     "total_charge": 24.999999730857176,
-    "total_volume": 71.82952310534152,
+    "total_volume": 71.82952310534151,
     "spin_system": "combined"
 }

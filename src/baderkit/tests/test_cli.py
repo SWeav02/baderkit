@@ -93,6 +93,7 @@ def test_bader():
         assert result.exit_code == 0
         assert Path("CHGCAR_a0").exists()
 
+
 def test_badelf():
     # create a temporary folder to run the command in
     with runner.isolated_filesystem():
@@ -117,7 +118,8 @@ def test_badelf():
         time.sleep(0)
         assert result.exit_code == 0
         assert Path("ELFCAR_a0_up").exists()
-        
+
+
 def test_labeler():
     # create a temporary folder to run the command in
     with runner.isolated_filesystem():
@@ -140,7 +142,8 @@ def test_labeler():
         time.sleep(0)
         assert result.exit_code == 0
         assert Path("ELFCAR_metallic_fsum_up").exists()
-        
+
+
 # TODO: I couldn't get this to run and be headless, so for now I'm going to
 # try and remember to always run this myself
 # def test_gui():
