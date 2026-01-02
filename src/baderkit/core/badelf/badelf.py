@@ -328,7 +328,7 @@ class Badelf:
         """
         if self._charges is None:
             self._get_voxel_assignments()
-        return self._charges
+        return self._charges.round(10)
 
     @property
     def volumes(self) -> NDArray:
@@ -342,7 +342,7 @@ class Badelf:
         """
         if self._volumes is None:
             self._get_voxel_assignments()
-        return self._volumes
+        return self._volumes.round(10)
 
     @property
     def total_electron_number(self) -> float:
@@ -358,7 +358,7 @@ class Badelf:
 
         """
 
-        return self.charges.sum()
+        return round(self.charges.sum(), 10)
 
     @property
     def _zero_flux_feature_labels(self) -> NDArray:
@@ -888,7 +888,7 @@ class Badelf:
         """
         if self._min_surface_distances is None:
             self._get_min_avg_surface_dists()
-        return self._min_surface_distances
+        return self._min_surface_distances.round(10)
 
     @property
     def avg_surface_distances(self) -> NDArray:
@@ -903,7 +903,7 @@ class Badelf:
         """
         if self._avg_surface_distances is None:
             self._get_min_avg_surface_dists()
-        return self._avg_surface_distances
+        return self._avg_surface_distances.round(10)
 
     @property
     def electrides_per_formula(self) -> float:
@@ -920,7 +920,7 @@ class Badelf:
             for i in range(len(self.structure), len(self.electride_structure)):
                 electrides_per_unit += self.charges[i]
             self._electrides_per_formula = electrides_per_unit
-        return self._electrides_per_formula
+        return round(self._electrides_per_formula, 10)
 
     @property
     def electrides_per_reduced_formula(self) -> float:
@@ -940,7 +940,7 @@ class Badelf:
             self._electrides_per_reduced_formula = (
                 self.electrides_per_formula / formula_reduction_factor
             )
-        return self._electrides_per_reduced_formula
+        return round(self._electrides_per_reduced_formula, 10)
 
     @property
     def electride_formula(self) -> str:
@@ -969,7 +969,7 @@ class Badelf:
         """
         if self._total_charge is None:
             self._total_charge = self.charges.sum()
-        return self._total_charge
+        return round(self._total_charge, 10)
 
     @property
     def total_volume(self):
@@ -984,7 +984,7 @@ class Badelf:
         """
         if self._total_volume is None:
             self._total_volume = self.volumes.sum()
-        return self._total_volume
+        return round(self._total_volume, 10)
 
     def to_dict(
         self, potcar_path: Path | str = "POTCAR", use_json: bool = True

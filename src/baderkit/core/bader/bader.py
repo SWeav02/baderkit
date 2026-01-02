@@ -351,7 +351,7 @@ class Bader:
             self._basin_maxima_charge_values = self.charge_grid.values_at(
                 self.basin_maxima_frac
             )
-        return self._basin_maxima_charge_values
+        return self._basin_maxima_charge_values.round(10)
 
     @property
     def basin_maxima_ref_values(self) -> NDArray[float]:
@@ -368,7 +368,7 @@ class Bader:
             # we get these values during each bader method anyways, so
             # we run this here.
             self.run_bader()
-        return self._basin_maxima_ref_values
+        return self._basin_maxima_ref_values.round(10)
 
     @property
     def basin_maxima_vox(self) -> NDArray[int]:
@@ -398,7 +398,7 @@ class Bader:
         """
         if self._basin_charges is None:
             self.run_bader()
-        return self._basin_charges
+        return self._basin_charges.round(10)
 
     @property
     def basin_volumes(self) -> NDArray[float]:
@@ -412,7 +412,7 @@ class Bader:
         """
         if self._basin_volumes is None:
             self.run_bader()
-        return self._basin_volumes
+        return self._basin_volumes.round(10)
 
     @property
     def basin_min_surface_distances(self) -> NDArray[float]:
@@ -427,7 +427,7 @@ class Bader:
         """
         if self._basin_min_surface_distances is None:
             self._get_basin_surface_distances()
-        return self._basin_min_surface_distances
+        return self._basin_min_surface_distances.round(10)
 
     @property
     def basin_avg_surface_distances(self) -> NDArray[float]:
@@ -441,7 +441,7 @@ class Bader:
         """
         if self._basin_avg_surface_distances is None:
             self._get_basin_surface_distances()
-        return self._basin_avg_surface_distances
+        return self._basin_avg_surface_distances.round(10)
 
     @property
     def basin_atoms(self) -> NDArray[float]:
@@ -469,7 +469,7 @@ class Bader:
         """
         if self._basin_atom_dists is None:
             self.run_atom_assignment()
-        return self._basin_atom_dists
+        return self._basin_atom_dists.round(10)
 
     @property
     def significant_basins(self) -> NDArray[bool]:
@@ -517,7 +517,7 @@ class Bader:
         """
         if self._atom_charges is None:
             self.run_atom_assignment()
-        return self._atom_charges
+        return self._atom_charges.round(10)
 
     @property
     def atom_volumes(self) -> NDArray[float]:
@@ -531,7 +531,7 @@ class Bader:
         """
         if self._atom_volumes is None:
             self.run_atom_assignment()
-        return self._atom_volumes
+        return self._atom_volumes.round(10)
 
     @property
     def atom_min_surface_distances(self) -> NDArray[float]:
@@ -545,7 +545,7 @@ class Bader:
         """
         if self._atom_min_surface_distances is None:
             self._get_atom_surface_distances()
-        return self._atom_min_surface_distances
+        return self._atom_min_surface_distances.round(10)
 
     @property
     def atom_avg_surface_distances(self) -> NDArray[float]:
@@ -559,7 +559,7 @@ class Bader:
         """
         if self._atom_avg_surface_distances is None:
             self._get_basin_surface_distances()
-        return self._atom_avg_surface_distances
+        return self._atom_avg_surface_distances.round(10)
 
     @property
     def basin_edges(self) -> NDArray[np.bool_]:
@@ -611,7 +611,7 @@ class Bader:
         """
         if self._vacuum_charge is None:
             self.run_bader()
-        return self._vacuum_charge
+        return round(self._vacuum_charge, 10)
 
     @property
     def vacuum_volume(self) -> float:
@@ -625,7 +625,7 @@ class Bader:
         """
         if self._vacuum_volume is None:
             self.run_bader()
-        return self._vacuum_volume
+        return round(self._vacuum_volume, 10)
 
     @property
     def vacuum_mask(self) -> NDArray[bool]:
@@ -680,7 +680,7 @@ class Bader:
 
         """
 
-        return self.atom_charges.sum() + self.vacuum_charge
+        return round(self.atom_charges.sum() + self.vacuum_charge, 10)
 
     @staticmethod
     def all_methods() -> list[str]:

@@ -307,7 +307,7 @@ class SpinBadelf:
         """
         if self._charges is None:
             self._get_charges_and_volumes()
-        return self._charges
+        return self._charges.round(10)
 
     @property
     def volumes(self):
@@ -323,7 +323,7 @@ class SpinBadelf:
         """
         if self._volumes is None:
             self._get_charges_and_volumes()
-        return self._volumes
+        return self._volumes.round(10)
 
     @property
     def total_electron_number(self) -> float:
@@ -339,7 +339,7 @@ class SpinBadelf:
 
         """
 
-        return self.charges.sum()
+        return round(self.charges.sum(), 10)
 
     def get_oxidation_from_potcar(self, potcar_path: Path | str = "POTCAR"):
         """
@@ -396,7 +396,7 @@ class SpinBadelf:
             for i in range(len(self.structure), len(self.electride_structure)):
                 electrides_per_unit += self.charges[i]
             self._electrides_per_formula = electrides_per_unit
-        return self._electrides_per_formula
+        return round(self._electrides_per_formula, 10)
 
     @property
     def electrides_per_reduced_formula(self):
@@ -416,7 +416,7 @@ class SpinBadelf:
             self._electrides_per_reduced_formula = (
                 self.electrides_per_formula / formula_reduction_factor
             )
-        return self._electrides_per_reduced_formula
+        return round(self._electrides_per_reduced_formula, 10)
 
     @property
     def electride_formula(self):
@@ -445,7 +445,7 @@ class SpinBadelf:
         """
         if self._total_charge is None:
             self._total_charge = self.charges.sum()
-        return self._total_charge
+        return round(self._total_charge, 10)
 
     @property
     def total_volume(self):
@@ -460,7 +460,7 @@ class SpinBadelf:
         """
         if self._total_volume is None:
             self._total_volume = self.volumes.sum()
-        return self._total_volume
+        return round(self._total_volume, 10)
 
     def to_dict(self, potcar_path: Path | str = "POTCAR", use_json: bool = True):
         """

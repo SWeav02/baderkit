@@ -17,21 +17,21 @@
     "nelectrides": 1,
     "electride_dimensionality": 2,
     "charges": [
-        8.751900767154797,
-        8.75189542886941,
-        6.822350037673624,
-        0.6738534971600029
+        8.7519007672,
+        8.7518954289,
+        6.8223500376,
+        0.6738534972
     ],
     "volumes": [
-        20.258087052281482,
-        20.25800391625937,
-        17.25313553301921,
-        14.060296603782323
+        20.2580870522,
+        20.2580039162,
+        17.253135533,
+        14.0602966038
     ],
     "electride_formula": "Ca2 N1 e1",
-    "electrides_per_formula": 0.6738534971600029,
-    "electrides_per_reduced_formula": 0.6738534971600029,
-    "total_charge": 24.999999730857837,
-    "total_volume": 71.82952310534239,
+    "electrides_per_formula": 0.6738534972,
+    "electrides_per_reduced_formula": 0.6738534972,
+    "total_charge": 24.9999997309,
+    "total_volume": 71.8295231052,
     "spin_system": "combined"
 }

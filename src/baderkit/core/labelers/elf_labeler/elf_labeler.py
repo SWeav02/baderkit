@@ -354,7 +354,7 @@ class ElfLabeler:
                 if node.feature_type in FeatureType.bare_types:
                     electrides_per_unit += self.feature_charges[i]
             self._electrides_per_formula = electrides_per_unit
-        return self._electrides_per_formula
+        return round(self._electrides_per_formula, 10)
 
     @property
     def electrides_per_reduced_formula(self):
@@ -374,7 +374,7 @@ class ElfLabeler:
             self._electrides_per_reduced_formula = (
                 self.electrides_per_formula / formula_reduction_factor
             )
-        return self._electrides_per_reduced_formula
+        return round(self._electrides_per_reduced_formula, 10)
 
     ###########################################################################
     # Coordination Environment
@@ -439,7 +439,7 @@ class ElfLabeler:
                 self.nearest_neighbor_data,
             )
 
-        return self._atom_elf_radii
+        return self._atom_elf_radii.round(10)
 
     @property
     def atom_elf_radii_types(self) -> NDArray[np.float64]:
@@ -481,7 +481,7 @@ class ElfLabeler:
                     self.electride_nearest_neighbor_data,
                 )
             )
-        return self._electride_elf_radii
+        return self._electride_elf_radii.round(10)
 
     @property
     def electride_elf_radii_types(self) -> NDArray[np.float64]:
@@ -640,7 +640,7 @@ class ElfLabeler:
                 max_values.append(np.max(feature_max_values[feature_indices]))
 
             self._atom_max_values = np.array(max_values)
-        return self._atom_max_values
+        return self._atom_max_values.round(10)
 
     ###########################################################################
     # Feature Properties
@@ -730,7 +730,7 @@ class ElfLabeler:
             The maximum value at which each feature exists.
 
         """
-        return np.array(self._get_feature_properties("max_value"))
+        return np.array(self._get_feature_properties("max_value")).round(10)
 
     @property
     def feature_min_values(self) -> NDArray:
@@ -742,7 +742,7 @@ class ElfLabeler:
             The minimum value at which each feature exists.
 
         """
-        return np.array(self._get_feature_properties("min_value"))
+        return np.array(self._get_feature_properties("min_value")).round(10)
 
     @property
     def feature_charges(self) -> NDArray:
@@ -754,7 +754,7 @@ class ElfLabeler:
             The charge associated with each feature.
 
         """
-        return np.array(self._get_feature_properties("charge"))
+        return np.array(self._get_feature_properties("charge")).round(10)
 
     @property
     def feature_volumes(self) -> NDArray:
@@ -766,7 +766,7 @@ class ElfLabeler:
             The volume associated with each feature.
 
         """
-        return np.array(self._get_feature_properties("volume"))
+        return np.array(self._get_feature_properties("volume")).round(10)
 
     @property
     def feature_coord_atoms(self) -> list:
@@ -854,7 +854,7 @@ class ElfLabeler:
             partitioning surface.
 
         """
-        return np.array(self._get_feature_properties("min_surface_dist"))
+        return np.array(self._get_feature_properties("min_surface_dist")).round(10)
 
     @property
     def feature_avg_surface_dists(self) -> NDArray:
@@ -867,7 +867,7 @@ class ElfLabeler:
             partitioning surface.
 
         """
-        return np.array(self._get_feature_properties("avg_surface_dist"))
+        return np.array(self._get_feature_properties("avg_surface_dist")).round(10)
 
     ###########################################################################
     # Helpful Methods
@@ -945,7 +945,7 @@ class ElfLabeler:
             oxi_state = val_electrons - site_charge
             oxi_state_data.append(oxi_state)
 
-        return np.array(oxi_state_data), charges, volumes
+        return np.array(oxi_state_data).round(10), charges.round(10), volumes.round(10)
 
     def get_charges_and_volumes(
         self,
@@ -1108,7 +1108,7 @@ class ElfLabeler:
                     f"'{splitting_method}' is not a valid splitting method"
                 )
 
-        return atom_charge, atom_volume
+        return atom_charge.round(10), atom_volume.round(10)
 
     def get_feature_labels(
         self,
