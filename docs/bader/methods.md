@@ -117,7 +117,7 @@ doing your own tests for your system.
 === "Speed"
     
     
-    ![baderkit_vs_henk_time](images/time_vs_grid_baderkit_henk_subplots.png)
+    ![baderkit_vs_henk_time](/images/time_vs_grid_baderkit_henk_subplots.png)
     
     BaderKit shows improved speeds for all methods. The `neargrid-weight`
     method adds very little additional time over the original `neargrid` method. In all
@@ -126,7 +126,7 @@ doing your own tests for your system.
     
 === "Convergence"    
     
-    ![baderkit_conv](images/charges_vs_grid_baderkit.png)
+    ![baderkit_conv](/images/charges_vs_grid_baderkit.png)
     
     As expected from their original papers, the `weight` method converges first
     followed by the `neargrid` method. The `ongrid` method does not converge even
@@ -135,7 +135,7 @@ doing your own tests for your system.
     
 === "Memory"
 
-    ![baderkit_conv](images/memory_vs_grid_baderkit_henk_subplots.png)
+    ![baderkit_conv](/images/memory_vs_grid_baderkit_henk_subplots.png)
     
     BaderKit uses more memory than the original Fortran code in all cases. This
     is largely due the need to store chunks of data for parallelization.
@@ -143,7 +143,7 @@ doing your own tests for your system.
     
 === "Orientation"
     
-    ![baderkit_orient](images/oxygen_charge_vs_angle.png)
+    ![baderkit_orient](/images/oxygen_charge_vs_angle.png)
     
     The `neargrid`, `weight`, and `neargrid-weight` methods
     show minimal variance with orientation (<0.001 e<sup>-</sup>), while the `ongrid` method shows

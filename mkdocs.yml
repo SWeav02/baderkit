@@ -60,9 +60,18 @@ markdown_extensions:
       permalink: true
   
 nav:
-  - Quick Start: index.md
-  - Background: background.md
-  - Methods and Benchmarks: implementation.md
+  - Introduction: index.md
+  - Bader:
+      - Quick Start: bader/usage.md
+      - Background: bader/background.md
+      - Methods: bader/methods.md
+  - BadELF:
+      - Quick Start: badelf/usage.md
+      - Background: badelf/background.md
+      - Methods: badelf/methods.md
+  - ElfLabeler:
+      - Quick Start: elf_labeler/usage.md
+      - Background: elf_labeler/background.md
   - API Reference: 
     - Core:
       - Bader: api_reference/core/bader.md
