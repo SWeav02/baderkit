@@ -106,7 +106,7 @@ class Badelf:
         self,
         reference_grid: Grid,
         charge_grid: Grid,
-        method: Literal["badelf", "voronelf", "zero-flux"] = "badelf",
+        method: Literal["badelf", "voronelf", "zero-flux"] = "zero-flux",
         shared_feature_splitting_method: Literal[
             "weighted_dist", "pauling", "equal", "dist", "nearest"
         ] = "weighted_dist",

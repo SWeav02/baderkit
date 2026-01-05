@@ -1,6 +1,6 @@
 ## Introduction
 
-The `Badelf` class uses principles from Bader's Quantum Theory of Atoms in Molecules combined with the Electron Localization Function (ELF) to calculate atomic charges. It is primarily designed for charge analysis in electride systems, which was the motivation for the original [work](https://pubs.acs.org/doi/10.1021/jacs.3c10876). For tasks aiming to analyze other chemical features (e.g. covalent bonds, lone-pairs), the [ElfLabeler](../../elf_labeler/usage) class is likely more appropriate.
+The `Badelf` class uses principles from Bader's Quantum Theory of Atoms in Molecules combined with the Electron Localization Function (ELF) to calculate atomic charges. It is primarily designed for charge analysis in electride systems, which was the motivation for the original [work](https://pubs.acs.org/doi/10.1021/jacs.3c10876). For more in-depth analysis, particularly in systems with non-nuclear chemical features (e.g. covalent bonds, lone-pairs), the [ElfLabeler](../../elf_labeler/usage) class is likely more appropriate.
 
 ## Basic Use
 
@@ -92,7 +92,7 @@ By default, BadELF uses the 'badelf' algorithm which separates atoms with planes
 === "GUI App"
 
     !!! Warning
-        Currently the GUI App only supports traditional Bader analysis.
+        Currently the GUI App only supports Bader analysis.
 
 ---
 
@@ -141,7 +141,7 @@ BaderKit provides a convenience class for performing `BadELF` on the spin-up and
 
 ### Low Valence Pseudopotentials
 
-VASP only includes the valence electrons in the ELFCAR. This means that for pseudopotentials with relatively few valence electrons, it is possible for the ELF to be zero at atom centers. To get around this, we recommend using VASP's [GW potentials](https://www.vasp.at/wiki/Available_pseudopotentials), with additional valence electrons.
+VASP only includes the valence electrons in the ELFCAR. This means that for pseudopotentials with relatively few valence electrons, it is possible for the ELF to be zero at atom centers. We recommend using VASP's [GW potentials](https://www.vasp.at/wiki/Available_pseudopotentials), with additional valence electrons.
 
 ### Atomic Position Precision
 

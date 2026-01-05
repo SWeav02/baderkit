@@ -58,6 +58,8 @@ markdown_extensions:
   - md_in_html
   - toc:
       permalink: true
+  - pymdownx.arithmatex:
+      generic: true
   
 nav:
   - Introduction: index.md
@@ -102,3 +104,7 @@ plugins:
 
 extra_css:
   - css/mkdocstrings.css
+  
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js

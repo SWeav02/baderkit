@@ -5,24 +5,30 @@ The available BadELF methods differ from the [Bader](../../bader/methods) method
 ---
 
 ## Methods
+
+=== "zero-flux (default)"
+
+    **Key Takeaway:** *Fastest method with some potential interstitial bias.*
     
-=== "badelf (default)"
-
-    **Key Takeaways:** *A hybrid method that mixes voronoi-like planes between atoms and a zero-flux surface surrounding electrides.*
+    This is the primary method used since the conception of the ELF. It is conceptually very similar to Bader's method, dividing the ELF into regions (called basins) separated by a zero-flux surface. The charge density is then integrated to assign charge to each basin. This method essentially wraps the `Bader` class and retains all of its speed and rigor. 
     
-    This method is designed to alleviate issues when the ELF value between adjacent atoms differs heavily. When using zero-flux partitioning, atoms with greater ELF values tend to fully dominate the interstitial area even when the difference in ELF values is not so great. To help reduce this bias, the BadELF algorithm uses a weighted voronoi scheme with planes placed at minima along atomic bonds to separate atoms. However, this concept relies on the idea that atoms are relatively spherical. While this is often the case for atoms, there are many cases for electrides where the bare electrons are not spherical. Thus we continue to use the zero-flux separation for bare electrons, sacrificing some bias in the interstitial region.
-
-    This method is the original 'BadELF' method, and is thus the default here. However, it is worth noting that the reliance on planes rather than the zero-flux surface makes this method take significantly longer and adds a reliance on the assumption that each atom is relatively spherical. In general, the original zero-flux method may be more consistent.
+    There are two potential downsides of this method. The first is that in highly ionic systems, nearly all of the interstitial region is assigned to the atom with a higher ELF value (typically the anion). This leads to near formal charges, and it is difficult to pull out information about any degree of covalency. The second is that chemical features that are shared by multiple atomes (i.e. covalent/metallic bonds) are not rigorously divided, requiring an arbitrary choice of how to split them up.
     
-=== "zero-flux"
-
-    **Key Takeaway:** *Faster than BadELF with some potential interstitial bias.*
+    Despite these downsides, we have chosen to use this method as the default as it scales significantly better than the alternative methods and has been prefered in the historical literature.
     
-    The zero-flux method really predates the BadELF method, having been used since the ELF's conception. It is essentially identical to Bader's method with the exception that the system is divided into regions using the ELF rather than the charge-density. As such, this method relies fully on the `Bader` class under the hood and retains all of its speed and rigor. Its main downside is a potential biasing of charge towards those atoms with higher ELf values. A secondary downside is that covalent and metallic bonds must be empirically divided to their neighboring atoms rather than using a dividing surface like in `badelf` or `voronelf`.
+=== "voronelf"
+
+    **Key Takeaway:** *Tries to alleviate issues in the zero-flux method. Works well for systems with entirely concave basins*
     
+    This method is designed to alleviate the issues described in the zero-flux method. Rather than relying on a full zero-flux surface, planes are placed perpendicular to the vector between each atom and its neighbors. The placement of the planes depends on the type of interaction. For ionic bonds, the plane is placed at the minimum between the atoms which corresponds to a point on the zero-flux surface. For covalent and metallic bonds, a separate basin appears in the ELF between the atoms, and the plane is placed at the maximum along the bond which falls in this region. 
+    
+    The use of planes means the interstitial space is more evenly divided between the atoms and allows covalent/metallic features to be separated rigorously. However, this method has several issues of its own. The most important is that it assumes the ELF basin's to be concave. This is usually the case for atoms, but is not true for many other features such as metal bonds and electride electrons. The second is that it scales rather poorly, depending on both the number of grid points and the number of planes that must be constructed. Therefore, we tend to prefer the other methods.
 
-=== "vornelf"
+=== "badelf"
 
-    **Key Takeaway:** *Similar to BadELF but potentially better for spherical electrides.*
+    **Key Takeaways:** *A hybrid of the zero-flux and voronelf methods. Often best for electride systems.*
+    
+    This is the original 'BadELF' method created by the [Warren Lab](https://pubs.acs.org/doi/10.1021/jacs.3c10876) at UNC. It is a hybrid of the other two methods, using a zero-flux surface to separate bare electrons in electrides and planes to separate atoms. For electride systems, this often helps alleviate the issues of the voronelf method. The downsides are that it retains the potential bias of the zero-flux method around electride sites and will still behave poorly for systems where atoms or metallic bonds are not concave and fairly spherical.
+    
+    We recommend this method for most electrides, but suggest a more in-depth analysis for complex systems that may have heavy polarization or mixed metal/electride features.
 
-    This method foregoes the zero-flux method entirely, instead opting to use voronoi-like planes for separating both atoms and bare electrons. This may work well if all atom/electride species are fairly spherical, but has the potential to produce nonsense for non-spherical electrides.
