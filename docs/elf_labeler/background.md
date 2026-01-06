@@ -82,7 +82,7 @@ In practice, many of these are difficult to distinguish without human chemical i
 
 5. **Metallic** features often appear as many, shallow depth point attractors forming a network spread throughout the system. They are very similar to multi-centered bonds and non-bonding features, with arbitrary cutoffs based on depth.
 
-6. **Multi-centered Bonds** sit at interstitial sites between multiple atoms. They are typically very similar to metallic features, but have a greater depth.
+6. **Multi-centered Bonds** sit at interstitial sites between multiple atoms. They are often found in metallic systems, and share many similarities with metallic features. In most cases they are really only distince from metallic features in that they have a greater depth and are more likely to have a higher ELF value.
 
 7. **Bare Electrons** include features like f-centers and electrides. Like metallic features, it is difficult to distinguish them from multi-centered bonds, and we are currently working to determine reasonable criteria for distinguishing them.
 

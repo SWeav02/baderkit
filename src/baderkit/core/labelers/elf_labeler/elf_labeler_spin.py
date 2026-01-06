@@ -645,8 +645,8 @@ class SpinElfLabeler:
         for result in [
             "atom_elf_radii",
             "atom_elf_radii_types",
-            "electride_elf_radii",
-            "electride_elf_radii_types",
+            "atom_elf_radii_e",
+            "atom_elf_radii_types_e",
         ]:
             result_obj = getattr(self, result, None)
             if use_json and result_obj is not None:

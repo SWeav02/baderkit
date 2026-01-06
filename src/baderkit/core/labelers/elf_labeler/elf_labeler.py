@@ -28,6 +28,7 @@ from .elf_radii import ElfRadiiTools
 Self = TypeVar("Self", bound="ElfLabeler")
 
 # TODO:
+# - Add distinction between core and valence shells using POTCAR if desired
 # - Add modified feature volume normalized to structure volume (likely better
 # metric for hp-electrides)
 # - Add option for calculating atom radius from volume rather than bonds
@@ -107,21 +108,25 @@ class ElfLabeler:
         bonds and metallic bonds with covalent-like behavior may form ring
         like shapes due to digeneracy with maxima slightly of the bond, decreasing
         this angle. The default is 135.
+    max_metal_depth : float, optional
+        The maximum depth a feature can have and be considered metallic. Features
+        between multiple atoms with a depth lower than this value will be marked
+        as metallic. The default is 0.1.
     min_electride_elf_value : float, optional
         The minimum ELF value for a feature to be considered an electride rather
-        than a metallic bond. The default is 0.5.
+        than a multi-centered bond. The default is 0.5.
     min_electride_depth : float, optional
         The minimum range of ELF values a feature must exist distinctly to
-        be considered an electride rather than a metal. The default is 0.2.
+        be considered an electride rather than a multi-centered bond. The default is 0.2.
     min_electride_charge : float, optional
         The minimum charge a feature must have to be considered an electride
-        rather than a metal. The default is 0.5.
+        rather than a multi-centered bond. The default is 0.5.
     min_electride_volume : float, optional
         The minimum volume a feature must have to be considered an electride
-        rather than a metal. The default is 10.
+        rather than a multi-centered bond. The default is 10.
     min_electride_dist_beyond_atom : float, optional
         The minimum distance beyond the atoms radius that an electride must
-        sit to be considered an electride rather than a metal. The radius
+        sit to be considered an electride rather than a multi-centered bond. The radius
         is calculated as the minimum in the ELF between two atoms. If a covalent
         or metallic bond is present, the maximum is used instead. The default is 0.3.
     crystalnn_kwargs : dict, optional
@@ -140,7 +145,7 @@ class ElfLabeler:
     """
 
     _labeled_covalent = False
-    _labeled_metallic = False
+    _labeled_multi = False
     spin_system = "total"
 
     def __init__(
@@ -153,6 +158,7 @@ class ElfLabeler:
         combine_shells: bool = True,
         min_covalent_charge: float = 0.6,
         min_covalent_angle: float = 135,
+        max_metal_depth: float = 0.1,
         min_electride_elf_value: float = 0.5,
         min_electride_depth: float = 0.2,
         min_electride_charge: float = 0.5,
@@ -211,18 +217,18 @@ class ElfLabeler:
         self._bifurcation_plot = None
         self._atom_elf_radii = None
         self._atom_elf_radii_types = None
-        self._electride_elf_radii = None
-        self._electride_elf_radii_types = None
+        self._atom_elf_radii_e = None
+        self._atom_elf_radii_types_e = None
         self._atom_nn_elf_radii = None
-        self._electride_nn_elf_radii = None
+        self._atom_nn_elf_radii_e = None
         self._atom_nn_elf_radii_types = None
-        self._electride_nn_elf_radii_types = None
+        self._atom_nn_elf_radii_types_e = None
         self._nearest_neighbor_data = None
-        self._electride_nearest_neighbor_data = None
+        self._nearest_neighbor_data_e = None
         self._atom_feature_indices = None
         self._atom_max_values = None
         self._atom_nn_planes = None
-        self._electride_nn_planes = None
+        self._atom_nn_planes_e = None
 
         self._electrides_per_formula = None
         self._electrides_per_reduced_formula = None
@@ -399,7 +405,7 @@ class ElfLabeler:
         return self._nearest_neighbor_data
 
     @property
-    def electride_nearest_neighbor_data(self):
+    def nearest_neighbor_data_e(self):
         """
 
         Returns
@@ -411,10 +417,10 @@ class ElfLabeler:
             coordinates of the neighbor, and the distance between the two sites.
 
         """
-        if self._electride_nearest_neighbor_data is None:
+        if self._nearest_neighbor_data_e is None:
             # run assignment
-            self.electride_nn_elf_radii
-        return self._electride_nearest_neighbor_data
+            self.atom_nn_elf_radii_e
+        return self._nearest_neighbor_data_e
 
     ###########################################################################
     # Atom and Electride quasi-atom Properties
@@ -462,7 +468,7 @@ class ElfLabeler:
         return np.where(self._atom_elf_radii_types, "covalent", "ionic")
 
     @property
-    def electride_elf_radii(self) -> NDArray[np.float64]:
+    def atom_elf_radii_e(self) -> NDArray[np.float64]:
         """
 
         Returns
@@ -472,19 +478,19 @@ class ElfLabeler:
             using the closest neighboring atom/electride in the structure.
 
         """
-        if self._electride_elf_radii is None:
-            self._electride_elf_radii, self._electride_elf_radii_types = (
+        if self._atom_elf_radii_e is None:
+            self._atom_elf_radii_e, self._atom_elf_radii_types_e = (
                 self._get_atom_elf_radii(
                     self.electride_structure,
-                    self.electride_nn_elf_radii,
-                    self._electride_nn_elf_radii_types,
-                    self.electride_nearest_neighbor_data,
+                    self.atom_nn_elf_radii_e,
+                    self._atom_nn_elf_radii_types_e,
+                    self.nearest_neighbor_data_e,
                 )
             )
-        return self._electride_elf_radii.round(10)
+        return self._atom_elf_radii_e.round(10)
 
     @property
-    def electride_elf_radii_types(self) -> NDArray[np.float64]:
+    def atom_elf_radii_types_e(self) -> NDArray[np.float64]:
         """
 
         Returns
@@ -497,10 +503,10 @@ class ElfLabeler:
             the radius is placed at the minimum between the two atoms.
 
         """
-        if self._electride_elf_radii_types is None:
+        if self._atom_elf_radii_types_e is None:
             # run labeling and radii calc by calling our bifurcation graph
-            self.electride_elf_radii
-        return np.where(self._electride_elf_radii_types, "covalent", "ionic")
+            self.atom_elf_radii_e
+        return np.where(self._atom_elf_radii_types_e, "covalent", "ionic")
 
     @property
     def atom_nn_elf_radii(self) -> NDArray[np.float64]:
@@ -534,27 +540,27 @@ class ElfLabeler:
         return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
 
     @property
-    def electride_nn_elf_radii(self) -> NDArray[np.float64]:
+    def atom_nn_elf_radii_e(self) -> NDArray[np.float64]:
         """
 
         Returns
         -------
         NDArray
             The elf radii for each atom/electride and its neighboring atoms in the same
-            order as the electride_nearest_neighbor_data property.
+            order as the nearest_neighbor_data_e property.
 
         """
-        if self._electride_nn_elf_radii is None:
+        if self._atom_nn_elf_radii_e is None:
             # make sure labeled bifurcation graph exists
             if self._labeled_covalent is None:
                 self.bifurcation_graph
             # if there are no electride atoms, just return the results for the base
             # structure (avoid repeat calc)
             if len(self.structure) == len(self.electride_structure):
-                self._electride_nn_elf_radii = self.atom_nn_elf_radii
-                self._electride_nn_elf_radii_types = self._atom_nn_elf_radii_types
-                self._electride_nearest_neighbor_data = self.nearest_neighbor_data
-                self._electride_nn_planes = self._atom_nn_planes
+                self._atom_nn_elf_radii_e = self.atom_nn_elf_radii
+                self._atom_nn_elf_radii_types_e = self._atom_nn_elf_radii_types
+                self._nearest_neighbor_data_e = self.nearest_neighbor_data
+                self._atom_nn_planes_e = self._atom_nn_planes
             else:
                 (
                     site_indices,
@@ -565,19 +571,19 @@ class ElfLabeler:
                     plane_points,
                     plane_vectors,
                 ) = self._get_nn_atom_elf_radii(use_electrides=True)
-                self._electride_nn_elf_radii = radii
-                self._electride_nn_elf_radii_types = bond_types
-                self._electride_nearest_neighbor_data = (
+                self._atom_nn_elf_radii_e = radii
+                self._atom_nn_elf_radii_types_e = bond_types
+                self._nearest_neighbor_data_e = (
                     site_indices,
                     neigh_indices,
                     neigh_coords,
                 )
-                self._electride_nn_planes = (plane_points, plane_vectors)
+                self._atom_nn_planes_e = (plane_points, plane_vectors)
 
-        return self._electride_nn_elf_radii
+        return self._atom_nn_elf_radii_e
 
     @property
-    def electride_nn_elf_radii_types(self) -> NDArray[np.float64]:
+    def atom_nn_elf_radii_types_e(self) -> NDArray[np.float64]:
         """
 
         Returns
@@ -587,9 +593,9 @@ class ElfLabeler:
             order as the nearest_neighbor_data property.
 
         """
-        if self._electride_nn_elf_radii_types is None:
+        if self._atom_nn_elf_radii_types_e is None:
             # call radii method
-            self.electride_nn_elf_radii
+            self.atom_nn_elf_radii_e
         return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
 
     @property
@@ -1089,7 +1095,7 @@ class ElfLabeler:
                     dists = self.feature_coord_atoms_w_electrides_dists[
                         feature_idx
                     ].copy()
-                    atom_radii = self.electride_elf_radii[coord_atoms]
+                    atom_radii = self.atom_elf_radii_e[coord_atoms]
                 else:
                     dists = self.feature_coord_atom_dists[feature_idx].copy()
                     atom_radii = self.atom_elf_radii[coord_atoms]
@@ -1849,8 +1855,8 @@ class ElfLabeler:
         for result in [
             "atom_elf_radii",
             "atom_elf_radii_types",
-            "electride_elf_radii",
-            "electride_elf_radii_types",
+            "atom_elf_radii_e",
+            "atom_elf_radii_types_e",
             "atom_max_values",
             "feature_max_values",
             "feature_min_values",
@@ -2335,12 +2341,20 @@ class ElfLabeler:
                     # reset coord env so that it gets calculated as 1
                     child._coord_atom_indices = None
 
+    def _mark_metallic(self):
+        logging.info("Marking metallic features")
+        # we mark metallic features simply based on their depth
+        for node in self.bifurcation_graph.unassigned_nodes:
+            if node.depth < self.max_metal_depth:
+                node.feature_type = FeatureType.metallic
+            
+
     def _mark_metallic_or_bare(self):
-        if not self._labeled_metallic:
-            logging.info("Marking metallic and bare electron features")
+        if not self._labeled_multi:
+            logging.info("Marking multi-centered and bare electron features")
         else:
-            logging.info("Re-marking metallic and bare electron features")
-        self._labeled_metallic = True
+            logging.info("Re-marking multi-centered and bare electron features")
+        self._labeled_multi = True
         # The remaining features are various types of non-nuclear attractors.
         # We separate them into metallic or "bare electrons" based on a series
         # of cutoffs
@@ -2387,7 +2401,7 @@ class ElfLabeler:
             if np.all(condition_test > conditions):
                 node.feature_type = FeatureType.bare_electron
             else:
-                node.feature_type = FeatureType.metallic
+                node.feature_type = FeatureType.multi_centered
 
     # This is a method aimed at giving a feature a score on how "bare" it is
     # with the goal of distinguishing metals from electrides. We will leave it

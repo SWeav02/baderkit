@@ -408,7 +408,7 @@ class Badelf:
                 site_indices, neigh_indices, _ = (
                     self.elf_labeler.electride_nearest_neighbor_data
                 )
-                plane_points, plane_vectors = self.elf_labeler._electride_nn_planes
+                plane_points, plane_vectors = self.elf_labeler._atom_nn_planes_e
 
             # we want to transform our planes to the 26 nearest neighbor cells
             # to ensure that we cover our unit cell.

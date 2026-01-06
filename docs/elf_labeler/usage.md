@@ -116,7 +116,9 @@ BaderKit provides a convenience class for using the `ElfLabeler` on the spin-up 
 ---
 
 
-## Labeled Structures
+## Visualizing and Interpreting Results
+
+### The Labeled Structure
 
 A useful output from the `ElfLabeler` class is the labeled structure which is a [pymatgen](https://pymatgen.org/) `Structure` object with 'dummy' atoms representing the different types of ELF features. This can be obtained from the `labeled_structure` property.
 
@@ -131,6 +133,18 @@ Pymatgen limits what labels can be used for dummy atoms based on if they start w
 | Metallic | "M" |
 | Electride | "E" |
  
+This structure can be written to a cif or POSCAR format with the `Structure.to()` method.
+
+### Feature Properties
+
+The properties assigned to each feature in the labeled structure are available as class properties. They may also be written to file with the `ElfLabeler.to_json()` method, which is used when running through the command line. Properties are always in the same order as the dummy atoms in the `labeled_structure`.
+
+Some properties have `_e` appended at the end. This indicates that the electride sites were treated as quasi-atoms for this property. The electrides are included in any CrystalNN related analysis and given their own charge and "oxidation state". The equivalent properties without `_e` are calculated treating electride sites as some form of multi-centered bond.
+
+### Additional Properties
+
+Some information such as the charge, volume, and oxidation state are not cached as class properties. This is because there are multiple ways to calculate them depending on how one chooses to divide the shared features. Additionally, calculating oxidation states requires knowledge of the pseudopotentials that were used (currently from the POTCAR). As pseudopotentials are often proprietary (e.g. VASP), we chose to may oxidation calculations optional.
+
  ---
 
 ## Warnings for VASP
