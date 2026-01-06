@@ -29,7 +29,7 @@ FEATURE_COLORS = {
     "shallow covalent-metallic": "rgba(140, 180, 180, 1)",  # bluish gray
     "metallic": "rgba(112, 128, 144, 1)",  # slate gray
     "lone-pair": "rgba(128, 0, 128, 1)",  # purple
-    "non-nuclear attractor": "rgba(128, 0, 0, 1)",  # maroon
+    "multi-centered": "rgba(128, 0, 0, 1)",  # maroon
     "electride": "rgba(170, 0, 0, 1)",  # dark red
     "bare electron": "rgba(170, 0, 0, 1)",  # dark red
 }
@@ -44,7 +44,7 @@ FEATURE_DUMMY_ATOMS = {
     "shallow covalent-metallic": "Z",
     "metallic": "M",
     "lone-pair": "Lp",
-    "non-nuclear attractor": "Xn",
+    "multi-centered": "Mc",
     "electride": "E",
     "bare electron": "Le",
 }
@@ -118,7 +118,7 @@ class FeatureType(str, Enum):
     shallow_covalent_metallic = "shallow covalent-metallic"
     metallic = "metallic"
     lone_pair = "lone-pair"
-    non_nuclear_attractor = "non-nuclear attractor"
+    multi_centered = "multi-centered"
     electride = "electride"
     bare_electron = "bare electron"
 
@@ -143,10 +143,10 @@ class FeatureType(str, Enum):
             cls.covalent_metallic,
             cls.shallow_covalent_metallic,
             cls.metallic,
-            cls.non_nuclear_attractor,
             cls.electride,
             cls.bare_electron,
             cls.unknown,
+            cls.multi_centered,
         ]
 
     @classproperty
@@ -155,7 +155,7 @@ class FeatureType(str, Enum):
 
     @classproperty
     def bare_types(cls):
-        return [cls.non_nuclear_attractor, cls.electride, cls.bare_electron]
+        return [cls.electride, cls.bare_electron]
 
     @classproperty
     def bare_species(cls):
@@ -180,6 +180,7 @@ class FeatureType(str, Enum):
             cls.covalent_metallic,
             cls.shallow_covalent_metallic,
             cls.metallic,
+            cls.multi_centered,
         ]
 
     @classproperty

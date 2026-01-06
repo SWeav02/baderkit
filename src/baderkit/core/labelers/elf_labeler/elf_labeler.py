@@ -566,7 +566,7 @@ class ElfLabeler:
                     plane_vectors,
                 ) = self._get_nn_atom_elf_radii(use_electrides=True)
                 self._electride_nn_elf_radii = radii
-                self._electride_nn_elf_radii = bond_types
+                self._electride_nn_elf_radii_types = bond_types
                 self._electride_nearest_neighbor_data = (
                     site_indices,
                     neigh_indices,
@@ -1013,18 +1013,22 @@ class ElfLabeler:
         for feature_idx in range(len(self.feature_types)):
             charge = self.feature_charges[feature_idx]
             volume = self.feature_volumes[feature_idx]
-            if (
-                use_electrides
-                and self.feature_types[feature_idx] in FeatureType.bare_types
-            ):
-                # assign charge/volume to self
-                struc_idx = len(self.structure) + electride_num
-                atom_charge[struc_idx] += charge
-                atom_volume[struc_idx] += volume
-                electride_num += 1
-                continue
-
-            coord_atoms = self.feature_coord_atoms[feature_idx]
+            
+            if use_electrides:
+                # check if this is an electride feature
+                if self.feature_types[feature_idx] in FeatureType.bare_types:
+                    # assign charge/volume to self
+                    struc_idx = len(self.structure) + electride_num
+                    atom_charge[struc_idx] += charge
+                    atom_volume[struc_idx] += volume
+                    electride_num += 1
+                    continue
+                
+                # get coordination with electrides
+                coord_atoms = self.feature_coord_atoms_w_electrides[feature_idx]
+            else:
+                # get coordination without electrides
+                coord_atoms = self.feature_coord_atoms[feature_idx]
             # get unique atoms and counts (correction for small cells)
             unique_atoms, unique_indices, atom_counts = np.unique(
                 coord_atoms, return_index=True, return_counts=True
@@ -1091,7 +1095,10 @@ class ElfLabeler:
                     atom_radii = self.atom_elf_radii[coord_atoms]
 
                 # calculate the weighted contribution to each atom and normalize
-                weight = atom_radii / dists
+                try:
+                    weight = atom_radii / dists
+                except:
+                    breakpoint()
                 weight /= weight.sum()
                 # add for each atom
                 for coord_idx, atom in enumerate(coord_atoms):
@@ -1399,7 +1406,10 @@ class ElfLabeler:
 
         # get first instance of each atom
         radii = np.empty(len(structure), dtype=np.float64)
-        radii_types = np.empty(len(structure), dtype=all_radii_types.dtype)
+        try:
+            radii_types = np.empty(len(structure), dtype=all_radii_types.dtype)
+        except:
+            breakpoint()
         for i in range(len(structure)):
             first_index = np.argmax(sorted_sites == i)
             radii[i] = all_radii[sorted_indices[first_index]]
