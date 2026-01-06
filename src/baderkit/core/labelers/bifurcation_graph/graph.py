@@ -825,10 +825,15 @@ class BifurcationGraph:
         buffer = x_range * 0.05
         # remove y axis label and add title
         fig.update_layout(
-            margin=dict(l=0, r=0, t=0, b=0),
+            title=dict(
+                text=f"{self.structure.reduced_formula} Bifurcations",
+                xanchor="center",
+                x=0.5,
+            ),
+            margin=dict(l=0, r=0, t=40, b=0),
             xaxis=dict(
                 range=[min_x - buffer, max_x + buffer],
-                title=f"{self.labeler_type} Bifurcations",
+                title="ELF",
             ),
             yaxis=dict(
                 showline=False,

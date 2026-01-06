@@ -44,9 +44,9 @@ FEATURE_DUMMY_ATOMS = {
     "shallow covalent-metallic": "Z",
     "metallic": "M",
     "lone-pair": "Lp",
-    "multi-centered": "Mc",
+    "multi-centered": "Zm",
     "electride": "E",
-    "bare electron": "Le",
+    "bare electron": "E",
 }
 
 LINE_COLOR = "rgba(128, 128, 128, 1)"  # grey
@@ -111,7 +111,7 @@ class DomainSubtype(str, Enum):
 class FeatureType(str, Enum):
     unknown = "unknown"
     shell = "shell"
-    deep_shell = "deep shell"
+    deep_shell = "shell"  # Hide for now
     core = "core"
     covalent = "covalent"
     covalent_metallic = "covalent-metallic"

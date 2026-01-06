@@ -811,7 +811,7 @@ class ElfLabeler:
         return self._get_feature_properties("coord_atom_dists")
 
     @property
-    def feature_coord_atoms_w_electrides(self) -> list:
+    def feature_coord_atoms_e(self) -> list:
         """
 
         Returns
@@ -823,7 +823,7 @@ class ElfLabeler:
         return self._get_feature_properties("coord_electride_indices")
 
     @property
-    def feature_electride_coord_nums(self) -> list:
+    def feature_coord_nums_e(self) -> list:
         """
 
         Returns
@@ -838,7 +838,7 @@ class ElfLabeler:
         )
 
     @property
-    def feature_coord_atoms_w_electrides_dists(self):
+    def feature_coord_atoms_dists_e(self):
         """
 
         Returns
@@ -1019,7 +1019,7 @@ class ElfLabeler:
         for feature_idx in range(len(self.feature_types)):
             charge = self.feature_charges[feature_idx]
             volume = self.feature_volumes[feature_idx]
-            
+
             if use_electrides:
                 # check if this is an electride feature
                 if self.feature_types[feature_idx] in FeatureType.bare_types:
@@ -1029,9 +1029,9 @@ class ElfLabeler:
                     atom_volume[struc_idx] += volume
                     electride_num += 1
                     continue
-                
+
                 # get coordination with electrides
-                coord_atoms = self.feature_coord_atoms_w_electrides[feature_idx]
+                coord_atoms = self.feature_coord_atoms_e[feature_idx]
             else:
                 # get coordination without electrides
                 coord_atoms = self.feature_coord_atoms[feature_idx]
@@ -1076,9 +1076,7 @@ class ElfLabeler:
             elif splitting_method == "dist":
                 # get the dist to each coordinated atom
                 if use_electrides:
-                    dists = self.feature_coord_atoms_w_electrides_dists[
-                        feature_idx
-                    ].copy()
+                    dists = self.feature_coord_atoms_dists_e[feature_idx].copy()
                 else:
                     dists = self.feature_coord_atom_dists[feature_idx].copy()
                 # invert and normalize
@@ -1092,9 +1090,7 @@ class ElfLabeler:
             elif splitting_method == "weighted_dist":
                 # get the dist to each coordinated atom and their radii
                 if use_electrides:
-                    dists = self.feature_coord_atoms_w_electrides_dists[
-                        feature_idx
-                    ].copy()
+                    dists = self.feature_coord_atoms_dists_e[feature_idx].copy()
                     atom_radii = self.atom_elf_radii_e[coord_atoms]
                 else:
                     dists = self.feature_coord_atom_dists[feature_idx].copy()
@@ -1807,6 +1803,7 @@ class ElfLabeler:
             "min_electride_dist_beyond_atom": self.min_electride_dist_beyond_atom,
         }
         results["method_kwargs"] = method_kwargs
+        results["spin_system"] = self.spin_system
 
         # only try to calculate oxidation state if this was not a half spin system
         if self.spin_system == "total":
@@ -1863,7 +1860,7 @@ class ElfLabeler:
             "feature_charges",
             "feature_volumes",
             "feature_coord_nums",
-            "feature_electride_coord_nums",
+            "feature_coord_nums_e",
             "feature_min_surface_dists",
             "feature_avg_surface_dists",
         ]:
@@ -1875,7 +1872,7 @@ class ElfLabeler:
         # add objects that are lists with arrays
         for result in [
             "feature_coord_atom_dists",
-            "feature_coord_atoms_w_electrides_dists",
+            "feature_coord_atoms_dists_e",
         ]:
             result_obj = getattr(self, result, None)
             if use_json and result_obj is not None:
@@ -1884,15 +1881,14 @@ class ElfLabeler:
 
         # add other objects that are already jsonable
         for result in [
-            "spin_system",
             "nelectrides",
-            "feature_types",
-            "feature_coord_atoms",
-            "feature_coord_atoms_w_electrides",
-            "atom_feature_indices",
             "electride_formula",
             "electrides_per_formula",
             "electrides_per_reduced_formula",
+            "feature_types",
+            "feature_coord_atoms",
+            "feature_coord_atoms_e",
+            "atom_feature_indices",
         ]:
             results[result] = getattr(self, result, None)
 
@@ -2050,7 +2046,7 @@ class ElfLabeler:
     ###############################################################################
 
     def _mark_cores(self):
-        logging.info("Marking atomic cores")
+        logging.info("Marking atomic shells")
         # cores are reducible domains that contain an atom. They should be within
         # one voxel of the atom. We must check for this as it is possible for
         # a different type of basin to contain the atom if too few valence electrons
@@ -2062,10 +2058,9 @@ class ElfLabeler:
             if len(node.contained_atoms) != 1:
                 continue
             if node.atom_distance <= max_dist:
-                node.feature_type = FeatureType.core
+                node.feature_type = FeatureType.shell
 
     def _mark_shells(self):
-        logging.info("Marking atomic shells")
         # shells are reducible domains that surround exactly one atom.
         # In a vacuum, an atoms shells are spherical due to symmetry. In a
         # molecule/solid they will warp due to interactions with neighboring
@@ -2347,7 +2342,6 @@ class ElfLabeler:
         for node in self.bifurcation_graph.unassigned_nodes:
             if node.depth < self.max_metal_depth:
                 node.feature_type = FeatureType.metallic
-            
 
     def _mark_metallic_or_bare(self):
         if not self._labeled_multi:

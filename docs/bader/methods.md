@@ -23,11 +23,15 @@ doing your own tests for your system.
 | weight        | <span style="color:orange;">0.26</span>   | <span style="color:green;">8300</span> | <span style="color:orange;">1000</span> | <span style="color:green;">0.0009</span> |
 | ongrid        | <span style="color:green;">0.19</span> | <span style="color:red;">>150000</span> | <span style="color:green;">1250</span>  | <span style="color:red;">0.04</span> |
 
-<small>1. Assuming ~30 Å<sup>3</sup> per atom and a resolution of 10000 pts/Å<sup>3</sup></small>
+<p style="line-height: 1;">
+    <ol>
+        <small><li>Assuming ~30 Å<sup>3</sup> per atom and a resolution of 10000 pts/Å<sup>3</sup></li></small>
 
-<small>2. Resolution at which benchmark reached within 0.001 e<sup>-</sup> of converged value</small>
+        <small><li>Resolution at which benchmark reached within 0.001 e<sup>-</sup> of converged value</li></small>
 
-<small>3. Standard deviation of orientation benchmarks</small>
+        <small><li>Standard deviation of orientation benchmarks</li></small>
+    </ol>
+</p>
     
 === "neargrid-weight (default)"
 

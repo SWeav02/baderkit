@@ -1,6 +1,7 @@
 ![title](/images/full_title.svg)
 
 BaderKit is a python package providing tools for calculating atomic charges using principles from Bader's Quantum Theory of Atoms in Molecules. The project has expanded to include methods for analyzing the Electron Localization Function. For more information on the core classes of the package, see their quick-start pages:
+
  - [Bader](/bader/usage.md)
  - [BadELF](/badelf/usage.md)
  - [ElfLabeler](/elf_labeler/usage.md)

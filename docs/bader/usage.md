@@ -4,9 +4,9 @@ The `Bader` class reproduces the methods for Bader charge analysis available in 
 [Henkelman group's](https://theory.cm.utexas.edu/henkelman/code/bader/) excellent 
 Fortran code within the Python ecosystem. It is built on
 top of the [PyMatGen](https://pymatgen.org/) package, allowing for
-easy extension to other projects. Under the hood, BaderKit runs on [Numba](https://numba.pydata.org/numba-doc/dev/index.html) 
+easy extension to other projects. Under the hood, `Bader` runs on [Numba](https://numba.pydata.org/numba-doc/dev/index.html) 
 and [NumPy](https://numpy.org/doc/stable/index.html) to parallelize and vectorize
-calculations. This allows BaderKit to reach speeds [comparable or faster](/methods/#__tabbed_2_1)
+calculations. This allows `Bader` to reach speeds [comparable or faster](../methods/#__tabbed_2_1)
 than the original code.
 
 ## Basic Use

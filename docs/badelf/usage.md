@@ -1,12 +1,12 @@
 ## Introduction
 
-The `Badelf` class uses principles from Bader's Quantum Theory of Atoms in Molecules combined with the Electron Localization Function (ELF) to calculate atomic charges. It is primarily designed for charge analysis in electride systems, which was the motivation for the original [work](https://pubs.acs.org/doi/10.1021/jacs.3c10876). For more in-depth analysis, particularly in systems with non-nuclear chemical features (e.g. covalent bonds, lone-pairs), the [ElfLabeler](../../elf_labeler/usage) class is likely more appropriate.
+The `Badelf` class uses principles from Bader's Quantum Theory of Atoms in Molecules combined with the Electron Localization Function (ELF) to calculate atomic charges. It is primarily designed for calculating oxidation states in electride systems, which was the motivation for the original [work](https://pubs.acs.org/doi/10.1021/jacs.3c10876). For more in-depth analysis of the ELF, particularly in systems with non-nuclear chemical features (e.g. covalent bonds, lone-pairs), the [ElfLabeler](../../elf_labeler/usage) class is likely more appropriate.
 
 ## Basic Use
 
 BadELF can be run through the command line interface or through Python script. Currently only VASP's CHGCAR and ELFCAR files are supported.
 
-By default, BadELF uses the 'badelf' algorithm which separates atoms with planes and electride sites with zero-flux surfaces (i.e. Bader's method). This works best when atoms are fairly spherical and ionic. In other cases, the [zero-flux](/methods) method may be more appropriate.
+By default, BadELF uses the 'zero-flux' algorithm which separates all ELF basins at zero-flux surfaces, following traditional ELF charge analysis. The original [badelf](../methods/#__tabbed_1_3) algorithm also incorporates voronoi-like planes and may be more appropriate in some systems.
 
 === "Command Line"
 
@@ -137,6 +137,12 @@ BaderKit provides a convenience class for performing `BadELF` on the spin-up and
 
 ---
 
+## Labeling the ELF
+
+In Bader analysis there are typically maxima only at the center of each atom making it quite easy to assign each basin. In the ELF this becomes much more complicated as a single basin may belong to multiple atoms (e.g. covalent bonds) or even no atoms (e.g. electrides). Because of this, it is necessary to label each basin prior to assigning atomic charges to know how each basin should be split. This process is handled by the [ElfLabeler](../../elf_labeler/usage) class. Keyword arguments can be fed to the `ElfLabeler` when running BadELF through python by providing them in dictionary format to the `elf_labeler` argument.
+
+---
+
 ## Warnings for VASP
 
 ### Low Valence Pseudopotentials
@@ -149,7 +155,7 @@ By default, VASP writes the CHGCAR and ELFCAR to different grid shapes (the "fin
 
 ### Atomic Position Precision
 
-For BadELF methods involving planes (i.e. `badelf` and `voronelf`), results can change significantly with very small differences in atom position. VASP writes atomic positions in the CHGCAR and ELFCAR with limited precision, sometimes much lower than the values in the POSCAR. To help with this, we provide an option to override the crystal structure when reading in the CHGCAR/ELFCAR:
+For BadELF alorithms involving planes (i.e. `badelf` and `voronelf`), results can change significantly with very small differences in atom position. VASP writes atomic positions in the CHGCAR and ELFCAR with limited precision, sometimes much lower than the values in the POSCAR/CONTCAR. To help with this, we provide an option to override the crystal structure when reading in the CHGCAR/ELFCAR:
 
 ```python
 from baderkit.core import Badelf

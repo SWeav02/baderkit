@@ -5,7 +5,7 @@
 
 ## The Electron Localization Function
 
-The Electron Localization Function (ELF), as its name suggests, is a measure of the localization of electrons in a system. It was originally developed in 1990 by [Becke and Edgecombe](https://doi.org/10.1063/1.458517) and was very quickly adopted as a tool for the qualitative and quantitative analysis of chemical features and bonding
+The Electron Localization Function (ELF), as its name suggests, is a measure of the localization of electrons in a system. It was originally developed in 1990 by [Becke and Edgecombe](https://doi.org/10.1063/1.458517) and was very quickly adopted as a tool for the qualitative and quantitative analysis of chemical features and bonding.
 
 ![elf features](/images/elf_features.png)
 
@@ -37,24 +37,30 @@ $$
 \sum_i\frac{|\nabla\psi_{i\sigma}|^2}{\rho^{5/3}}
 $$
 
-Thus, the ELF is primarily dependent on the kinetic energy density (numerator) and charge density (denomenator). As this term is inverted in equation $\eqref{eq:1}$, the ELF increases with charge density and decreases with kinetic energy. This is chemically intuitive, as it suggests high localization where there are many electrons or where electrons are not moving significantly. Another useful note is that the ELF tends to decrease heavily in regions where there are a significant number of nodes in the occupied orbitals. In these regions, the increase in charge density is outweighed by the contribution of nodes to the kinetic energy. Thus, an ELF value below 0.5 can be understood as a region with very little electron density (i.e. interstitial areas between atoms) or regions with a great number of nodes.
+Thus, the ELF is primarily dependent on the kinetic energy density (numerator) and charge density (denomenator). As this term is inverted in equation $\eqref{eq:1}$, the ELF increases with charge density and decreases with kinetic energy. This is chemically intuitive, as it suggests high localization where there are many electrons or where electrons are not moving significantly. Another useful note is that the ELF tends to decrease heavily in regions where there are a significant number of nodes in the occupied orbitals. In these regions, the increase in charge density is outweighed by the contribution of nodes to the kinetic energy. Thus, an ELF value below 0.5 can be understood as a region with very little electron density (i.e. interstitial areas between atoms) or a region with a great number of nodes.
 
 ---
 
 ## Topology of the ELF
 
 !!! note
- This discussion is largely based on this review by Carlo Gatti: [Chemical bonding in crystals: new directions](https://tutorials.crystalsolutions.eu/tutorials/topond/Zeit2005.pdf).
+    This discussion is largely based on this review by Carlo Gatti: [Chemical bonding in crystals: new directions](https://tutorials.crystalsolutions.eu/tutorials/topond/Zeit2005.pdf).
 
 Much like Bader analysis, the ELF can be separated into multiple regions at zero-flux surfaces. These regions are called *basins* and each contains a single local maximum called an *attractor*. Typically, attractors are single points, but in areas of high symmetry they may be rings or cages. Each basin has its own set of useful properties such as charge, volume, position, shape, etc. The advantage of the ELF over the charge density is its ability to show localized features that the charge density does not (e.g. covalent bonds, lone-pairs, electrides, etc.), which can enable more in-depth analysis of chemical interactions.
 
-A helpful tool for analyzing ELF basins is the *bifurcation plot*. The x-axis of a bifurcation plot spans the elf values from 0 to 1. Each value of x defines a set of solids called *domains* where the ELF is greater than or equal to x. As x is increased, some domains split (bifurcate) at saddle points into smaller domains. New domains are represented by points at the x value at which they appear and are connected to their parent by a line. The domains that never split are exactly the same as the basins described earlier. Thus, the bifurcation plot maps out the relationships between various basins and their parent domains.
+A helpful tool for analyzing ELF basins is the *bifurcation plot*. The x-axis of a bifurcation plot spans the elf values from 0 to 1. Each value of x defines a set of solids called *domains* where the ELF is greater than or equal to x. As x is increased, some domains split (bifurcate) at saddle points into smaller domains. New domains are represented by points at the x value at which they appear and are connected to their parent by a line. The domains that never split are exactly the same as the basins described earlier. In our bifurcation plots, we represent these as rectangles that span their total ELF depth. Thus, the bifurcation plot maps out the relationships between various basins and their parent domains.
 
-*** INSERT PLOT
+![bifurcation_plot](/images/bifurcation_plot.png)
+<p style="line-height: 1;">
+<small><strong>The bifurcation plot for Ca<sub>2</sub>N</strong>. The first two bars represent the Ca shells, the third bar the N shell, and the final red bar an electride electron. The electride and N atom form a larger domain at ~0.1 as evidenced by the lines connecting them to a reducible domain. This domain does not connect to the Ca atoms until a lower value of ~0.06. The `depth` of each domain is represented by horizontal lines for reducible domains and the length of the bars for irreducible domains (basins). Note that the Ca and N only display single shells due to the use of pseudopotentials.</small>
+</p>
 
-The bifurcation plot provides us with a *depth* for each domain which corresponds to the range of x values in which the domain exists. Our team uses this to make a distinction between *basins* and *chemical features* (or ELF features). Chemical features are what a chemist would likely use to analyze a system such as covalent bonds, lone-pairs, atom shells, etc. In most cases, these features map directly to a single basin, but in some cases two or more basins are separated by a very shallow depth. In these cases, it is often more intuitive to consider the sume of these basins as a single chemical feature. For example, the outer shell of anions is often slighly polarized towards the nearby cations, leading to several very shallow basins.
+The bifurcation plot provides us with a *depth* for each domain which corresponds to the range of x values in which the domain exists. Our team uses this to make a distinction between *basins* and *chemical features* (or ELF features). Chemical features are what a chemist would likely use to analyze a system such as covalent bonds, lone-pairs, atom shells, etc. In most cases, these features map directly to a single basin, but in some cases two or more basins are separated by a very shallow depth. In these cases, it is often more intuitive to consider the sum of these basins as a single chemical feature. For example, the outer shell of anions is often slighly polarized towards the nearby cations, leading to several very shallow basins.
 
-*** INSERT PLOT
+![depth_plot](/images/LiI_plot.png)
+<p style="line-height: 1;">
+<small><strong>Depth shematic for LiI</strong>. The central purple atom is iodide and the yellow isosurface is its outermost shell at the given ELF value. The second image shows the bifurcation of the shell into smaller basins. These disappear at a slightly higher ELF value, resulting in a very shallow depth. Because these basins are so shallow relative to the domain formed below 0.56, it is more intuitive to describe them as a single feature.</small>
+</p>
 
 ---
 

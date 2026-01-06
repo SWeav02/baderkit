@@ -406,7 +406,7 @@ class Badelf:
                 plane_points, plane_vectors = self.elf_labeler._atom_nn_planes
             elif self.method == "voronelf":
                 site_indices, neigh_indices, _ = (
-                    self.elf_labeler.electride_nearest_neighbor_data
+                    self.elf_labeler.nearest_neighbor_data_e
                 )
                 plane_points, plane_vectors = self.elf_labeler._atom_nn_planes_e
 

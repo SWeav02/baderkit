@@ -2,15 +2,13 @@
 
 The available BadELF methods differ from the [Bader](../../bader/methods) methods in that they refer to different partitioning schemes rather than methods of approximating the smooth zero-flux surface.
 
----
-
 ## Methods
 
 === "zero-flux (default)"
 
     **Key Takeaway:** *Fastest method with some potential interstitial bias.*
     
-    This is the primary method used since the conception of the ELF. It is conceptually very similar to Bader's method, dividing the ELF into regions (called basins) separated by a zero-flux surface. The charge density is then integrated to assign charge to each basin. This method essentially wraps the `Bader` class and retains all of its speed and rigor. 
+    This is the primary method used historically. It is conceptually very similar to Bader's method, dividing the ELF into regions (called basins) separated by a zero-flux surface. The charge density is then integrated to assign charge to each basin. This method essentially wraps the `Bader` class and retains all of its speed and rigor. 
     
     There are two potential downsides of this method. The first is that in highly ionic systems, nearly all of the interstitial region is assigned to the atom with a higher ELF value (typically the anion). This leads to near formal charges, and it is difficult to pull out information about any degree of covalency. The second is that chemical features that are shared by multiple atomes (i.e. covalent/metallic bonds) are not rigorously divided, requiring an arbitrary choice of how to split them up.
     

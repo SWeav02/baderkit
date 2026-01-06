@@ -4,7 +4,7 @@
     This page assumes prior knowledge of Bader's method for quantifying atomic charge and oxidation states as well as the Electron Localization Function. See the [Bader](../../bader/background) and [ElfLabeler](../../elf_labeler/background) for more information.
 
 
-In most cases, Bader's analysis of the charge density suffices for examining local charges. Where it fails is when there is interest in the charge of chemical features which do not appear in the charge density. For example, one may be interested in the charge located at a covalent bond as atoms move closer together, or the charge in the bare electrons of electrides. It is these situations where the Electron Localization Function (ELF) is more useful. Unlike the charge density, the ELF typically displays maxima in chemically interesting areas. This allows each feature to be analyzed independently and can make it easier to visualize interesting bonding interactions.
+In most cases, Bader's analysis of the charge density suffices for examining local charges. Where it fails is when there is interest in the charge of chemical features which do not appear in the charge density. For example, one may be interested in the charge located at a covalent bond as atoms move closer together, or the charge in the bare electrons of electrides. It is these situations where the Electron Localization Function (ELF) is more useful. Unlike the charge density, the ELF typically displays maxima at most chemical features familiar to chemists. This allows each feature to be analyzed independently and can make it easier to visualize interesting bonding interactions.
 
 ![elf features](/images/elf_features.png)
 

@@ -1,6 +1,6 @@
 ## Introduction
 
-The first step of the BadELF algorithm is to determine whether there are bare electrons in the system and, if so, where they are located. In the original paper this was done by using relatively simple distance and ELF value cutoffs. Since then, the `ElfLabeler` method has evolved to be more rigorous. Using exclusively the ELF, charge density, and crystal structure, the `ElfLabeler` class aims to automatically label not only bare electrons, but atom shells, covalent bonds, metallic features, and lone-pairs.
+The first step of the BadELF algorithm is to determine whether there are bare electrons in the system and, if so, where they are located. In the original [paper](https://pubs.acs.org/doi/10.1021/jacs.3c10876), this was done by using relatively simple distance and ELF value cutoffs. Since then, the `ElfLabeler` method has evolved to be more rigorous. Using exclusively the ELF, charge density, and crystal structure, the `ElfLabeler` class aims to automatically label not only bare electrons, but atom shells, covalent bonds, metallic features, and lone-pairs.
 
 While it was originally conceived to support the BadELF algorithm, the current ElfLabeler class can be used as a general tool for analyzing the ELF, providing considerably more information on each ELF feature than the Badelf class.
 
@@ -49,6 +49,7 @@ The `ElfLabeler` can be run through the command line interface or through Python
     3. To run the analysis, we can call any class property. Try getting a complete summary in dictionary format.
         ```python
         results = labeler.to_json()
+        ```
     
     4. Now try getting individual properties. For more details on each property, see the [API reference](../api_reference/core/labeler).
         ```python
@@ -131,7 +132,7 @@ Pymatgen limits what labels can be used for dummy atoms based on if they start w
 | Multi-centered | "Mc" |
 | Lone-Pair | "Lp" |
 | Metallic | "M" |
-| Electride | "E" |
+| Bare Electron | "E" |
  
 This structure can be written to a cif or POSCAR format with the `Structure.to()` method.
 
@@ -141,12 +142,8 @@ The properties assigned to each feature in the labeled structure are available a
 
 Some properties have `_e` appended at the end. This indicates that the electride sites were treated as quasi-atoms for this property. The electrides are included in any CrystalNN related analysis and given their own charge and "oxidation state". The equivalent properties without `_e` are calculated treating electride sites as some form of multi-centered bond.
 
-### Additional Properties
-
-Some information such as the charge, volume, and oxidation state are not cached as class properties. This is because there are multiple ways to calculate them depending on how one chooses to divide the shared features. Additionally, calculating oxidation states requires knowledge of the pseudopotentials that were used (currently from the POTCAR). As pseudopotentials are often proprietary (e.g. VASP), we chose to may oxidation calculations optional.
-
  ---
 
 ## Warnings for VASP
 
-See the warning on the [Badelf](../../badelf/usage) page.
+See the warning on the [Badelf](../../badelf/usage/#warnings-for-vasp) page.
