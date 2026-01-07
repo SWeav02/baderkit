@@ -343,6 +343,19 @@ class Badelf:
         if self._volumes is None:
             self._get_voxel_assignments()
         return self._volumes.round(10)
+    
+    @property
+    def elf_maxima(self) -> NDArray:
+        """
+
+        Returns
+        -------
+        NDArray
+            The maximum ELF value for each atom and electride in the system.
+
+        """
+        
+        return self.elf_labeler.atom_max_values_e
 
     @property
     def total_electron_number(self) -> float:
@@ -1034,9 +1047,9 @@ class Badelf:
             "all_electride_dims",
             "all_electride_dim_cutoffs",
             "electride_dimensionality",
-            "species",
             "charges",
             "volumes",
+            "elf_maxima",
             "min_surface_distances",
             "avg_surface_distances",
             "electride_formula",
@@ -1054,6 +1067,7 @@ class Badelf:
             for key in [
                 "charges",
                 "volumes",
+                "elf_maxima",
                 "oxidation_states",
                 "min_surface_distances",
                 "avg_surface_distances",

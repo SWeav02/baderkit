@@ -65,8 +65,8 @@ The `ElfLabeler` can be run through the command line interface or through Python
         labeler.write_bifurcation_plot()
         ```
     
-    !!! Tip
-        After creating a `ElfLabeler` class object, it doesn't matter what order you call properties, summaries, or write methods in. BaderKit calculates properties/results only when they are needed and caches them.
+    !!! Note
+        The `ElfLabeler` uses the `Bader` class for partitioning. Any extra keyword arguments, such as the `method` parameter will be passed to the `Bader` class.
 
 === "GUI App"
 

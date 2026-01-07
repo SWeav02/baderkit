@@ -208,6 +208,22 @@ class Structure(PymatgenStructure):
                 site.label = f"{label}_{idx + 1}"
 
         return self
+    
+    @property
+    def reduced_formula(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            The reduced formula of the structure.
+
+        """
+        # NOTE: This property seems to only be available in some versions of
+        # pymatgen, but its useful enough that I'm ensuring it always
+        # exists here.
+        
+        return self.composition.reduced_formula
 
     @property
     def symmetry_kwargs(self) -> dict:

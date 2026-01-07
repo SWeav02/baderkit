@@ -225,8 +225,8 @@ class ElfLabeler:
         self._atom_nn_elf_radii_types_e = None
         self._nearest_neighbor_data = None
         self._nearest_neighbor_data_e = None
-        self._atom_feature_indices = None
-        self._atom_max_values = None
+        self._atom_feature_indices_e = None
+        self._atom_max_values_e = None
         self._atom_nn_planes = None
         self._atom_nn_planes_e = None
 
@@ -599,7 +599,7 @@ class ElfLabeler:
         return np.where(self._atom_nn_elf_radii_types, "covalent", "ionic")
 
     @property
-    def atom_feature_indices(self) -> NDArray[np.int64]:
+    def atom_feature_indices_e(self) -> NDArray[np.int64]:
         """
 
         Returns
@@ -611,7 +611,7 @@ class ElfLabeler:
         """
         # For each atom, a list of feature indices that belong solely to that
         # atom
-        if self._atom_feature_indices is None:
+        if self._atom_feature_indices_e is None:
             atom_features = [[] for i in range(len(self.electride_structure))]
             # add atom indices
             for feat_idx, node in enumerate(self.bifurcation_graph.irreducible_nodes):
@@ -626,11 +626,11 @@ class ElfLabeler:
                 if node.feature_type in FeatureType.bare_types:
                     atom_features[len(self.structure) + electride_num].append(i)
                     electride_num += 1
-            self._atom_feature_indices = atom_features
-        return self._atom_feature_indices
+            self._atom_feature_indices_e = atom_features
+        return self._atom_feature_indices_e
 
     @property
-    def atom_max_values(self) -> NDArray[np.float64]:
+    def atom_max_values_e(self) -> NDArray[np.float64]:
         """
 
         Returns
@@ -639,14 +639,14 @@ class ElfLabeler:
             The maximum value that each atom has an existing feature.
 
         """
-        if self._atom_max_values is None:
+        if self._atom_max_values_e is None:
             feature_max_values = self.feature_max_values
             max_values = []
-            for i, feature_indices in enumerate(self.atom_feature_indices):
+            for i, feature_indices in enumerate(self.atom_feature_indices_e):
                 max_values.append(np.max(feature_max_values[feature_indices]))
 
-            self._atom_max_values = np.array(max_values)
-        return self._atom_max_values.round(10)
+            self._atom_max_values_e = np.array(max_values)
+        return self._atom_max_values_e.round(10)
 
     ###########################################################################
     # Feature Properties
@@ -1854,7 +1854,7 @@ class ElfLabeler:
             "atom_elf_radii_types",
             "atom_elf_radii_e",
             "atom_elf_radii_types_e",
-            "atom_max_values",
+            "atom_max_values_e",
             "feature_max_values",
             "feature_min_values",
             "feature_charges",
@@ -1888,7 +1888,7 @@ class ElfLabeler:
             "feature_types",
             "feature_coord_atoms",
             "feature_coord_atoms_e",
-            "atom_feature_indices",
+            "atom_feature_indices_e",
         ]:
             results[result] = getattr(self, result, None)
 
