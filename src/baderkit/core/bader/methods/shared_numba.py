@@ -542,7 +542,7 @@ def initialize_labels_from_maxima(
     return labels, all_frac_coords, all_grid_coords
 
 
-@njit(cache=True, fastmath=True)
+@njit(cache=True)
 def get_min_avg_surface_dists(
     labels,
     frac_coords,
@@ -554,7 +554,7 @@ def get_min_avg_surface_dists(
     # create array to store best dists, sums, and counts
     dists = np.full(len(frac_coords), max_value, dtype=np.float64)
     dist_sums = np.zeros(len(frac_coords), dtype=np.float64)
-    edge_totals = np.zeros(len(frac_coords), dtype=np.uint32)
+    edge_totals = np.zeros(len(frac_coords), dtype=np.float64)
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
@@ -564,7 +564,7 @@ def get_min_avg_surface_dists(
                 # get label at edge
                 label = labels[i, j, k]
                 # add to our count
-                edge_totals[label] += 1
+                edge_totals[label] += 1.0
                 # convert from voxel indices to frac
                 fi = i / nx
                 fj = j / ny
@@ -584,7 +584,7 @@ def get_min_avg_surface_dists(
                 cj = di * matrix[0, 1] + dj * matrix[1, 1] + dk * matrix[2, 1]
                 ck = di * matrix[0, 2] + dj * matrix[1, 2] + dk * matrix[2, 2]
                 # calculate distance
-                dist = np.linalg.norm(np.array((ci, cj, ck), dtype=np.float64))
+                dist = (ci**2 + cj**2 + ck**2) ** 0.5
                 # add to our total
                 dist_sums[label] += dist
                 # if this is the lowest distance, update radius
