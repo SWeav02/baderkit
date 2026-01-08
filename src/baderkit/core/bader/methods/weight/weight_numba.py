@@ -335,7 +335,7 @@ def get_weight_assignments(
                 best_weight = weight
                 tied_labels = False
             elif weight > best_weight - tol:  # equal to with a tolerance
-                tied_labels == True
+                tied_labels = True
             # add weight to current weights
             reduced_weights.append(weight)
             reduced_labels.append(label)
