@@ -28,7 +28,6 @@ from baderkit.core.utilities.voronoi import get_cell_wrapped_voronoi
 
 # TODO:
 
-# 3. update docs to include elf labeler and badelf
 # 4. push new release and update warrenapp info
 # 5. update simmate workflows/database
 # 6. update simmate docs
@@ -343,7 +342,7 @@ class Badelf:
         if self._volumes is None:
             self._get_voxel_assignments()
         return self._volumes.round(10)
-    
+
     @property
     def elf_maxima(self) -> NDArray:
         """
@@ -354,7 +353,7 @@ class Badelf:
             The maximum ELF value for each atom and electride in the system.
 
         """
-        
+
         return self.elf_labeler.atom_max_values_e
 
     @property
@@ -415,10 +414,12 @@ class Badelf:
 
             # if we have an elf labeler, use its results to get partitioning
             if self.method == "badelf":
-                site_indices, neigh_indices, _ = self.elf_labeler.nearest_neighbor_data
+                site_indices, neigh_indices, _, _ = (
+                    self.elf_labeler.nearest_neighbor_data
+                )
                 plane_points, plane_vectors = self.elf_labeler._atom_nn_planes
             elif self.method == "voronelf":
-                site_indices, neigh_indices, _ = (
+                site_indices, neigh_indices, _, _ = (
                     self.elf_labeler.nearest_neighbor_data_e
                 )
                 plane_points, plane_vectors = self.elf_labeler._atom_nn_planes_e

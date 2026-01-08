@@ -709,7 +709,7 @@ class SpinElfLabeler:
 
     def write_all_features(
         self,
-        directory: str | Path = None,
+        directory: str | Path = Path("."),
         write_reference: bool = True,
         prefix_override: str = None,
         **kwargs,
@@ -763,7 +763,12 @@ class SpinElfLabeler:
                     directory / f"{temp_prefix}_f{feat_idx}",
                     directory / f"{prefix_override}_f{feat_idx}_up",
                 )
-        if not self.equal_spin:
+            else:
+                os.rename(
+                    directory / f"{temp_prefix}_f{feat_idx}",
+                    directory / f"{prefix_override}_f{feat_idx}",
+                )
+        if self.equal_spin:
             return
         # Write the spin down file and change the name
         for feat_idx in range(len(self.elf_labeler_down.feature_charges)):
@@ -784,7 +789,7 @@ class SpinElfLabeler:
     def write_features_by_type(
         self,
         included_types: list[FeatureType],
-        directory: str | Path = None,
+        directory: str | Path = Path("."),
         prefix_override=None,
         write_reference: bool = True,
         **kwargs,
@@ -830,6 +835,7 @@ class SpinElfLabeler:
 
         for feat_type in included_types:
             feat_type = FeatureType(feat_type)
+
             self.elf_labeler_up.write_features_by_type(
                 included_types=[feat_type],
                 directory=directory,
@@ -837,12 +843,20 @@ class SpinElfLabeler:
                 prefix_override=temp_prefix,
                 **kwargs,
             )
+
             if not self.equal_spin:
                 # rename with "up" so we don't overwrite
                 os.rename(
-                    directory / f"{temp_prefix}_{feat_type.value}_fsum",
-                    directory / f"{prefix_override}_{feat_type.value}_fsum_up",
+                    directory / f"{temp_prefix}_{feat_type.dummy_species}",
+                    directory / f"{prefix_override}_{feat_type.dummy_species}_up",
                 )
+            else:
+                os.rename(
+                    directory / f"{temp_prefix}_{feat_type.dummy_species}",
+                    directory / f"{prefix_override}_{feat_type.dummy_species}",
+                )
+                return
+
                 # Write the spin down file and change the name
             # temporarily update prefix override to avoid overwriting
             self.elf_labeler_down.write_features_by_type(
@@ -855,14 +869,14 @@ class SpinElfLabeler:
             if not self.equal_spin:
                 # rename with "up" so we don't overwrite
                 os.rename(
-                    directory / f"{temp_prefix}_{feat_type.value}_fsum",
-                    directory / f"{prefix_override}_{feat_type.value}_fsum_down",
+                    directory / f"{temp_prefix}_{feat_type.dummy_species}",
+                    directory / f"{prefix_override}_{feat_type.dummy_species}_down",
                 )
 
     def write_features_by_type_sum(
         self,
         included_types: list[FeatureType],
-        directory: str | Path = None,
+        directory: str | Path = Path("."),
         prefix_override=None,
         write_reference: bool = True,
         **kwargs,
@@ -919,7 +933,14 @@ class SpinElfLabeler:
                 directory / f"{temp_prefix}_fsum",
                 directory / f"{prefix_override}_fsum_up",
             )
-            # Write the spin down file and change the name
+        else:
+            os.rename(
+                directory / f"{temp_prefix}_fsum",
+                directory / f"{prefix_override}_fsum",
+            )
+            return
+
+        # Write the spin down file and change the name
         # temporarily update prefix override to avoid overwriting
         self.elf_labeler_down.write_features_by_type_sum(
             included_types=included_types,

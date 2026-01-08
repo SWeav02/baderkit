@@ -471,7 +471,7 @@ def generate_symmetric_bonds(
     # create an array to store all bond information
     # site, neighbor, plane equation
     n_transforms = len(translation_vectors)
-    all_bonds = np.empty((n_transforms * len(site_indices), 13), dtype=np.float64)
+    all_bonds = np.empty((n_transforms * len(site_indices), 14), dtype=np.float64)
 
     chunked_coords = np.round(all_frac_coords / tol).astype(np.int64)
 
@@ -541,8 +541,9 @@ def generate_symmetric_bonds(
 
             # get fractional vector
             plane_vector *= frac
-            # calculate radius
+            # calculate radius and dist
             cart_vector = plane_vector @ frac2cart
+            dist = np.linalg.norm(cart_vector)
             radius = np.linalg.norm(cart_vector)
 
             # get plane equation
@@ -552,10 +553,11 @@ def generate_symmetric_bonds(
             all_bonds[bond_idx, 0] = site_idx
             all_bonds[bond_idx, 1] = neigh_idx
             all_bonds[bond_idx, 2] = radius
-            all_bonds[bond_idx, 3] = bond_type
-            all_bonds[bond_idx, 4:7] = plane_point
-            all_bonds[bond_idx, 7:10] = plane_vector
-            all_bonds[bond_idx, 10:] = trans_neigh_coord
+            all_bonds[bond_idx, 3] = dist
+            all_bonds[bond_idx, 4] = bond_type
+            all_bonds[bond_idx, 5:8] = plane_point
+            all_bonds[bond_idx, 8:11] = plane_vector
+            all_bonds[bond_idx, 11:] = trans_neigh_coord
             bond_idx += 1
 
     return np.round(all_bonds, 12)

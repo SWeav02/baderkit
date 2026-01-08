@@ -141,7 +141,7 @@ def test_labeler():
         )
         time.sleep(0)
         assert result.exit_code == 0
-        assert Path("ELFCAR_metallic_fsum_up").exists()
+        assert Path("ELFCAR_M_up").exists()
 
 
 # TODO: I couldn't get this to run and be headless, so for now I'm going to

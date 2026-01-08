@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from collections import defaultdict
+from pathlib import Path
 from typing import TypeVar
 
 import numpy as np
@@ -208,7 +209,7 @@ class Structure(PymatgenStructure):
                 site.label = f"{label}_{idx + 1}"
 
         return self
-    
+
     @property
     def reduced_formula(self) -> str:
         """
@@ -222,7 +223,7 @@ class Structure(PymatgenStructure):
         # NOTE: This property seems to only be available in some versions of
         # pymatgen, but its useful enough that I'm ensuring it always
         # exists here.
-        
+
         return self.composition.reduced_formula
 
     @property
@@ -303,3 +304,31 @@ class Structure(PymatgenStructure):
     @property
     def site_symbols(self):
         return np.array([i.specie.symbol for i in self])
+
+    def to(self, filename: str | Path = "", fmt: str = "", **kwargs) -> str | None:
+        """
+        Outputs the structure to a file or string.
+
+        Args:
+            filename (str): If provided, output will be written to a file. If
+                fmt is not specified, the format is determined from the
+                filename. Defaults is None, i.e. string output.
+            fmt (str): Format to output to. Defaults to JSON unless filename
+                is provided. If fmt is specifies, it overrides whatever the
+                filename is. Options include "cif", "poscar", "cssr", "json",
+                "xsf", "mcsqs", "prismatic", "yaml", "fleur-inpgen".
+                Non-case sensitive.
+            **kwargs: Kwargs passthru to relevant methods. E.g., This allows
+                the passing of parameters like symprec to the
+                CifWriter.__init__ method for generation of symmetric cifs.
+
+        Returns:
+            (str) if filename is None. None otherwise.
+        """
+
+        # this is just a wrapper for the pymatgen method because some versions
+        # do not allow for Path objects
+        if filename:
+            filename = Path(filename)
+            filename = str(filename.resolve())
+        return super().to(filename=filename, fmt=fmt, **kwargs)

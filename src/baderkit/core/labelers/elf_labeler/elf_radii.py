@@ -367,6 +367,7 @@ class ElfRadiiTools:
         neigh_indices = neigh_indices[important_plane_mask]
         neigh_images = neigh_images[important_plane_mask]
         neigh_coords = neigh_coords[important_plane_mask]
+        pair_dists = pair_dists[important_plane_mask]
         fracs = fracs[important_plane_mask]
         bond_types = bond_types[important_plane_mask]
 
@@ -392,10 +393,11 @@ class ElfRadiiTools:
         site_indices = all_bonds[:, 0].astype(int)
         neigh_indices = all_bonds[:, 1].astype(int)
         radii = all_bonds[:, 2]
-        bond_types = all_bonds[:, 3].astype(bool)
-        plane_points = all_bonds[:, 4:7]
-        plane_vectors = all_bonds[:, 7:10]
-        neigh_coords = all_bonds[:, 10:]
+        pair_dists = all_bonds[:, 3]
+        bond_types = all_bonds[:, 4].astype(bool)
+        plane_points = all_bonds[:, 5:8]
+        plane_vectors = all_bonds[:, 8:11]
+        neigh_coords = all_bonds[:, 11:]
 
         if -1 in site_indices:
             raise Exception(
@@ -407,6 +409,7 @@ class ElfRadiiTools:
             neigh_indices,
             neigh_coords,
             radii,
+            pair_dists,
             bond_types,
             plane_points,
             plane_vectors,

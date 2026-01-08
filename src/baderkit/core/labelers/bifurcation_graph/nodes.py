@@ -346,8 +346,8 @@ class IrreducibleNode(NodeBase):
             "average surface dist": "avg_surface_dist",
             "distance beyond atom": "dist_beyond_atom",
             "coord number": "coord_num",
-            "coord atom indices": "coord_atom_indices",
-            "coord atom species": "coord_atom_species",
+            "coord atom indices": "coord_indices",
+            "coord atom species": "coord_species",
         }
     )
 
@@ -370,8 +370,8 @@ class IrreducibleNode(NodeBase):
         self._min_surface_dist = min_surface_dist
         self._avg_surface_dist = avg_surface_dist
 
-        self._coord_atom_indices = None
-        self._coord_electride_indices = None
+        self._coord_indices = None
+        self._coord_indices_e = None
 
     @property
     def feature_type(self) -> FeatureType | None:
@@ -450,13 +450,13 @@ class IrreducibleNode(NodeBase):
 
     @property
     def coord_number(self) -> int:
-        return len(self.coord_atom_indices)
+        return len(self.coord_indices)
 
     @property
-    def coord_atom_indices(self) -> list[int]:
-        if self._coord_atom_indices is None:
+    def coord_indices(self) -> list[int]:
+        if self._coord_indices is None:
             if self.feature_type in FeatureType.atomic_types:
-                self._coord_atom_indices = [int(self.nearest_atom)]
+                self._coord_indices = [int(self.nearest_atom)]
             else:
                 # TODO: I would really like a better method of doing this as
                 # CrystalNN is very slow in this situation. I can't do them all
@@ -466,28 +466,28 @@ class IrreducibleNode(NodeBase):
                 coordination = self.bifurcation_graph.cnn.get_nn_info(
                     feature_structure, -1
                 )
-                self._coord_atom_indices = [int(i["site_index"]) for i in coordination]
+                self._coord_indices = [int(i["site_index"]) for i in coordination]
 
-        return self._coord_atom_indices
+        return self._coord_indices
 
     @property
-    def coord_atom_species(self) -> list[str]:
+    def coord_species(self) -> list[str]:
         structure = self.bifurcation_graph.structure
-        return [structure[i].species_string for i in self.coord_atom_indices]
+        return [structure[i].species_string for i in self.coord_indices]
 
     @property
-    def coord_atom_dists(self) -> list[float]:
-        return self.atom_dists[self.coord_atom_indices]
+    def coord_dists(self) -> list[float]:
+        return self.atom_dists[self.coord_indices]
 
     @property
-    def electride_coord_number(self) -> int:
-        return len(self.coord_electride_indices)
+    def coord_number_e(self) -> int:
+        return len(self.coord_indices_e)
 
     @property
-    def coord_electride_indices(self) -> list[int]:
-        if self._coord_electride_indices is None:
+    def coord_indices_e(self) -> list[int]:
+        if self._coord_indices_e is None:
             if self.feature_type in FeatureType.atomic_types:
-                self._coord_electride_indices = [int(self.nearest_atom)]
+                self._coord_indices_e = [int(self.nearest_atom)]
             else:
                 feature_structure = (
                     self.bifurcation_graph._electride_hatom_structure.copy()
@@ -508,20 +508,18 @@ class IrreducibleNode(NodeBase):
                 coordination = self.bifurcation_graph.cnn.get_nn_info(
                     feature_structure, struc_idx
                 )
-                self._coord_electride_indices = [
-                    int(i["site_index"]) for i in coordination
-                ]
+                self._coord_indices_e = [int(i["site_index"]) for i in coordination]
 
-        return self._coord_electride_indices
+        return self._coord_indices_e
 
     @property
-    def coord_electride_species(self) -> list[str]:
+    def coord_species_e(self) -> list[str]:
         structure = self.bifurcation_graph.electride_structure
-        return [structure[i].species_string for i in self.coord_electride_indices]
+        return [structure[i].species_string for i in self.coord_indices_e]
 
     @property
-    def coord_electride_dists(self) -> list[float]:
-        return self.electride_dists[self.coord_electride_indices]
+    def coord_dists_e(self) -> list[float]:
+        return self.electride_dists[self.coord_indices_e]
 
     def remove(self) -> None:
         # remove this node from the current parent's children

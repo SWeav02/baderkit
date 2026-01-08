@@ -3,6 +3,7 @@
 import json
 import logging
 import math
+import os
 import warnings
 from pathlib import Path
 from typing import Literal, TypeVar
@@ -567,6 +568,7 @@ class ElfLabeler:
                     neigh_indices,
                     neigh_coords,
                     radii,
+                    dists,
                     bond_types,
                     plane_points,
                     plane_vectors,
@@ -577,6 +579,7 @@ class ElfLabeler:
                     site_indices,
                     neigh_indices,
                     neigh_coords,
+                    dists,
                 )
                 self._atom_nn_planes_e = (plane_points, plane_vectors)
 
@@ -619,7 +622,7 @@ class ElfLabeler:
                     node.coord_number == 1
                     and node.feature_type not in FeatureType.bare_types
                 ):
-                    atom_features[node.coord_electride_indices[0]].append(feat_idx)
+                    atom_features[node.coord_indices_e[0]].append(feat_idx)
             # add electride indices
             electride_num = 0
             for i, node in enumerate(self.bifurcation_graph.irreducible_nodes):
@@ -784,7 +787,7 @@ class ElfLabeler:
             The atoms coordinated with each feature.
 
         """
-        return self._get_feature_properties("coord_atom_indices")
+        return self._get_feature_properties("coord_indices")
 
     @property
     def feature_coord_nums(self) -> list:
@@ -799,7 +802,7 @@ class ElfLabeler:
         return np.array(self._get_feature_properties("coord_number"), dtype=np.int64)
 
     @property
-    def feature_coord_atom_dists(self) -> list:
+    def feature_coord_dists(self) -> list:
         """
 
         Returns
@@ -808,7 +811,7 @@ class ElfLabeler:
             The distance to each coordinated atom from each feature.
 
         """
-        return self._get_feature_properties("coord_atom_dists")
+        return self._get_feature_properties("coord_dists")
 
     @property
     def feature_coord_atoms_e(self) -> list:
@@ -820,7 +823,7 @@ class ElfLabeler:
             The coordinated atoms to each feature, including electrides as quasi-atoms
 
         """
-        return self._get_feature_properties("coord_electride_indices")
+        return self._get_feature_properties("coord_indices_e")
 
     @property
     def feature_coord_nums_e(self) -> list:
@@ -833,9 +836,7 @@ class ElfLabeler:
             electrides as quasi-atoms.
 
         """
-        return np.array(
-            self._get_feature_properties("electride_coord_number"), dtype=np.int64
-        )
+        return np.array(self._get_feature_properties("coord_number_e"), dtype=np.int64)
 
     @property
     def feature_coord_atoms_dists_e(self):
@@ -847,7 +848,7 @@ class ElfLabeler:
             The distance to each coordinated atom/electride from each feature.
 
         """
-        return self._get_feature_properties("coord_electride_dists")
+        return self._get_feature_properties("coord_dists_e")
 
     @property
     def feature_min_surface_dists(self) -> list:
@@ -1047,7 +1048,7 @@ class ElfLabeler:
                     f"No neighboring atoms found for feature with index {feature_idx}. Feature assigned to nearest atom."
                 )
                 # assign all charge/volume to the closest atom
-                nearest = np.argmin(self.feature_coord_atom_dists[feature_idx])
+                nearest = np.argmin(self.feature_coord_dists[feature_idx])
                 atom_charge[nearest] += charge
                 atom_volume[nearest] += volume
 
@@ -1078,7 +1079,7 @@ class ElfLabeler:
                 if use_electrides:
                     dists = self.feature_coord_atoms_dists_e[feature_idx].copy()
                 else:
-                    dists = self.feature_coord_atom_dists[feature_idx].copy()
+                    dists = self.feature_coord_dists[feature_idx].copy()
                 # invert and normalize
                 dists = 1 / dists
                 dists /= dists.sum()
@@ -1093,7 +1094,7 @@ class ElfLabeler:
                     dists = self.feature_coord_atoms_dists_e[feature_idx].copy()
                     atom_radii = self.atom_elf_radii_e[coord_atoms]
                 else:
-                    dists = self.feature_coord_atom_dists[feature_idx].copy()
+                    dists = self.feature_coord_dists[feature_idx].copy()
                     atom_radii = self.atom_elf_radii[coord_atoms]
 
                 # calculate the weighted contribution to each atom and normalize
@@ -1109,7 +1110,7 @@ class ElfLabeler:
 
             elif splitting_method == "nearest":
                 # assign all charge/volume to the closest atom
-                nearest = np.argmin(self.feature_coord_atom_dists[feature_idx])
+                nearest = np.argmin(self.feature_coord_dists[feature_idx])
                 atom_charge[nearest] += charge
                 atom_volume[nearest] += volume
             else:
@@ -1400,7 +1401,7 @@ class ElfLabeler:
         # along the bond to the nearest neighbor, but typically is. For
         # example CdPt3 has 2 Pt atoms with a Cd an dPt atom tied for the
         # nearest.
-        site_indices, neigh_indices, neigh_coords = nn_data
+        site_indices, neigh_indices, neigh_coords, dists = nn_data
 
         # sort radii
         sorted_indices = np.argsort(all_radii)
@@ -1538,7 +1539,7 @@ class ElfLabeler:
     def write_feature_basins(
         self,
         feature_indices: list[int],
-        directory: str | Path = None,
+        directory: str | Path = Path("."),
         include_dummy_atoms: bool = True,
         write_reference: bool = True,
         output_format: str | Format = None,
@@ -1611,7 +1612,7 @@ class ElfLabeler:
     def write_feature_basins_sum(
         self,
         feature_indices: list[int],
-        directory: str | Path = None,
+        directory: str | Path = Path("."),
         include_dummy_atoms: bool = False,
         write_reference: bool = True,
         output_format: str | Format = None,
@@ -1702,6 +1703,7 @@ class ElfLabeler:
         included_types: list[FeatureType],
         prefix_override=None,
         write_reference: bool = True,
+        directory: str | Path = Path("."),
         **kwargs,
     ):
         """
@@ -1733,11 +1735,18 @@ class ElfLabeler:
         for feature_type in included_types:
             feature_type = FeatureType(feature_type)
             feature_indices = self.feature_indices_by_type([feature_type])
-            prefix = prefix_override + f"_{feature_type.value}"
+            prefix = prefix_override + f"_{feature_type.dummy_species}"
             self.write_feature_basins_sum(
                 feature_indices=feature_indices,
                 prefix_override=prefix,
+                directory=directory,
                 **kwargs,
+            )
+
+            # rename to remove fsum
+            os.rename(
+                directory / f"{prefix}_fsum",
+                directory / f"{prefix}",
             )
 
     def write_features_by_type_sum(
@@ -1806,7 +1815,8 @@ class ElfLabeler:
         results["spin_system"] = self.spin_system
 
         # only try to calculate oxidation state if this was not a half spin system
-        if self.spin_system == "total":
+        potcar_path = Path(potcar_path)
+        if self.spin_system == "total" and potcar_path.exists():
             oxidation_states, charges, volumes = (
                 self.get_oxidation_and_volumes_from_potcar(
                     potcar_path=potcar_path, use_electrides=False
@@ -1820,12 +1830,8 @@ class ElfLabeler:
         else:
             oxidation_states = None
             oxidation_states_e = None
-            charges, volumes = self.get_charges_and_volumes(
-                potcar_path=potcar_path, use_electrides=False
-            )
-            charges_e, volumes_e = self.get_charges_and_volumes(
-                potcar_path=potcar_path, use_electrides=True
-            )
+            charges, volumes = self.get_charges_and_volumes(use_electrides=False)
+            charges_e, volumes_e = self.get_charges_and_volumes(use_electrides=True)
         if oxidation_states is not None:
             oxidation_states = oxidation_states.tolist()
             oxidation_states_e = oxidation_states_e.tolist()
@@ -1871,7 +1877,7 @@ class ElfLabeler:
 
         # add objects that are lists with arrays
         for result in [
-            "feature_coord_atom_dists",
+            "feature_coord_dists",
             "feature_coord_atoms_dists_e",
         ]:
             result_obj = getattr(self, result, None)
@@ -1977,13 +1983,14 @@ class ElfLabeler:
             neigh_indices,
             neigh_coords,
             radii,
+            dists,
             bond_types,
             plane_points,
             plane_vectors,
         ) = self._get_nn_atom_elf_radii(use_electrides=False)
         self._atom_nn_elf_radii = radii
         self._atom_nn_elf_radii_types = bond_types
-        self._nearest_neighbor_data = (site_indices, neigh_indices, neigh_coords)
+        self._nearest_neighbor_data = (site_indices, neigh_indices, neigh_coords, dists)
         self._atom_nn_planes = (plane_points, plane_vectors)
 
         # Next we mark our metallic/bare electrons. These currently have a set
@@ -2210,10 +2217,10 @@ class ElfLabeler:
                         node.feature_type = FeatureType.shallow_covalent_metallic
                     # we also go ahead and set the neighboring atoms to avoid some
                     # CrystalNN calculations
-                    node._coord_atom_indices = [int(atom0), int(atom1)]
+                    node._coord_indices = [int(atom0), int(atom1)]
                 elif node.charge > self.min_covalent_charge:
                     node.feature_type = FeatureType.covalent
-                    node._coord_atom_indices = [int(atom0), int(atom1)]
+                    node._coord_indices = [int(atom0), int(atom1)]
 
         # note we've labeled our covalent features
         self._labeled_covalent = True
@@ -2321,7 +2328,7 @@ class ElfLabeler:
                     continue
                 # check how many neighs are in this domain
                 neighs_in_domain = 0
-                for atom_idx in child.coord_atom_indices:
+                for atom_idx in child.coord_indices:
                     if atom_idx in node.contained_atoms:
                         neighs_in_domain += 1
                     if neighs_in_domain > 1:
@@ -2334,7 +2341,7 @@ class ElfLabeler:
                     child.feature_type = FeatureType.lone_pair
                     assigned_nodes.append(child.key)
                     # reset coord env so that it gets calculated as 1
-                    child._coord_atom_indices = None
+                    child._coord_indices = None
 
     def _mark_metallic(self):
         logging.info("Marking metallic features")
