@@ -14,6 +14,7 @@ from baderkit.command_line.base import baderkit_app
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"
+TEST_ELFCAR = TEST_FOLDER / "ELFCAR"
 
 runner = CliRunner()
 
@@ -66,7 +67,7 @@ def test_convert():
         assert Path("CHGCAR_vasp").exists()
 
 
-def test_run():
+def test_bader():
     # create a temporary folder to run the command in
     with runner.isolated_filesystem():
         # copy CHGCAR over to temp path
@@ -85,12 +86,62 @@ def test_run():
                 "vasp",
                 "-p",
                 "sel_atoms",
-                "0",
+                "[0]",
             ],
         )
         time.sleep(0)
         assert result.exit_code == 0
         assert Path("CHGCAR_a0").exists()
+
+
+def test_badelf():
+    # create a temporary folder to run the command in
+    with runner.isolated_filesystem():
+        # copy CHGCAR/ELFCAR over to temp path
+        shutil.copyfile(TEST_CHGCAR, "CHGCAR")
+        shutil.copyfile(TEST_ELFCAR, "ELFCAR")
+        # run sum
+        result = runner.invoke(
+            app=baderkit_app,
+            args=[
+                "badelf",
+                "CHGCAR",
+                "ELFCAR",
+                "-m",
+                "zero-flux",
+                "-s",
+                "-p",
+                "sel_atoms",
+                "[0]",
+            ],
+        )
+        time.sleep(0)
+        assert result.exit_code == 0
+        assert Path("ELFCAR_a0_up").exists()
+
+
+def test_labeler():
+    # create a temporary folder to run the command in
+    with runner.isolated_filesystem():
+        # copy CHGCAR/ELFCAR over to temp path
+        shutil.copyfile(TEST_CHGCAR, "CHGCAR")
+        shutil.copyfile(TEST_ELFCAR, "ELFCAR")
+        # run sum
+        result = runner.invoke(
+            app=baderkit_app,
+            args=[
+                "label",
+                "CHGCAR",
+                "ELFCAR",
+                "-s",
+                "-p",
+                "sel_feat",
+                "[metallic]",
+            ],
+        )
+        time.sleep(0)
+        assert result.exit_code == 0
+        assert Path("ELFCAR_M_up").exists()
 
 
 # TODO: I couldn't get this to run and be headless, so for now I'm going to

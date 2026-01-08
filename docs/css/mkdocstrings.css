@@ -37,3 +37,10 @@ span.doc-section-title {
 .admonition.note > .admonition-title::before {
   background-color: #785abf !important;
 }
+
+/* Center all images */
+.md-content img {
+    display: block;
+    margin-left: auto;
+    margin-right: auto;
+}

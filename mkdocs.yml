@@ -58,15 +58,30 @@ markdown_extensions:
   - md_in_html
   - toc:
       permalink: true
+  - pymdownx.arithmatex:
+      generic: true
   
 nav:
-  - Quick Start: index.md
-  - Background: background.md
-  - Methods and Benchmarks: implementation.md
+  - Introduction: index.md
+  - Bader:
+      - Quick Start: bader/usage.md
+      - Background: bader/background.md
+      - Methods: bader/methods.md
+  - BadELF:
+      - Quick Start: badelf/usage.md
+      - Background: badelf/background.md
+      - Methods: badelf/methods.md
+  - ElfLabeler:
+      - Quick Start: elf_labeler/usage.md
+      - Background: elf_labeler/background.md
   - API Reference: 
     - Core:
       - Bader: api_reference/core/bader.md
       - Grid: api_reference/core/grid.md
+      - ElfLabeler: api_reference/core/labeler.md
+      - SpinElfLabeler: api_reference/core/labeler_spin.md
+      - Badelf: api_reference/core/badelf.md
+      - SpinBadelf: api_reference/core/badelf_spin.md
     - Plotting:
       - Structure: api_reference/plotting/structure.md
       - Grid: api_reference/plotting/grid.md
@@ -89,3 +104,7 @@ plugins:
 
 extra_css:
   - css/mkdocstrings.css
+  
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js

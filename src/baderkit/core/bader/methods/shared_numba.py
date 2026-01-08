@@ -1,0 +1,595 @@
+# -*- coding: utf-8 -*-
+
+import math
+
+import numpy as np
+from numba import njit, prange
+from numpy.typing import NDArray
+
+from baderkit.core.utilities.basic import (
+    coords_to_flat,
+    flat_to_coords,
+    merge_frac_coords_weighted,
+    wrap_point,
+)
+from baderkit.core.utilities.interpolation import linear_slice
+from baderkit.core.utilities.union_find import find_root_no_compression, union
+
+###############################################################################
+# General methods
+###############################################################################
+
+
+@njit(cache=True, inline="always")
+def get_best_neighbor(
+    data: NDArray[np.float64],
+    i: np.int64,
+    j: np.int64,
+    k: np.int64,
+    neighbor_transforms: NDArray[np.int64],
+    neighbor_dists: NDArray[np.int64],
+):
+    """
+    For a given coordinate (i,j,k) in a grid (data), finds the neighbor with
+    the largest gradient.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        The data for each voxel.
+    i : np.int64
+        First coordinate
+    j : np.int64
+        Second coordinate
+    k : np.int64
+        Third coordinate
+    neighbor_transforms : NDArray[np.int64]
+        Transformations to apply to get to the voxels neighbors
+    neighbor_dists : NDArray[np.int64]
+        The distance to each voxels neighbor
+
+    Returns
+    -------
+    best_transform : NDArray[np.int64]
+        The transformation to the best neighbor
+    best_neigh : NDArray[np.int64]
+        The coordinates of the best neigbhor
+
+    """
+    nx, ny, nz = data.shape
+    # get the value at this point
+    base = data[i, j, k]
+    # create a tracker for the best increase in value
+    best = 0.0
+    # create initial best transform. Default to this point
+    bti = 0
+    btj = 0
+    btk = 0
+    # create initial best neighbor
+    bni = i
+    bnj = j
+    bnk = k
+    # For each neighbor get the difference in value and if its better
+    # than any previous, replace the current best
+    for (si, sj, sk), dist in zip(neighbor_transforms, neighbor_dists):
+        # loop
+        ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+        # calculate the difference in value taking into account distance
+        diff = (data[ii, jj, kk] - base) / dist
+        # if better than the current best, note the best and the
+        # current label
+        if diff > best:
+            best = diff
+            bti, btj, btk = (si, sj, sk)
+            bni, bnj, bnk = (ii, jj, kk)
+
+    # return the best shift and neighbor
+    return (
+        np.array((bti, btj, btk), dtype=np.int64),
+        np.array((bni, bnj, bnk), dtype=np.int64),
+    )
+
+
+@njit(parallel=True, cache=True)
+def get_edges(
+    labeled_array: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+):
+    """
+    In a 3D array of labeled voxels, finds the voxels that neighbor at
+    least one voxel with a different label.
+
+    Parameters
+    ----------
+    labeled_array : NDArray[np.int64]
+        A 3D array where each entry represents the basin label of the point.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
+
+    Returns
+    -------
+    edges : NDArray[np.bool_]
+        A mask with the same shape as the input grid that is True at points
+        on basin edges.
+
+    """
+    nx, ny, nz = labeled_array.shape
+    # create 3D array to store edges
+    edges = np.zeros_like(labeled_array, dtype=np.bool_)
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
+                # get this voxels label
+                label = labeled_array[i, j, k]
+                # iterate over the neighboring voxels
+                for si, sj, sk in neighbor_transforms:
+                    # wrap points
+                    ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                    # get neighbors label
+                    neigh_label = labeled_array[ii, jj, kk]
+                    # if any label is different, the current voxel is an edge.
+                    # Note this in our edge array and break
+                    # NOTE: we also check that the neighbor is not part of the
+                    # vacuum
+                    if neigh_label != label and not vacuum_mask[ii, jj, kk]:
+                        edges[i, j, k] = True
+                        break
+    return edges
+
+
+@njit(fastmath=True, cache=True)
+def get_basin_charges_and_volumes(
+    data: NDArray[np.float64],
+    labels: NDArray[np.int64],
+    cell_volume: np.float64,
+    maxima_num: np.int64,
+):
+    nx, ny, nz = data.shape
+    total_points = nx * ny * nz
+    # create variables to store charges/volumes
+    charges = np.zeros(maxima_num, dtype=np.float64)
+    volumes = np.zeros(maxima_num, dtype=np.float64)
+    vacuum_charge = 0.0
+    vacuum_volume = 0.0
+    # iterate in parallel over each voxel
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                charge = data[i, j, k]
+                label = labels[i, j, k]
+                if label < 0:
+                    vacuum_charge += charge
+                    vacuum_volume += 1
+                else:
+                    charges[label] += charge
+                    volumes[label] += 1.0
+    # calculate charge and volume
+    volumes = volumes * cell_volume / total_points
+    charges = charges / total_points
+    vacuum_volume = vacuum_volume * cell_volume / total_points
+    vacuum_charge = vacuum_charge / total_points
+    return charges, volumes, vacuum_charge, vacuum_volume
+
+
+@njit(parallel=True, cache=True)
+def get_maxima(
+    data: NDArray[np.float64],
+    neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+    use_minima: bool = False,
+):
+    """
+    For a 3D array of data, return a mask that is True at local maxima.
+
+    Parameters
+    ----------
+    data : NDArray[np.float64]
+        A 3D array of data.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
+    use_minima : bool, optional
+        Whether or not to search for minima instead of maxima.
+
+    Returns
+    -------
+    maxima : NDArray[np.bool_]
+        A mask with the same shape as the input grid that is True at points
+        that are local maxima.
+
+    """
+    nx, ny, nz = data.shape
+    # create 3D array to store maxima
+    maxima = np.zeros_like(data, dtype=np.bool_)
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
+                # get this voxels value
+                value = data[i, j, k]
+                is_max = True
+                # iterate over the neighboring voxels
+                for si, sj, sk in neighbor_transforms:
+                    # wrap points
+                    ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                    if not use_minima:
+                        if data[ii, jj, kk] > value:
+                            is_max = False
+                            break
+                    else:
+                        if data[ii, jj, kk] < value:
+                            is_max = False
+                            break
+                if is_max:
+                    maxima[i, j, k] = True
+    return maxima
+
+
+# NOTE: Parts of this could probably be parallelized, but I was running into issues
+# with rather unhelpful error messages (ValueError: negative dimensions not allowed)
+@njit(cache=True)
+def initialize_labels_from_maxima(
+    data,
+    spline_coeffs,
+    maxima_mask,
+    maxima_vox,
+    lattice,
+    neighbor_transforms,
+    neighbor_dists,
+    max_cart_offset=1,
+    rel_minima_tol=1e-5,
+):
+    nx, ny, nz = data.shape
+    ny_nz = ny * nz
+
+    # create a flat array of labels. These will initially all be -1
+    labels = np.full(nx * ny * nz, -1, dtype=np.int64)
+
+    # create an array to store values at each maximum
+    maxima_values = np.empty(len(maxima_vox), dtype=np.float64)
+    maxima_labels = np.empty(len(maxima_vox), dtype=np.int64)
+
+    # get the fractional representation of each maximum
+    maxima_frac = maxima_vox / np.array(data.shape, dtype=np.int64)
+
+    # Now we initialize the maxima
+    for max_idx, (i, j, k) in enumerate(maxima_vox):
+        # get value at maximum
+        maxima_values[max_idx] = data[i, j, k]
+        # set as initial group root
+        flat_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
+        maxima_labels[max_idx] = flat_max_idx
+        labels[flat_max_idx] = flat_max_idx
+
+    ###########################################################################
+    # 1. Remove Flat False Maxima
+    ###########################################################################
+    # If there is a particularly flat region, a point might have neighbors that
+    # are the same value. This point may be mislabeled as a maximum if these
+    # neighbors are not themselves maxima. This issue is really caused by too
+    # few sig figs in the data preventing the region from being properly distinguished
+
+    # create an array to store which maxima need to be reduced
+    flat_maxima_labels = []
+    flat_maxima_mask = np.zeros(len(maxima_vox), dtype=np.bool_)
+    best_neigh = []
+    num_to_reduce = 0
+    # check each maximum to see if it is a true maximum. We do this iteratively
+    # in case there is a flat area larger than a couple of voxels across
+    while True:
+        for max_idx, ((i, j, k), value, max_label) in enumerate(
+            zip(maxima_vox, maxima_values, maxima_labels)
+        ):
+            # skip points that are already added
+            if not maxima_mask[i, j, k]:
+                continue
+
+            for si, sj, sk in neighbor_transforms:
+                # get neighbor and wrap
+                ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                neigh_value = data[ii, jj, kk]
+                # skip lower points or points that are also true maxima
+                if neigh_value < value or maxima_mask[ii, jj, kk]:
+                    continue
+                # note this is a false maximum
+                flat_maxima_labels.append(max_label)
+                flat_maxima_mask[max_idx] = True
+                # temporarily set maxima_mask to false
+                maxima_mask[i, j, k] = False
+                # check if this neighbor is also in our flat set
+                neigh_label = coords_to_flat(ii, jj, kk, ny_nz, nz)
+                found = False
+                for max_label, max_neigh in zip(flat_maxima_labels, best_neigh):
+                    if neigh_label == max_label:
+                        # give this max the same neighbor as this point
+                        best_neigh.append(max_neigh)
+                        found = True
+                        break
+                if not found:
+                    best_neigh.append(neigh_label)
+                # we only need one neighbor to match so we break
+                break
+        # check if anything has changed. If not we're done
+        new_num_to_reduce = len(flat_maxima_labels)
+        if new_num_to_reduce == num_to_reduce:
+            break
+        num_to_reduce = new_num_to_reduce
+    # find the ongrid maximum each false maximum corresponds to
+    unique_neighs = np.unique(np.array(best_neigh, dtype=np.int64))
+    for unique_neigh_label in unique_neighs:
+        i, j, k = flat_to_coords(unique_neigh_label, ny_nz, nz)
+        # hill climb to best max
+        while True:
+            _, (ni, nj, nk) = get_best_neighbor(
+                data,
+                i,
+                j,
+                k,
+                neighbor_transforms,
+                neighbor_dists,
+            )
+            if maxima_mask[ni, nj, nk]:
+                break
+            if i == ni and j == nj and k == nk:
+                # we've hit another group of flat maxima. get their best neighbor
+                # and continue
+                flat_neigh = coords_to_flat(ni, nj, nk, ny_nz, nz)
+                for max_label, neigh_label in zip(flat_maxima_labels, best_neigh):
+                    if max_label == flat_neigh:
+                        ni, nj, nk = flat_to_coords(neigh_label, ny_nz, nz)
+                        break
+            i = ni
+            j = nj
+            k = nk
+        best_max = coords_to_flat(ni, nj, nk, ny_nz, nz)
+        # union each corresponding point
+        for max_label, neigh_label in zip(flat_maxima_labels, best_neigh):
+            if neigh_label != unique_neigh_label:
+                continue
+            union(labels, max_label, best_max)
+
+    # add maxima back to mask (required for things like the weight method)
+    for max_label in flat_maxima_labels:
+        i, j, k = flat_to_coords(max_label, ny_nz, nz)
+        maxima_mask[i, j, k] = True
+
+    ###########################################################################
+    # 2. Combine Adjacent Maxima
+    ###########################################################################
+    # If a maximum lies off of the grid, two adjacent point may have the same
+    # value and appear to be separate maxima.
+    for (i, j, k), max_label in zip(maxima_vox, maxima_labels):
+        for si, sj, sk in neighbor_transforms:
+            # get neighbor and wrap
+            ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+            neigh_label = coords_to_flat(ii, jj, kk, ny_nz, nz)
+            # if the neighbor is also a maximum, create a union
+            if maxima_mask[ii, jj, kk]:
+                union(labels, max_label, neigh_label)
+
+    ###########################################################################
+    # 2. Remove Voxelated False Maxima
+    ###########################################################################
+    # With the right shape (e.g. highly anisotropic) a maximum may lay offgrid
+    # and cause two ongrid points to appear to be higher than the region around
+    # them. We check for these in a region around each point using cubic interpolation
+
+    # sort maxima from high to low
+    sorted_indices = np.flip(np.argsort(maxima_values))
+
+    # Iterate over each maximum (except the first) and check for nearby maxima
+    # above them
+    for sorted_max_idx, max_idx in enumerate(sorted_indices[1:]):
+        # skip fake flat maxima (we've already found their higher neighbors)
+        if flat_maxima_mask[max_idx]:
+            continue
+        sorted_max_idx += 1
+        max_frac = maxima_frac[max_idx]
+        value = maxima_values[max_idx]
+
+        # iterate over maxima above this point
+        for neigh_max_idx in sorted_indices:
+            # skip if this is the same point
+            if neigh_max_idx == max_idx:
+                continue
+
+            # break if we reach a point lower than the current one
+            neigh_value = maxima_values[neigh_max_idx]
+            if neigh_value < value:
+                break
+
+            neigh_frac = maxima_frac[neigh_max_idx]
+            # unwrap relative to central
+            fi, fj, fk = neigh_frac - np.round(neigh_frac - max_frac)
+            # get offset in frac coords
+            oi = fi - max_frac[0]
+            oj = fj - max_frac[1]
+            ok = fk - max_frac[2]
+
+            # calculate the distance in cart coords
+            ci = lattice[0, 0] * oi + lattice[1, 0] * oj + lattice[2, 0] * ok
+            cj = lattice[0, 1] * oi + lattice[1, 1] * oj + lattice[2, 1] * ok
+            ck = lattice[0, 2] * oi + lattice[1, 2] * oj + lattice[2, 2] * ok
+            dist = (ci**2 + cj**2 + ck**2) ** (1 / 2)
+
+            # if above our cutoff, continue
+            if dist > max_cart_offset:
+                continue
+
+            # check if there is a minimum between this point and its neighbor
+            # set number of interpolation points to ~20/A
+            n_points = math.ceil(dist * 20)
+            values = linear_slice(
+                spline_coeffs, max_frac, (fi, fj, fk), n=n_points, is_frac=True
+            )
+            # check for a local minimum. If there is one, these are distince maxima
+            # BUGFIX: Check for minima with a tolerance.
+            minima = (
+                np.where((values[1:-1] < values[:-2]) & (values[1:-1] <= values[2:]))[0]
+                + 1
+            )
+            maxima = (
+                np.where((values[1:-1] > values[:-2]) & (values[1:-1] >= values[2:]))[0]
+                + 1
+            )
+
+            # Add edges if they qualify as maxima
+            if values[0] >= values[1]:
+                maxima = np.append(0, maxima)
+            if values[-1] > values[-2]:
+                maxima = np.append(maxima, len(values) - 1)
+
+            filtered = []
+            for m in minima:
+                # Find nearest maxima to the left and right
+                left_max = maxima[maxima < m][-1]
+                right_max = maxima[maxima > m][0]
+
+                min_val = values[m]
+                max_val = max(values[left_max], values[right_max])
+
+                if (max_val - min_val) / max_val > rel_minima_tol:
+                    filtered.append(m)
+
+            if len(filtered) == 0:
+                # these are the same maximum and we combine
+                max_label = maxima_labels[max_idx]
+                neigh_label = maxima_labels[neigh_max_idx]
+                union(labels, max_label, neigh_label)
+                break
+
+    # get the roots of each maximum
+    maxima_roots = []
+    for max_idx in maxima_labels:
+        maxima_roots.append(find_root_no_compression(labels, max_idx))
+    maxima_roots = np.array(maxima_roots, dtype=np.int64)
+
+    # Now we want to calculate the new frac coords for each group
+    # find unique labels and their count
+    unique_roots = np.unique(maxima_roots)
+    n_unique = len(unique_roots)
+
+    # Prepare result array to store frac coords and grid coords
+    all_frac_coords = np.zeros((n_unique, 3), dtype=np.float64)
+    all_grid_coords = np.zeros((n_unique, 3), dtype=np.int64)
+
+    # Parallel loop: for each unique label, scan new_labels and get average
+    # frac coords
+    for u_idx in range(n_unique):
+        target_root = unique_roots[u_idx]
+        frac_coords = []
+        maxima_w_root_labels = []
+        maxima_w_root_values = []
+        # track highest value and position
+        highest_value = -1e300
+        highest_idx = -1
+        i = -1
+        j = -1
+        k = -1
+        for max_idx, root in enumerate(maxima_roots):
+            if root == target_root:
+                # note this maximum has this root
+                maxima_w_root_labels.append(maxima_labels[max_idx])
+                # only append frac coords if this isn't a false flat max
+                if not flat_maxima_mask[max_idx]:
+                    frac_coords.append(maxima_frac[max_idx])
+                maxima_w_root_values.append(maxima_values[max_idx])
+                if maxima_values[max_idx] > highest_value:
+                    # update our highest point and value
+                    highest_value = maxima_values[max_idx]
+                    i, j, k = maxima_vox[max_idx]
+                    highest_idx = max_idx
+
+        # combine frac coords
+        merged_coord = merge_frac_coords_weighted(
+            frac_coords, np.array(maxima_w_root_values, dtype=np.float64)
+        )
+
+        # We want to get the point closest to the merged coord. This point must
+        # also be the ongrid maximum for this area.
+        ci = round(merged_coord[0] * nx) % nx
+        cj = round(merged_coord[1] * ny) % ny
+        ck = round(merged_coord[2] * nz) % nz
+        best_max_label = coords_to_flat(ci, cj, ck, ny_nz, nz)
+        center_value = data[ci, cj, ck]
+        # make sure this point is one of our maxima and is has as high a value
+        if not best_max_label in maxima_w_root_labels or center_value < highest_value:
+            # default back to the max point we found in our loop
+            ci = i
+            cj = j
+            ck = k
+            best_max_label = coords_to_flat(ci, cj, ck, ny_nz, nz)
+            merged_coord = maxima_frac[highest_idx]
+
+        # add the new frac and grid coords
+        all_frac_coords[u_idx] = merged_coord
+        all_grid_coords[u_idx] = (ci, cj, ck)
+        # relabel all maxima to point to the highest maximum in the group
+        for max_label in maxima_w_root_labels:
+            labels[max_label] = best_max_label
+
+    return labels, all_frac_coords, all_grid_coords
+
+
+@njit(cache=True)
+def get_min_avg_surface_dists(
+    labels,
+    frac_coords,
+    edge_mask,
+    matrix,
+    max_value,
+):
+    nx, ny, nz = labels.shape
+    # create array to store best dists, sums, and counts
+    dists = np.full(len(frac_coords), max_value, dtype=np.float64)
+    dist_sums = np.zeros(len(frac_coords), dtype=np.float64)
+    edge_totals = np.zeros(len(frac_coords), dtype=np.float64)
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # skip outside edges
+                if not edge_mask[i, j, k]:
+                    continue
+                # get label at edge
+                label = labels[i, j, k]
+                # add to our count
+                edge_totals[label] += 1.0
+                # convert from voxel indices to frac
+                fi = i / nx
+                fj = j / ny
+                fk = k / nz
+                # calculate the distance to the appropriate frac coord
+                ni, nj, nk = frac_coords[label]
+                # get differences between each index
+                di = ni - fi
+                dj = nj - fj
+                dk = nk - fk
+                # wrap at edges to be as close as possible
+                di -= round(di)
+                dj -= round(dj)
+                dk -= round(dk)
+                # convert to cartesian coordinates
+                ci = di * matrix[0, 0] + dj * matrix[1, 0] + dk * matrix[2, 0]
+                cj = di * matrix[0, 1] + dj * matrix[1, 1] + dk * matrix[2, 1]
+                ck = di * matrix[0, 2] + dj * matrix[1, 2] + dk * matrix[2, 2]
+                # calculate distance
+                dist = (ci**2 + cj**2 + ck**2) ** 0.5
+                # add to our total
+                dist_sums[label] += dist
+                # if this is the lowest distance, update radius
+                if dist < dists[label]:
+                    dists[label] = dist
+    # get average dists
+    average_dists = dist_sums / edge_totals
+    return dists, average_dists

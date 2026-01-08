@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 
 from collections import defaultdict
+from pathlib import Path
 from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 from pymatgen.core import Lattice, Species
 from pymatgen.core import Structure as PymatgenStructure
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
+from pymatgen.util.typing import CompositionLike
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Structure")
@@ -23,13 +26,65 @@ class Structure(PymatgenStructure):
         lattice: Lattice,
         species: list[Species],
         frac_coords: list[NDArray],
+        symmetry_kwargs: dict = {},
         **kwargs,
     ):
+        # clean frac coords
+        for coord in frac_coords:
+            coord %= 1.0
         super().__init__(lattice, species, frac_coords, **kwargs)
         # add labels to sites. This is to add backwards compatability to the
         # relabel_sites method that doesn't exist in earlier versions of pymatgen
         for site in self:
-            site.label = site.specie.symbol
+            site.properties["label"] = site.specie.symbol
+
+        # cache for symmetry data
+        self._symmetry_kwargs = symmetry_kwargs
+        self._symmetry_data = None
+        self._last_symmetry_save = None
+        self._spacegroup_analyzer = None
+
+    def insert(  # type: ignore
+        self,
+        i: int,
+        species: CompositionLike,
+        coords: NDArray,
+        coords_are_cartesian: bool = False,
+        validate_proximity: bool = False,
+        properties: dict | None = None,
+    ):
+        """
+        Insert a site to the structure.
+
+        This is a wraparound for the PyMatGen method adding a label if it is
+        not specified.
+
+        Args:
+            i (int): Index to insert site
+            species (species-like): Species of inserted site
+            coords (3x1 array): Coordinates of inserted site
+            coords_are_cartesian (bool): Whether coordinates are cartesian.
+                Defaults to False.
+            validate_proximity (bool): Whether to check if inserted site is
+                too close to an existing site. Defaults to False.
+            properties (dict): Properties associated with the site.
+
+        Returns:
+            New structure with inserted site.
+        """
+        if properties is None:
+            properties = {}
+        if properties.get("label", None) is None:
+            properties["label"] = str(species)
+
+        super().insert(
+            i,
+            species=species,
+            coords=coords,
+            coords_are_cartesian=coords_are_cartesian,
+            validate_proximity=validate_proximity,
+            properties=properties,
+        )
 
     @property
     def labels(self) -> list[str]:
@@ -155,10 +210,86 @@ class Structure(PymatgenStructure):
 
         return self
 
+    @property
+    def reduced_formula(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            The reduced formula of the structure.
+
+        """
+        # NOTE: This property seems to only be available in some versions of
+        # pymatgen, but its useful enough that I'm ensuring it always
+        # exists here.
+
+        return self.composition.reduced_formula
+
+    @property
+    def symmetry_kwargs(self) -> dict:
+        """
+
+        Returns
+        -------
+        dict
+            The keyword arguments used in the SpaceGroupAnalyzer for finding
+            symmetry data.
+
+        """
+        return self._symmetry_kwargs
+
+    @symmetry_kwargs.setter
+    def symmetry_kwargs(self, value: dict):
+        # set kwargs and reset symmetry
+        self._symmetry_kwargs = value
+        self._symmetry_data = None
+
+    @property
+    def spacegroup_analyzer(self) -> SpacegroupAnalyzer:
+        """
+
+        Returns
+        -------
+        SpacegroupAnalyzer
+            A spacegroup analyzer for this structure
+
+        """
+        if self._spacegroup_analyzer is None or self._last_symmetry_save != tuple(self):
+            self._last_symmetry_save = tuple(self)
+            self._spacegroup_analyzer = SpacegroupAnalyzer(self, **self.symmetry_kwargs)
+        return self._spacegroup_analyzer
+
+    @property
+    def symmetry_data(self):
+        """
+
+        Returns
+        -------
+        TYPE
+            The pymatgen symmetry dataset for the Structure object
+
+        """
+        if self._symmetry_data is None or self._last_symmetry_save != tuple(self):
+            self._symmetry_data = self.spacegroup_analyzer.get_symmetry_dataset()
+        return self._symmetry_data
+
+    @property
+    def equivalent_atoms(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The equivalent atoms in the Structure.
+
+        """
+        return self.symmetry_data.equivalent_atoms
+
     @staticmethod
     def merge_frac_coords(frac_coords):
         # avoid circular import
-        from baderkit.core.methods.shared_numba import merge_frac_coords
+        from baderkit.core.utilities.basic import merge_frac_coords
 
         frac_coords = np.asarray(frac_coords, dtype=np.float64)
         if len(frac_coords) == 0:
@@ -169,3 +300,35 @@ class Structure(PymatgenStructure):
             return merge_frac_coords(frac_coords)
         else:
             raise Exception("Frac coords must have Nx3 shape")
+
+    @property
+    def site_symbols(self):
+        return np.array([i.specie.symbol for i in self])
+
+    def to(self, filename: str | Path = "", fmt: str = "", **kwargs) -> str | None:
+        """
+        Outputs the structure to a file or string.
+
+        Args:
+            filename (str): If provided, output will be written to a file. If
+                fmt is not specified, the format is determined from the
+                filename. Defaults is None, i.e. string output.
+            fmt (str): Format to output to. Defaults to JSON unless filename
+                is provided. If fmt is specifies, it overrides whatever the
+                filename is. Options include "cif", "poscar", "cssr", "json",
+                "xsf", "mcsqs", "prismatic", "yaml", "fleur-inpgen".
+                Non-case sensitive.
+            **kwargs: Kwargs passthru to relevant methods. E.g., This allows
+                the passing of parameters like symprec to the
+                CifWriter.__init__ method for generation of symmetric cifs.
+
+        Returns:
+            (str) if filename is None. None otherwise.
+        """
+
+        # this is just a wrapper for the pymatgen method because some versions
+        # do not allow for Path objects
+        if filename:
+            filename = Path(filename)
+            filename = str(filename.resolve())
+        return super().to(filename=filename, fmt=fmt, **kwargs)

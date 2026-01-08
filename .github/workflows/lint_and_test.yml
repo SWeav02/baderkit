@@ -17,7 +17,18 @@ on:
     - cron: "30 5,17 * * *"
 
 jobs:
-  lint-and-test:
+  # black and isort were both failing on windows so I've moved them to only test on ubuntu
+  lint-check:
+    name: Code Quality Check
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: Initial setup
+        uses: actions/checkout@v3
+      - name: Black
+        uses: psf/black@stable
+      - name: iSort
+        uses: isort/isort-action@master
+  python-versions:
     # Establishes the combination of all OS and python versions
     # for us to test. The "steps" below will be ran for each
     # of these combinations.
@@ -33,14 +44,6 @@ jobs:
       - name: Initial setup
         uses: actions/checkout@v3
 
-      - name: Check code format with Black
-        uses: psf/black@stable
-        
-      # This action seems poorly-maintained -- as it fails on MacOS and also
-      # directly installs isort (unlike the action used for Black). I therefore
-      # disable this for now.
-      # - name: Check import format with iSort
-      #   uses: isort/isort-action@master
 
       - name: Create conda env and install deps
         uses: conda-incubator/setup-miniconda@v3

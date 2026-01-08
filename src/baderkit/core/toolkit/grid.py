@@ -14,21 +14,21 @@ import numpy as np
 from numpy.typing import NDArray
 from pymatgen.electronic_structure.core import Spin
 from pymatgen.io.vasp import VolumetricData
-from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from scipy.ndimage import label, spline_filter, zoom
 from scipy.spatial import Voronoi
 
-from baderkit.core.toolkit.file_parsers import (
+from baderkit.core.toolkit.interpolator import Interpolator
+from baderkit.core.toolkit.structure import Structure
+from baderkit.core.utilities.basic import get_transforms_in_radius
+from baderkit.core.utilities.file_parsers import (
     Format,
     detect_format,
     infer_significant_figures,
     read_cube,
     read_vasp,
 )
-from baderkit.core.toolkit.file_parsers import write_cube as write_cube_file
-from baderkit.core.toolkit.file_parsers import write_vasp as write_vasp_file
-from baderkit.core.toolkit.grid_numba import Interpolator
-from baderkit.core.toolkit.structure import Structure
+from baderkit.core.utilities.file_parsers import write_cube as write_cube_file
+from baderkit.core.utilities.file_parsers import write_vasp as write_vasp_file
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Grid")
@@ -99,9 +99,12 @@ class Grid(VolumetricData):
     ):
         # The following is copied directly from pymatgen, but replaces their
         # creation of a RegularGridInterpolator to avoid some overhead
-        self.structure = Structure.from_dict(
+        structure = Structure.from_dict(
             structure.as_dict()
         )  # convert to baderkit structure
+
+        self.structure = structure
+
         self.is_spin_polarized = len(data) >= 2
         self.is_soc = len(data) >= 4
         # convert data to numpy arrays in case they were jsanitized as lists
@@ -147,7 +150,6 @@ class Grid(VolumetricData):
         self._point_dists = None
         self._max_point_dist = None
         self._grid_neighbor_transforms = None
-        self._symmetry_data = None
         self._maxima_mask = None
         self._minima_mask = None
 
@@ -452,8 +454,7 @@ class Grid(VolumetricData):
     def grid_neighbor_transforms(self) -> list:
         """
         The transforms for translating a grid index to neighboring unit
-        cells. This is necessary for the many voxels that will not be directly
-        within an atoms partitioning.
+        cells.
 
         Returns
         -------
@@ -499,34 +500,6 @@ class Grid(VolumetricData):
         volume = self.structure.volume
         number_of_voxels = self.ngridpts
         return number_of_voxels / volume
-
-    @property
-    def symmetry_data(self):
-        """
-
-        Returns
-        -------
-        TYPE
-            The pymatgen symmetry dataset for the Grid's Structure object
-
-        """
-        if self._symmetry_data is None:
-            self._symmetry_data = SpacegroupAnalyzer(
-                self.structure
-            ).get_symmetry_dataset()
-        return self._symmetry_data
-
-    @property
-    def equivalent_atoms(self) -> NDArray[int]:
-        """
-
-        Returns
-        -------
-        NDArray[int]
-            The equivalent atoms in the Structure.
-
-        """
-        return self.symmetry_data.equivalent_atoms
 
     @property
     def maxima_mask(self) -> NDArray[bool]:
@@ -691,7 +664,7 @@ class Grid(VolumetricData):
         frac_coords = np.column_stack((x_pts, y_pts, z_pts))
         return self.values_at(frac_coords, method)
 
-    def get_box_around_point(self, point: NDArray, neighbor_size: int = 1) -> NDArray:
+    def cubic_slice(self, point: NDArray, neighbor_size: int = 1) -> NDArray:
         """
         Gets a box around a given point taking into account wrapping at cell
         boundaries.
@@ -699,7 +672,7 @@ class Grid(VolumetricData):
         Parameters
         ----------
         point : NDArray
-            The indices of the point to get a box around.
+            The grid indices of the point to get a box around.
         neighbor_size : int, optional
             The size of the box on either side of the point. The default is 1.
 
@@ -718,98 +691,158 @@ class Grid(VolumetricData):
         return self.total[np.ix_(slices[0], slices[1], slices[2])]
 
     @staticmethod
-    def get_2x_supercell(data: NDArray | None = None) -> NDArray:
+    def _tile_data(data: NDArray, shape: NDArray):
+        # stack data n-times for each shape n
+        for i, n in enumerate(shape):
+            data = np.concatenate([data for j in range(n)], axis=i)
+        return data
+
+    def make_supercell(self, scaling_matrix: int | NDArray = 2) -> Self:
         """
-        Duplicates data to make a 2x2x2 supercell
+        Duplicates data to make a supercell
 
         Parameters
         ----------
-        data : NDArray | None, optional
-            The data to duplicate. The default is None.
+        scaling_matrix : int | NDArray, optional
+            A scaling matrix for transforming the lattice and grid data. Two
+            options are possible:
+
+                1. A sequence of three scaling factors. E.g., [2, 1, 1] specifies
+                that the supercell should have dimensions 2a x b x c.
+
+                2. An integer, which simply scales all lattice vectors by the
+                same factor.
+
+            Note that a full 3x3 scaling matrix like that used in PyMatGen's Structure
+            make_supercell method is not currently supported.
 
         Returns
         -------
         NDArray
-            A new array with the data doubled in each direction
+            A new array with the data duplicated as requested
         """
-        new_data = np.tile(data, (2, 2, 2))
-        return new_data
 
-    def get_points_in_radius(
-        self,
-        point: NDArray,
-        radius: float,
-    ) -> NDArray[int]:
+        # convert to array for consistency
+        scaling_matrix = np.array(scaling_matrix)
+
+        # if an int is provided, convert to a 1d scaling matrix
+        if scaling_matrix.ndim == 0:
+            scaling_matrix = np.array(
+                [scaling_matrix, scaling_matrix, scaling_matrix], dtype=int
+            )
+
+        x, y, z = scaling_matrix
+        # duplicate data
+        self.total = self._tile_data(self.total, scaling_matrix)
+        if self.diff:
+            new_diff = self._tile_data(self.diff, scaling_matrix)
+            self.diff = new_diff
+
+        # duplicate structure
+        self.structure.make_supercell(scaling_matrix=scaling_matrix)
+
+        return self
+
+    # def get_points_in_radius(
+    #     self,
+    #     point: NDArray,
+    #     radius: float,
+    # ) -> NDArray[int]:
+    #     """
+    #     Gets the indices of the points in a radius around a point
+
+    #     Parameters
+    #     ----------
+    #     radius : float
+    #         The radius in cartesian distance units to find indices around the
+    #         point.
+    #     point : NDArray
+    #         The indices of the point to perform the operation on.
+
+    #     Returns
+    #     -------
+    #     NDArray[int]
+    #         The point indices in the sphere around the provided point.
+
+    #     """
+    #     point = np.array(point)
+    #     # Get the distance from each point to the origin
+    #     point_distances = self.point_dists
+
+    #     # Get the indices that are within the radius
+    #     sphere_indices = np.where(point_distances <= radius)
+    #     sphere_indices = np.column_stack(sphere_indices)
+
+    #     # Get indices relative to the point
+    #     sphere_indices = sphere_indices + point
+    #     # adjust points to wrap around grid
+    #     # line = [[round(float(a % b), 12) for a, b in zip(position, grid_data.shape)]]
+    #     new_x = (sphere_indices[:, 0] % self.shape[0]).astype(int)
+    #     new_y = (sphere_indices[:, 1] % self.shape[1]).astype(int)
+    #     new_z = (sphere_indices[:, 2] % self.shape[2]).astype(int)
+    #     sphere_indices = np.column_stack([new_x, new_y, new_z])
+    #     # return new_x, new_y, new_z
+    #     return sphere_indices
+
+    # def get_transformations_in_radius(self, radius: float) -> NDArray[int]:
+    #     """
+    #     Gets the transformations required to move from a point to the points
+    #     surrounding it within the provided radius
+
+    #     Parameters
+    #     ----------
+    #     radius : float
+    #         The radius in cartesian distance units around the voxel.
+
+    #     Returns
+    #     -------
+    #     NDArray[int]
+    #         An array of transformations to add to a point to get to each of the
+    #         points within the radius surrounding it.
+
+    #     """
+    #     # Get voxels around origin
+    #     voxel_distances = self.point_dists
+    #     # sphere_grid = np.where(voxel_distances <= radius, True, False)
+    #     # eroded_grid = binary_erosion(sphere_grid)
+    #     # shell_indices = np.where(sphere_grid!=eroded_grid)
+    #     shell_indices = np.where(voxel_distances <= radius)
+    #     # Now we want to translate these indices to next to the corner so that
+    #     # we can use them as transformations to move a voxel to the edge
+    #     final_shell_indices = []
+    #     for a, x in zip(self.shape, shell_indices):
+    #         new_x = x - a
+    #         abs_new_x = np.abs(new_x)
+    #         new_x_filter = abs_new_x < x
+    #         final_x = np.where(new_x_filter, new_x, x)
+    #         final_shell_indices.append(final_x)
+
+    #     return np.column_stack(final_shell_indices)
+
+    def get_radial_neighbor_transforms(self, r: float) -> tuple:
         """
-        Gets the indices of the points in a radius around a point
+        Gets the transformations from each grid point to its neighbors within a
+        radius r. transforms are sorted by distance
 
         Parameters
         ----------
-        radius : float
-            The radius in cartesian distance units to find indices around the
-            point.
-        point : NDArray
-            The indices of the point to perform the operation on.
+        r : float
+            The radius to get transforms within
 
         Returns
         -------
-        NDArray[int]
-            The point indices in the sphere around the provided point.
+        tuple
+            Two arrays. The first is the transforms to each neighbor in the radius.
+            The second is the distance to each neighbor in the radius.
 
         """
-        point = np.array(point)
-        # Get the distance from each point to the origin
-        point_distances = self.point_dists
 
-        # Get the indices that are within the radius
-        sphere_indices = np.where(point_distances <= radius)
-        sphere_indices = np.column_stack(sphere_indices)
+        nx, ny, nz = self.shape
 
-        # Get indices relative to the point
-        sphere_indices = sphere_indices + point
-        # adjust points to wrap around grid
-        # line = [[round(float(a % b), 12) for a, b in zip(position, grid_data.shape)]]
-        new_x = (sphere_indices[:, 0] % self.shape[0]).astype(int)
-        new_y = (sphere_indices[:, 1] % self.shape[1]).astype(int)
-        new_z = (sphere_indices[:, 2] % self.shape[2]).astype(int)
-        sphere_indices = np.column_stack([new_x, new_y, new_z])
-        # return new_x, new_y, new_z
-        return sphere_indices
-
-    def get_transformation_in_radius(self, radius: float) -> NDArray[int]:
-        """
-        Gets the transformations required to move from a point to the points
-        surrounding it within the provided radius
-
-        Parameters
-        ----------
-        radius : float
-            The radius in cartesian distance units around the voxel.
-
-        Returns
-        -------
-        NDArray[int]
-            An array of transformations to add to a point to get to each of the
-            points within the radius surrounding it.
-
-        """
-        # Get voxels around origin
-        voxel_distances = self.point_dists
-        # sphere_grid = np.where(voxel_distances <= radius, True, False)
-        # eroded_grid = binary_erosion(sphere_grid)
-        # shell_indices = np.where(sphere_grid!=eroded_grid)
-        shell_indices = np.where(voxel_distances <= radius)
-        # Now we want to translate these indices to next to the corner so that
-        # we can use them as transformations to move a voxel to the edge
-        final_shell_indices = []
-        for a, x in zip(self.shape, shell_indices):
-            new_x = x - a
-            abs_new_x = np.abs(new_x)
-            new_x_filter = abs_new_x < x
-            final_x = np.where(new_x_filter, new_x, x)
-            final_shell_indices.append(final_x)
-
-        return np.column_stack(final_shell_indices)
+        transforms, dists = get_transforms_in_radius(
+            r=r, nx=nx, ny=ny, nz=nz, lattice_matrix=self.matrix
+        )
+        return transforms, dists
 
     def copy(self) -> Self:
         """
@@ -1268,6 +1301,7 @@ class Grid(VolumetricData):
         grid_file: str | Path,
         data_type: str | DataType = None,
         total_only: bool = True,
+        poscar_file: str | Path = None,
         **kwargs,
     ) -> Self:
         """
@@ -1287,6 +1321,9 @@ class Grid(VolumetricData):
             increases speed and reduced memory usage for methods that do not
             use the spin data.
             Defaults to True.
+        poscar_file: str | Path
+            The POSCAR file to override the grids structure with. This is useful
+            if the POSCAR contains more precise atom positions.
 
         Returns
         -------
@@ -1303,6 +1340,8 @@ class Grid(VolumetricData):
         structure, data, data_aug, sig_figs = read_vasp(
             grid_file, total_only=total_only
         )
+        if poscar_file is not None:
+            structure = Structure.from_file(poscar_file)
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
         return cls(
