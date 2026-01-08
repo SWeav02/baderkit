@@ -374,7 +374,7 @@ def get_weight_assignments(
                 before = abs(diff)
                 after = abs(diff + charge)
                 improvement = (before - after) / charges[label]
-                if improvement > best_improvement:
+                if improvement > best_improvement + tol:
                     best_improvement = improvement
                     best_label = label
             labels[idx] = best_label
