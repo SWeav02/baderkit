@@ -76,6 +76,17 @@ def test_writing_bader(tmp_path):
 )
 def test_running_bader_methods(tmp_path, method):
     bader = Bader.from_dynamic(TEST_CHGCAR, method=method)
+
+    assert len(np.where(bader.basin_labels == -1)[0]) == 0
+
+    counts = {
+        "weight": 66632,
+        "ongrid": 72545,
+        "neargrid": 67199,
+        "neargrid-weight": 67199,
+    }
+    assert len(np.where(bader.basin_labels == 0)[0]) == counts[method]
+
     with open(TEST_BADER_FOLDER / method / "bader.json", "r") as file:
         expected_json = file.read()
     with open(TEST_BADER_FOLDER / method / "bader_atoms.tsv", "r") as file:
@@ -96,12 +107,3 @@ def test_running_bader_methods(tmp_path, method):
     assert json_results == expected_json
     assert atom_results == expected_atom_results
     assert basin_results == expected_basin_results
-    assert len(np.where(bader.basin_labels == -1)[0]) == 0
-
-    counts = {
-        "weight": 66632,
-        "ongrid": 72545,
-        "neargrid": 67199,
-        "neargrid-weight": 67199,
-    }
-    assert len(np.where(bader.basin_labels == 0)[0]) == counts[method]
