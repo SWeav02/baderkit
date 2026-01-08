@@ -314,6 +314,9 @@ def get_weight_assignments(
                     weight_mask[label] = True
                 scratch_weights[label] += flux * weight
 
+        current_labels = np.array(current_labels, dtype=np.int64)
+        current_labels = np.sort(current_labels)
+
         # Now loop over each label and assign charges, volumes, and labels
         best_label = -1
         best_weight = 0.0
