@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import numpy as np
+
 from baderkit.core import Bader, Grid
 from baderkit.core.bader.methods import Method
 
@@ -95,3 +97,12 @@ def test_running_bader_methods(tmp_path, method):
     assert json_results == expected_json
     assert atom_results == expected_atom_results
     assert basin_results == expected_basin_results
+    assert len(np.where(bader.basin_labels==-1)[0]) == 0
+    
+    counts = {
+        "weight": 66632,
+        "ongrid": 72545,
+        "neargrid": 67199,
+        "neargrid-weight": 67199
+        }
+    assert len(np.where(bader.basin_labels==0)[0]) == counts[method]
