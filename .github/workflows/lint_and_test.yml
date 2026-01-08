@@ -13,11 +13,87 @@ on:
   pull_request:
     branches: [main]
   schedule:
+    # every Sunday at 23:00 UTC
+    - cron: "0 23 * * 0"
+
+jobs:
+
+  lint-check:
+    name: Code Quality Check
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: Initial setup
+        uses: actions/checkout@v3
+      - name: Black
+        uses: psf/black@stable
+      - name: iSort
+        uses: isort/isort-action@master
+      # TODO: djlint
+      # TODO: maybe ruff for other file types
+
+  python-test:
+    # Establishes the combination of all OS and python versions
+    # for us to test. The "steps" below will be ran for each
+    # of these combinations.
+    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ["ubuntu-latest", "macos-latest", "windows-latest"]
+        python-version: ["3.10", "3.11"]
+    steps:
+      - name: Initial setup
+        uses: actions/checkout@v3
+
+      - name: Create conda env and install deps
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          auto-update-conda: true
+          environment-file: envs/conda/ci.yaml
+          python-version: ${{ matrix.python-version }}
+          auto-activate-base: false
+          activate-environment: simmate_dev
+          channel-priority: strict
+          # ensure we are using conda-forge and never the default channel
+          miniforge-version: latest
+          channels: conda-forge
+          conda-remove-defaults: "true"
+      # The lines "shell: bash -l {0}" ensure we use the created env below
+      - name: Install Simmate
+        shell: bash -l {0}
+        run: |
+          pip install -e .
+      # --editable is needed because we need test files too
+      - name: Run default tests
+        shell: bash -l {0}
+        run: |
+          pytest --durations=15
+
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
     # Runs the schedule every day at 5:30 and at 17:30 UTC
     - cron: "30 5,17 * * *"
 
 jobs:
-  lint-and-test:
+  # black and isort were both failing on windows so I've moved them to only test on ubuntu
+  lint-check:
+    name: Code Quality Check
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: Initial setup
+        uses: actions/checkout@v3
+      - name: Black
+        uses: psf/black@stable
+      - name: iSort
+        uses: isort/isort-action@master
+  python-versions:
     # Establishes the combination of all OS and python versions
     # for us to test. The "steps" below will be ran for each
     # of these combinations.
@@ -33,14 +109,6 @@ jobs:
       - name: Initial setup
         uses: actions/checkout@v3
 
-      - name: Check code format with Black
-        uses: psf/black@stable
-        
-      # This action seems poorly-maintained -- as it fails on MacOS and also
-      # directly installs isort (unlike the action used for Black). I therefore
-      # disable this for now.
-      # - name: Check import format with iSort
-      #   uses: isort/isort-action@master
 
       - name: Create conda env and install deps
         uses: conda-incubator/setup-miniconda@v3
