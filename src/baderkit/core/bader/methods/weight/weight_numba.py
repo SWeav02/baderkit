@@ -272,6 +272,7 @@ def get_weight_assignments(
     # Now we have the fluxes (and some weights) at each edge point. We loop over
     # them from high to low and assign charges, volumes, and labels
     scratch_weights = np.zeros(len(charges), dtype=np.float64)
+    weight_mask = np.zeros(len(charges), dtype=np.bool_)
     approx_charges = charges.copy()
 
     all_weights = []
@@ -293,10 +294,12 @@ def get_weight_assignments(
 
             if label >= 0:
                 # This is a basin rather than another edge index.
-                if scratch_weights[label] == 0.0:
+                if not weight_mask[label]:
                     current_labels.append(label)
+                    weight_mask[label] = True
                 scratch_weights[label] += flux
                 continue
+
             # otherwise, this is another edge index. Get its weight
             label = -label - 1  # convert back to actual neighbor index
             neigh_edge_idx = idx_to_edge[label]
@@ -306,10 +309,10 @@ def get_weight_assignments(
             # voxel
             for label, weight in zip(neigh_labels, neigh_weights):
                 # if there is no weight at this label yet, its new. Add it to our list
-                if scratch_weights[label] == 0.0:
+                if not weight_mask[label]:
                     current_labels.append(label)
+                    weight_mask[label] = True
                 scratch_weights[label] += flux * weight
-                continue
 
         # Now loop over each label and assign charges, volumes, and labels
         best_label = -1
@@ -324,6 +327,7 @@ def get_weight_assignments(
         for label in current_labels:
             weight = scratch_weights[label]
             scratch_weights[label] = 0.0  # reset scratch
+            weight_mask[label] = False
             charges[label] += charge * weight
             volumes[label] += weight
             # skip if our weight is below a very small tolerance
