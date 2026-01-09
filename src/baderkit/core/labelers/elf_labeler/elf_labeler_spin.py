@@ -12,9 +12,7 @@ from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
 
 from baderkit.core import Grid, Structure
-from baderkit.core.labelers.bifurcation_graph import (
-    FeatureType,
-)
+from baderkit.core.labelers.bifurcation_graph import FeatureType
 
 from .elf_labeler import ElfLabeler
 

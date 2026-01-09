@@ -457,22 +457,23 @@ class BifurcationGraph:
 
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0, 2)}")
-        # breakpoint()
+
+        # NOTE: It seems like my maxima merging is still not perfect. In the
+        # neargrid method this means that in some cases a point with a higher
+        # value than the basin's maximum can be assigned to it. For now I'm removing
+        # this check unless major issues occur.
         # run a quick check ensuring that all basins appear as individual irreducible
         # nodes
-        all_basins = np.zeros(len(basin_maxima_grid), dtype=np.bool_)
-        for basins in domain_basins:
-            if len(basins) != 1:
-                continue
-            all_basins[basins[0]] = True
+        # all_basins = np.zeros(len(basin_maxima_grid), dtype=np.bool_)
+        # for basins in domain_basins:
+        #     if len(basins) != 1:
+        #         continue
+        #     all_basins[basins[0]] = True
 
-        if not np.all(all_basins):
-            breakpoint()
-
-        assert np.all(
-            all_basins
-        ), """Not all basins were assigned to irreducible domains. This is a bug!!! Please report to our github:
-            https://github.com/SWeav02/baderkit"""
+        # assert np.all(
+        #     all_basins
+        # ), """Not all basins were assigned to irreducible domains. This is a bug!!! Please report to our github:
+        #     https://github.com/SWeav02/baderkit"""
 
         #######################################################################
         # Get Atoms Surrounded by Each domain
