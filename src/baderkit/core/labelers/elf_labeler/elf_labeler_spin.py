@@ -577,6 +577,24 @@ class SpinElfLabeler:
             10,
         )
 
+    @property
+    def total_volume(self):
+        """
+
+        Returns
+        -------
+        float
+            The total volume integrated in the system. This should match the
+            volume of the structure. If it does not there may be a serious problem.
+
+            This is the average of the two systems
+
+        """
+
+        return (
+            self.elf_labeler_up.total_volume + self.elf_labeler_down.total_volume
+        ) / 2
+
     ###########################################################################
     # From methods
     ###########################################################################
@@ -709,6 +727,10 @@ class SpinElfLabeler:
             "electride_formula",
             "electrides_per_formula",
             "electrides_per_reduced_formula",
+            "total_electron_number",
+            "total_volume",
+            "vacuum_charge",
+            "vacuum_volume",
         ]:
             results[result] = getattr(self, result, None)
 

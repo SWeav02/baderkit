@@ -167,10 +167,6 @@ class Badelf:
         self._electrides_per_formula = None
         self._electrides_per_reduced_formula = None
 
-        # TODO: Add vacuum handling to Elf Analyzer and BadELF
-        # self._vacuum_charge = None
-        # self._vacuum_volume = None
-
         self._results_summary = None
 
     ###########################################################################
