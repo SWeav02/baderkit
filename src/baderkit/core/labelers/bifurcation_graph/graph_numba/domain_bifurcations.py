@@ -18,6 +18,7 @@ def find_domain_connections(
     edge_mask: NDArray[np.bool_],
     num_basins: np.int64,
     neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
 ):
     """
     Finds values where domains potentially form new connections. Success depends
@@ -41,7 +42,7 @@ def find_domain_connections(
         for j in range(ny):
             for k in range(nz):
                 # skip points that are not edge maxima
-                if not bif_mask[i, j, k]:
+                if not bif_mask[i, j, k] or vacuum_mask[i,j,k]:
                     continue
 
                 # get the label at this point
@@ -101,7 +102,7 @@ def find_domain_connections(
             for j in range(ny):
                 for k in range(nz):
                     # skip points that are not edge maxima
-                    if not edge_mask[i, j, k]:
+                    if not edge_mask[i, j, k] or vacuum_mask[i,j,k]:
                         continue
                     # get the label at this point
                     label = basin_labels[i, j, k]
@@ -150,6 +151,7 @@ def find_domain_bifurcations(
     basin_maxima_ref_values,
     data,
     neighbor_transforms,
+    vacuum_mask,
 ):
     """
     Finds the values at which changes in domain connections occur. Assumes the
@@ -330,6 +332,7 @@ def find_domain_bifurcations(
                 offset_z=offset_z,
                 size=size,
                 neighbors=neighbor_transforms,
+                vacuum_mask=vacuum_mask,
             )
         )
 

@@ -526,6 +526,50 @@ class SpinElfLabeler:
 
         self.elf_labeler_up.write_bifurcation_plot(filename_up)
         self.elf_labeler_down.write_bifurcation_plot(filename_down)
+        
+    ###########################################################################
+    # Vacuum Properties
+    ###########################################################################
+    @property
+    def vacuum_charge(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The charge assigned to the vacuum.
+
+        """
+        return self.elf_labeler_up.vacuum_charge + self.elf_labeler_down.vacuum_charge
+
+    @property
+    def vacuum_volume(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total volume assigned to the vacuum. This is an average between
+            the spin up and spin down values.
+
+        """
+        return (self.elf_labeler_up.vacuum_volume + self.elf_labeler_down.vacuum_volume) / 2
+    
+    @property
+    def total_electron_number(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total number of electrons in the system calculated from the
+            spin-up and spin-down systems. If this does not match the true
+            total electron number within reasonable floating point error,
+            there is a major problem.
+
+        """
+
+        return round(self.elf_labeler_up.total_electron_number + self.elf_labeler_down.total_electron_number, 10)
 
     ###########################################################################
     # From methods

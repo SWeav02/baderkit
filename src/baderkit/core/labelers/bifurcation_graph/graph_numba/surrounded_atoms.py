@@ -25,6 +25,7 @@ def get_connected_voids(
     offset_z,
     size,
     neighbors,
+    vacuum_mask,
 ):
     """
     Finds unions and periodic offsets for points in a periodic solid. Slower than
@@ -59,6 +60,7 @@ def get_connected_voids(
         offset_z,
         size,
         neighbors,
+        vacuum_mask,
     )
 
     # create a mask to indicate the number of connections between domains and
@@ -70,7 +72,7 @@ def get_connected_voids(
             for k in range(nz):
 
                 # skip anything not in the solid
-                if not solid[i, j, k]:
+                if not solid[i, j, k] or vacuum_mask[i,j,k]:
                     continue
 
                 root_idx = -1  # we don't calculate these unless we have to
@@ -242,6 +244,7 @@ def get_domains_surrounding_atoms(
     basin_labels,
     data,
     num_basins,
+    vacuum_mask,
 ):
     """
     Finds the values at which changes in void connections occur and checks if
@@ -342,6 +345,7 @@ def get_domains_surrounding_atoms(
             offset_z=offset_z,
             size=size,
             neighbors=neighbor_transforms,
+            vacuum_mask=vacuum_mask,
         )
 
         # Get which domains surround each atom
