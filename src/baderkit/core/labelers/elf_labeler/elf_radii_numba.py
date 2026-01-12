@@ -84,6 +84,7 @@ def get_elf_radius_frac(
         # test for this, we check if the vector from the point to the site is
         # less than half a unit cell in any direction. This assumes the atom is
         # fairly spherical (which is also an assumption of badelf itself).
+
         vec = all_frac_coords[label] - point
         if np.max(np.abs(vec)) > 0.5:
             label += num_atoms
@@ -127,12 +128,16 @@ def get_elf_radius_frac(
         midpoint = (len(values) - 1) / 2
         for i, (value, label) in enumerate(zip(values, labels)):
             # skip points that aren't part of the covalent bond
-            if not covalent_labels[label]:
+            equiv_label = label % num_atoms
+            if not covalent_labels[equiv_label]:
                 continue
             # check if the point is a maximum
-            if ((i == 0) or (values[i - 1] <= value)) and (
-                (i == len(values) - 1) or (value > values[i + 1])
-            ):
+            # BUGFIX: We don't allow the first or last point to be considered
+            # maxima. If we allow that, the fraction will be refined to a point
+            # outside the bond range
+            if i == 0 or i == num_points - 1:
+                continue
+            if values[i - 1] <= value and value > values[i + 1]:
                 # if the maximum is closer to the midpoint than previous points,
                 # update our best distance
                 dist = abs(i - midpoint)
@@ -166,10 +171,13 @@ def get_elf_radius_frac(
         # get the minimum along the line closest to this point
         minima_dist = 1.0e6
         for i, (value, label) in enumerate(zip(values, labels)):
+            # BUGFIX: We don't allow the first or last point to be considered
+            # minima. If we allow that, the minimum will be refined to a point
+            # outside the bond ranged.
+            if i == 0 or i == num_points - 1:
+                continue
             # check if the point is a minimum
-            if ((i == 0) or (values[i - 1] >= value)) and (
-                (i == len(values) - 1) or (value < values[i + 1])
-            ):
+            if values[i - 1] >= value and value < values[i + 1]:
                 # if the minimum is closer to the midpoint than previous points,
                 # update our best distance
                 dist = abs(i - midpoint)
@@ -423,5 +431,9 @@ def get_all_atom_elf_radii(
               due to the atom having no core electrons, likely caused by the use
               of too small of a pseudopotential. The radius will default to 1/2 the bond length"""
         )
+
+    assert (
+        bond_fracs.min() >= 0.0 and bond_fracs.max() <= 1.0
+    ), "Major failure while finding bond fraction"
 
     return atomic_radii, bond_fracs, radius_is_covalent

@@ -2,11 +2,7 @@
 import numpy as np
 from numba import njit
 
-from baderkit.core.utilities.union_find import (
-    bulk_union,
-    compress_roots,
-    find_root,
-)
+from baderkit.core.utilities.union_find import bulk_union, compress_roots, find_root
 
 
 @njit(cache=True)

@@ -24,7 +24,7 @@ name="baderkit"
 # Versions should comply with PEP 440:
 # https://www.python.org/dev/peps/pep-0440/
 # https://semver.org/
-version="0.8.0"
+version="0.8.1"
 
 # Maintainer info
 authors = [{name = "Sam M. Weaver", email = "sammweaver@gmail.com"}]

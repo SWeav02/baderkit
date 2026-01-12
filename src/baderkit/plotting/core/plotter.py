@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 import pyvista as pv
 from numpy.typing import NDArray
+from pyvista.plotting.helpers import view_vectors
 from pyvistaqt import QtInteractor
 
 from baderkit.core import Bader, Grid, Structure
@@ -795,6 +796,50 @@ class StructurePlotter:
             plotter.close()
         return screenshot
 
+    def _set_camera_tight(self, camera, padding=0.0, adjust_render_window=True):
+        """
+        Adjust the camera parallel_scale to fit the actors tightly,
+        without changing the camera position, focal point, or view direction.
+        """
+        ren = camera._renderer
+        x0, x1, y0, y1, z0, z1 = ren.bounds
+
+        # Compute aspect ratio
+        ren.ComputeAspect()
+        aspect = ren.GetAspect()
+
+        # Bounding box size
+        bbox_size = np.array([x1 - x0, y1 - y0, z1 - z0])
+
+        # Use current camera view up and direction
+        viewup = np.array(camera.GetViewUp())
+        direction = np.array(camera.GetFocalPoint()) - np.array(camera.GetPosition())
+        direction /= np.linalg.norm(direction)
+        horizontal = np.cross(direction, viewup)
+
+        # Project bounding box onto camera plane axes
+        vert_dist = abs(bbox_size @ viewup)
+        horiz_dist = abs(bbox_size @ horizontal)
+
+        # Set parallel scale
+        ps = max(horiz_dist / aspect[0], vert_dist) / 2
+        camera.parallel_scale = ps * (1 + padding)
+
+        # Reset clipping planes
+        camera._renderer.ResetCameraClippingRange(x0, x1, y0, y1, z0, z1)
+
+        if adjust_render_window:
+            ren_win = ren.GetRenderWindow()
+            size = list(ren_win.GetSize())
+            size_ratio = size[0] / size[1]
+            tight_ratio = horiz_dist / vert_dist
+            resize_ratio = tight_ratio / size_ratio
+            if resize_ratio < 1:
+                size[0] = round(size[0] * resize_ratio)
+            else:
+                size[1] = round(size[1] / resize_ratio)
+            ren_win.SetSize(size)
+
 
 class GridPlotter(StructurePlotter):
     def __init__(
@@ -842,12 +887,12 @@ class GridPlotter(StructurePlotter):
         values = np.pad(grid.total, pad_width=((0, 1), (0, 1), (0, 1)), mode="wrap")
         self.shape = values.shape
         self.values = values.ravel(order="F")
-        self.min_val = self.values.min()
+        self._min_val = self.values.min()
         # make min val slightly above 0
-        self.min_val += +0.0000001 * self.min_val
-        self.max_val = self.values.max()
+        self._min_val += 0.0000001 * self._min_val
+        self._max_val = self.values.max()
         # determine default iso if not provided
-        self._iso_val = self.min_val  # np.mean(grid.total)
+        self._iso_val = self._min_val  # np.mean(grid.total)
         # generate the structured grid
         indices = np.indices(self.shape).reshape(3, -1, order="F").T
         self.points = grid.grid_to_cart(indices)
@@ -978,6 +1023,34 @@ class GridPlotter(StructurePlotter):
             self._add_iso_mesh()
         if not self.use_solid_cap_color:
             self._add_cap_mesh()
+
+    @property
+    def min_val(self) -> str:
+        return self._min_val
+
+    @min_val.setter
+    def min_val(self, value: float):
+
+        # make sure value is below max value
+        value = min(self.max_val, value)
+
+        # update settings
+        self._min_val = value
+        self._add_cap_mesh()
+
+    @property
+    def max_val(self) -> str:
+        return self._max_val
+
+    @max_val.setter
+    def max_val(self, value: float):
+
+        # make sure value is above min value
+        value = max(self.min_val, value)
+
+        # update settings
+        self._max_val = value
+        self._add_cap_mesh()
 
     @property
     def use_solid_surface_color(self) -> bool:
@@ -1214,6 +1287,86 @@ class GridPlotter(StructurePlotter):
 
         """
         return self._create_grid_plot()
+
+    def get_slice_plot(
+        self,
+        hkl: NDArray,
+        d: float,
+        include_atoms: bool = True,
+        filepath: Path = None,
+        **write_kwargs,
+    ):
+        """
+        Generates a pyvista plot of a slice at the requested miller plane. If
+        a filepath is provided, the plot is written and no plot object is returned.
+
+        Parameters
+        ----------
+        hkl : NDArray
+            The miller indices of the plane to use.
+        d : float
+            The multiplier for the d-spacing of the current plane
+        include_atoms : bool, optional
+            Whether or not atoms should be incuded. Only atoms whose sphere mesh
+            is sliced by the plane are included. The default is True.
+        filepath : Path, optional
+            The filepath to write the plot to if desired. The default is None.
+        **write_kwargs
+            any additional keyword arguments to provide to the plot writer.
+
+        Returns
+        -------
+        p : pv.plotter | None
+            the pyvista plot of the slice or None if a filepath was provided.
+
+        """
+        h, k, l = hkl
+        # get normal vector in cart coords
+        normal = self.structure.get_cart_from_miller(h, k, l)
+        n = self.structure.lattice.d_hkl(hkl)
+        origin = normal * n * d
+        slice_plane = self.structured_grid.slice(normal=normal, origin=origin)
+
+        # create plotter
+        p = pv.Plotter(off_screen=True)
+        p.add_mesh(
+            slice_plane,
+            scalars="values",
+            cmap=self.colormap,
+            clim=(self.min_val, self.max_val),
+            show_scalar_bar=False,
+        )
+
+        # if desired, add any atoms that sit on/near the plane
+        if include_atoms:
+            for i, (site, color) in enumerate(zip(self.structure, self.colors)):
+                center = site.coords
+                radius = self.radii[i]
+                dist = np.dot(center - origin, normal)
+                if not abs(dist) <= radius:
+                    continue
+                # otherwise remove the actor, regenerate, and replot
+                atom_mesh = self.get_site_mesh(i)
+                p.add_mesh(
+                    atom_mesh,
+                    color=color,
+                    metallic=self.atom_metallicness,
+                    pbr=True,  # enable physical based rendering
+                    name=f"{site.label}",
+                )
+        # set camera to be perpendicular
+        camera = self.get_camera_position_from_miller(h, k, l)
+        p.camera_position = camera
+        p.camera.parallel_projection = True
+        # p.reset_camera() # zoom to fit
+        self._set_camera_tight(p.camera)
+
+        if filepath is not None:
+            p.screenshot(filepath, **write_kwargs)
+            p.close()
+            return
+
+        return p
 
 
 class BaderPlotter(GridPlotter):

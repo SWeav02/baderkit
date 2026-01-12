@@ -60,7 +60,7 @@ class ElfRadiiTools:
         return get_all_atom_elf_radii(
             site_indices=site_indices,
             neigh_indices=neigh_indices,
-            site_frac_coords=self.structure.frac_coords,
+            site_frac_coords=self.feature_structure.frac_coords,
             neigh_frac_coords=neigh_frac_coords,
             neigh_dists=pair_dists,
             reversed_bonds=reversed_bonds,
@@ -298,9 +298,6 @@ class ElfRadiiTools:
         bond_types = bond_types[inverse]
         # reverse any that need it
         fracs[reversed_mask] = 1 - fracs[reversed_mask]
-        bond_types[reversed_mask] = (
-            pair_dists[reversed_mask] - bond_types[reversed_mask]
-        )
 
         # get ranges for each site
         site_ranges = np.where(site_indices[:-1] != site_indices[1:])[0] + 1
@@ -338,12 +335,14 @@ class ElfRadiiTools:
             upper = site_ranges[unique_idx + 1]
 
             current_halfspaces = halfspaces[lower:upper]
-
-            halfspace = HalfspaceIntersection(
-                current_halfspaces,
-                self.structure.frac_coords[site_idx],
-                incremental=False,
-            )
+            try:
+                halfspace = HalfspaceIntersection(
+                    current_halfspaces,
+                    self.structure.frac_coords[site_idx],
+                    incremental=False,
+                )
+            except:
+                breakpoint()
             vertices = halfspace.intersections
 
             # Get one plane for each unique bond with this atom at the center.
