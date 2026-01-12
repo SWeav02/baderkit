@@ -388,12 +388,11 @@ class BifurcationGraph:
 
         # get mask where potential saddle points connecting domains exist
         bif_mask = find_potential_saddle_points(
-            data=reference_grid.total, 
-            edge_mask=labeler.bader.basin_edges, 
+            data=reference_grid.total,
+            edge_mask=labeler.bader.basin_edges,
             greater=True,
             vacuum_mask=labeler.vacuum_mask,
         )
-        
 
         # get the basins connected at these points
         lower_points, upper_points, connection_values = find_domain_connections(
@@ -442,7 +441,7 @@ class BifurcationGraph:
         basin_maxima_grid %= labeler.reference_grid.shape
 
         basin_maxima_ref_values = labeler.bader.basin_maxima_ref_values
-        
+
         (
             domain_basins,
             domain_min_values,
@@ -508,7 +507,7 @@ class BifurcationGraph:
         atom_grid_coords = (
             np.round(atom_grid_coords).astype(np.int64) % reference_grid.shape
         )
-        # breakpoint()
+
         # get the atoms each domain contains
         (
             domain_basins,

@@ -173,7 +173,7 @@ def check_if_possible_saddle(
         # want to include it as a bifurcation point
         if vacuum_mask[ni, nj, nk]:
             return False
-        
+
         neigh_value = data[ni, nj, nk]
         if (greater and neigh_value > value) or (not greater and neigh_value < value):
             # mark in mask and instantiate as a root
@@ -228,11 +228,11 @@ def check_if_saddle(
     # mark mask
     for shift_idx, (si, sj, sk) in enumerate(shifts):
         ni, nj, nk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-        
+
         # skip vacuum
-        if vacuum_mask[ni,nj,nk]:
+        if vacuum_mask[ni, nj, nk]:
             continue
-        
+
         neigh_value = data[ni, nj, nk]
         if (greater and neigh_value > value) or (not greater and neigh_value < value):
             value_mask[shift_idx] = 2
@@ -245,7 +245,7 @@ def check_if_saddle(
     # iterate over connections and make unions
     for connection_idx, (shift1, shift2) in enumerate(shift_connections):
         connection_type = min(value_mask[shift1], value_mask[shift2])
-        if connection_type == 0: # skip vacuum
+        if connection_type == 0:  # skip vacuum
             continue
         elif connection_type == 2:
             union_w_roots(connections, shift1, shift2, root_mask)
@@ -299,13 +299,29 @@ def find_potential_saddle_points(data, edge_mask, vacuum_mask, greater=False):
                 # do a first check with the nearest neighbors to see if this
                 # has the potential to be a bifurcation
                 if not check_if_possible_saddle(
-                    i, j, k, value, data, trans3, trans_connections3, greater, vacuum_mask=vacuum_mask,
+                    i,
+                    j,
+                    k,
+                    value,
+                    data,
+                    trans3,
+                    trans_connections3,
+                    greater,
+                    vacuum_mask=vacuum_mask,
                 ):
                     continue
 
                 # check if point is a potential bifurcation
                 is_bif = check_if_saddle(
-                    i, j, k, value, data, trans5, trans_connections5, greater, vacuum_mask=vacuum_mask,
+                    i,
+                    j,
+                    k,
+                    value,
+                    data,
+                    trans5,
+                    trans_connections5,
+                    greater,
+                    vacuum_mask=vacuum_mask,
                 )
 
                 if is_bif:
@@ -366,7 +382,11 @@ def find_periodic_cycles(
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
-                if not solid[i, j, k] or previous_solid[i, j, k] or vacuum_mask[i,j,k]:
+                if (
+                    not solid[i, j, k]
+                    or previous_solid[i, j, k]
+                    or vacuum_mask[i, j, k]
+                ):
                     continue
                 idx = coords_to_flat(i, j, k, ny_nz, nz)
 
@@ -480,7 +500,11 @@ def get_connected_groups(
                 # NOTE: Doing a check like this has such a small time cost
                 # that I didn't see a difference between doing a mock lookup/continue
                 # for a 30^3 cube and 400^3 cube.
-                if not solid[i, j, k] or previous_solid[i, j, k] or vacuum_mask[i,j,k]:
+                if (
+                    not solid[i, j, k]
+                    or previous_solid[i, j, k]
+                    or vacuum_mask[i, j, k]
+                ):
                     continue
 
                 idx = coords_to_flat(i, j, k, ny_nz, nz)

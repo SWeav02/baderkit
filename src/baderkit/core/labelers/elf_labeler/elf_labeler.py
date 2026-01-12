@@ -480,6 +480,9 @@ class ElfLabeler:
 
         """
         if self._atom_elf_radii_e is None:
+            # make sure bifurcation graph has been constructed
+            self.bifurcation_graph
+            # calculate elf radii
             self._atom_elf_radii_e, self._atom_elf_radii_types_e = (
                 self._get_atom_elf_radii(
                     self.electride_structure,
@@ -650,7 +653,7 @@ class ElfLabeler:
 
             self._atom_max_values_e = np.array(max_values)
         return self._atom_max_values_e.round(10)
-    
+
     ###########################################################################
     # Vacuum Properties
     ###########################################################################
@@ -701,7 +704,7 @@ class ElfLabeler:
 
         """
         return self.bader.num_vacuum
-    
+
     @property
     def total_electron_number(self) -> float:
         """
@@ -717,7 +720,7 @@ class ElfLabeler:
         """
 
         return round(self.feature_charges.sum() + self.vacuum_charge, 10)
-    
+
     @property
     def total_volume(self):
         """
@@ -1179,10 +1182,7 @@ class ElfLabeler:
                     atom_radii = self.atom_elf_radii[coord_atoms]
 
                 # calculate the weighted contribution to each atom and normalize
-                try:
-                    weight = atom_radii / dists
-                except:
-                    breakpoint()
+                weight = atom_radii / dists
                 weight /= weight.sum()
                 # add for each atom
                 for coord_idx, atom in enumerate(coord_atoms):
@@ -1490,10 +1490,8 @@ class ElfLabeler:
 
         # get first instance of each atom
         radii = np.empty(len(structure), dtype=np.float64)
-        try:
-            radii_types = np.empty(len(structure), dtype=all_radii_types.dtype)
-        except:
-            breakpoint()
+        radii_types = np.empty(len(structure), dtype=all_radii_types.dtype)
+
         for i in range(len(structure)):
             first_index = np.argmax(sorted_sites == i)
             radii[i] = all_radii[sorted_indices[first_index]]
@@ -2104,7 +2102,6 @@ class ElfLabeler:
             len(np.unique(assigned_atoms)) != len(self.structure)
             and not self.ignore_low_pseudopotentials
         ):
-
             raise Exception(
                 "At least one atom was not assigned a zero-flux basin. This typically results"
                 "from pseudo-potentials (PPs) with only valence electrons (e.g. the defaults for Al, Si, B in VASP 5.X.X)."

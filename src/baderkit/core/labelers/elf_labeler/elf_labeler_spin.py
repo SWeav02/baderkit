@@ -526,7 +526,7 @@ class SpinElfLabeler:
 
         self.elf_labeler_up.write_bifurcation_plot(filename_up)
         self.elf_labeler_down.write_bifurcation_plot(filename_down)
-        
+
     ###########################################################################
     # Vacuum Properties
     ###########################################################################
@@ -553,8 +553,10 @@ class SpinElfLabeler:
             the spin up and spin down values.
 
         """
-        return (self.elf_labeler_up.vacuum_volume + self.elf_labeler_down.vacuum_volume) / 2
-    
+        return (
+            self.elf_labeler_up.vacuum_volume + self.elf_labeler_down.vacuum_volume
+        ) / 2
+
     @property
     def total_electron_number(self) -> float:
         """
@@ -569,7 +571,11 @@ class SpinElfLabeler:
 
         """
 
-        return round(self.elf_labeler_up.total_electron_number + self.elf_labeler_down.total_electron_number, 10)
+        return round(
+            self.elf_labeler_up.total_electron_number
+            + self.elf_labeler_down.total_electron_number,
+            10,
+        )
 
     ###########################################################################
     # From methods

@@ -389,6 +389,7 @@ class Badelf:
             None if the zero-flux method is selected.
 
         """
+
         if self.method == "zero-flux":
             return None, None, None
 
@@ -478,6 +479,7 @@ class Badelf:
             site_transforms,
             plane_equations,
         ) = self.partitioning_planes
+
         logging.info("Beginning voxel assignment")
 
         # get the zero-flux labels as a starting point
@@ -490,6 +492,7 @@ class Badelf:
                 splitting_method=self.shared_feature_splitting_method,
                 use_electrides=True,
             )
+
         else:
             # In badelf, we want to label our electride basins ahead of time
             if self.method == "badelf":
@@ -965,7 +968,7 @@ class Badelf:
         """
 
         return round(self.volumes.sum() + self.vacuum_volume, 10)
-    
+
     ###########################################################################
     # Vacuum Properties
     ###########################################################################
@@ -1016,7 +1019,7 @@ class Badelf:
 
         """
         return self.elf_labeler.num_vacuum
-    
+
     @property
     def total_electron_number(self) -> float:
         """

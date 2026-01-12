@@ -42,7 +42,7 @@ def find_domain_connections(
         for j in range(ny):
             for k in range(nz):
                 # skip points that are not edge maxima
-                if not bif_mask[i, j, k] or vacuum_mask[i,j,k]:
+                if not bif_mask[i, j, k] or vacuum_mask[i, j, k]:
                     continue
 
                 # get the label at this point
@@ -102,7 +102,7 @@ def find_domain_connections(
             for j in range(ny):
                 for k in range(nz):
                     # skip points that are not edge maxima
-                    if not edge_mask[i, j, k] or vacuum_mask[i,j,k]:
+                    if not edge_mask[i, j, k] or vacuum_mask[i, j, k]:
                         continue
                     # get the label at this point
                     label = basin_labels[i, j, k]

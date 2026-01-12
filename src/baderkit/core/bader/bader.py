@@ -637,13 +637,11 @@ class Bader:
                 grid = self.charge_grid.total
             # if vacuum tolerance is set to False, ignore vacuum
             if self.vacuum_tol is False:
-                self._vacuum_mask = np.zeros_like(
-                    grid, dtype=np.bool_
-                )
+                self._vacuum_mask = np.zeros_like(grid, dtype=np.bool_)
             else:
                 # get vacuum mask
                 self._vacuum_mask = grid < (
-                    self.vacuum_tol * self.structure.volume # normalize
+                    self.vacuum_tol * self.structure.volume  # normalize
                 )
         return self._vacuum_mask
 
@@ -676,7 +674,7 @@ class Bader:
         """
 
         return round(self.atom_charges.sum() + self.vacuum_charge, 10)
-    
+
     @property
     def total_volume(self):
         """

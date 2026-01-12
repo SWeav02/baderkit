@@ -72,7 +72,7 @@ def get_connected_voids(
             for k in range(nz):
 
                 # skip anything not in the solid
-                if not solid[i, j, k] or vacuum_mask[i,j,k]:
+                if not solid[i, j, k] or vacuum_mask[i, j, k]:
                     continue
 
                 root_idx = -1  # we don't calculate these unless we have to
