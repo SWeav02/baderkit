@@ -388,7 +388,10 @@ class BifurcationGraph:
 
         # get mask where potential saddle points connecting domains exist
         bif_mask = find_potential_saddle_points(
-            data=reference_grid.total, edge_mask=labeler.bader.basin_edges, greater=True
+            data=reference_grid.total,
+            edge_mask=labeler.bader.basin_edges,
+            greater=True,
+            vacuum_mask=labeler.vacuum_mask,
         )
 
         # get the basins connected at these points
@@ -399,10 +402,11 @@ class BifurcationGraph:
             edge_mask=get_edges(
                 labeler.bader.basin_labels,
                 neighbor_transforms,
-                labeler.bader.vacuum_mask,
+                labeler.vacuum_mask,
             ),
             num_basins=len(labeler.bader.basin_maxima_frac),
             neighbor_transforms=neighbor_transforms,
+            vacuum_mask=labeler.vacuum_mask,
         )
 
         # clear mask for memory
@@ -451,6 +455,7 @@ class BifurcationGraph:
             basin_maxima_ref_values,
             reference_grid.total,
             neighbor_transforms,
+            vacuum_mask=labeler.vacuum_mask,
         )
         # convert basins to numpy arrays to avoid Numba reflected list issue
         domain_basins = [np.array(i, dtype=np.int64) for i in domain_basins]
@@ -486,6 +491,7 @@ class BifurcationGraph:
             data=reference_grid.total,
             edge_mask=labeler.bader.basin_edges,
             greater=False,
+            vacuum_mask=labeler.vacuum_mask,
         )
 
         # get the possible values and clear mask
@@ -501,7 +507,7 @@ class BifurcationGraph:
         atom_grid_coords = (
             np.round(atom_grid_coords).astype(np.int64) % reference_grid.shape
         )
-        # breakpoint()
+
         # get the atoms each domain contains
         (
             domain_basins,
@@ -522,6 +528,7 @@ class BifurcationGraph:
             basin_labels=labeler.bader.basin_labels,
             data=reference_grid.total,
             num_basins=len(labeler.bader.basin_maxima_frac),
+            vacuum_mask=labeler.vacuum_mask,
         )
         t2 = time.time()
         logging.info(f"Time: {round(t2-t1, 2)}")

@@ -38,18 +38,17 @@ class Bader:
         None, defaults to the charge_grid.
     method : str | Method, optional
         The algorithm to use for generating bader basins.
-    vacuum_tol: float | bool, optional
+    vacuum_tol : float | bool, optional
         If a float is provided, this is the value below which a point will
         be considered part of the vacuum. If a bool is provided, no vacuum
         will be used on False, and the default tolerance will be used on True.
-    normalize_vacuum: bool, optional
-        Whether or not the reference data needs to be converted to real space
-        units for vacuum tolerance comparison. This should be True for charge
-        densities and False for the ELF. If None, the setting will be guessed
-        from the reference grid's data type.
-    basin_tol: float, optional
+    basin_tol : float, optional
         The value below which a basin will not be considered significant. This
         is used only used to avoid writing out data that is likely not valuable.
+    use_reference_vacuum : bool, optional
+        Whether or not to use the reference file to determine regions of vacuum
+        (low charge density). This should generally be set to True unless the
+        ELF is being used as the reference. The default is True.
 
     """
 
@@ -59,8 +58,9 @@ class Bader:
         reference_grid: Grid | None = None,
         method: str | Method = Method.weight,
         vacuum_tol: float | bool = 1.0e-3,
-        normalize_vacuum: bool | None = None,
+        # normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
+        use_reference_vacuum: bool = True,
         **kwargs,
     ):
 
@@ -82,19 +82,13 @@ class Bader:
             reference_grid = charge_grid.copy()
         self._reference_grid = reference_grid
 
-        # guess whether the reference should be scaled for vacuum tolerance comparison
-        if normalize_vacuum is None:
-            if reference_grid.data_type == "elf":
-                normalize_vacuum = False
-            else:
-                normalize_vacuum = True
+        self._use_reference_vacuum = use_reference_vacuum
 
         # if vacuum tolerance is True, set it to the same default as above
         if vacuum_tol is True:
             self._vacuum_tol = 1.0e-3
         else:
             self._vacuum_tol = vacuum_tol
-        self._normalize_vacuum = normalize_vacuum
         self._basin_tol = basin_tol
 
         # set hidden class variables. This allows us to cache properties and
@@ -143,7 +137,6 @@ class Bader:
                 "atom_volumes",
                 "atom_min_surface_distances",
                 "atom_avg_surface_distances",
-                "total_electron_number",
             ]
         # get our final list of properties
         reset_properties = [
@@ -262,23 +255,22 @@ class Bader:
         # TODO: only reset everything if the vacuum actually changes
 
     @property
-    def normalize_vacuum(self) -> bool:
+    def use_reference_vacuum(self) -> bool:
         """
 
         Returns
         -------
         bool
-            Whether or not the reference data needs to be converted to real space
-            units for vacuum tolerance comparison. This should be set to True if
-            the data follows VASP's CHGCAR standards, but False if the data should
-            be compared as is (e.g. in ELFCARs)
+            Whether or not to use the reference file to determine regions of vacuum
+            (low charge density). This should generally be set to True unless the
+            ELF is being used as the reference. The default is True.
 
         """
-        return self._normalize_vacuum
+        return self._use_reference_vacuum
 
-    @normalize_vacuum.setter
-    def normalize_vacuum(self, value: bool) -> bool:
-        self._normalize_vacuum = value
+    @use_reference_vacuum.setter
+    def use_reference_vacuum(self, value: bool) -> bool:
+        self._use_reference_vacuum = value
         self._reset_properties()
         # TODO: only reset everything if the vacuum actually changes
 
@@ -638,18 +630,19 @@ class Bader:
 
         """
         if self._vacuum_mask is None:
+            # get appropriate grid
+            if self._use_reference_vacuum:
+                grid = self.reference_grid.total
+            else:
+                grid = self.charge_grid.total
             # if vacuum tolerance is set to False, ignore vacuum
             if self.vacuum_tol is False:
-                self._vacuum_mask = np.zeros_like(
-                    self.reference_grid.total, dtype=np.bool_
-                )
+                self._vacuum_mask = np.zeros_like(grid, dtype=np.bool_)
             else:
-                if self.normalize_vacuum:
-                    self._vacuum_mask = self.reference_grid.total < (
-                        self.vacuum_tol * self.structure.volume
-                    )
-                else:
-                    self._vacuum_mask = self.reference_grid.total < self.vacuum_tol
+                # get vacuum mask
+                self._vacuum_mask = grid < (
+                    self.vacuum_tol * self.structure.volume  # normalize
+                )
         return self._vacuum_mask
 
     @property
@@ -682,6 +675,20 @@ class Bader:
 
         return round(self.atom_charges.sum() + self.vacuum_charge, 10)
 
+    @property
+    def total_volume(self):
+        """
+
+        Returns
+        -------
+        float
+            The total volume integrated in the system. This should match the
+            volume of the structure. If it does not there may be a serious problem.
+
+        """
+
+        return round(self.atom_volumes.sum() + self.vacuum_volume, 10)
+
     @staticmethod
     def all_methods() -> list[str]:
         """
@@ -694,38 +701,6 @@ class Bader:
         """
 
         return [i.value for i in Method]
-
-    # @property
-    # def results_summary(self) -> dict:
-    #     """
-
-    #     Returns
-    #     -------
-    #     results_dict : dict
-    #         A dictionary summary of all results
-
-    #     """
-    #     results_dict = {
-    #         "method": self.method,
-    #         "basin_maxima_frac": self.basin_maxima_frac,
-    #         "basin_maxima_vox": self.basin_maxima_vox,
-    #         "basin_charges": self.basin_charges,
-    #         "basin_volumes": self.basin_volumes,
-    #         "basin_min_surface_distances": self.basin_min_surface_distances,
-    #         "basin_avg_surface_distances": self.basin_avg_surface_distances,
-    #         "basin_atoms": self.basin_atoms,
-    #         "basin_atom_dists": self.basin_atom_dists,
-    #         "atom_charges": self.atom_charges,
-    #         "atom_volumes": self.atom_volumes,
-    #         "atom_min_surface_distances": self.atom_min_surface_distances,
-    #         "atom_avg_surface_distances": self.atom_avg_surface_distances,
-    #         "structure": self.structure,
-    #         "vacuum_charge": self.vacuum_charge,
-    #         "vacuum_volume": self.vacuum_volume,
-    #         "significant_basins": self.significant_basins,
-    #         "total_electron_num": self.total_electron_number,
-    #     }
-    #     return results_dict
 
     def run_bader(self) -> None:
         """
@@ -1536,6 +1511,7 @@ class Bader:
             f.write(f"Vacuum Charge:\t\t{self.vacuum_charge:.5f}\n")
             f.write(f"Vacuum Volume:\t\t{self.vacuum_volume:.5f}\n")
             f.write(f"Total Electrons:\t{self.total_electron_number:.5f}\n")
+            f.write(f"Total Volume:\t{self.total_volume:.5f}\n")
 
     def write_basin_tsv(self, filepath: Path | str = "bader_basins.tsv"):
         """
@@ -1650,6 +1626,7 @@ class Bader:
             "vacuum_volume",
             "num_vacuum",
             "total_electron_number",
+            "total_volume",
         ]:
             results[result] = getattr(self, result, None)
 

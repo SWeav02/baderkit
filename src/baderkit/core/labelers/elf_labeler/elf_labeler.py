@@ -136,10 +136,9 @@ class ElfLabeler:
         charges on atoms when splitting covalent/metallic features to their
         nearest neighbors.
     vacuum_tol : float | bool, optional
-        The tolerance for considering a region to be part of the vacuum.
-        WARNING: This is set to False for now as we have not implemented
-        vacuum handling for the ELF.
-        The default is False.
+        The tolerance for considering a region to be part of the vacuum. The
+        tolerance is compared to the charge density, not the ELF. The default
+        is 0.001.
     **kwargs : dict
         Keyword arguments to pass to the Bader class.
 
@@ -170,7 +169,7 @@ class ElfLabeler:
             "x_diff_weight": 0.0,
             "porous_adjustment": False,
         },
-        vacuum_tol=False,
+        vacuum_tol=1.0e-03,
         **kwargs,
     ):
 
@@ -239,6 +238,7 @@ class ElfLabeler:
             charge_grid=charge_grid,
             reference_grid=reference_grid,
             vacuum_tol=vacuum_tol,
+            use_reference_vacuum=False,
             **kwargs,
         )
 
@@ -480,6 +480,9 @@ class ElfLabeler:
 
         """
         if self._atom_elf_radii_e is None:
+            # make sure bifurcation graph has been constructed
+            self.bifurcation_graph
+            # calculate elf radii
             self._atom_elf_radii_e, self._atom_elf_radii_types_e = (
                 self._get_atom_elf_radii(
                     self.electride_structure,
@@ -650,6 +653,87 @@ class ElfLabeler:
 
             self._atom_max_values_e = np.array(max_values)
         return self._atom_max_values_e.round(10)
+
+    ###########################################################################
+    # Vacuum Properties
+    ###########################################################################
+    @property
+    def vacuum_charge(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The charge assigned to the vacuum.
+
+        """
+        return self.bader.vacuum_charge
+
+    @property
+    def vacuum_volume(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total volume assigned to the vacuum.
+
+        """
+        return self.bader.vacuum_volume
+
+    @property
+    def vacuum_mask(self) -> NDArray[bool]:
+        """
+
+        Returns
+        -------
+        NDArray[bool]
+            A mask representing the voxels that belong to the vacuum.
+
+        """
+        return self.bader.vacuum_mask
+
+    @property
+    def num_vacuum(self) -> int:
+        """
+
+        Returns
+        -------
+        int
+            The number of vacuum points in the array
+
+        """
+        return self.bader.num_vacuum
+
+    @property
+    def total_electron_number(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total number of electrons in the system calculated from the
+            atom charges and vacuum charge. If this does not match the true
+            total electron number within reasonable floating point error,
+            there is a major problem.
+
+        """
+
+        return round(self.feature_charges.sum() + self.vacuum_charge, 10)
+
+    @property
+    def total_volume(self):
+        """
+
+        Returns
+        -------
+        float
+            The total volume integrated in the system. This should match the
+            volume of the structure. If it does not there may be a serious problem.
+
+        """
+
+        return round(self.feature_volumes.sum() + self.vacuum_volume, 10)
 
     ###########################################################################
     # Feature Properties
@@ -1098,10 +1182,7 @@ class ElfLabeler:
                     atom_radii = self.atom_elf_radii[coord_atoms]
 
                 # calculate the weighted contribution to each atom and normalize
-                try:
-                    weight = atom_radii / dists
-                except:
-                    breakpoint()
+                weight = atom_radii / dists
                 weight /= weight.sum()
                 # add for each atom
                 for coord_idx, atom in enumerate(coord_atoms):
@@ -1409,10 +1490,8 @@ class ElfLabeler:
 
         # get first instance of each atom
         radii = np.empty(len(structure), dtype=np.float64)
-        try:
-            radii_types = np.empty(len(structure), dtype=all_radii_types.dtype)
-        except:
-            breakpoint()
+        radii_types = np.empty(len(structure), dtype=all_radii_types.dtype)
+
         for i in range(len(structure)):
             first_index = np.argmax(sorted_sites == i)
             radii[i] = all_radii[sorted_indices[first_index]]
@@ -1502,10 +1581,7 @@ class ElfLabeler:
         # This is just a wrapper of the Bader class to update the default to
         # load the ELFCAR
         charge_grid = Grid.from_vasp(charge_filename, total_only=total_only)
-        if reference_filename is None:
-            reference_grid = None
-        else:
-            reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
+        reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
 
         return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
 
@@ -1895,6 +1971,10 @@ class ElfLabeler:
             "feature_coord_atoms",
             "feature_coord_atoms_e",
             "atom_feature_indices_e",
+            "total_electron_number",
+            "total_volume",
+            "vacuum_charge",
+            "vacuum_volume",
         ]:
             results[result] = getattr(self, result, None)
 
@@ -2022,7 +2102,6 @@ class ElfLabeler:
             len(np.unique(assigned_atoms)) != len(self.structure)
             and not self.ignore_low_pseudopotentials
         ):
-
             raise Exception(
                 "At least one atom was not assigned a zero-flux basin. This typically results"
                 "from pseudo-potentials (PPs) with only valence electrons (e.g. the defaults for Al, Si, B in VASP 5.X.X)."

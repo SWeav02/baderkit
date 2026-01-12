@@ -123,12 +123,6 @@ class SpinBadelf:
         self._electrides_per_formula = None
         self._electrides_per_reduced_formula = None
 
-        self._total_charge = None
-        self._total_volume = None
-        # TODO: Add vacuum handling to Elf Analyzer and BadELF
-        # self._vacuum_charge = None
-        # self._vacuum_volume = None
-
         self._results_summary = None
 
     @property
@@ -325,22 +319,6 @@ class SpinBadelf:
             self._get_charges_and_volumes()
         return self._volumes.round(10)
 
-    @property
-    def total_electron_number(self) -> float:
-        """
-
-        Returns
-        -------
-        float
-            The total number of electrons in the system calculated from the
-            atom charges. If this does not match the true
-            total electron number within reasonable floating point error,
-            there is a major problem.
-
-        """
-
-        return round(self.charges.sum(), 10)
-
     def get_oxidation_from_potcar(self, potcar_path: Path | str = "POTCAR"):
         """
         Calculates the oxidation state of each atom/electride using the
@@ -431,21 +409,53 @@ class SpinBadelf:
         """
         return f"{self.structure.formula} e{round(self.electrides_per_formula)}"
 
+    ###########################################################################
+    # Vacuum Properties
+    ###########################################################################
     @property
-    def total_charge(self):
+    def vacuum_charge(self) -> float:
         """
 
         Returns
         -------
         float
-            The total charge integrated in the system. This should match the
-            number of electrons from the POTCAR. If it does not there may be a
-            serious problem.
+            The charge assigned to the vacuum.
 
         """
-        if self._total_charge is None:
-            self._total_charge = self.charges.sum()
-        return round(self._total_charge, 10)
+        return self.badelf_up.vacuum_charge + self.badelf_down.vacuum_charge
+
+    @property
+    def vacuum_volume(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total volume assigned to the vacuum. This is an average between
+            the spin up and spin down values.
+
+        """
+        return (self.badelf_up.vacuum_volume + self.badelf_down.vacuum_volume) / 2
+
+    @property
+    def total_electron_number(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total number of electrons in the system calculated from the
+            spin-up and spin-down systems. If this does not match the true
+            total electron number within reasonable floating point error,
+            there is a major problem.
+
+        """
+
+        return round(
+            self.badelf_up.total_electron_number
+            + self.badelf_down.total_electron_number,
+            10,
+        )
 
     @property
     def total_volume(self):
@@ -457,10 +467,11 @@ class SpinBadelf:
             The total volume integrated in the system. This should match the
             volume of the structure. If it does not there may be a serious problem.
 
+            This is the average of the two systems
+
         """
-        if self._total_volume is None:
-            self._total_volume = self.volumes.sum()
-        return round(self._total_volume, 10)
+
+        return (self.badelf_up.total_volume + self.badelf_down.total_volume) / 2
 
     def to_dict(self, potcar_path: Path | str = "POTCAR", use_json: bool = True):
         """
@@ -488,6 +499,7 @@ class SpinBadelf:
         results["oxidation_states"] = self.get_oxidation_from_potcar(potcar_path)
 
         for result in [
+            "spin_system",
             "species",
             "structure",
             "labeled_structure",
@@ -499,9 +511,10 @@ class SpinBadelf:
             "electride_formula",
             "electrides_per_formula",
             "electrides_per_reduced_formula",
-            "total_charge",
+            "total_electron_number",
             "total_volume",
-            "spin_system",
+            "vacuum_charge",
+            "vacuum_volume",
         ]:
             results[result] = getattr(self, result, None)
         if use_json:

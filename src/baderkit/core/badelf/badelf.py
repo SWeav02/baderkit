@@ -94,7 +94,8 @@ class Badelf:
                 Gives all charge to the nearest atom or electride site.
     elf_labeler : dict | ElfLabeler, optional
         Keyword arguments to pass to the ElfLabeler class. This includes
-        parameters controlling cutoffs for electrides. Alternatively, an
+        parameters controlling cutoffs for electrides as well as parameters
+        controlling the Bader algorithm. Alternatively, an
         ElfLabeler class can be passed directly. The default is {}.
 
     """
@@ -165,12 +166,6 @@ class Badelf:
 
         self._electrides_per_formula = None
         self._electrides_per_reduced_formula = None
-
-        self._total_charge = None
-        self._total_volume = None
-        # TODO: Add vacuum handling to Elf Analyzer and BadELF
-        # self._vacuum_charge = None
-        # self._vacuum_volume = None
 
         self._results_summary = None
 
@@ -357,22 +352,6 @@ class Badelf:
         return self.elf_labeler.atom_max_values_e
 
     @property
-    def total_electron_number(self) -> float:
-        """
-
-        Returns
-        -------
-        float
-            The total number of electrons in the system calculated from the
-            atom charges. If this does not match the true
-            total electron number within reasonable floating point error,
-            there is a major problem.
-
-        """
-
-        return round(self.charges.sum(), 10)
-
-    @property
     def _zero_flux_feature_labels(self) -> NDArray:
         """
 
@@ -406,6 +385,7 @@ class Badelf:
             None if the zero-flux method is selected.
 
         """
+
         if self.method == "zero-flux":
             return None, None, None
 
@@ -495,6 +475,7 @@ class Badelf:
             site_transforms,
             plane_equations,
         ) = self.partitioning_planes
+
         logging.info("Beginning voxel assignment")
 
         # get the zero-flux labels as a starting point
@@ -507,6 +488,7 @@ class Badelf:
                 splitting_method=self.shared_feature_splitting_method,
                 use_electrides=True,
             )
+
         else:
             # In badelf, we want to label our electride basins ahead of time
             if self.method == "badelf":
@@ -554,7 +536,7 @@ class Badelf:
                 site_indices=site_indices,
                 site_transforms=site_transforms,
                 plane_equations=plane_equations,
-                vacuum_mask=self.bader.vacuum_mask,
+                vacuum_mask=self.vacuum_mask,
                 min_plane_dist=voxel_dist,
                 num_assignments=len(self.electride_structure),
                 lattice_matrix=self.reference_grid.matrix,
@@ -877,7 +859,7 @@ class Badelf:
         edges = get_edges(
             labeled_array=self.atom_labels,
             neighbor_transforms=neigh_transforms,
-            vacuum_mask=self.bader.vacuum_mask,
+            vacuum_mask=self.vacuum_mask,
         )
         self._min_surface_distances, self._avg_surface_distances = (
             get_min_avg_surface_dists(
@@ -970,22 +952,6 @@ class Badelf:
         return f"{self.structure.formula} e{round(self.electrides_per_formula)}"
 
     @property
-    def total_charge(self) -> float:
-        """
-
-        Returns
-        -------
-        float
-            The total charge integrated in the system. This should match the
-            number of electrons from the POTCAR. If it does not there may be a
-            serious problem.
-
-        """
-        if self._total_charge is None:
-            self._total_charge = self.charges.sum()
-        return round(self._total_charge, 10)
-
-    @property
     def total_volume(self):
         """
 
@@ -996,9 +962,75 @@ class Badelf:
             volume of the structure. If it does not there may be a serious problem.
 
         """
-        if self._total_volume is None:
-            self._total_volume = self.volumes.sum()
-        return round(self._total_volume, 10)
+
+        return round(self.volumes.sum() + self.vacuum_volume, 10)
+
+    ###########################################################################
+    # Vacuum Properties
+    ###########################################################################
+    @property
+    def vacuum_charge(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The charge assigned to the vacuum.
+
+        """
+        return self.elf_labeler.vacuum_charge
+
+    @property
+    def vacuum_volume(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total volume assigned to the vacuum.
+
+        """
+        return self.elf_labeler.vacuum_volume
+
+    @property
+    def vacuum_mask(self) -> NDArray[bool]:
+        """
+
+        Returns
+        -------
+        NDArray[bool]
+            A mask representing the voxels that belong to the vacuum.
+
+        """
+        return self.elf_labeler.vacuum_mask
+
+    @property
+    def num_vacuum(self) -> int:
+        """
+
+        Returns
+        -------
+        int
+            The number of vacuum points in the array
+
+        """
+        return self.elf_labeler.num_vacuum
+
+    @property
+    def total_electron_number(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The total number of electrons in the system calculated from the
+            atom charges and vacuum charge. If this does not match the true
+            total electron number within reasonable floating point error,
+            there is a major problem.
+
+        """
+
+        return round(self.charges.sum() + self.vacuum_charge, 10)
 
     def to_dict(
         self, potcar_path: Path | str = "POTCAR", use_json: bool = True
@@ -1056,9 +1088,11 @@ class Badelf:
             "electride_formula",
             "electrides_per_formula",
             "electrides_per_reduced_formula",
-            "total_charge",
+            "total_electron_number",
             "total_volume",
             "spin_system",
+            "vacuum_charge",
+            "vacuum_volume",
         ]:
             results[result] = getattr(self, result, None)
         if use_json:

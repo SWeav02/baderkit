@@ -57,7 +57,9 @@
     "electride_formula": "Ca2 N1 e1",
     "electrides_per_formula": 0.6738534972,
     "electrides_per_reduced_formula": 0.6738534972,
-    "total_charge": 12.697646127,
+    "total_electron_number": 12.697646127,
     "total_volume": 71.8295231053,
-    "spin_system": "up"
+    "spin_system": "up",
+    "vacuum_charge": 0.0,
+    "vacuum_volume": 0.0
 }

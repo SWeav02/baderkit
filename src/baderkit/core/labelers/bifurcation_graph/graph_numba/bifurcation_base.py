@@ -147,6 +147,7 @@ def check_if_possible_saddle(
     shifts,
     shift_connections,
     greater,
+    vacuum_mask,
 ):
     """
     Checks if a point could be a saddle point using the nearest neighboring points
@@ -168,6 +169,11 @@ def check_if_possible_saddle(
         if shift_idx == 13:
             continue
         ni, nj, nk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+        # if this is a vacuum point, this point borders the vacuum and we don't
+        # want to include it as a bifurcation point
+        if vacuum_mask[ni, nj, nk]:
+            return False
+
         neigh_value = data[ni, nj, nk]
         if (greater and neigh_value > value) or (not greater and neigh_value < value):
             # mark in mask and instantiate as a root
@@ -205,6 +211,7 @@ def check_if_saddle(
     shifts,
     shift_connections,
     greater,
+    vacuum_mask,
 ):
     """
     Checks if a point is a saddle by grouping connected surrounding points (5x5x5) with
@@ -221,6 +228,11 @@ def check_if_saddle(
     # mark mask
     for shift_idx, (si, sj, sk) in enumerate(shifts):
         ni, nj, nk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+
+        # skip vacuum
+        if vacuum_mask[ni, nj, nk]:
+            continue
+
         neigh_value = data[ni, nj, nk]
         if (greater and neigh_value > value) or (not greater and neigh_value < value):
             value_mask[shift_idx] = 2
@@ -233,7 +245,7 @@ def check_if_saddle(
     # iterate over connections and make unions
     for connection_idx, (shift1, shift2) in enumerate(shift_connections):
         connection_type = min(value_mask[shift1], value_mask[shift2])
-        if connection_type == 0:
+        if connection_type == 0:  # skip vacuum
             continue
         elif connection_type == 2:
             union_w_roots(connections, shift1, shift2, root_mask)
@@ -254,7 +266,7 @@ def check_if_saddle(
 
 
 @njit(parallel=True, cache=True)
-def find_potential_saddle_points(data, edge_mask, greater=False):
+def find_potential_saddle_points(data, edge_mask, vacuum_mask, greater=False):
     """
     Finds all points in the grid that might be saddle points. Generally overestimates
     the actual number of points.
@@ -278,8 +290,8 @@ def find_potential_saddle_points(data, edge_mask, greater=False):
         for j in range(ny):
             for k in range(nz):
 
-                # skip anything not on the edge
-                if not edge_mask[i, j, k]:
+                # skip anything not on the edge or part of the vacuum
+                if not edge_mask[i, j, k] or vacuum_mask[i, j, k]:
                     continue
 
                 value = data[i, j, k]
@@ -287,13 +299,29 @@ def find_potential_saddle_points(data, edge_mask, greater=False):
                 # do a first check with the nearest neighbors to see if this
                 # has the potential to be a bifurcation
                 if not check_if_possible_saddle(
-                    i, j, k, value, data, trans3, trans_connections3, greater
+                    i,
+                    j,
+                    k,
+                    value,
+                    data,
+                    trans3,
+                    trans_connections3,
+                    greater,
+                    vacuum_mask=vacuum_mask,
                 ):
                     continue
 
                 # check if point is a potential bifurcation
                 is_bif = check_if_saddle(
-                    i, j, k, value, data, trans5, trans_connections5, greater
+                    i,
+                    j,
+                    k,
+                    value,
+                    data,
+                    trans5,
+                    trans_connections5,
+                    greater,
+                    vacuum_mask=vacuum_mask,
                 )
 
                 if is_bif:
@@ -319,6 +347,7 @@ def find_periodic_cycles(
     old_roots,
     root_mask,
     neighbors,
+    vacuum_mask,
 ):
     """
     Finds the cycles a labeled solid makes through a periodic cell. Allows for
@@ -353,7 +382,11 @@ def find_periodic_cycles(
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
-                if not solid[i, j, k] or previous_solid[i, j, k]:
+                if (
+                    not solid[i, j, k]
+                    or previous_solid[i, j, k]
+                    or vacuum_mask[i, j, k]
+                ):
                     continue
                 idx = coords_to_flat(i, j, k, ny_nz, nz)
 
@@ -450,6 +483,7 @@ def get_connected_groups(
     offset_z,
     size,
     neighbors,
+    vacuum_mask,
 ):
     """
     Finds unions and periodic offsets for points in a periodic solid. Slower than
@@ -466,7 +500,11 @@ def get_connected_groups(
                 # NOTE: Doing a check like this has such a small time cost
                 # that I didn't see a difference between doing a mock lookup/continue
                 # for a 30^3 cube and 400^3 cube.
-                if not solid[i, j, k] or previous_solid[i, j, k]:
+                if (
+                    not solid[i, j, k]
+                    or previous_solid[i, j, k]
+                    or vacuum_mask[i, j, k]
+                ):
                     continue
 
                 idx = coords_to_flat(i, j, k, ny_nz, nz)
@@ -519,6 +557,7 @@ def get_connected_groups(
         old_roots=roots,
         root_mask=root_mask,
         neighbors=neighbors,
+        vacuum_mask=vacuum_mask,
     )
 
     # Now get dimensionalities of each root
