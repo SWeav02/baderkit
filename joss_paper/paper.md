@@ -33,9 +33,11 @@ The concept of oxidation states has existed for centuries, guiding and informing
 
 Bader charge analysis is among the most widely used methods in chemistry and materials science, with thousands of articles referencing the method each year. By far the most popular implementation is the code developed by the Henkelman group at UT Austin [@Henkelman:2006]. While fast and memory-efficient, the code is written in Fortran making it cumbersome to incorporate into modern workflows. It is well over a decade old and was not designed for modern multi-threaded CPUs. There have been some previous attempts to alleviate these issues. In particular, `pybader` [@pybader] partially implemented the method into parallelized Python code. However, `pybader` is typically slower than the original code and requires a significant amount of boilerplate code. `BaderKit` aims to improve upon the areas where the original Fortran code and `pybader` fall short. It is fast, extensive, easy to use, and designed to be easily inserted into modern workflows.
 
-# Implementation Details
+# Software Design
 
-`BaderKit` runs directly on the output of many of the most popular density functional theory codes (e.g. VASP [@Kresse:1996], Gaussian [@gaussian], Quantum Espresso [@Giannozzi:2009]), and can be easily extended to run on the output of other codes. It is built on top of the well-established `PyMatGen` package, allowing for seamless integration into complex workflows. To reach speeds comparable to Fortran, `BaderKit` uses the `Numba` [@Lam:2015] and `NumPy` [@harris:2020] packages to compile expensive operations to machine code and allow for fast, C-based, vectorized calculations. `Numba's` auto-parallelization tool is used extensively to further improve speed on modern multi-core machines. For easier implementation into workflows, `BaderKit` builds its core classes off of the popular materials science package, `PyMatGen` [@Ong:2013]. In addition to the Python interface, `BaderKit` includes a command-line interface built with the `Typer` [@typer] package for quick one-off calculations, and a simple desktop application built with `PyQt5` [@PyQt5] and `PyVista` [@Sullivan:2019] for visualization.
+The foremost goal of `BaderKit` is to make Bader charge analysis broadly accessible and easy to implement. It is available through `github`, `PyPi`, and `conda-forge` and runs on the most popular operating systems (e.g. Windows, MacOS, Ubuntu, etc.). The object-oriented API is based on  the widely used `PyMatGen`[@Ong:2013] allowing users to obtain atomic charges with just three lines of code. `BaderKit` runs directly on the output most popular density functional theory codes (e.g. VASP [@Kresse:1996], Gaussian [@gaussian], Quantum Espresso [@Giannozzi:2009]), and can be easily extended to run on the output of others. For users who are less familiar with Python, `BaderKit` includes a command-line interface built with the `Typer` [@typer] package for quick one-off calculations, and a simple desktop application built with `PyQt5` [@PyQt5] and `PyVista` [@Sullivan:2019] for visualization.
+
+A secondary goal of `BaderKit` is to update grid-based Bader algorithms to utilize modern architectures. To achieve this, `BaderKit` uses the `Numba` [@Lam:2015] and `NumPy` [@harris:2020] packages to compile expensive operations to machine code and allow for fast, C-based, vectorized calculations. To improve speed further on modern multi-core CPUs, each Bader algorithm has been reworked from the ground up to allow for parallelization where possible.
 
 ## Speed and Parallelization
 
@@ -53,9 +55,16 @@ In addition to improved speed, BaderKit fixes an issue in the original codes han
 
 ![Comparison of basins found around an Ag atom in the Henkelman code and BaderKit. BaderKit merges the voxelated basins into a single maximum \label{fig:fig2}](basin_reduction.png){ width=50% }
 
-# Use in Other Codes
+# Research Impact Statement
 
-`BaderKit` is designed to simplify the creation of complex charge and topology analysis workflows. It has already been implemented in the `BadELF` code, a method designed for charge analysis in electride materials [@Weaver:2023]. It is easy to use, efficient, and runs on most popular operating systems (e.g. Windows, MacOS, Ubuntu, etc.). `BaderKit` will allow researchers to build complex charge and topology analysis software, all within the modern Python ecosystem.
+`BaderKit` was designed to provide researchers with easier access to underlying aspects of the Bader algorithm. It has already been incorporated into the `BadELF`[@Weaver:2023] code and is currently being expanded to include tools for detailed analysis of the electron localization function. The structure of `BaderKit` allows researchers to build further complex charge and topology analysis software that would be difficult or impossible with other currently available software.
+
+Though a relatively new software with a small set of developers, `BaderKit` is set up to allow easy contribution from others. As new users join, we expect `BaderKit` will become a widely used software and expand to meet the many needs of the chemistry and materials communities.
+
+# AI usage disclosure
+
+No generative AI tools were used in the writing
+of this manuscript, preparation of supporting materials, or code documentation. OpenAI's GPT-5 model was occasionally used to assist in code development. A human developer made all core design decisions and reviewed, edited, and tested any generated code.
 
 # Acknowledgements
 
