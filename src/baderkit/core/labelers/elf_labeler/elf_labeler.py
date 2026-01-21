@@ -51,8 +51,11 @@ class ElfLabeler:
     ----------
     charge_grid : Grid
         The charge density grid used for integrating charge.
-    reference_grid : Grid
+    elf_grid : Grid
         The ELF grid used to partition volumes.
+    total_charge_grid : Grid, optional
+        The total charge density used for bader integrations and vacuum masks. If
+        not provided, the charge_grid will be used instead.
     ignore_low_pseudopotentials : bool, optional
         Whether or not to ignore errors associated with the use of pseudopotentials
         with limited valence electrons. The default is False.
@@ -162,7 +165,8 @@ class ElfLabeler:
     def __init__(
         self,
         charge_grid: Grid,
-        reference_grid: Grid,
+        elf_grid: Grid,
+        total_charge_grid: Grid | None = None,
         ignore_low_pseudopotentials: bool = False,
         shared_shell_ratio: float = 0.75,
         covalent_molecule_ratio: float = 0.2,
@@ -186,14 +190,18 @@ class ElfLabeler:
         **kwargs,
     ):
 
-        # ensure the reference file is ELF
-        if reference_grid.data_type != "elf":
+        # ensure the elf file is ELF
+        if elf_grid.data_type != "elf":
             logging.warning(
-                "A non-ELF reference file has been detected. Results may not be valid."
+                "A non-ELF elf file has been detected. Results may not be valid."
             )
 
         self.charge_grid = charge_grid
-        self.reference_grid = reference_grid
+        self.elf_grid = elf_grid
+        
+        if total_charge_grid is None:
+            total_charge_grid = charge_grid
+        self.total_charge_grid = total_charge_grid
 
         self.ignore_low_pseudopotentials = ignore_low_pseudopotentials
         self.crystalnn_kwargs = crystalnn_kwargs
@@ -248,12 +256,21 @@ class ElfLabeler:
         self._electrides_per_formula = None
         self._electrides_per_reduced_formula = None
 
-        # create a bader object
-        self.bader = Bader(
+        # create a bader object for the elf
+        self.elf_bader = Bader(
             charge_grid=charge_grid,
-            reference_grid=reference_grid,
+            reference_grid=elf_grid,
             vacuum_tol=vacuum_tol,
             use_reference_vacuum=False,
+            **kwargs,
+        )
+        
+        # create a bader object for the charge density
+        self.elf_bader = Bader(
+            charge_grid=charge_grid,
+            reference_grid=total_charge_grid,
+            vacuum_tol=vacuum_tol,
+            use_reference_vacuum=True,
             **kwargs,
         )
 
@@ -305,7 +322,7 @@ class ElfLabeler:
             The PyMatGen Structure representing the system.
 
         """
-        return self.reference_grid.structure
+        return self.elf_grid.structure
 
     @property
     def electride_structure(self) -> Structure:
@@ -682,7 +699,7 @@ class ElfLabeler:
             The charge assigned to the vacuum.
 
         """
-        return self.bader.vacuum_charge
+        return self.elf_bader.vacuum_charge
 
     @property
     def vacuum_volume(self) -> float:
@@ -694,7 +711,7 @@ class ElfLabeler:
             The total volume assigned to the vacuum.
 
         """
-        return self.bader.vacuum_volume
+        return self.elf_bader.vacuum_volume
 
     @property
     def vacuum_mask(self) -> NDArray[bool]:
@@ -706,7 +723,7 @@ class ElfLabeler:
             A mask representing the voxels that belong to the vacuum.
 
         """
-        return self.bader.vacuum_mask
+        return self.elf_bader.vacuum_mask
 
     @property
     def num_vacuum(self) -> int:
@@ -718,7 +735,7 @@ class ElfLabeler:
             The number of vacuum points in the array
 
         """
-        return self.bader.num_vacuum
+        return self.elf_bader.num_vacuum
 
     @property
     def total_electron_number(self) -> float:
@@ -1228,7 +1245,7 @@ class ElfLabeler:
 
         Assigns each grid point to atoms and features included in the 'included_features'
         tag. The assignments are represented by an array with the same dimensions
-        as the charge/reference grids with integers representing the atom/feature
+        as the charge/elf grids with integers representing the atom/feature
         index in the Structure object including requested feature dummy atoms.
         By default this method orders requested features so that atoms
         come first, followed by electrides, and then any other feature types. This
@@ -1266,7 +1283,7 @@ class ElfLabeler:
         """
 
         # Get the original basin atom assignments
-        basin_atoms = self.bader.basin_atoms.copy()
+        basin_atoms = self.elf_bader.basin_atoms.copy()
 
         # get indices of requested type
         feature_indices = self.feature_indices_by_type(included_features)
@@ -1300,7 +1317,7 @@ class ElfLabeler:
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
 
         # reassign labels
-        feature_labels = basin_atoms[self.bader.basin_labels]
+        feature_labels = basin_atoms[self.elf_bader.basin_labels]
 
         # get requested results
         if not any((return_structure, return_feat_indices, return_charge_volume)):
@@ -1317,12 +1334,12 @@ class ElfLabeler:
 
             atom_charges = np.bincount(
                 basin_atoms,
-                weights=self.bader.basin_charges,
+                weights=self.elf_bader.basin_charges,
                 minlength=len(feature_structure),
             )
             atom_volumes = np.bincount(
                 basin_atoms,
-                weights=self.bader.basin_volumes,
+                weights=self.elf_bader.basin_volumes,
                 minlength=len(feature_structure),
             )
             results.append(atom_charges)
@@ -1461,7 +1478,7 @@ class ElfLabeler:
         covalent_symbols = np.unique([i.dummy_species for i in covalent_types])
         # Calculate all radii on the voronoi surface
         radii_tools = ElfRadiiTools(
-            grid=self.reference_grid,
+            grid=self.elf_grid,
             feature_labels=feature_labels,
             feature_structure=feature_structure,
             override_structure=structure,
@@ -1528,27 +1545,27 @@ class ElfLabeler:
 
         # collect frac coords and map basin labels to features
         frac_coords = [i.average_frac_coords for i in nodes]
-        feature_map = np.empty(len(self.bader.basin_maxima_frac), dtype=np.uint32)
+        feature_map = np.empty(len(self.elf_bader.basin_maxima_frac), dtype=np.uint32)
         for node_idx, node in enumerate(nodes):
             feature_map[node.basins] = node_idx
 
         # get feature edges
-        neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
+        neighbor_transforms, _ = self.elf_grid.point_neighbor_transforms
 
         edge_mask = get_feature_edges(
-            labeled_array=self.bader.basin_labels,
+            labeled_array=self.elf_bader.basin_labels,
             feature_map=feature_map,
             neighbor_transforms=neighbor_transforms,
-            vacuum_mask=self.bader.vacuum_mask,
+            vacuum_mask=self.elf_bader.vacuum_mask,
         )
 
         # calculate the minimum and average distance to each features surface
         min_dists, avg_dists = get_min_avg_feat_surface_dists(
-            labels=self.bader.basin_labels,
+            labels=self.elf_bader.basin_labels,
             feature_map=feature_map,
             frac_coords=np.array(frac_coords, dtype=np.float64),
             edge_mask=edge_mask,
-            matrix=self.reference_grid.matrix,
+            matrix=self.elf_grid.matrix,
             max_value=np.max(self.structure.lattice.abc) * 2,
         )
 
@@ -1564,7 +1581,7 @@ class ElfLabeler:
     def from_vasp(
         cls,
         charge_filename: Path | str = "CHGCAR",
-        reference_filename: Path | str = "ELFCAR",
+        elf_filename: Path | str = "ELFCAR",
         total_only: bool = True,
         **kwargs,
     ) -> Self:
@@ -1576,7 +1593,7 @@ class ElfLabeler:
         charge_filename : Path | str, optional
             The path to the CHGCAR like file that will be used for summing charge.
             The default is "CHGCAR".
-        reference_filename : Path | str
+        elf_filename : Path | str
             The path to ELFCAR like file that will be used for partitioning.
             If None, the charge file will be used for partitioning.
         total_only: bool
@@ -1596,9 +1613,9 @@ class ElfLabeler:
         # This is just a wrapper of the Bader class to update the default to
         # load the ELFCAR
         charge_grid = Grid.from_vasp(charge_filename, total_only=total_only)
-        reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
+        elf_grid = Grid.from_vasp(elf_filename, total_only=total_only)
 
-        return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
+        return cls(charge_grid=charge_grid, elf_grid=elf_grid, **kwargs)
 
     ###########################################################################
     # Write Methods
@@ -1632,7 +1649,7 @@ class ElfLabeler:
         feature_indices: list[int],
         directory: str | Path = Path("."),
         include_dummy_atoms: bool = True,
-        write_reference: bool = True,
+        write_elf: bool = True,
         output_format: str | Format = None,
         prefix_override: str = None,
         **writer_kwargs,
@@ -1650,8 +1667,8 @@ class ElfLabeler:
             is used.
         include_dummy_atoms : bool, optional
             Whether or not to add dummy files to the structure. The default is False.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
+        write_elf : bool, optional
+            Whether or not to write the elf data rather than the charge data.
             Default is False.
         output_format : str | Format, optional
             The format to write with. If None, writes to source format stored in
@@ -1664,9 +1681,9 @@ class ElfLabeler:
 
         """
         # get the data to use
-        if write_reference:
-            data_array = self.reference_grid.total
-            data_type = self.reference_grid.data_type
+        if write_elf:
+            data_array = self.elf_grid.total
+            data_type = self.elf_grid.data_type
         else:
             data_array = self.charge_grid.total
             data_type = self.charge_grid.data_type
@@ -1687,7 +1704,7 @@ class ElfLabeler:
         for feat_idx in feature_indices:
             basins = self.feature_basins[feat_idx]
             # get mask where this feature is NOT
-            mask = np.isin(self.bader.basin_labels, basins, invert=True)
+            mask = np.isin(self.elf_bader.basin_labels, basins, invert=True)
             # copy data to avoid overwriting. Set data off of basin to 0
             data_array_copy = data_array.copy()
             data_array_copy[mask] = 0.0
@@ -1705,7 +1722,7 @@ class ElfLabeler:
         feature_indices: list[int],
         directory: str | Path = Path("."),
         include_dummy_atoms: bool = False,
-        write_reference: bool = True,
+        write_elf: bool = True,
         output_format: str | Format = None,
         prefix_override: str = None,
         **writer_kwargs,
@@ -1723,8 +1740,8 @@ class ElfLabeler:
             is used.
         include_dummy_atoms : bool, optional
             Whether or not to add dummy files to the structure. The default is False.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
+        write_elf : bool, optional
+            Whether or not to write the elf data rather than the charge data.
             Default is False.
         output_format : str | Format, optional
             The format to write with. If None, writes to source format stored in
@@ -1736,9 +1753,9 @@ class ElfLabeler:
             grid.
         """
         # get the data to use
-        if write_reference:
-            data_array = self.reference_grid.total
-            data_type = self.reference_grid.data_type
+        if write_elf:
+            data_array = self.elf_grid.total
+            data_type = self.elf_grid.data_type
         else:
             data_array = self.charge_grid.total
             data_type = self.charge_grid.data_type
@@ -1762,7 +1779,7 @@ class ElfLabeler:
             basin_list.extend(self.feature_basins[feat_idx])
 
         # get mask where features are not
-        mask = np.isin(self.bader.basin_labels, basin_list, invert=True)
+        mask = np.isin(self.elf_bader.basin_labels, basin_list, invert=True)
         # copy data to avoid overwriting. Set data off of basin to 0
         data_array_copy = data_array.copy()
         data_array_copy[mask] = 0.0
@@ -1793,7 +1810,7 @@ class ElfLabeler:
         self,
         included_types: list[FeatureType],
         prefix_override=None,
-        write_reference: bool = True,
+        write_elf: bool = True,
         directory: str | Path = Path("."),
         **kwargs,
     ):
@@ -1808,16 +1825,16 @@ class ElfLabeler:
             The string to add at the front of the output path. If None, defaults
             to the VASP file name equivalent to the data type stored in the
             grid.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
+        write_elf : bool, optional
+            Whether or not to write the elf data rather than the charge data.
             Default is True.
         **kwargs :
             See :meth:`write_feature_basins`.
 
         """
         # get the data to use
-        if write_reference:
-            data_type = self.reference_grid.data_type
+        if write_elf:
+            data_type = self.elf_grid.data_type
         else:
             data_type = self.charge_grid.data_type
         # get prefix
@@ -2044,7 +2061,7 @@ class ElfLabeler:
         # run bader for nice looking logging purposes
         # NOTE: I call a property rather than run_bader/run_atom_assignment to
         # avoid repeat calcs if we've already run
-        self.bader.atom_labels
+        self.elf_bader.atom_labels
 
         logging.info("Beginning ELF Analysis")
 
@@ -2152,7 +2169,7 @@ class ElfLabeler:
         # one voxel of the atom. We must check for this as it is possible for
         # a different type of basin to contain the atom if too few valence electrons
         # are in the pseudopotential
-        max_dist = self.reference_grid.max_point_dist * 2
+        max_dist = self.elf_grid.max_point_dist * 2
         for node in self.bifurcation_graph.unassigned_nodes:
             if node.domain_subtype == DomainSubtype.irreducible_cage:
                 continue

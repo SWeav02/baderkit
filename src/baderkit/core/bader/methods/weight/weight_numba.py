@@ -303,6 +303,7 @@ def get_weight_assignments(
             # otherwise, this is another edge index. Get its weight
             label = -label - 1  # convert back to actual neighbor index
             neigh_edge_idx = idx_to_edge[label]
+
             neigh_labels = all_labels[neigh_edge_idx]
             neigh_weights = all_weights[neigh_edge_idx]
             # loop over neighbors weights and add the portion assigned to this
