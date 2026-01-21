@@ -133,12 +133,10 @@ def detect_format(filename: str | Path):
                 if sig == b"\x89HDF\r\n\x1a\n":
                     source_format = Format.hdf5
         except:
-            logging.warning(
-                """
+            logging.warning("""
             Tried to detect HDF5 format, but h5py is not installed.
             To read HDF5 files, install with `conda install h5py` or `pip install h5py`
-            """
-            )
+            """)
 
     if source_format is None:
         raise ValueError("File format not recognized.")

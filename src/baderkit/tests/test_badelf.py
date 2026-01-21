@@ -2,6 +2,7 @@
 """
 This file contains a series of tests for the core functionality of the BadELF class.
 """
+
 from pathlib import Path
 
 import pytest

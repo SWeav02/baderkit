@@ -2,6 +2,7 @@
 """
 This file contains a series of tests for the core functionality of the Bader methods.
 """
+
 from pathlib import Path
 
 import numpy as np

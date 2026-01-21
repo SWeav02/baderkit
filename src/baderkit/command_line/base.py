@@ -211,9 +211,7 @@ def sum(
 
     shape1 = tuple(grid1.shape)
     shape2 = tuple(grid2.shape)
-    assert (
-        shape1 == shape2
-    ), f"""
+    assert shape1 == shape2, f"""
     Grids must have the same shape. {file1.name}: {shape1} differs from {file2.name}: {shape2}
     """
     # sum grids
@@ -332,15 +330,13 @@ def split(
     grid = Grid.from_dynamic(file, format=input_format, total_only=False)
 
     if not grid.is_spin_polarized:
-        raise Exception(
-            """
+        raise Exception("""
             This method only splits files that contain both the total and difference
             charge densities like VASP's CHGCAR format.
             If you need help splitting a charge density or ELF in a different format, please
             open a discussion on our [github](https://github.com/SWeav02/baderkit/discussions) and
             we will try and add an example to our documentation.
-            """
-        )
+            """)
 
     # split grid. raises errors internally
     spin_up, spin_down = grid.split_to_spin()
