@@ -23,6 +23,9 @@ from .methods.shared_numba import get_edges, get_min_avg_surface_dists
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
 
+# TODO:
+# - Add handling of non-nuclear attractors (e.g. those in Li metal)
+
 
 class Bader:
     """
@@ -58,7 +61,6 @@ class Bader:
         reference_grid: Grid | None = None,
         method: str | Method = Method.weight,
         vacuum_tol: float | bool = 1.0e-3,
-        # normalize_vacuum: bool | None = None,
         basin_tol: float = 1.0e-3,
         use_reference_vacuum: bool = True,
         **kwargs,
@@ -1631,8 +1633,10 @@ class Bader:
             results[result] = getattr(self, result, None)
 
         if use_json:
-            # get serializable versions of each attribute
+            # get serializable structure
             results["structure"] = results["structure"].to(fmt="POSCAR")
+
+            # get serializable versions of each basin attribute
             for key in [
                 "basin_maxima_frac",
                 "basin_maxima_charge_values",
@@ -1649,6 +1653,8 @@ class Bader:
                 if basin_results[key] is None:
                     continue  # skip oxidation states if they fail
                 basin_results[key] = basin_results[key].tolist()
+
+            # get serializable versions of each atom attribute
             for key in [
                 "atom_charges",
                 "atom_volumes",
@@ -1658,6 +1664,10 @@ class Bader:
                 if atom_results[key] is None:
                     continue  # skip oxidation states if they fail
                 atom_results[key] = atom_results[key].tolist()
+
+            # get serializable oxidation states
+            if results["oxidation_states"] is not None:
+                results["oxidation_states"] = results["oxidation_states"].tolist()
 
         results["atom_results"] = atom_results
         results["basin_results"] = basin_results
