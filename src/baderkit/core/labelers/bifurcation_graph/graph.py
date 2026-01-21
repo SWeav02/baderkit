@@ -61,6 +61,7 @@ class BifurcationGraph:
         basin_volumes: NDArray[float],
         crystalnn_kwargs: dict,
         atomic_radii: NDArray[float] = None,
+        **kwargs,
     ):
 
         self._root_nodes = []
@@ -597,12 +598,14 @@ class BifurcationGraph:
 
         # TODO: It is common for there to be quite a few shallow reducible domains
         # seemingly due to voxelation. I need a better method for removing these
-        cls._remove_shallow_reducible_nodes(graph)
+        cls._remove_shallow_reducible_nodes(graph, labeler.shallow_reducible_cutoff)
 
         # Now we check for reducible nodes that should really be considered
         # irreducible. These nodes are very deep but their children separate
         # at very low values
-        cls._combine_shallow_irreducible_nodes(graph)
+        cls._combine_shallow_irreducible_nodes(
+            graph, labeler.shallow_irreducible_cutoff
+        )
 
         return graph
 
@@ -616,7 +619,7 @@ class BifurcationGraph:
         ----------
         graph : BifurcationGraph
             The graph to remove shallow nodes from.
-        cutoff : TYPE, optional
+        cutoff : float, optional
             The cutoff ratio for a node to be considered shallow. The default is 0.05.
 
         """
@@ -640,7 +643,7 @@ class BifurcationGraph:
         ----------
         graph : BifurcationGraph
             The graph to combine shallow nodes in.
-        cutoff : TYPE, optional
+        cutoff : float, optional
             The cutoff ratio for nodes to be considered shallow. The default is 0.1.
 
         """

@@ -139,6 +139,17 @@ class ElfLabeler:
         The tolerance for considering a region to be part of the vacuum. The
         tolerance is compared to the charge density, not the ELF. The default
         is 0.001.
+    shallow_reducible_cutoff : float, optional
+        The cutoff for removing shallow reducible domains. If the ratio of a
+        domains depth to its parents depth is below this value, it will be
+        removed. This is primarily to handle small differences due to voxelation.
+        The default of 0.05 is usually sufficient.
+    shallow_irreducible_cutoff : float, optional
+        The cutoff for combining shallow irreducible domains. If all children of
+        a reducible node have depths significantly lower than its own, they will
+        be combined into a single irreducible domain.. This is primarily to handle
+        small differences due to voxelation or very small/shallow basins.
+        The default of 0.1 is usually sufficient.
     **kwargs : dict
         Keyword arguments to pass to the Bader class.
 
@@ -170,6 +181,8 @@ class ElfLabeler:
             "porous_adjustment": False,
         },
         vacuum_tol=1.0e-03,
+        shallow_reducible_cutoff: float = 0.05,
+        shallow_irreducible_cutoff: float = 0.1,
         **kwargs,
     ):
 
@@ -202,6 +215,8 @@ class ElfLabeler:
         self.combine_shells = combine_shells
         self.min_covalent_charge = min_covalent_charge
         self.min_covalent_angle = min_covalent_angle
+        self.shallow_reducible_cutoff = shallow_reducible_cutoff
+        self.shallow_irreducible_cutoff = shallow_irreducible_cutoff
 
         # electride cutoffs
         self.min_electride_elf_value = min_electride_elf_value
@@ -2194,6 +2209,7 @@ class ElfLabeler:
             ratio = shared_shell_depth / total_depth
             if ratio > self.shared_shell_ratio:
                 shell_nodes.append(node)
+                print(ratio)
 
         # mark nodes as shells
         for node in shell_nodes:
