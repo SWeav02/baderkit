@@ -40,13 +40,14 @@ class WeightMethod(MethodBase):
         )
 
         logging.info("Sorting Reference Data")
-        # sort data from lowest to highest
-        sorted_indices = np.argsort(reference_data.ravel(), kind="stable")
+        # sort data from lowest to highest, ignoring vacuum points
+        sorted_indices = np.argsort(reference_data[~self.vacuum_mask], kind="stable")
 
-        # remove vacuum from sorted indices
-        sorted_indices = sorted_indices[self.num_vacuum :]
-        # flip to move from high to low
-        sorted_indices = np.flip(sorted_indices)
+        # map these truncated sorted indices back to the original flat indices.
+        # We also flip the indices to go from high to low here.
+        non_vacuum_indices = np.where((~self.vacuum_mask).ravel())[0]
+        sorted_indices = non_vacuum_indices[np.flip(sorted_indices)]
+
         # get the voronoi neighbors, their distances, and the area of the corresponding
         # facets. This is used to calculate the volume flux from each voxel
         neighbor_transforms, neighbor_dists, facet_areas, _ = (

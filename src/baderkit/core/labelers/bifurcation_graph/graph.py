@@ -61,6 +61,7 @@ class BifurcationGraph:
         basin_volumes: NDArray[float],
         crystalnn_kwargs: dict,
         atomic_radii: NDArray[float] = None,
+        **kwargs,
     ):
 
         self._root_nodes = []
@@ -388,7 +389,10 @@ class BifurcationGraph:
 
         # get mask where potential saddle points connecting domains exist
         bif_mask = find_potential_saddle_points(
-            data=reference_grid.total, edge_mask=labeler.bader.basin_edges, greater=True
+            data=reference_grid.total,
+            edge_mask=labeler.bader.basin_edges,
+            greater=True,
+            vacuum_mask=labeler.vacuum_mask,
         )
 
         # get the basins connected at these points
@@ -399,10 +403,11 @@ class BifurcationGraph:
             edge_mask=get_edges(
                 labeler.bader.basin_labels,
                 neighbor_transforms,
-                labeler.bader.vacuum_mask,
+                labeler.vacuum_mask,
             ),
             num_basins=len(labeler.bader.basin_maxima_frac),
             neighbor_transforms=neighbor_transforms,
+            vacuum_mask=labeler.vacuum_mask,
         )
 
         # clear mask for memory
@@ -451,6 +456,7 @@ class BifurcationGraph:
             basin_maxima_ref_values,
             reference_grid.total,
             neighbor_transforms,
+            vacuum_mask=labeler.vacuum_mask,
         )
         # convert basins to numpy arrays to avoid Numba reflected list issue
         domain_basins = [np.array(i, dtype=np.int64) for i in domain_basins]
@@ -486,6 +492,7 @@ class BifurcationGraph:
             data=reference_grid.total,
             edge_mask=labeler.bader.basin_edges,
             greater=False,
+            vacuum_mask=labeler.vacuum_mask,
         )
 
         # get the possible values and clear mask
@@ -501,7 +508,7 @@ class BifurcationGraph:
         atom_grid_coords = (
             np.round(atom_grid_coords).astype(np.int64) % reference_grid.shape
         )
-        # breakpoint()
+
         # get the atoms each domain contains
         (
             domain_basins,
@@ -522,6 +529,7 @@ class BifurcationGraph:
             basin_labels=labeler.bader.basin_labels,
             data=reference_grid.total,
             num_basins=len(labeler.bader.basin_maxima_frac),
+            vacuum_mask=labeler.vacuum_mask,
         )
         t2 = time.time()
         logging.info(f"Time: {round(t2-t1, 2)}")
@@ -590,12 +598,14 @@ class BifurcationGraph:
 
         # TODO: It is common for there to be quite a few shallow reducible domains
         # seemingly due to voxelation. I need a better method for removing these
-        cls._remove_shallow_reducible_nodes(graph)
+        cls._remove_shallow_reducible_nodes(graph, labeler.shallow_reducible_cutoff)
 
         # Now we check for reducible nodes that should really be considered
         # irreducible. These nodes are very deep but their children separate
         # at very low values
-        cls._combine_shallow_irreducible_nodes(graph)
+        cls._combine_shallow_irreducible_nodes(
+            graph, labeler.shallow_irreducible_cutoff
+        )
 
         return graph
 
@@ -609,7 +619,7 @@ class BifurcationGraph:
         ----------
         graph : BifurcationGraph
             The graph to remove shallow nodes from.
-        cutoff : TYPE, optional
+        cutoff : float, optional
             The cutoff ratio for a node to be considered shallow. The default is 0.05.
 
         """
@@ -633,7 +643,7 @@ class BifurcationGraph:
         ----------
         graph : BifurcationGraph
             The graph to combine shallow nodes in.
-        cutoff : TYPE, optional
+        cutoff : float, optional
             The cutoff ratio for nodes to be considered shallow. The default is 0.1.
 
         """

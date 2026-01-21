@@ -87,7 +87,7 @@ def get_dists_to_atoms(
     # calculate the distance to each each atom at each transform and record
     # the shortest for each
     for i in prange(len(atom_cart_coords)):
-        (ai, aj, ak) = atom_cart_coords[i]
+        ai, aj, ak = atom_cart_coords[i]
         for ci, cj, ck in trans_cart_coords:
             # calculate distance to each atom
             di = ai - ci

@@ -3,6 +3,7 @@
 """
 Defines a helper class for plotting Grids
 """
+
 import io
 import multiprocessing as mp
 import sys

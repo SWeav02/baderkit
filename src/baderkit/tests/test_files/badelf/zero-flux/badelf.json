@@ -5,6 +5,7 @@
         "elf_labeler_kwargs": null
     },
     "oxidation_states": null,
+    "spin_system": "combined",
     "species": [
         "Ca",
         "Ca",
@@ -31,7 +32,8 @@
     "electride_formula": "Ca2 N1 e1",
     "electrides_per_formula": 0.6736902216,
     "electrides_per_reduced_formula": 0.6736902216,
-    "total_charge": 24.9999997309,
-    "total_volume": 71.8295231052,
-    "spin_system": "combined"
+    "total_electron_number": 24.9999997309,
+    "total_volume": 71.82952310515,
+    "vacuum_charge": 0.0,
+    "vacuum_volume": 0.0
 }

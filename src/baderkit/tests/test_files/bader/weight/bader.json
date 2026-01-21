@@ -10,6 +10,7 @@
     "vacuum_volume": 0.0,
     "num_vacuum": 0,
     "total_electron_number": 24.9999997308,
+    "total_volume": 71.8295231053,
     "atom_results": {
         "species": [
             "Ca",
