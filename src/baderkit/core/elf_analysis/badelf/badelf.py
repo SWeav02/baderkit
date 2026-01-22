@@ -13,13 +13,14 @@ from pymatgen.io.vasp import Potcar
 from scipy.ndimage import label
 from tqdm import tqdm
 
-from baderkit.core import ElfLabeler, Grid, Structure
-from baderkit.core.badelf.badelf_numba import get_badelf_assignments
+from baderkit.core.toolkit import Grid, Structure
+from baderkit.core.elf_analysis.badelf.badelf_numba import get_badelf_assignments
 from baderkit.core.bader.methods.shared_numba import (
     get_edges,
     get_min_avg_surface_dists,
 )
-from baderkit.core.labelers.bifurcation_graph.enum_and_styling import (
+from baderkit.core.elf_analysis.elf_labeler import ElfLabeler
+from baderkit.core.elf_analysis.bifurcation_graph.enum_and_styling import (
     FEATURE_DUMMY_ATOMS,
     FeatureType,
 )

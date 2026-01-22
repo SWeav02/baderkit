@@ -15,7 +15,7 @@ from pymatgen.analysis.local_env import CrystalNN
 from pymatgen.io.vasp import Potcar
 
 from baderkit.core import Bader, Grid, Structure
-from baderkit.core.labelers.bifurcation_graph import (
+from baderkit.core.elf_analysis.bifurcation_graph import (
     BifurcationGraph,
     DomainSubtype,
     FeatureType,

@@ -143,6 +143,67 @@ def get_edges(
                         break
     return edges
 
+@njit(cache=True)
+def get_neighboring_basin_surface_area(
+    labeled_array: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
+    neighbor_areas: NDArray[np.float64],
+    vacuum_mask: NDArray[np.bool_],
+    label_num: int,
+):
+    """
+    In a 3D array of labeled voxels, approximately calculates the surface area
+    of contact between each basin using the voxel voronoi surface.
+
+    Parameters
+    ----------
+    labeled_array : NDArray[np.int64]
+        A 3D array where each entry represents the basin label of the point.
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    neighbor_areas : NDArray[np.int64]
+        The surface area of each neighbor at the corresponding transform.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
+    label_num : int,
+        The total number of labels
+
+    Returns
+    -------
+    connection_counts : NDArray[np.bool_]
+        A 2D array with indices i, j where i is the label index, j is the neighboring
+        label index, and the entry at i, j is the total area in contact between
+        these labels. One extra index is added that stores the number of connections
+        to the vacuum for each atom.
+
+    """
+    nx, ny, nz = labeled_array.shape
+    # create a 2D array to store total number of connections
+    connection_counts = np.zeros((label_num, label_num+1), dtype=np.float64)
+
+    # loop over each voxel. We can't do this in parallel as we may write to the
+    # same entry and cause a race condition.
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
+                # get this voxels label
+                label = labeled_array[i, j, k]
+                # iterate over the neighboring voxels
+                for (si, sj, sk), area in zip(neighbor_transforms, neighbor_areas):
+                    # wrap points
+                    ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                    # get neighbors label
+                    neigh_label = labeled_array[ii, jj, kk]
+                    # if this is the same label, skip it
+                    if label == neigh_label:
+                        continue
+                    # add to our count for this connection
+                    connection_counts[label, neigh_label] += area
+    return connection_counts
+
 
 @njit(fastmath=True, cache=True)
 def get_basin_charges_and_volumes(

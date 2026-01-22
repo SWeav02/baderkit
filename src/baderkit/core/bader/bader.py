@@ -18,7 +18,7 @@ from baderkit.core.toolkit import Grid, Structure
 from baderkit.core.utilities.file_parsers import Format
 
 from .methods import Method
-from .methods.shared_numba import get_edges, get_min_avg_surface_dists
+from .methods.shared_numba import get_edges, get_min_avg_surface_dists, get_neighboring_basin_surface_area
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
@@ -145,6 +145,10 @@ class Bader:
                 "basin_edges",
                 "atom_edges",
                 "structure",
+                "basin_surface_areas",
+                "basin_contact_surface_areas",
+                "atom_surface_areas",
+                "atom_contact_surface_areas",
                 # Assigned by run_atom_assignment
                 "basin_atoms",
                 "basin_atom_dists",
@@ -623,6 +627,104 @@ class Bader:
                 neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
         return self._atom_edges
+
+    @property
+    def basin_contact_surface_areas(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            A 2D array with indices i, j where i is the basin index, j is the neighboring
+            basin index, and the entry at i, j is the total area in contact between
+            these labels. One extra index is added that stores the number of connections
+            to the vacuum.
+            
+            This value is calculated using voronoi cells of the voxels to 
+            approximate the shared area between a voxel point and a neighbor in
+            another basin.
+
+        """
+        if self._basin_contact_surface_areas is None:
+            neighbor_transforms, _, neighbor_areas, _ = self.reference_grid.point_neighbor_voronoi_transforms
+            self._basin_contact_surface_areas = get_neighboring_basin_surface_area(
+                labeled_array=self.basin_labels, 
+                neighbor_transforms=neighbor_transforms, 
+                neighbor_areas=neighbor_areas, 
+                vacuum_mask=self.vacuum_mask, 
+                label_num=len(self.basin_maxima_frac),
+                )
+        return self._basin_contact_surface_areas
+    
+    @property
+    def atom_contact_surface_areas(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            A 2D array with indices i, j where i is the atom index, j is the neighboring
+            atom index, and the entry at i, j is the total area in contact between
+            these labels. One extra index is added that stores the number of connections
+            to the vacuum.
+            
+            This value is calculated using voronoi cells of the voxels to 
+            approximate the shared area between a voxel point and a neighbor in
+            another atom.
+
+        """
+        if self._atom_contact_surface_areas is None:
+            neighbor_transforms, _, neighbor_areas, _ = self.reference_grid.point_neighbor_voronoi_transforms
+            self._atom_contact_surface_areas = get_neighboring_basin_surface_area(
+                labeled_array=self.atom_labels, 
+                neighbor_transforms=neighbor_transforms, 
+                neighbor_areas=neighbor_areas, 
+                vacuum_mask=self.vacuum_mask, 
+                label_num=len(self.structure),
+                )
+        return self._atom_contact_surface_areas
+    
+    @property
+    def basin_surface_areas(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The approximate surface area of each basin.
+            
+            This value is calculated using voronoi cells of the voxels to 
+            approximate the shared area between a voxel point and a neighbor in
+            another basin.
+
+        """
+        if self._basin_surface_areas is None:
+            # get the contact surface area of each basin
+            contact_surfaces = self.basin_contact_surface_areas
+            # sum across axis 0 to get the total
+            self._basin_surface_areas = np.sum(contact_surfaces, axis=1)
+        return self._basin_surface_areas
+    
+    @property
+    def atom_surface_areas(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The approximate surface area of each atom.
+            
+            This value is calculated using voronoi cells of the voxels to 
+            approximate the shared area between a voxel point and a neighbor in
+            another atom.
+
+        """
+        if self._atom_surface_areas is None:
+            # get the contact surface area of each atom
+            contact_surfaces = self.atom_contact_surface_areas
+            # sum across axis 0 to get the total
+            self._atom_surface_areas = np.sum(contact_surfaces, axis=1)
+        return self._atom_surface_areas
 
     @property
     def vacuum_charge(self) -> float:

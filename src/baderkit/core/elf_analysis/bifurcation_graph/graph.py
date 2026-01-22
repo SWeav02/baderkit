@@ -36,8 +36,6 @@ class BifurcationGraph:
     ----------
     structure : Structure
         The PyMatGen structure of the chemical system.
-    labeler_type : str
-        The type of labeler used to mark irreducible features in the graph.
     basin_maxima_frac : NDArray[float]
         The fractional coordinates of the Bader basins in the system.
     basin_charges : NDArray[float]
@@ -55,12 +53,13 @@ class BifurcationGraph:
     def __init__(
         self,
         structure: Structure,
-        labeler_type: str,
         basin_maxima_frac: NDArray[float],
         basin_charges: NDArray[float],
         basin_volumes: NDArray[float],
         crystalnn_kwargs: dict,
         atomic_radii: NDArray[float] = None,
+        remove_cutoff: float = 0.05,
+        reduce_cutoff: float = 0.10,
         **kwargs,
     ):
 
@@ -69,12 +68,14 @@ class BifurcationGraph:
         self._node_keys = {}
 
         self.structure = structure
-        self.labeler_type = labeler_type
         self.basin_maxima_frac = basin_maxima_frac
         self.basin_charges = basin_charges
         self.basin_volumes = basin_volumes
         self.crystalnn_kwargs = crystalnn_kwargs
         self.cnn = CrystalNN(**crystalnn_kwargs)
+        
+        self._remove_cutoff = remove_cutoff
+        self._reduce_cutoff = reduce_cutoff
 
     def __iter__(self):
         return iter(self.nodes)
@@ -259,6 +260,9 @@ class BifurcationGraph:
         return [
             i for i in self if not i.is_reducible and i.feature_type in feature_types
         ]
+###############################################################################
+# To Methods
+###############################################################################
 
     def to_dict(self) -> dict:
         """
@@ -273,7 +277,6 @@ class BifurcationGraph:
         graph_dict = {
             "nodes": [i.to_dict() for i in self],
             "structure": self.structure.to_json(),
-            "labeler_type": self.labeler_type,
             "crystalnn_kwargs": self.crystalnn_kwargs,
         }
         # convert array props to python list/int for json
@@ -289,6 +292,22 @@ class BifurcationGraph:
             graph_dict[prop_str] = prop
 
         return graph_dict
+
+    def to_json(self) -> str:
+        """
+        Creates a json string representation of the graph.
+
+        Returns
+        -------
+        str
+            A json string representation of the graph.
+
+        """
+        return json.dumps(self.to_dict())
+    
+###############################################################################
+# From Methods
+###############################################################################
 
     @classmethod
     def from_dict(cls, graph_dict: dict):
@@ -330,18 +349,6 @@ class BifurcationGraph:
 
         return graph
 
-    def to_json(self) -> str:
-        """
-        Creates a json string representation of the graph.
-
-        Returns
-        -------
-        str
-            A json string representation of the graph.
-
-        """
-        return json.dumps(self.to_dict())
-
     @classmethod
     def from_json(cls, json_str: str):
         """
@@ -362,23 +369,33 @@ class BifurcationGraph:
         return cls.from_dict(graph_dict)
 
     @classmethod
-    def from_labeler(cls, labeler: Bader):
+    def from_bader(cls, charge_bader: Bader, elf_bader: Bader, **kwargs):
         """
-        Creates a BifurcationGraph from a labeler object.
+        Creates a BifurcationGraph from the Bader method results of the charge
+        density and ELF (or ELI-D, LOL, etc.)
 
         Parameters
         ----------
-        labeler : Bader
-            A labeler object to create a graph from.
+        charge_bader : Bader
+            A Bader object partitioning over the charge density
+        elf_bader : Bader
+            A bader object partitioning over the ELF (or ELI-D, LOL, etc.)
 
         Returns
         -------
         graph : BifurcationGraph
-            The graph object created from a labeler.
+            The graph object created from the Bader results.
 
         """
-        reference_grid = labeler.reference_grid
-        neighbor_transforms, _ = reference_grid.point_neighbor_transforms
+        #######################################################################
+        # Run Bader for clean logging
+        #######################################################################
+        _ = charge_bader.atom_labels
+        _ = elf_bader.atom_labels
+        
+        # get convenience references
+        elf_grid = elf_bader.reference_grid
+        neighbor_transforms, _ = elf_grid.point_neighbor_transforms
 
         #######################################################################
         # Get Bifurcation Values and Corresponding domains
@@ -389,32 +406,32 @@ class BifurcationGraph:
 
         # get mask where potential saddle points connecting domains exist
         bif_mask = find_potential_saddle_points(
-            data=reference_grid.total,
-            edge_mask=labeler.bader.basin_edges,
+            data=elf_grid.total,
+            edge_mask=elf_bader.basin_edges,
             greater=True,
-            vacuum_mask=labeler.vacuum_mask,
+            vacuum_mask=elf_grid.vacuum_mask,
         )
 
         # get the basins connected at these points
         lower_points, upper_points, connection_values = find_domain_connections(
-            basin_labels=labeler.bader.basin_labels,
-            data=reference_grid.total,
+            basin_labels=elf_bader.basin_labels,
+            data=elf_grid.total,
             bif_mask=bif_mask,
             edge_mask=get_edges(
-                labeler.bader.basin_labels,
+                elf_bader.basin_labels,
                 neighbor_transforms,
-                labeler.vacuum_mask,
+                elf_bader.vacuum_mask,
             ),
-            num_basins=len(labeler.bader.basin_maxima_frac),
+            num_basins=len(elf_bader.basin_maxima_frac),
             neighbor_transforms=neighbor_transforms,
-            vacuum_mask=labeler.vacuum_mask,
+            vacuum_mask=elf_bader.vacuum_mask,
         )
 
         # clear mask for memory
         bif_mask = None
 
         # add maxima values as the points each basin "connects" to itself
-        basin_maxima = labeler.bader.basin_maxima_ref_values
+        basin_maxima = elf_bader.basin_maxima_ref_values
         basin_indices = np.arange(len(basin_maxima))
         lower_points = np.append(lower_points, basin_indices)
         upper_points = np.append(upper_points, basin_indices)
@@ -437,11 +454,11 @@ class BifurcationGraph:
         connection_values = connection_values[unique_indices]
 
         basin_maxima_grid = np.round(
-            labeler.reference_grid.frac_to_grid(labeler.bader.basin_maxima_frac)
+            elf_grid.frac_to_grid(elf_bader.basin_maxima_frac)
         ).astype(np.int64)
-        basin_maxima_grid %= labeler.reference_grid.shape
+        basin_maxima_grid %= elf_grid.shape
 
-        basin_maxima_ref_values = labeler.bader.basin_maxima_ref_values
+        basin_maxima_ref_values = elf_bader.basin_maxima_ref_values
 
         (
             domain_basins,
@@ -454,9 +471,9 @@ class BifurcationGraph:
             connection_values,
             basin_maxima_grid,
             basin_maxima_ref_values,
-            reference_grid.total,
+            elf_grid.total,
             neighbor_transforms,
-            vacuum_mask=labeler.vacuum_mask,
+            vacuum_mask=elf_bader.vacuum_mask,
         )
         # convert basins to numpy arrays to avoid Numba reflected list issue
         domain_basins = [np.array(i, dtype=np.int64) for i in domain_basins]
@@ -489,14 +506,14 @@ class BifurcationGraph:
 
         # possible saddle points where voids between domains first connect
         bif_mask = find_potential_saddle_points(
-            data=reference_grid.total,
-            edge_mask=labeler.bader.basin_edges,
+            data=elf_grid.total,
+            edge_mask=elf_bader.basin_edges,
             greater=False,
-            vacuum_mask=labeler.vacuum_mask,
+            vacuum_mask=elf_bader.vacuum_mask,
         )
 
         # get the possible values and clear mask
-        bif_values = reference_grid.total[bif_mask]
+        bif_values = elf_grid.total[bif_mask]
         bif_mask = None
 
         # add the values from the domain bifurcations and get only the
@@ -504,9 +521,9 @@ class BifurcationGraph:
         bif_values = np.unique(np.append(bif_values, domain_min_values))
 
         # get atom grid coordinates
-        atom_grid_coords = reference_grid.frac_to_grid(labeler.structure.frac_coords)
+        atom_grid_coords = elf_grid.frac_to_grid(elf_bader.structure.frac_coords)
         atom_grid_coords = (
-            np.round(atom_grid_coords).astype(np.int64) % reference_grid.shape
+            np.round(atom_grid_coords).astype(np.int64) % elf_grid.shape
         )
 
         # get the atoms each domain contains
@@ -526,10 +543,10 @@ class BifurcationGraph:
             domain_parents=domain_parents,
             atom_grid_coords=atom_grid_coords,
             neighbor_transforms=neighbor_transforms,
-            basin_labels=labeler.bader.basin_labels,
-            data=reference_grid.total,
-            num_basins=len(labeler.bader.basin_maxima_frac),
-            vacuum_mask=labeler.vacuum_mask,
+            basin_labels=elf_bader.basin_labels,
+            data=elf_grid.total,
+            num_basins=len(elf_bader.basin_maxima_frac),
+            vacuum_mask=elf_bader.vacuum_mask,
         )
         t2 = time.time()
         logging.info(f"Time: {round(t2-t1, 2)}")
@@ -538,12 +555,11 @@ class BifurcationGraph:
         # Construct Graph
         #######################################################################
         graph = cls(
-            structure=labeler.structure,
-            labeler_type=labeler.__class__.__name__,
-            basin_maxima_frac=labeler.bader.basin_maxima_frac,
-            basin_charges=labeler.bader.basin_charges,
-            basin_volumes=labeler.bader.basin_volumes,
-            crystalnn_kwargs=labeler.crystalnn_kwargs,
+            structure=elf_bader.structure,
+            basin_maxima_frac=elf_bader.basin_maxima_frac,
+            basin_charges=elf_bader.basin_charges,
+            basin_volumes=elf_bader.basin_volumes,
+            **kwargs
         )
         node_keys = []
         for feat_idx in range(len(domain_basins)):
@@ -596,21 +612,24 @@ class BifurcationGraph:
             elif len(parent.contained_atoms) != len(node.contained_atoms):
                 node.domain_subtype = DomainSubtype.reducible_atom
 
-        # TODO: It is common for there to be quite a few shallow reducible domains
-        # seemingly due to voxelation. I need a better method for removing these
-        cls._remove_shallow_reducible_nodes(graph, labeler.shallow_reducible_cutoff)
+        # It is common for there to be quite a few shallow reducible domains
+        # seemingly due to voxelation. We remove those below a relative cutoff.
+        cls._remove_shallow_reducible_nodes(graph, shallow_reducible_cutoff)
 
         # Now we check for reducible nodes that should really be considered
         # irreducible. These nodes are very deep but their children separate
         # at very low values
         cls._combine_shallow_irreducible_nodes(
-            graph, labeler.shallow_irreducible_cutoff
+            graph, shallow_irreducible_cutoff
         )
+        
+        # Next we calculate the overlap of each basin with the atomic regions
+        # of the charge denisty
 
         return graph
 
     @staticmethod
-    def _remove_shallow_reducible_nodes(graph, cutoff=0.05):
+    def _reduce_shallow_nodes(graph, remove_cutoff=0.05, reduce_cutoff=0.10):
         """
         Removes reducible nodes that are significantly more shallow than their
         parent nodes.
@@ -623,30 +642,19 @@ class BifurcationGraph:
             The cutoff ratio for a node to be considered shallow. The default is 0.05.
 
         """
+        # First we remove shallow reducible nodes
         # iterate over nodes from low to high
         reducible_nodes = graph.sorted_reducible_nodes
         for node in reducible_nodes[1:]:
             parent = node.parent
             # check that this node is very shallow relative to its parent
-            if (node.depth / parent.depth) > cutoff:
+            if (node.depth / parent.depth) > remove_cutoff:
                 continue
             # This is a very shallow node. delete it
             node.remove()
-
-    @staticmethod
-    def _combine_shallow_irreducible_nodes(graph, cutoff=0.1):
-        """
-        Combines irreducible nodes that are significantly more shallow than their
-        parent node (i.e. are essentially a single feature)
-
-        Parameters
-        ----------
-        graph : BifurcationGraph
-            The graph to combine shallow nodes in.
-        cutoff : float, optional
-            The cutoff ratio for nodes to be considered shallow. The default is 0.1.
-
-        """
+            
+        # Next we reduce very deep reducible nodes with very shallow children
+        # to single irreducible nodes
         # TODO: Add check that nodes are at relatively similar values
         # iterate from highest to lowest
         reducible_nodes = graph.sorted_reducible_nodes.copy()
@@ -665,7 +673,7 @@ class BifurcationGraph:
                     continue
                 # check if depth is more than the cutoff portion of the parent's depth. If so,
                 # we don't consider this domain to be shallow
-                if (child.depth / depth) > cutoff:
+                if (child.depth / depth) > reduce_cutoff:
                     is_shallow = False
                     break
 
@@ -674,6 +682,10 @@ class BifurcationGraph:
 
             # combine node
             node.make_irreducible()
+
+###############################################################################
+# Plotting Methods
+###############################################################################
 
     def get_plot(self) -> go.Figure:
         """
