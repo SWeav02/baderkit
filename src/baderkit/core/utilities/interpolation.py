@@ -375,7 +375,6 @@ def refine_maxima(
     new_coords %= 1
     return new_coords, new_values
 
-
 # Method that refines maxima using spline interpolation. I had a lot of issues with
 # ringing/overshooting
 # @njit(parallel=True, fastmath=True, cache=True)

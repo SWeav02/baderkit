@@ -7,9 +7,8 @@ from numpy.typing import NDArray
 from baderkit.core.bader.methods.shared_numba import get_best_neighbor
 from baderkit.core.utilities.basic import coords_to_flat, wrap_point
 
-
-@njit(cache=True, inline="always")
-def get_gradient_simple(
+@njit(cache=True)
+def get_gradient(
     data: NDArray[np.float64],
     voxel_coord: NDArray[np.int64],
     dir2lat: NDArray[np.float64],
@@ -62,7 +61,6 @@ def get_gradient_simple(
     r1 = dir2lat[1, 0] * gi + dir2lat[1, 1] * gj + dir2lat[1, 2] * gk
     r2 = dir2lat[2, 0] * gi + dir2lat[2, 1] * gj + dir2lat[2, 2] * gk
     return r0, r1, r2
-
 
 # NOTE
 # This is an alternative method for calculating the gradient that uses all of
@@ -189,7 +187,7 @@ def get_gradient_pointers_simple(
                 if maxima_mask[i, j, k]:
                     continue
                 # get gradient
-                gi, gj, gk = get_gradient_simple(
+                gi, gj, gk = get_gradient(
                     data=data,
                     voxel_coord=(i, j, k),
                     dir2lat=dir2lat,

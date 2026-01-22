@@ -1,21 +1,19 @@
 # -*- coding: utf-8 -*-
 
-import copy
 import importlib
-import json
 import logging
 import time
 import warnings
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
 
-from baderkit.core.toolkit import Grid, Structure
-from baderkit.core.utilities.file_parsers import Format
+from baderkit.core.base.base_analysis import BaseAnalysis
+from baderkit.core.toolkit import Structure
 
 from .methods import Method
 from .methods.shared_numba import get_edges, get_min_avg_surface_dists, get_neighboring_basin_surface_area
@@ -25,9 +23,11 @@ Self = TypeVar("Self", bound="Bader")
 
 # TODO:
 # - Add handling of non-nuclear attractors (e.g. those in Li metal)
+# - Improve docstrings, especially for write methods, so that they show kwargs
 
 
-class Bader:
+
+class Bader(BaseAnalysis):
     """
     Class for running Bader analysis on a regular grid. For information on each
     method, see our [docs](https://sweav02.github.io/baderkit/)
@@ -51,24 +51,45 @@ class Bader:
         If a float is provided, this is the value below which a point will
         be considered part of the vacuum. If a bool is provided, no vacuum
         will be used on False, and the default tolerance (0.001) will be used on True.
-    basin_tol : float, optional
-        The total charge value below which a basin will not be considered significant.
-        This is used only in write methods to avoid writing insignicant regions.
 
     """
+    
+    _reset_props = [
+        # assigned by run_bader
+        "basin_labels",
+        "basin_maxima_frac",
+        "basin_maxima_charge_values",
+        "basin_maxima_ref_values",
+        "basin_maxima_vox",
+        "basin_charges",
+        "basin_volumes",
+        # Assigned by calling the property
+        "basin_min_surface_distances",
+        "basin_avg_surface_distances",
+        "basin_edges",
+        "atom_edges",
+        "basin_surface_areas",
+        "basin_contact_surface_areas",
+        "atom_surface_areas",
+        "atom_contact_surface_areas",
+        # Assigned by run_atom_assignment
+        "basin_atoms",
+        "basin_atom_dists",
+        "atom_labels",
+        "atom_charges",
+        "atom_volumes",
+        "atom_min_surface_distances",
+        "atom_avg_surface_distances",
+    ]
 
     def __init__(
         self,
-        charge_grid: Grid,
-        total_charge_grid: Grid | None = None,
-        reference_grid: Grid | None = None,
         method: str | Method = Method.weight,
-        vacuum_tol: float | bool = 1.0e-3,
-        basin_tol: float = 1.0e-3,
         **kwargs,
     ):
+        super().__init__(**kwargs)
 
-        # ensure th method is valid
+        # ensure the method is valid
         valid_methods = [m.value for m in Method]
         if isinstance(method, Method):
             self._method = method
@@ -79,171 +100,12 @@ class Bader:
                 f"Invalid method '{method}'. Available options are: {valid_methods}"
             )
 
-        self._charge_grid = charge_grid
-        
-        # if no total charge is provided, use the base charge grid
-        if total_charge_grid is None:
-            total_charge_grid = charge_grid
-        
-        # if no reference grid is provided, use the total charge grid
-        if reference_grid is None:
-            reference_grid = total_charge_grid
-            
-        # ensure all grids have the same shape
-        for x in range(3):
-            assert charge_grid.shape[x] == total_charge_grid.shape[x] == reference_grid.shape[x], "Differing grid sizes found. All grids must have the same shape."
-
-        self._total_charge_grid = total_charge_grid
-        self._reference_grid = reference_grid
-
-        # check if the total charge grid has values below 0
-        if vacuum_tol is not False:
-            assert total_charge_grid.total.min() >= 0, "The charge grid used to detect vacuum has values below 0. This typically results from too low of a grid density and causes incorrect partitions."
-
-        # if vacuum tolerance is True, set it to the same default as above
-        if vacuum_tol is True:
-            self._vacuum_tol = 1.0e-3
-        else:
-            self._vacuum_tol = vacuum_tol
-        self._basin_tol = basin_tol
-
-        # set hidden class variables. This allows us to cache properties and
-        # still be able to recalculate them if needed, though that should only
-        # be done by advanced users
-        self._reset_properties()
-
         # whether or not to use overdetermined gradients in neargrid methods.
         self._use_overdetermined = False
 
     ###########################################################################
     # Set Properties
     ###########################################################################
-    def _reset_properties(
-        self,
-        include_properties: list[str] = None,
-        exclude_properties: list[str] = [],
-    ):
-        # if include properties is not provided, we wnat to reset everything
-        if include_properties is None:
-            include_properties = [
-                # assigned by run_bader
-                "basin_labels",
-                "basin_maxima_frac",
-                "basin_maxima_charge_values",
-                "basin_maxima_ref_values",
-                "basin_maxima_vox",
-                "basin_charges",
-                "basin_volumes",
-                "vacuum_charge",
-                "vacuum_volume",
-                "significant_basins",
-                "vacuum_mask",
-                "num_vacuum",
-                # Assigned by calling the property
-                "basin_min_surface_distances",
-                "basin_avg_surface_distances",
-                "basin_edges",
-                "atom_edges",
-                "structure",
-                "basin_surface_areas",
-                "basin_contact_surface_areas",
-                "atom_surface_areas",
-                "atom_contact_surface_areas",
-                # Assigned by run_atom_assignment
-                "basin_atoms",
-                "basin_atom_dists",
-                "atom_labels",
-                "atom_charges",
-                "atom_volumes",
-                "atom_min_surface_distances",
-                "atom_avg_surface_distances",
-            ]
-        # get our final list of properties
-        reset_properties = [
-            i for i in include_properties if i not in exclude_properties
-        ]
-        # set corresponding hidden variable to None
-        for prop in reset_properties:
-            setattr(self, f"_{prop}", None)
-
-    @property
-    def structure(self) -> Structure:
-        """
-
-        Returns
-        -------
-        Structure
-            The pymatgen structure basins are assigned to.
-
-        """
-        if self._structure is None:
-            self._structure = self.reference_grid.structure.copy()
-            self._structure.relabel_sites(ignore_uniq=True)
-        return self._structure
-
-    @property
-    def species(self) -> list[str]:
-        """
-
-        Returns
-        -------
-        list[str]
-            The species of each atom/dummy atom in the electride structure. Covalent
-            and metallic features are not included.
-
-        """
-        return [i.specie.symbol for i in self.structure]
-
-    @property
-    def charge_grid(self) -> Grid:
-        """
-
-        Returns
-        -------
-        Grid
-            A Grid object with the charge density that will be integrated.
-
-        """
-        return self._charge_grid
-
-    @charge_grid.setter
-    def charge_grid(self, value: Grid):
-        self._charge_grid = value
-        self._reset_properties()
-        
-    @property
-    def total_charge_grid(self) -> Grid:
-        """
-
-        Returns
-        -------
-        Grid
-            A Grid object whose values are used to determine vacuum regions.
-
-        """
-        return self._total_charge_grid
-    
-    @total_charge_grid.setter
-    def total_charge_grid(self, value: Grid):
-        self._total_charge_grid = value
-        self._reset_properties()
-
-    @property
-    def reference_grid(self) -> Grid:
-        """
-
-        Returns
-        -------
-        Grid
-            A Grid object whose values are used to construct the basins.
-
-        """
-        return self._reference_grid
-
-    @reference_grid.setter
-    def reference_grid(self, value: Grid):
-        self._reference_grid = value
-        self._reset_properties()
 
     @property
     def method(self) -> str:
@@ -271,64 +133,6 @@ class Bader:
                 f"Invalid method '{value}'. Available options are: {valid_values}"
             )
         self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
-
-    @property
-    def vacuum_tol(self) -> float | bool:
-        """
-
-        Returns
-        -------
-        float
-            The value below which a point will be considered part of the vacuum.
-            The default is 0.001.
-
-        """
-        return self._vacuum_tol
-
-    @vacuum_tol.setter
-    def vacuum_tol(self, value: float | bool):
-        self._vacuum_tol = value
-        self._reset_properties()
-        # TODO: only reset everything if the vacuum actually changes
-
-    @property
-    def use_reference_vacuum(self) -> bool:
-        """
-
-        Returns
-        -------
-        bool
-            Whether or not to use the reference file to determine regions of vacuum
-            (low charge density). This should generally be set to True unless the
-            ELF is being used as the reference. The default is True.
-
-        """
-        return self._use_reference_vacuum
-
-    @use_reference_vacuum.setter
-    def use_reference_vacuum(self, value: bool) -> bool:
-        self._use_reference_vacuum = value
-        self._reset_properties()
-        # TODO: only reset everything if the vacuum actually changes
-
-    @property
-    def basin_tol(self) -> float:
-        """
-
-        Returns
-        -------
-        float
-            The value below which a basin will not be considered significant. This
-            is used to avoid writing out data that is likely not valuable.
-            The default is 0.001.
-
-        """
-        return self._basin_tol
-
-    @basin_tol.setter
-    def basin_tol(self, value: float):
-        self._basin_tol = value
-        self._reset_properties(include_properties=["significant_basins"])
 
     ###########################################################################
     # Calculated Properties
@@ -499,21 +303,6 @@ class Bader:
         if self._basin_atom_dists is None:
             self.run_atom_assignment()
         return self._basin_atom_dists.round(10)
-
-    @property
-    def significant_basins(self) -> NDArray[bool]:
-        """
-
-        Returns
-        -------
-        NDArray[bool]
-            A 1D mask with an entry for each basin that is True where basins
-            are significant.
-
-        """
-        if self._significant_basins is None:
-            self._significant_basins = self.basin_charges > self.basin_tol
-        return self._significant_basins
 
     @property
     def atom_labels(self) -> NDArray[float]:
@@ -725,69 +514,6 @@ class Bader:
             # sum across axis 0 to get the total
             self._atom_surface_areas = np.sum(contact_surfaces, axis=1)
         return self._atom_surface_areas
-
-    @property
-    def vacuum_charge(self) -> float:
-        """
-
-        Returns
-        -------
-        float
-            The charge assigned to the vacuum.
-
-        """
-        if self._vacuum_charge is None:
-            self.run_bader()
-        return round(self._vacuum_charge, 10)
-
-    @property
-    def vacuum_volume(self) -> float:
-        """
-
-        Returns
-        -------
-        float
-            The total volume assigned to the vacuum.
-
-        """
-        if self._vacuum_volume is None:
-            self.run_bader()
-        return round(self._vacuum_volume, 10)
-
-    @property
-    def vacuum_mask(self) -> NDArray[bool]:
-        """
-
-        Returns
-        -------
-        NDArray[bool]
-            A mask representing the voxels that belong to the vacuum.
-
-        """
-        if self._vacuum_mask is None:
-            # if vacuum tolerance is set to False, ignore vacuum
-            if self.vacuum_tol is False:
-                self._vacuum_mask = np.zeros(self.total_charge_grid.shape, dtype=np.bool_)
-            else:
-                # get vacuum mask
-                self._vacuum_mask = self.total_charge_grid.total < (
-                    self.vacuum_tol * self.structure.volume  # normalize
-                )
-        return self._vacuum_mask
-
-    @property
-    def num_vacuum(self) -> int:
-        """
-
-        Returns
-        -------
-        int
-            The number of vacuum points in the array
-
-        """
-        if self._num_vacuum is None:
-            self._num_vacuum = np.count_nonzero(self.vacuum_mask)
-        return self._num_vacuum
 
     @property
     def total_electron_number(self) -> float:
@@ -1010,181 +736,14 @@ class Bader:
             )
         )
 
-    @classmethod
-    def from_vasp(
-        cls,
-        charge_filename: Path | str = "CHGCAR",
-        total_charge_filename: Path | None | str = None,
-        reference_filename: Path | None | str = None,
-        total_only: bool = True,
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a Bader class object from VASP files.
-
-        Parameters
-        ----------
-        charge_filename : Path | str, optional
-            The path to the CHGCAR like file that will be used for integrating charge.
-            The default is "CHGCAR".
-        total_charge_filename : Grid | None, optional
-            The path to the CHGCAR like file used for determining vacuum regions 
-            in the system. For pseudopotential codes this represents the total 
-            electron density and should be provided whenever possible. 
-            If None, defaults to the charge_grid.
-        reference_filename : Path | None | str, optional
-            The path to CHGCAR like file that will be used for partitioning.
-            If None, the total charge file will be used for partitioning.
-        total_only: bool
-            If true, only the first set of data in each file will be read. This
-            increases speed and reduced memory usage as the other data is typically
-            not used.
-            Defaults to True.
-        **kwargs : dict
-            Keyword arguments to pass to the Bader class.
-
-        Returns
-        -------
-        Self
-            A Bader class object.
-
-        """
-        charge_grid = Grid.from_vasp(charge_filename, total_only=total_only)
-        
-        if total_charge_filename is None:
-            total_charge_grid = None
-        else:
-            total_charge_grid = Grid.from_vasp(total_charge_filename, total_only=total_only)
-            
-        if reference_filename is None:
-            reference_grid = None
-        else:
-            reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
-
-        return cls(charge_grid=charge_grid, total_charge_grid=total_charge_grid, reference_grid=reference_grid, **kwargs)
-
-    @classmethod
-    def from_cube(
-        cls,
-        charge_filename: Path | str,
-        total_charge_filename: Path | None | str = None,
-        reference_filename: Path | None | str = None,
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a Bader class object from .cube files.
-
-        Parameters
-        ----------
-        charge_filename : Path | str, optional
-            The path to the .cube like file that will be used for integrating charge.
-            The default is "CHGCAR".
-        total_charge_filename : Grid | None, optional
-            The path to the .cube like file used for determining vacuum regions 
-            in the system. For pseudopotential codes this represents the total 
-            electron density and should be provided whenever possible. 
-            If None, defaults to the charge_grid.
-        reference_filename : Path | None | str, optional
-            The path to .cube file that will be used for partitioning.
-            If None, the total charge file will be used for partitioning.
-        **kwargs : dict
-            Keyword arguments to pass to the Bader class.
-
-        Returns
-        -------
-        Self
-            A Bader class object.
-
-        """
-        charge_grid = Grid.from_cube(charge_filename)
-        if total_charge_filename is None:
-            total_charge_grid = None
-        else:
-            total_charge_grid = Grid.from_cube(total_charge_filename)
-        if reference_filename is None:
-            reference_grid = None
-        else:
-            reference_grid = Grid.from_cube(reference_filename)
-
-        return cls(charge_grid=charge_grid, total_charge_grid=total_charge_grid, reference_grid=reference_grid, **kwargs)
-
-    @classmethod
-    def from_dynamic(
-        cls,
-        charge_filename: Path | str,
-        total_charge_filename: Path | None | str = None,
-        reference_filename: Path | None | str = None,
-        format: Literal["vasp", "cube", None] = None,
-        total_only: bool = True,
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a Bader class object from VASP or .cube files. If no format is
-        provided the method will automatically try and determine the file type
-        from the name
-
-        Parameters
-        ----------
-        charge_filename : Path | str
-            The path to the file containing the charge density that will be
-            integrated.
-        total_charge_filename : Grid | None, optional
-            The path to the file used for determining vacuum regions 
-            in the system. For pseudopotential codes this represents the total 
-            electron density and should be provided whenever possible. 
-            If None, defaults to the charge_grid.
-        reference_filename : Path | None | str, optional
-            The path to the file that will be used for partitioning.
-            If None, defaults to the total charge grid.
-        format : Literal["vasp", "cube", None], optional
-            The format of the grids to read in. If None, the formats will be
-            guessed from the file names.
-        total_only: bool
-            If true, only the first set of data in the file will be read. This
-            increases speed and reduced memory usage as the other data is typically
-            not used. This is only used if the file format is determined to be
-            VASP, as cube files are assumed to contain only one set of data.
-            Defaults to True.
-        **kwargs : dict
-            Keyword arguments to pass to the Bader class.
-
-        Returns
-        -------
-        Self
-            A Bader class object.
-
-        """
-        charge_grid = Grid.from_dynamic(charge_filename, format=format, total_only=total_only)
-        if total_charge_filename is None:
-            total_charge_grid = None
-        else:
-            total_charge_grid = Grid.from_dynamic(total_charge_filename, format=format, total_only=total_only)
-        if reference_filename is None:
-            reference_grid = None
-        else:
-            reference_grid = Grid.from_dynamic(reference_filename, format=format, total_only=total_only)
-
-        return cls(charge_grid=charge_grid, total_charge_grid=total_charge_grid, reference_grid=reference_grid, **kwargs)
-
-    def copy(self) -> Self:
-        """
-
-        Returns
-        -------
-        Self
-            A deep copy of this Bader object.
-
-        """
-        return copy.deepcopy(self)
-
+    ###########################################################################
+    # Write Methods
+    ###########################################################################
+    
     def write_basin_volumes(
         self,
-        basin_indices: NDArray,
-        directory: str | Path = None,
-        write_grid: Literal["charge_grid", "total_charge_grid", "reference_grid"] = "charge_grid",
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        basin_indices: NDArray[int],
+        **kwargs,
     ):
         """
         Writes bader basins to vasp-like files. Points belonging to the basin
@@ -1195,58 +754,21 @@ class Bader:
         ----------
         basin_indices : NDArray
             The list of basin indices to write
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_grid : Literal["charge_grid", "total_charge_grid", "reference_grid"], optional
-            The property name of the grid to write to file. Defaults to 'charge_grid'
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        # get the data to use
-        grid = getattr(self, write_grid, None)
-        if grid is None:
-            logging.warning("Provided grid name does not exist. Defaulting to 'charge_grid'")
-            grid = self.charge_grid
-            
-        data_array = grid.total
-        data_type = grid.data_type
-
-        if directory is None:
-            directory = Path(".")
         for basin in basin_indices:
             # get a mask everywhere but the requested basin
-            mask = self.basin_labels != basin
-            # copy data to avoid overwriting. Set data off of basin to 0
-            data_array_copy = data_array.copy()
-            data_array_copy[mask] = 0.0
-            grid = Grid(
-                structure=self.structure,
-                data={"total": data_array_copy},
-                data_type=data_type,
-            )
-            # get prefix
-            if prefix_override is None:
-                prefix_override = grid.data_type.prefix
-
-            file_path = directory / f"{prefix_override}_b{basin}"
-            # write file
-            grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+            mask = self.basin_labels == basin
+            kwargs["suffix"] = f"_b{basin}"
+            
+            self._write_volume(
+                volume_mask=mask, 
+                **kwargs)
 
     def write_all_basin_volumes(
-        self,
-        directory: str | Path = None,
-        write_grid: Literal["charge_grid", "total_charge_grid", "reference_grid"] = "charge_grid",
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+            self,
+        basin_tol: float = 1e-03,
+        **kwargs,
     ):
         """
         Writes all bader basins to vasp-like files. Points belonging to the basin
@@ -1255,39 +777,20 @@ class Bader:
 
         Parameters
         ----------
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_grid : Literal["charge_grid", "total_charge_grid", "reference_grid"], optional
-            The property name of the grid to write to file. Defaults to 'charge_grid'
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
+        basin_tol : float, optional
+            The total charge value below which a basin will not be considered written      
 
         """
-        basin_indices = np.where(self.significant_basins)[0]
+        basin_indices = np.where(self.basin_charges > basin_tol)[0]
         self.write_basin_volumes(
             basin_indices=basin_indices,
-            directory=directory,
-            write_grid=write_grid,
-            prefix_override=prefix_override,
-            output_format=output_format,
-            **writer_kwargs,
+            **kwargs,
         )
 
     def write_basin_volumes_sum(
         self,
-        basin_indices: NDArray,
-        directory: str | Path = None,
-        write_grid: Literal["charge_grid", "total_charge_grid", "reference_grid"] = "charge_grid",
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        basin_indices: NDArray[int],
+        **kwargs,
     ):
         """
         Writes the union of the provided bader basins to vasp-like files.
@@ -1298,59 +801,20 @@ class Bader:
         ----------
         basin_indices : NDArray
             The list of basin indices to sum and write
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_grid : Literal["charge_grid", "total_charge_grid", "reference_grid"], optional
-            The property name of the grid to write to file. Defaults to 'charge_grid'
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        # get the data to use
-        grid = getattr(self, write_grid, None)
-        if grid is None:
-            logging.warning("Provided grid name does not exist. Defaulting to 'charge_grid'")
-            grid = self.charge_grid
-            
-        data_array = grid.total
-        data_type = grid.data_type
-
-        if directory is None:
-            directory = Path(".")
         # create a mask including each of the requested basins
         mask = np.isin(self.basin_labels, basin_indices)
-        # copy data to avoid overwriting. Set data off of basin to 0
-        data_array_copy = data_array.copy()
-        data_array_copy[~mask] = 0.0
-        grid = Grid(
-            structure=self.structure,
-            data={"total": data_array_copy},
-            data_type=data_type,
-        )
-        # get prefix
-        if prefix_override is None:
-            prefix_override = grid.data_type.prefix
-
-        file_path = directory / f"{prefix_override}_bsum"
-
-        # write file
-        grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+        # write
+        kwargs["suffix"] = "_bsum"
+        self._write_volume(
+            volume_mask=mask, 
+            **kwargs)
 
     def write_atom_volumes(
         self,
         atom_indices: NDArray,
-        directory: str | Path = None,
-        write_grid: Literal["charge_grid", "total_charge_grid", "reference_grid"] = "charge_grid",
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        **kwargs,
     ):
         """
         Writes atomic basins to vasp-like files. Points belonging to the atom
@@ -1361,103 +825,37 @@ class Bader:
         ----------
         atom_indices : NDArray
             The list of atom indices to write
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_grid : Literal["charge_grid", "total_charge_grid", "reference_grid"], optional
-            The property name of the grid to write to file. Defaults to 'charge_grid'
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        # get the data to use
-        grid = getattr(self, write_grid, None)
-        if grid is None:
-            logging.warning("Provided grid name does not exist. Defaulting to 'charge_grid'")
-            grid = self.charge_grid
-            
-        data_array = grid.total
-        data_type = grid.data_type
 
-        if directory is None:
-            directory = Path(".")
         for atom_index in atom_indices:
-            # get a mask everywhere but the requested basin
-            mask = self.atom_labels != atom_index
-            # copy data to avoid overwriting. Set data off of basin to 0
-            data_array_copy = data_array.copy()
-            data_array_copy[mask] = 0.0
-            grid = Grid(
-                structure=self.structure,
-                data={"total": data_array_copy},
-                data_type=data_type,
-            )
-
-            # get prefix
-            if prefix_override is None:
-                prefix_override = grid.data_type.prefix
-
-            file_path = directory / f"{prefix_override}_a{atom_index}"
-            # write file
-            grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+            # get a mask at the requested atoms
+            mask = self.atom_labels == atom_index
+            kwargs["suffix"] = "_a{atom_index}"            
+            self._write_volume(
+                volume_mask=mask, 
+                **kwargs)
 
     def write_all_atom_volumes(
         self,
-        directory: str | Path = None,
-        write_grid: Literal["charge_grid", "total_charge_grid", "reference_grid"] = "charge_grid",
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        **kwargs,
     ):
         """
         Writes all atomic basins to vasp-like files. Points belonging to the atom
         will have values from the charge or reference grid, and all other points
         will be 0.
 
-        Parameters
-        ----------
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_grid : Literal["charge_grid", "total_charge_grid", "reference_grid"], optional
-            The property name of the grid to write to file. Defaults to 'charge_grid'
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
-
         """
         atom_indices = np.array(range(len(self.structure)))
         self.write_atom_volumes(
             atom_indices=atom_indices,
-            directory=directory,
-            write_grid=write_grid,
-            prefix_override=prefix_override,
-            output_format=output_format,
-            **writer_kwargs,
+            **kwargs,
         )
 
     def write_atom_volumes_sum(
         self,
         atom_indices: NDArray,
-        directory: str | Path = None,
-        write_grid: Literal["charge_grid", "total_charge_grid", "reference_grid"] = "charge_grid",
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        **kwargs,
     ):
         """
         Writes the union of the provided atom basins to vasp-like files.
@@ -1468,57 +866,20 @@ class Bader:
         ----------
         atom_indices : NDArray
             The list of atom indices to sum and write
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_grid : Literal["charge_grid", "total_charge_grid", "reference_grid"], optional
-            The property name of the grid to write to file. Defaults to 'charge_grid'
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        # get the data to use
-        grid = getattr(self, write_grid, None)
-        if grid is None:
-            logging.warning("Provided grid name does not exist. Defaulting to 'charge_grid'")
-            grid = self.charge_grid
-            
-        data_array = grid.total
-        data_type = grid.data_type
 
-        if directory is None:
-            directory = Path(".")
         mask = np.isin(self.atom_labels, atom_indices)
-        data_array_copy = data_array.copy()
-        data_array_copy[~mask] = 0.0
-        grid = Grid(
-            structure=self.structure,
-            data={"total": data_array_copy},
-            data_type=data_type,
-        )
-
-        # get prefix
-        if prefix_override is None:
-            prefix_override = grid.data_type.prefix
-
-        file_path = directory / f"{prefix_override}_asum"
-        # write file
-        grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+        # write
+        kwargs["suffix"] = "_asum"
+        self._write_volume(
+            volume_mask=mask, 
+            **kwargs)
 
     def write_species_volume(
         self,
         species: str,
-        directory: str | Path = None,
-        write_grid: Literal["charge_grid", "total_charge_grid", "reference_grid"] = "charge_grid",
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        **kwargs,
     ):
         """
         Writes the charge density or reference file for all atoms of the given
@@ -1528,47 +889,18 @@ class Bader:
         ----------
         species : str, optional
             The species to write.
-        directory : str | Path, optional
-            The directory to write the result to. The default is None.
-        write_grid : Literal["charge_grid", "total_charge_grid", "reference_grid"], optional
-            The property name of the grid to write to file. Defaults to 'charge_grid'
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        if directory is None:
-            directory = Path(".")
-
-        # Get voxel assignments and data
-        voxel_assignment_array = self.atom_labels
-        # get the data to use
-        grid = getattr(self, write_grid, None)
-        if grid is None:
-            logging.warning("Provided grid name does not exist. Defaulting to 'charge_grid'")
-            grid = self.charge_grid
 
         # add dummy atoms if desired
         indices = self.structure.indices_from_symbol(species)
 
         # Get mask where the grid belongs to requested species
-        mask = np.isin(voxel_assignment_array, indices, invert=True)
-        grid.total[mask] = 0
-        if grid.diff is not None:
-            grid.diff[mask] = 0
-
-        # get prefix
-        if prefix_override is None:
-            prefix_override = grid.data_type.prefix
-
-        file_path = directory / f"{prefix_override}_{species}"
-        # write file
-        grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+        mask = np.isin(self.atom_labels, indices)
+        kwargs["suffix"] = "_{species}"
+        self._write_volume(
+            volume_mask=mask, 
+            **kwargs)
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """
@@ -1595,7 +927,7 @@ class Bader:
         )
         return atoms_df
 
-    def get_basin_results_dataframe(self):
+    def get_basin_results_dataframe(self, basin_tol: float):
         """
         Collects a summary of results for the basins in a pandas DataFrame.
 
@@ -1603,9 +935,11 @@ class Bader:
         -------
         basin_df : pd.DataFrame
             A table summarizing the basins.
+        basin_tol : float, optional
+            The total charge value below which a basin will not be considered significant.
 
         """
-        subset = self.significant_basins
+        subset = self.basin_charges > basin_tol
         basin_frac_coords = self.basin_maxima_frac[subset]
         basin_df = pd.DataFrame(
             {
@@ -1747,7 +1081,6 @@ class Bader:
         method_kwargs = {
             "method": self.method,
             "vacuum_tol": self.vacuum_tol,
-            "basin_tol": self.basin_tol,
         }
         results["method_kwargs"] = method_kwargs
         results["oxidation_states"] = self.get_oxidation_from_potcar(potcar_path)
@@ -1773,7 +1106,6 @@ class Bader:
             "basin_maxima_charge_values",
             "basin_maxima_ref_values",
             "basin_maxima_vox",
-            "significant_basins",
             "basin_min_surface_distances",
             "basin_avg_surface_distances",
         ]:
@@ -1801,7 +1133,6 @@ class Bader:
                 "basin_maxima_vox",
                 "basin_charges",
                 "basin_volumes",
-                "significant_basins",
                 "basin_min_surface_distances",
                 "basin_avg_surface_distances",
                 "basin_atoms",
@@ -1830,37 +1161,3 @@ class Bader:
         results["basin_results"] = basin_results
 
         return results
-
-    def to_json(self, **kwargs) -> str:
-        """
-        Creates a JSON string representation of the results, typically for writing
-        results to file.
-
-        Parameters
-        ----------
-        **kwargs : dict
-            Keyword arguments for the to_dict method.
-
-        Returns
-        -------
-        str
-            A JSON string representation of the BadELF results.
-
-        """
-        return json.dumps(self.to_dict(use_json=True, **kwargs))
-
-    def write_json(self, filepath: Path | str = "bader.json", **kwargs) -> None:
-        """
-        Writes results of the analysis to file in a JSON format.
-
-        Parameters
-        ----------
-        filepath : Path | str, optional
-            The Path to write the results to. The default is "bader.json".
-        **kwargs : dict
-            keyword arguments for the to_dict method.
-
-        """
-        filepath = Path(filepath)
-        with open(filepath, "w") as json_file:
-            json.dump(self.to_dict(use_json=True, **kwargs), json_file, indent=4)

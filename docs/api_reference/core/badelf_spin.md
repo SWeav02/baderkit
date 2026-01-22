@@ -1,1 +1,1 @@
-::: src.baderkit.core.badelf.SpinBadelf
+::: src.baderkit.core.elf_analysis.badelf.SpinBadelf
