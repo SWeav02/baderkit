@@ -6,11 +6,12 @@ from numpy.typing import NDArray
 from baderkit.core.toolkit import Structure
 from .overlap_numba import get_overlap_counts
 
+
 class BasinOverlap:
     """
     A convenience class for calculating the overlap between basins calculated
     in the charge density and a localization density such as ELF.
-    
+
     Vacuum points should be represented by -1.
     """
 
@@ -26,15 +27,16 @@ class BasinOverlap:
         self._local_structure = local_structure
         self._atom_labels = atom_labels
         self._local_labels = local_labels
-        
-        assert np.all(np.equal(atom_labels.shape, local_labels.shape)), "Label arrays must have the same grid shape."
-        
-        self._vacuum_mask = (atom_labels == -1) | (local_labels == -1)
-        self._num_local_basins = np.ptp(local_labels[~self.vacuum_mask])+1
-        self._num_atom_basins = np.ptp(atom_labels[~self.vacuum_mask])+1
-        
-        self._reset_properties()
 
+        assert np.all(
+            np.equal(atom_labels.shape, local_labels.shape)
+        ), "Label arrays must have the same grid shape."
+
+        self._vacuum_mask = (atom_labels == -1) | (local_labels == -1)
+        self._num_local_basins = np.ptp(local_labels[~self.vacuum_mask]) + 1
+        self._num_atom_basins = np.ptp(atom_labels[~self.vacuum_mask]) + 1
+
+        self._reset_properties()
 
     ###########################################################################
     # Set Properties
@@ -60,7 +62,7 @@ class BasinOverlap:
         # set corresponding hidden variable to None
         for prop in reset_properties:
             setattr(self, f"_{prop}", None)
-            
+
     @property
     def local_structure(self) -> Structure:
         """
@@ -73,7 +75,7 @@ class BasinOverlap:
 
         """
         return self._local_structure
-    
+
     @property
     def atom_structure(self) -> Structure:
         """
@@ -85,7 +87,7 @@ class BasinOverlap:
 
         """
         return self._atom_structure
-            
+
     @property
     def local_labels(self) -> NDArray[np.int64]:
         """
@@ -98,7 +100,7 @@ class BasinOverlap:
 
         """
         return self._local_labels
-            
+
     @property
     def atom_labels(self) -> NDArray[np.int64]:
         """
@@ -111,7 +113,7 @@ class BasinOverlap:
 
         """
         return self._atom_labels
-            
+
     @property
     def vacuum_mask(self) -> NDArray[np.bool_]:
         """
@@ -123,7 +125,7 @@ class BasinOverlap:
 
         """
         return self._vacuum_mask
-    
+
     @property
     def num_local_basins(self) -> int:
         """
@@ -134,9 +136,9 @@ class BasinOverlap:
             The total number of local basins in the labeled localization grid
 
         """
-        
+
         return self._num_local_basins
-    
+
     @property
     def num_atom_basins(self) -> int:
         """
@@ -147,9 +149,9 @@ class BasinOverlap:
             The total number of atoms in the labeled atom grid
 
         """
-        
+
         return self._num_atom_basins
-    
+
     @property
     def atomicities(self) -> NDArray[np.int64]:
         """
@@ -168,7 +170,7 @@ class BasinOverlap:
             # non-zero entries in each row of our overlap_matrix
             self._atomicities = np.count_nonzero(self.overlap_matrix, axis=1)
         return self._atomicities
-    
+
     @property
     def overlap_atoms(self) -> list[NDArray[np.int64]]:
         """
@@ -183,7 +185,7 @@ class BasinOverlap:
         if self._overlap_atoms is None:
             self._get_overlap_portions()
         return self._overlap_atoms
-    
+
     @property
     def overlap_fractions(self) -> NDArray[np.float64]:
         """
@@ -199,7 +201,6 @@ class BasinOverlap:
             self._get_overlap_portions()
         return self._overlap_fractions
 
-    
     @property
     def overlap_labels(self) -> NDArray[np.int64]:
         """
@@ -208,7 +209,7 @@ class BasinOverlap:
         -------
         NDArray[np.int64]
             A 3D array with the same shape as the Bader grids representing the
-            basin intersections. The entry number is the result of the szudzik 
+            basin intersections. The entry number is the result of the szudzik
             pairing function for indices i and j where i is the local basin index
             and j is the bader atom index.
 
@@ -216,7 +217,7 @@ class BasinOverlap:
         if self._overlap_labels is None:
             self._get_overlap()
         return self._overlap_labels
-    
+
     @property
     def overlap_matrix(self) -> NDArray[np.int64]:
         """
@@ -232,20 +233,22 @@ class BasinOverlap:
         if self._overlap_matrix is None:
             self._get_overlap()
         return self._overlap_matrix
-    
+
     def _get_overlap(self):
         self._overlap_matrix, self._overlap_labels = get_overlap_counts(
-            local_labels=self.local_labels, # ELF basins
-            atom_labels=self.atom_labels, # Bader Atoms
+            local_labels=self.local_labels,  # ELF basins
+            atom_labels=self.atom_labels,  # Bader Atoms
             vacuum_mask=self.vacuum_mask,
             num_local=self.num_local_basins,
-            num_charge=self.num_atom_basins
-            )
-            
+            num_charge=self.num_atom_basins,
+        )
+
     def _get_overlap_portions(self):
         # get overlap matrix and normalize rows
-        overlap_matrix = self.overlap_matrix / self.overlap_matrix.sum(axis=1, keepdims=True)
-        
+        overlap_matrix = self.overlap_matrix / self.overlap_matrix.sum(
+            axis=1, keepdims=True
+        )
+
         # get the indices of the non-zero entries in our overlap matrix
         rows, cols = np.nonzero(overlap_matrix)
         # get the overlap counts at these points
@@ -255,5 +258,3 @@ class BasinOverlap:
         # get atom indices and overlap counts
         self._overlap_atoms = np.split(cols, np.cumsum(row_bins)[:-1])
         self._overlap_fractions = np.split(overlap_counts, np.cumsum(row_bins)[:-1])
-            
-    

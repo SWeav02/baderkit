@@ -198,7 +198,7 @@ class ElfLabeler:
 
         self.charge_grid = charge_grid
         self.elf_grid = elf_grid
-        
+
         if total_charge_grid is None:
             total_charge_grid = charge_grid
         self.total_charge_grid = total_charge_grid
@@ -259,16 +259,17 @@ class ElfLabeler:
         # create a bader object for the elf
         self.elf_bader = Bader(
             charge_grid=charge_grid,
+            total_charge_grid=total_charge_grid,
             reference_grid=elf_grid,
             vacuum_tol=vacuum_tol,
             use_reference_vacuum=False,
             **kwargs,
         )
-        
+
         # create a bader object for the charge density
-        self.elf_bader = Bader(
+        self.charge_bader = Bader(
             charge_grid=charge_grid,
-            reference_grid=total_charge_grid,
+            total_charge_grid=total_charge_grid,
             vacuum_tol=vacuum_tol,
             use_reference_vacuum=True,
             **kwargs,

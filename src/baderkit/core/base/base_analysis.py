@@ -35,8 +35,8 @@ class BaseAnalysis(ABC):
         be provided whenever possible. If None, defaults to the charge_grid.
     reference_grid : Grid | None, optional
         The Grid object whose values will be used to construct the basins. This
-        should typically only be set when partitioning functions other than the 
-        charge density (e.g. ELI-D, ELF, etc.).If None, defaults to the 
+        should typically only be set when partitioning functions other than the
+        charge density (e.g. ELI-D, ELF, etc.).If None, defaults to the
         total_charge_grid.
     vacuum_tol : float | bool, optional
         If a float is provided, this is the value below which a point will
@@ -44,14 +44,14 @@ class BaseAnalysis(ABC):
         will be used on False, and the default tolerance (0.001) will be used on True.
 
     """
-    
+
     _base_reset_props = [
         "vacuum_mask",
         "num_vacuum",
         "vacuum_charge",
         "vacuum_volume",
-        "structure"
-        ]
+        "structure",
+    ]
     _reset_props = []
 
     def __init__(
@@ -64,25 +64,31 @@ class BaseAnalysis(ABC):
     ):
 
         self._charge_grid = charge_grid
-        
+
         # if no total charge is provided, use the base charge grid
         if total_charge_grid is None:
             total_charge_grid = charge_grid
-        
+
         # if no reference grid is provided, use the total charge grid
         if reference_grid is None:
             reference_grid = total_charge_grid
-            
+
         # ensure all grids have the same shape
         for x in range(3):
-            assert charge_grid.shape[x] == total_charge_grid.shape[x] == reference_grid.shape[x], "Differing grid sizes found. All grids must have the same shape."
+            assert (
+                charge_grid.shape[x]
+                == total_charge_grid.shape[x]
+                == reference_grid.shape[x]
+            ), "Differing grid sizes found. All grids must have the same shape."
 
         self._total_charge_grid = total_charge_grid
         self._reference_grid = reference_grid
 
         # check if the total charge grid has values below 0
         if vacuum_tol is not False:
-            assert total_charge_grid.total.min() >= 0, "The charge grid used to detect vacuum has values below 0. This typically results from too low of a grid density and causes incorrect partitions."
+            assert (
+                total_charge_grid.total.min() >= 0
+            ), "The charge grid used to detect vacuum has values below 0. This typically results from too low of a grid density and causes incorrect partitions."
 
         # if vacuum tolerance is True, set it to the same default as above
         if vacuum_tol is True:
@@ -128,7 +134,7 @@ class BaseAnalysis(ABC):
             self._structure = self.reference_grid.structure.copy()
             self._structure.relabel_sites(ignore_uniq=True)
         return self._structure
-    
+
     @property
     def species(self) -> list[str]:
         """
@@ -156,7 +162,7 @@ class BaseAnalysis(ABC):
     def charge_grid(self, value: Grid):
         self._charge_grid = value
         self._reset_properties()
-        
+
     @property
     def total_charge_grid(self) -> Grid:
         """
@@ -168,7 +174,7 @@ class BaseAnalysis(ABC):
 
         """
         return self._total_charge_grid
-    
+
     @total_charge_grid.setter
     def total_charge_grid(self, value: Grid):
         self._total_charge_grid = value
@@ -224,7 +230,10 @@ class BaseAnalysis(ABC):
 
         """
         if self._vacuum_charge is None:
-            self._vacuum_charge = self.charge_grid.total[self.vacuum_mask].sum() / self.charge_grid.ngridpts
+            self._vacuum_charge = (
+                self.charge_grid.total[self.vacuum_mask].sum()
+                / self.charge_grid.ngridpts
+            )
         return round(self._vacuum_charge, 10)
 
     @property
@@ -238,7 +247,9 @@ class BaseAnalysis(ABC):
 
         """
         if self._vacuum_volume is None:
-            self._vacuum_volume = (self.num_vacuum / self.reference_grid.ngridpts) * self.structure.volume
+            self._vacuum_volume = (
+                self.num_vacuum / self.reference_grid.ngridpts
+            ) * self.structure.volume
         return round(self._vacuum_volume, 10)
 
     @property
@@ -254,7 +265,9 @@ class BaseAnalysis(ABC):
         if self._vacuum_mask is None:
             # if vacuum tolerance is set to False, ignore vacuum
             if self.vacuum_tol is False:
-                self._vacuum_mask = np.zeros(self.total_charge_grid.shape, dtype=np.bool_)
+                self._vacuum_mask = np.zeros(
+                    self.total_charge_grid.shape, dtype=np.bool_
+                )
             else:
                 # get vacuum mask
                 self._vacuum_mask = self.total_charge_grid.total < (
@@ -279,7 +292,7 @@ class BaseAnalysis(ABC):
     ###########################################################################
     # From Methods
     ###########################################################################
-    
+
     @classmethod
     def from_vasp(
         cls,
@@ -298,9 +311,9 @@ class BaseAnalysis(ABC):
             The path to the CHGCAR like file that will be used for integrating charge.
             The default is "CHGCAR".
         total_charge_filename : Grid | None, optional
-            The path to the CHGCAR like file used for determining vacuum regions 
-            in the system. For pseudopotential codes this represents the total 
-            electron density and should be provided whenever possible. 
+            The path to the CHGCAR like file used for determining vacuum regions
+            in the system. For pseudopotential codes this represents the total
+            electron density and should be provided whenever possible.
             If None, defaults to the charge_grid.
         reference_filename : Path | None | str, optional
             The path to CHGCAR like file that will be used for partitioning.
@@ -320,18 +333,25 @@ class BaseAnalysis(ABC):
 
         """
         charge_grid = Grid.from_vasp(charge_filename, total_only=total_only)
-        
+
         if total_charge_filename is None:
             total_charge_grid = None
         else:
-            total_charge_grid = Grid.from_vasp(total_charge_filename, total_only=total_only)
-            
+            total_charge_grid = Grid.from_vasp(
+                total_charge_filename, total_only=total_only
+            )
+
         if reference_filename is None:
             reference_grid = None
         else:
             reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
 
-        return cls(charge_grid=charge_grid, total_charge_grid=total_charge_grid, reference_grid=reference_grid, **kwargs)
+        return cls(
+            charge_grid=charge_grid,
+            total_charge_grid=total_charge_grid,
+            reference_grid=reference_grid,
+            **kwargs,
+        )
 
     @classmethod
     def from_cube(
@@ -350,9 +370,9 @@ class BaseAnalysis(ABC):
             The path to the .cube like file that will be used for integrating charge.
             The default is "CHGCAR".
         total_charge_filename : Grid | None, optional
-            The path to the .cube like file used for determining vacuum regions 
-            in the system. For pseudopotential codes this represents the total 
-            electron density and should be provided whenever possible. 
+            The path to the .cube like file used for determining vacuum regions
+            in the system. For pseudopotential codes this represents the total
+            electron density and should be provided whenever possible.
             If None, defaults to the charge_grid.
         reference_filename : Path | None | str, optional
             The path to .cube file that will be used for partitioning.
@@ -376,7 +396,12 @@ class BaseAnalysis(ABC):
         else:
             reference_grid = Grid.from_cube(reference_filename)
 
-        return cls(charge_grid=charge_grid, total_charge_grid=total_charge_grid, reference_grid=reference_grid, **kwargs)
+        return cls(
+            charge_grid=charge_grid,
+            total_charge_grid=total_charge_grid,
+            reference_grid=reference_grid,
+            **kwargs,
+        )
 
     @classmethod
     def from_dynamic(
@@ -399,9 +424,9 @@ class BaseAnalysis(ABC):
             The path to the file containing the charge density that will be
             integrated.
         total_charge_filename : Grid | None, optional
-            The path to the file used for determining vacuum regions 
-            in the system. For pseudopotential codes this represents the total 
-            electron density and should be provided whenever possible. 
+            The path to the file used for determining vacuum regions
+            in the system. For pseudopotential codes this represents the total
+            electron density and should be provided whenever possible.
             If None, defaults to the charge_grid.
         reference_filename : Path | None | str, optional
             The path to the file that will be used for partitioning.
@@ -424,17 +449,28 @@ class BaseAnalysis(ABC):
             A BaseAnalysis class object.
 
         """
-        charge_grid = Grid.from_dynamic(charge_filename, format=format, total_only=total_only)
+        charge_grid = Grid.from_dynamic(
+            charge_filename, format=format, total_only=total_only
+        )
         if total_charge_filename is None:
             total_charge_grid = None
         else:
-            total_charge_grid = Grid.from_dynamic(total_charge_filename, format=format, total_only=total_only)
+            total_charge_grid = Grid.from_dynamic(
+                total_charge_filename, format=format, total_only=total_only
+            )
         if reference_filename is None:
             reference_grid = None
         else:
-            reference_grid = Grid.from_dynamic(reference_filename, format=format, total_only=total_only)
+            reference_grid = Grid.from_dynamic(
+                reference_filename, format=format, total_only=total_only
+            )
 
-        return cls(charge_grid=charge_grid, total_charge_grid=total_charge_grid, reference_grid=reference_grid, **kwargs)
+        return cls(
+            charge_grid=charge_grid,
+            total_charge_grid=total_charge_grid,
+            reference_grid=reference_grid,
+            **kwargs,
+        )
 
     def copy(self) -> Self:
         """
@@ -497,23 +533,25 @@ class BaseAnalysis(ABC):
         filepath = Path(filepath)
         with open(filepath, "w") as json_file:
             json.dump(self.to_dict(use_json=True, **kwargs), json_file, indent=4)
-            
+
     ###########################################################################
     # Volume Writing Methods
     ###########################################################################
-    
+
     def _write_volume(
         self,
         volume_mask: NDArray[bool],
         filename: str | Path = "CHGCAR",
         suffix: str = "",
-        write_grid: Literal["charge_grid", "total_charge_grid", "reference_grid"] = "charge_grid",
+        write_grid: Literal[
+            "charge_grid", "total_charge_grid", "reference_grid"
+        ] = "charge_grid",
         output_format: str | Format = None,
         **writer_kwargs,
     ):
         """
         Writes the values in the provided mask for the requested grid.
-        
+
         Parameters
         ----------
         volume_mask : NDArray[bool]
@@ -537,20 +575,22 @@ class BaseAnalysis(ABC):
         filename = filename.with_name(
             filename.stem + suffix + "".join(filename.suffixes)
         )
-        
+
         # get the data to use
         grid = getattr(self, write_grid, None)
         if grid is None:
-            logging.warning("Provided grid name does not exist. Defaulting to 'charge_grid'")
+            logging.warning(
+                "Provided grid name does not exist. Defaulting to 'charge_grid'"
+            )
             grid = self.charge_grid
-            
+
         data_array = grid.total
         data_type = grid.data_type
-        
+
         # copy data to avoid overwriting. Set data off of basin to 0
         data_array_copy = data_array.copy()
         data_array_copy[~volume_mask] = 0.0
-        
+
         # create a new grid object with the masked data
         grid = Grid(
             structure=self.structure,
@@ -560,4 +600,3 @@ class BaseAnalysis(ABC):
 
         # write file
         grid.write(filename=filename, output_format=output_format, **writer_kwargs)
-

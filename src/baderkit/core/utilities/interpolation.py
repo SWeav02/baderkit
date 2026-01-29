@@ -5,7 +5,7 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.utilities.basic import wrap_point
+from baderkit.core.utilities.basic import wrap_point, merge_frac_coords_weighted
 
 ###############################################################################
 # Nearest point interpolation
@@ -360,20 +360,48 @@ def refine_frac_max_parabolic(grid, frac_coords, lattice):
 @njit(parallel=True, cache=True)
 def refine_maxima(
     maxima_coords,
+    maxima_children,
     data,
+    labels,
     lattice,
 ):
-    new_coords = np.empty_like(maxima_coords, dtype=np.float64)
-    new_values = np.empty(len(maxima_coords), dtype=np.float64)
-    for coord_idx in prange(len(maxima_coords)):
-        coord = maxima_coords[coord_idx]
-        new_coord, new_value = refine_frac_max_parabolic(data, coord, lattice)
-        new_coords[coord_idx] = new_coord
-        new_values[coord_idx] = new_value
+    shape = np.array(data.shape, dtype=np.int64)
+    # for each group of maxima, we try and merge them into one. If the resulting
+    # point is not part of the group or does not have the maximum value of the
+    # group, we default to the highest point or lowest index in case of a tie.
+    # The parabolic refinement is then applied to the resulting point.
+    
+    new_voxel_coords = np.empty_like(maxima_coords, dtype=np.float64)
+    frac_coords = np.empty_like(maxima_coords, dtype=np.float64)
+    refined_values = np.empty(len(maxima_coords), dtype=np.float64)
+    for group_idx in prange(len(maxima_coords)):
+        group = maxima_children[group_idx]
+        values = np.empty(len(group), dtype=np.float64)
+        for idx, (i,j,k) in enumerate(group):
+            values[idx] = data[i,j,k]
+        best_value = values.max()
+        group_frac = group / shape
+        # get average frac weighted by value
+        average_frac = merge_frac_coords_weighted(group_frac, values)
+        # get equivalent grid point
+        ai, aj, ak = np.round(average_frac*shape).astype(np.int64)
+        # check if this point is in the right basin and has the highest value
+        label = labels[ai, aj, ak]
+        value = data[ai,aj,ak]
+        if label != group_idx or value != best_value:
+            # default to current maxima representing this group
+            ai, aj, ak = maxima_coords[group_idx]
+            average_frac = maxima_coords[group_idx] / shape
+        new_voxel_coords[group_idx] = (ai, aj, ak)
+
+        refined_frac, new_value = refine_frac_max_parabolic(data, average_frac, lattice)
+        frac_coords[group_idx] = refined_frac
+        refined_values[group_idx] = new_value
     # round and wrap coords
-    new_coords = np.round(new_coords, 6)
-    new_coords %= 1
-    return new_coords, new_values
+    frac_coords = np.round(frac_coords, 6)
+    frac_coords %= 1
+    return new_voxel_coords, frac_coords, refined_values
+
 
 # Method that refines maxima using spline interpolation. I had a lot of issues with
 # ringing/overshooting

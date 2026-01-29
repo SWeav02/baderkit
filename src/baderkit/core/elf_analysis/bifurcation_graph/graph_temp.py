@@ -16,6 +16,7 @@ from baderkit.core.bader.methods.shared_numba import get_edges
 from .enum_and_styling import LINE_COLOR, DomainSubtype, FeatureType
 
 from baderkit.core.base.base_analysis import BaseAnalysis
+
 # from elf_analyzer.core.utilities import IonicRadiiTools
 from baderkit.core.bader import Bader
 from .graph_numba import (
@@ -49,10 +50,8 @@ class BifurcationGraph(BaseAnalysis):
         The radii of each atom in the system used to calculate distance beyond
         the atom for each feature. The default is None.
     """
-    
-    _reset_props = [
-        "bifurcations"
-        ]
+
+    _reset_props = ["bifurcations"]
 
     def __init__(
         self,
@@ -63,15 +62,15 @@ class BifurcationGraph(BaseAnalysis):
         **kwargs,
     ):
         super().__init__(reference_grid=reference_grid, **kwargs)
-        
+
         # create bader object with ELF reference
         self.bader = Bader(
             charge_grid=self.charge_grid,
             total_charge_grid=self.total_charge_grid,
             reference_grid=reference_grid,
             **kwargs,
-            )
-        
+        )
+
         self._calculate_surrounded_atoms = calculate_surrounded_atoms
 
         self._root_nodes = []
@@ -80,7 +79,6 @@ class BifurcationGraph(BaseAnalysis):
 
         self._remove_cutoff = remove_cutoff
         self._reduce_cutoff = reduce_cutoff
-
 
     ###########################################################################
     # Base Operations
@@ -100,7 +98,7 @@ class BifurcationGraph(BaseAnalysis):
 
     def __repr__(self):
         return f"BifurcationGraph(num_nodes={len(self._nodes)})"
-    
+
     ###########################################################################
     # Set Properties
     ###########################################################################
@@ -145,38 +143,38 @@ class BifurcationGraph(BaseAnalysis):
 
         """
         return self._node_keys[key]
-    
+
     @property
     def remove_cutoff(self) -> float:
         return self._remove_cutoff
-    
+
     @remove_cutoff.setter
     def remove_cutoff(self, value):
         self._remove_cutoff = value
         self._reset_properties()
-        
+
     @property
     def reduce_cutoff(self) -> float:
         return self._reduce_cutoff
-    
+
     @reduce_cutoff.setter
     def reduce_cutoff(self, value):
         self._reduce_cutoff = value
         self._reset_properties()
-        
+
     @property
     def calculate_surrounded_atoms(self) -> float:
         return self._calculate_surrounded_atoms
-    
+
     @calculate_surrounded_atoms.setter
     def calculate_surrounded_atoms(self, value):
         self._calculate_surrounded_atoms = value
         self._reset_properties()
-        
+
     ###########################################################################
     # Calculated Properties
     ###########################################################################
-    
+
     def bifurcations(self) -> dict:
         if self._bifurcations is None:
             #######################################################################
@@ -184,7 +182,7 @@ class BifurcationGraph(BaseAnalysis):
             #######################################################################
             bader = self.bader
             bader.atom_charges
-            
+
             reference_grid = bader.reference_grid
             neighbor_transforms, _ = reference_grid.point_neighbor_transforms
 
@@ -273,7 +271,7 @@ class BifurcationGraph(BaseAnalysis):
 
             t1 = time.time()
             logging.info(f"Time: {round(t1-t0, 2)}")
-            
+
             if self.calculate_surrounded_atoms:
                 logging.info("Finding contained atoms")
 
@@ -294,7 +292,9 @@ class BifurcationGraph(BaseAnalysis):
                 bif_values = np.unique(np.append(bif_values, domain_min_values))
 
                 # get atom grid coordinates
-                atom_grid_coords = reference_grid.frac_to_grid(bader.structure.frac_coords)
+                atom_grid_coords = reference_grid.frac_to_grid(
+                    bader.structure.frac_coords
+                )
                 atom_grid_coords = (
                     np.round(atom_grid_coords).astype(np.int64) % reference_grid.shape
                 )
@@ -323,11 +323,10 @@ class BifurcationGraph(BaseAnalysis):
                 )
                 t2 = time.time()
                 logging.info(f"Time: {round(t2-t1, 2)}")
-    
+
     # bifurcation_dict
     # basin_labels
-    
-        
+
     ###########################################################################
     # Convenience Properties
     ###########################################################################
@@ -459,9 +458,10 @@ class BifurcationGraph(BaseAnalysis):
         return [
             i for i in self if not i.is_reducible and i.feature_type in feature_types
         ]
-###############################################################################
-# To Methods
-###############################################################################
+
+    ###############################################################################
+    # To Methods
+    ###############################################################################
 
     # def to_dict(self) -> dict:
     #     """
@@ -503,10 +503,10 @@ class BifurcationGraph(BaseAnalysis):
 
     #     """
     #     return json.dumps(self.to_dict())
-    
-###############################################################################
-# From Methods
-###############################################################################
+
+    ###############################################################################
+    # From Methods
+    ###############################################################################
 
     # @classmethod
     # def from_dict(cls, graph_dict: dict):
@@ -591,7 +591,7 @@ class BifurcationGraph(BaseAnalysis):
         #######################################################################
         _ = charge_bader.atom_labels
         _ = bader.atom_labels
-        
+
         # get convenience references
         reference_grid = bader.reference_grid
         neighbor_transforms, _ = reference_grid.point_neighbor_transforms
@@ -758,7 +758,7 @@ class BifurcationGraph(BaseAnalysis):
             basin_maxima_frac=bader.basin_maxima_frac,
             basin_charges=bader.basin_charges,
             basin_volumes=bader.basin_volumes,
-            **kwargs
+            **kwargs,
         )
         node_keys = []
         for feat_idx in range(len(domain_basins)):
@@ -818,10 +818,8 @@ class BifurcationGraph(BaseAnalysis):
         # Now we check for reducible nodes that should really be considered
         # irreducible. These nodes are very deep but their children separate
         # at very low values
-        cls._combine_shallow_irreducible_nodes(
-            graph, shallow_irreducible_cutoff
-        )
-        
+        cls._combine_shallow_irreducible_nodes(graph, shallow_irreducible_cutoff)
+
         # Next we calculate the overlap of each basin with the atomic regions
         # of the charge denisty
 
@@ -851,7 +849,7 @@ class BifurcationGraph(BaseAnalysis):
                 continue
             # This is a very shallow node. delete it
             node.remove()
-            
+
         # Next we reduce very deep reducible nodes with very shallow children
         # to single irreducible nodes
         # TODO: Add check that nodes are at relatively similar values
@@ -882,9 +880,9 @@ class BifurcationGraph(BaseAnalysis):
             # combine node
             node.make_irreducible()
 
-###############################################################################
-# Plotting Methods
-###############################################################################
+    ###############################################################################
+    # Plotting Methods
+    ###############################################################################
 
     def get_plot(self) -> go.Figure:
         """

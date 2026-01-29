@@ -4,7 +4,7 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.bader.methods.shared_numba import get_best_neighbor
+from baderkit.core.bader.methods.shared_numba import get_best_neighbor_with_shift
 from baderkit.core.utilities.basic import coords_to_flat
 
 
@@ -12,6 +12,7 @@ from baderkit.core.utilities.basic import coords_to_flat
 def get_steepest_pointers(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
+    shifts: NDArray[np.int8],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.int64],
     vacuum_mask: NDArray[np.bool_],
@@ -62,7 +63,7 @@ def get_steepest_pointers(
                 if maxima_mask[i, j, k]:
                     continue
                 # get the best neighbor
-                _, (x, y, z) = get_best_neighbor(
+                _, (x, y, z), shift = get_best_neighbor_with_shift(
                     data=data,
                     i=i,
                     j=j,
@@ -71,5 +72,6 @@ def get_steepest_pointers(
                     neighbor_dists=neighbor_dists,
                 )
                 labels[flat_idx] = coords_to_flat(x, y, z, ny_nz, nz)
+                shifts[flat_idx] = shift
 
-    return labels
+    return labels, shifts

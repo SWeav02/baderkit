@@ -7,6 +7,7 @@ from numpy.typing import NDArray
 from baderkit.core.bader.methods.shared_numba import get_best_neighbor
 from baderkit.core.utilities.basic import coords_to_flat, wrap_point
 
+
 @njit(cache=True)
 def get_gradient(
     data: NDArray[np.float64],
@@ -61,6 +62,7 @@ def get_gradient(
     r1 = dir2lat[1, 0] * gi + dir2lat[1, 1] * gj + dir2lat[1, 2] * gk
     r2 = dir2lat[2, 0] * gi + dir2lat[2, 1] * gj + dir2lat[2, 2] * gk
     return r0, r1, r2
+
 
 # NOTE
 # This is an alternative method for calculating the gradient that uses all of

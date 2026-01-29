@@ -16,7 +16,11 @@ from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Structure
 
 from .methods import Method
-from .methods.shared_numba import get_edges, get_min_avg_surface_dists, get_neighboring_basin_surface_area
+from .methods.shared_numba import (
+    get_edges,
+    get_min_avg_surface_dists,
+    get_neighboring_basin_surface_area,
+)
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
@@ -24,7 +28,6 @@ Self = TypeVar("Self", bound="Bader")
 # TODO:
 # - Add handling of non-nuclear attractors (e.g. those in Li metal)
 # - Improve docstrings, especially for write methods, so that they show kwargs
-
 
 
 class Bader(BaseAnalysis):
@@ -42,8 +45,8 @@ class Bader(BaseAnalysis):
         be provided whenever possible. If None, defaults to the charge_grid.
     reference_grid : Grid | None, optional
         The Grid object whose values will be used to construct the basins. This
-        should typically only be set when partitioning functions other than the 
-        charge density (e.g. ELI-D, ELF, etc.).If None, defaults to the 
+        should typically only be set when partitioning functions other than the
+        charge density (e.g. ELI-D, ELF, etc.).If None, defaults to the
         total_charge_grid.
     method : str | Method, optional
         The algorithm to use for generating bader basins.
@@ -53,7 +56,7 @@ class Bader(BaseAnalysis):
         will be used on False, and the default tolerance (0.001) will be used on True.
 
     """
-    
+
     _reset_props = [
         # assigned by run_bader
         "basin_labels",
@@ -428,23 +431,25 @@ class Bader(BaseAnalysis):
             basin index, and the entry at i, j is the total area in contact between
             these labels. One extra index is added that stores the number of connections
             to the vacuum.
-            
-            This value is calculated using voronoi cells of the voxels to 
+
+            This value is calculated using voronoi cells of the voxels to
             approximate the shared area between a voxel point and a neighbor in
             another basin.
 
         """
         if self._basin_contact_surface_areas is None:
-            neighbor_transforms, _, neighbor_areas, _ = self.reference_grid.point_neighbor_voronoi_transforms
+            neighbor_transforms, _, neighbor_areas, _ = (
+                self.reference_grid.point_neighbor_voronoi_transforms
+            )
             self._basin_contact_surface_areas = get_neighboring_basin_surface_area(
-                labeled_array=self.basin_labels, 
-                neighbor_transforms=neighbor_transforms, 
-                neighbor_areas=neighbor_areas, 
-                vacuum_mask=self.vacuum_mask, 
+                labeled_array=self.basin_labels,
+                neighbor_transforms=neighbor_transforms,
+                neighbor_areas=neighbor_areas,
+                vacuum_mask=self.vacuum_mask,
                 label_num=len(self.basin_maxima_frac),
-                )
+            )
         return self._basin_contact_surface_areas
-    
+
     @property
     def atom_contact_surface_areas(self) -> NDArray[np.float64]:
         """
@@ -456,23 +461,25 @@ class Bader(BaseAnalysis):
             atom index, and the entry at i, j is the total area in contact between
             these labels. One extra index is added that stores the number of connections
             to the vacuum.
-            
-            This value is calculated using voronoi cells of the voxels to 
+
+            This value is calculated using voronoi cells of the voxels to
             approximate the shared area between a voxel point and a neighbor in
             another atom.
 
         """
         if self._atom_contact_surface_areas is None:
-            neighbor_transforms, _, neighbor_areas, _ = self.reference_grid.point_neighbor_voronoi_transforms
+            neighbor_transforms, _, neighbor_areas, _ = (
+                self.reference_grid.point_neighbor_voronoi_transforms
+            )
             self._atom_contact_surface_areas = get_neighboring_basin_surface_area(
-                labeled_array=self.atom_labels, 
-                neighbor_transforms=neighbor_transforms, 
-                neighbor_areas=neighbor_areas, 
-                vacuum_mask=self.vacuum_mask, 
+                labeled_array=self.atom_labels,
+                neighbor_transforms=neighbor_transforms,
+                neighbor_areas=neighbor_areas,
+                vacuum_mask=self.vacuum_mask,
                 label_num=len(self.structure),
-                )
+            )
         return self._atom_contact_surface_areas
-    
+
     @property
     def basin_surface_areas(self) -> NDArray[np.float64]:
         """
@@ -481,8 +488,8 @@ class Bader(BaseAnalysis):
         -------
         NDArray[np.float64]
             The approximate surface area of each basin.
-            
-            This value is calculated using voronoi cells of the voxels to 
+
+            This value is calculated using voronoi cells of the voxels to
             approximate the shared area between a voxel point and a neighbor in
             another basin.
 
@@ -493,7 +500,7 @@ class Bader(BaseAnalysis):
             # sum across axis 0 to get the total
             self._basin_surface_areas = np.sum(contact_surfaces, axis=1)
         return self._basin_surface_areas
-    
+
     @property
     def atom_surface_areas(self) -> NDArray[np.float64]:
         """
@@ -502,8 +509,8 @@ class Bader(BaseAnalysis):
         -------
         NDArray[np.float64]
             The approximate surface area of each atom.
-            
-            This value is calculated using voronoi cells of the voxels to 
+
+            This value is calculated using voronoi cells of the voxels to
             approximate the shared area between a voxel point and a neighbor in
             another atom.
 
@@ -618,11 +625,8 @@ class Bader(BaseAnalysis):
         basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
 
         # Atom labels per grid point
-        # NOTE: append -1 so that vacuum gets assigned to -1 in the atom_labels
-        # array
-        basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
-        atom_labels = basin_atoms[self.basin_labels]
-        basin_atoms = basin_atoms[:-1]
+        atom_labels = np.full_like(self.basin_labels, np.iinfo(self.basin_labels.dtype).max, dtype=self.basin_labels.dtype)
+        atom_labels[~self.vacuum_mask] = basin_atoms[self.basin_labels[~self.vacuum_mask]]
 
         atom_charges = np.bincount(
             basin_atoms, weights=self.basin_charges, minlength=len(structure)
@@ -739,7 +743,7 @@ class Bader(BaseAnalysis):
     ###########################################################################
     # Write Methods
     ###########################################################################
-    
+
     def write_basin_volumes(
         self,
         basin_indices: NDArray[int],
@@ -760,13 +764,11 @@ class Bader(BaseAnalysis):
             # get a mask everywhere but the requested basin
             mask = self.basin_labels == basin
             kwargs["suffix"] = f"_b{basin}"
-            
-            self._write_volume(
-                volume_mask=mask, 
-                **kwargs)
+
+            self._write_volume(volume_mask=mask, **kwargs)
 
     def write_all_basin_volumes(
-            self,
+        self,
         basin_tol: float = 1e-03,
         **kwargs,
     ):
@@ -778,7 +780,7 @@ class Bader(BaseAnalysis):
         Parameters
         ----------
         basin_tol : float, optional
-            The total charge value below which a basin will not be considered written      
+            The total charge value below which a basin will not be considered written
 
         """
         basin_indices = np.where(self.basin_charges > basin_tol)[0]
@@ -807,9 +809,7 @@ class Bader(BaseAnalysis):
         mask = np.isin(self.basin_labels, basin_indices)
         # write
         kwargs["suffix"] = "_bsum"
-        self._write_volume(
-            volume_mask=mask, 
-            **kwargs)
+        self._write_volume(volume_mask=mask, **kwargs)
 
     def write_atom_volumes(
         self,
@@ -831,10 +831,8 @@ class Bader(BaseAnalysis):
         for atom_index in atom_indices:
             # get a mask at the requested atoms
             mask = self.atom_labels == atom_index
-            kwargs["suffix"] = "_a{atom_index}"            
-            self._write_volume(
-                volume_mask=mask, 
-                **kwargs)
+            kwargs["suffix"] = "_a{atom_index}"
+            self._write_volume(volume_mask=mask, **kwargs)
 
     def write_all_atom_volumes(
         self,
@@ -872,9 +870,7 @@ class Bader(BaseAnalysis):
         mask = np.isin(self.atom_labels, atom_indices)
         # write
         kwargs["suffix"] = "_asum"
-        self._write_volume(
-            volume_mask=mask, 
-            **kwargs)
+        self._write_volume(volume_mask=mask, **kwargs)
 
     def write_species_volume(
         self,
@@ -898,9 +894,7 @@ class Bader(BaseAnalysis):
         # Get mask where the grid belongs to requested species
         mask = np.isin(self.atom_labels, indices)
         kwargs["suffix"] = "_{species}"
-        self._write_volume(
-            volume_mask=mask, 
-            **kwargs)
+        self._write_volume(volume_mask=mask, **kwargs)
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """

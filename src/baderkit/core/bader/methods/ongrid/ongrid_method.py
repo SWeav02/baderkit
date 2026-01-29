@@ -6,12 +6,14 @@ import numpy as np
 
 from baderkit.core.bader.methods.base import MethodBase
 
+from baderkit.core.utilities.basic import get_lowest_uint
+
 from .ongrid_numba import get_steepest_pointers
 
 
 class OngridMethod(MethodBase):
 
-    def _run_bader(self, labels):
+    def _run_bader(self, labels, shifts):
         """
         Assigns voxels to basins and calculates charge using the on-grid
         method:
@@ -32,14 +34,16 @@ class OngridMethod(MethodBase):
         # For each voxel, get the label of the surrounding voxel that has the highest
         # density
         logging.info("Calculating Steepest Neighbors")
-        labels = get_steepest_pointers(
+        labels, shifts = get_steepest_pointers(
             data=data,
             labels=labels,
+            shifts=shifts,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             vacuum_mask=self.vacuum_mask,
             maxima_mask=self.maxima_mask,
         )
+        
         # Our pointers object is a 1D array pointing each voxel to its parent voxel. We
         # essentially have a classic forest of trees problem where each maxima is
         # a root and we want to point all of our voxels to their respective root.
@@ -48,20 +52,28 @@ class OngridMethod(MethodBase):
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
         logging.info("Finding Roots")
-        labels = self.get_roots(labels)
+        labels, shifts = self.get_roots(labels, shifts)
+        shifts = self.condense_shifts(shifts)
+        
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots
-        unique_roots, labels = np.unique(labels, return_inverse=True)
-        # If we had at least one vacuum point, we need to subtract our labels by
-        # 1 to recover the vacuum label.
-        if -1 in unique_roots:
-            labels -= 1
-        # reconstruct a 3D array with our labels
+        vacuum_val = np.iinfo(labels.dtype).max
+        unique_roots = np.unique(labels)
+        dtype = get_lowest_uint(len(unique_roots))
+        labels = np.searchsorted(unique_roots, labels).astype(dtype, copy=False)
+        
+        # if we have any vacuum, relabel to the highest available value
+        if vacuum_val in unique_roots:
+            labels[labels==labels.max()] = np.iinfo.dtype.max
+            
+        # reconstruct a 3D array with our labels and images
         labels = labels.reshape(shape)
+        shifts = shifts.reshape(shape)
 
         # assign all results
         results = {
             "basin_labels": labels,
+            "basin_shifts": shifts,
         }
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")

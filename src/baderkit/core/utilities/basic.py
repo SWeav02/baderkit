@@ -5,6 +5,11 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
+def get_lowest_uint(max_value):
+    for dtype in (np.uint8, np.uint16, np.uint32, np.uint64):
+        if np.iinfo(dtype).max > max_value:
+            break
+    return dtype
 
 @njit(cache=True, inline="always")
 def dist(p1, p2):
@@ -19,7 +24,6 @@ def mutiple_dists(p1s, p2s):
     for idx in prange(len(p1s)):
         dists[idx] = dist(p1s[idx], p2s[idx])
     return dists
-
 
 @njit(cache=True, inline="always")
 def wrap_point(

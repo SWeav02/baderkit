@@ -2,6 +2,7 @@
 from typing import Callable
 from inspect import getdoc
 
+
 def merge_param_sections(child_doc: str, base_doc: str) -> str:
     """Simple merger for 'Parameters' (NumPy style) or 'Args:' (Google style).
     This is intentionally small — adapt if you have different docstring conventions.
@@ -35,9 +36,11 @@ def merge_param_sections(child_doc: str, base_doc: str) -> str:
 
 def inherit_signature_and_doc(base_fn: Callable):
     """Decorator: sets __signature__ on the wrapped fn and merges docstrings"""
+
     def decorator(fn: Callable):
         base_doc = getdoc(base_fn) or ""
         child_doc = getdoc(fn) or ""
         fn.__doc__ = merge_param_sections(child_doc, base_doc)
         return fn
+
     return decorator
