@@ -86,7 +86,7 @@ class MethodBase:
         self._maxima_mask = None
         self._maxima_vox = None
         self._maxima_children = None
-        # self._maxima_frac = None
+        self._maxima_frac = None
         self._car2lat = None
         self._dir2lat = None
 

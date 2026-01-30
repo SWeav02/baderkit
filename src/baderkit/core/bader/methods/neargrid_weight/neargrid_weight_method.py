@@ -10,6 +10,7 @@ from baderkit.core.bader.methods.neargrid.neargrid_numba import (
     get_gradient_pointers_simple,
     refine_fast_neargrid,
 )
+from baderkit.core.utilities.basic import get_lowest_int, get_lowest_uint
 from baderkit.core.bader.methods.shared_numba import get_edges
 
 from .neargrid_weight_numba import (
@@ -22,7 +23,7 @@ class NeargridWeightMethod(MethodBase):
 
     _use_overdetermined = False
 
-    def _run_bader(self, labels):
+    def _run_bader(self, labels, shifts):
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
@@ -45,9 +46,10 @@ class NeargridWeightMethod(MethodBase):
         logging.info("Calculating Gradients")
         if not self._use_overdetermined:
             # calculate gradients and pointers to best neighbors
-            labels, gradients = get_gradient_pointers_simple(
+            labels, shifts, gradients = get_gradient_pointers_simple(
                 data=reference_data,
                 labels=labels,
+                shifts=shifts,
                 dir2lat=self.dir2lat,
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
@@ -66,9 +68,10 @@ class NeargridWeightMethod(MethodBase):
             # get the pseudo inverse
             inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms[:13])
             # calculate gradients and pointers to best neighbors
-            labels, gradients = get_gradient_pointers_overdetermined(
+            labels, shifts, gradients, self._maxima_mask = get_gradient_pointers_overdetermined(
                 data=reference_data,
                 labels=labels,
+                shifts=shifts,
                 car2lat=self.car2lat,
                 inv_norm_cart_trans=inv_norm_cart_trans,
                 neighbor_dists=neighbor_dists,
@@ -76,22 +79,19 @@ class NeargridWeightMethod(MethodBase):
                 vacuum_mask=self.vacuum_mask,
                 maxima_mask=self.maxima_mask,
             )
+
         # Find roots
-        # NOTE: Vacuum points are indicated by a value of -1 and we want to
-        # ignore these
         logging.info("Finding Roots")
-        labels = self.get_roots(labels)
-        # We now have our roots. Relabel so that they go from 0 to the length of our
-        # roots
-        unique_roots, labels = np.unique(labels, return_inverse=True)
-        # shift back to vacuum at -1
-        if -1 in unique_roots:
-            labels -= 1
-        # reconstruct a 3D array with our labels
-        labels = labels.reshape(shape)
+        labels, shifts = self.get_roots(labels, shifts)
+
+        # reconstruct a 3D array with our labels. make sure our data type can
+        # include negative values so that we can mark points needing refinement
+        dtype = get_lowest_int(len(self.maxima_vox)+1)
+        labels = labels.reshape(shape).astype(dtype)
 
         logging.info("Starting Edge Refinement")
-        # shift to vacuum at 0
+        
+        # shift indices to start at 1
         labels += 1
 
         # Now we refine the edges with the neargrid method
@@ -103,21 +103,27 @@ class NeargridWeightMethod(MethodBase):
         )
         # remove maxima from refinement
         refinement_mask[self.maxima_mask] = False
-        # note these labels should not be reassigned again in future cycles
-        labels[refinement_mask] = -labels[refinement_mask]
-        labels = refine_fast_neargrid(
+        # note these labels and the vacuum should not be reassigned again in future cycles
+        labels[refinement_mask&self.vacuum_mask] = -labels[refinement_mask&self.vacuum_mask]
+        labels, shifts = refine_fast_neargrid(
             data=reference_data,
             labels=labels,
+            shifts=shifts,
             refinement_mask=refinement_mask,
             maxima_mask=self.maxima_mask,
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
+            vacuum_label=-(len(self.maxima_vox)+1),
         )
-
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1
+        dtype = get_lowest_uint(len(self.maxima_vox)+1)
+        labels = labels.reshape(shape).astype(dtype)
+        
+        # condense shifts
+        shifts = self.condense_shifts(shifts)
 
         # get final edges
         edge_mask = get_edges(
@@ -132,7 +138,7 @@ class NeargridWeightMethod(MethodBase):
                 data=charge_data,
                 labels=labels,
                 cell_volume=reference_grid.structure.volume,
-                maxima_num=len(self.maxima_frac),
+                maxima_num=len(self.maxima_vox),
                 edge_mask=edge_mask,
             )
         )
@@ -147,7 +153,7 @@ class NeargridWeightMethod(MethodBase):
 
         # Get the data at the edges
         edge_indices = np.argwhere(edge_mask)
-        edge_data = charge_data[edge_mask]
+        edge_data = reference_data[edge_mask]
         # sort the data
         sorted_indices = np.argsort(edge_data, kind="stable")
         # get edge charge/volume
@@ -175,5 +181,6 @@ class NeargridWeightMethod(MethodBase):
             "basin_volumes": volumes,
             "vacuum_charge": vacuum_charge,
             "vacuum_volume": vacuum_volume,
+            "basin_shifts": shifts,
         }
         return results

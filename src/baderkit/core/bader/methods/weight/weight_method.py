@@ -14,7 +14,7 @@ from .weight_numba import (  # reduce_charge_volume,; get_labels,
 
 class WeightMethod(MethodBase):
 
-    def _run_bader(self, labels):
+    def _run_bader(self, labels, shifts):
         """
         Assigns basin weights to each voxel and assigns charge using
         the weight method:

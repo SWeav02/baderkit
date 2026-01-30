@@ -22,6 +22,7 @@ def get_interior_basin_charges_and_volumes(
     volumes = np.zeros(maxima_num, dtype=np.float64)
     vacuum_charge = 0.0
     vacuum_volume = 0.0
+
     # iterate in parallel over each voxel
     for i in range(nx):
         for j in range(ny):
@@ -30,7 +31,8 @@ def get_interior_basin_charges_and_volumes(
                     continue
                 charge = data[i, j, k]
                 label = labels[i, j, k]
-                if label < 0:
+                # add vacuum charge if relavent
+                if label == maxima_num:
                     vacuum_charge += charge
                     vacuum_volume += 1
                 else:
@@ -106,20 +108,10 @@ def get_edge_charges_volumes(
             neigh_num += 1
 
         # check that there is flux. If not, we have a fake local maximum and
-        # revert to an ongrid step
+        # simply assign charge to the points label. Here we note there are no
+        # neighbors
         if total_flux == 0.0:
-            shift, (ni, nj, nk) = get_best_neighbor(
-                data=reference_data,
-                i=i,
-                j=j,
-                k=k,
-                neighbor_transforms=all_neighbor_transforms,
-                neighbor_dists=all_neighbor_dists,
-            )
-            neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
-            neigh_nums[sorted_idx] = 1
-            neigh_array[sorted_idx, 0] = neigh_idx
-            flux_array[sorted_idx, 0] = 1.0
+            neigh_nums[sorted_idx] = 0
             continue
 
         # otherwise we assign as normal.
@@ -138,7 +130,15 @@ def get_edge_charges_volumes(
         # get charge/volume at this point
         charge = flat_charge[voxel_idx]
         volume = flat_volume[voxel_idx]
-        # loop over our each neighbor
+
+        # if this point has no neighbors, assign its charge to its label
+        if neigh_num == 0:
+            label = labels[i,j,k]
+            charges[label] += charge
+            volumes[label] += volume
+            continue
+        
+        # otherwise loop over each neighbor and consolidate charge
         for neigh_idx in range(neigh_num):
             neigh = neighs[neigh_idx]
             flux = fluxes[neigh_idx]
