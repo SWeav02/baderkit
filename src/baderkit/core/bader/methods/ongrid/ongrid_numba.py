@@ -28,6 +28,8 @@ def get_steepest_pointers(
         A 3D grid of values for each point.
     labels : NDArray[np.int64]
         A 1D grid of assignments for each point in the grid
+    shifts : NDArray[np.int64]
+        A Nx3 array of shifts tracking cycles around periodic edges
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.int64]

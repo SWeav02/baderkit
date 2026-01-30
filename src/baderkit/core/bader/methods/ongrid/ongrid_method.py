@@ -54,17 +54,6 @@ class OngridMethod(MethodBase):
         logging.info("Finding Roots")
         labels, shifts = self.get_roots(labels, shifts)
         shifts = self.condense_shifts(shifts)
-        
-        # We now have our roots. Relabel so that they go from 0 to the length of our
-        # roots
-        vacuum_val = np.iinfo(labels.dtype).max
-        unique_roots = np.unique(labels)
-        dtype = get_lowest_uint(len(unique_roots))
-        labels = np.searchsorted(unique_roots, labels).astype(dtype, copy=False)
-        
-        # if we have any vacuum, relabel to the highest available value
-        if vacuum_val in unique_roots:
-            labels[labels==labels.max()] = np.iinfo.dtype.max
             
         # reconstruct a 3D array with our labels and images
         labels = labels.reshape(shape)

@@ -24,6 +24,10 @@ from .shared_numba import (  # combine_neigh_maxima,
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="MethodBase")
 
+# TODO:
+    # 1. Add periodic awareness to weight method
+    # 2. allow for non-periodic boundaries?
+    # 3. continue with critical point finder
 
 class MethodBase:
     """
@@ -76,6 +80,7 @@ class MethodBase:
         self.reference_grid = reference_grid
         self.vacuum_mask = vacuum_mask
         self.num_vacuum = num_vacuum
+        self.persistence_tol = persistence_tol
 
         # These variables are also often needed but are calculated during the run
         self._maxima_mask = None
@@ -121,7 +126,7 @@ class MethodBase:
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             lattice=self.reference_grid.structure.lattice.matrix,
-            persistence_tol=0.01,
+            persistence_tol=self.persistence_tol,
         )
 
         # now run bader
@@ -130,6 +135,7 @@ class MethodBase:
         
         # Now we want to combine any remaining noisy maxima based on their
         # rigorous discrete persistence.
+        logging.info("Combining Low-Persistence Basins")
         
         # get edges
         edge_mask = get_edges(
@@ -155,7 +161,7 @@ class MethodBase:
             connections=basin_connections, 
             connection_values=connection_values, 
             lattice=self.reference_grid.structure.lattice.matrix,
-            persistence_tol=0.01,
+            persistence_tol=self.persistence_tol,
             )
         
         # update maxima children, labels, charges, and volumes
@@ -170,7 +176,7 @@ class MethodBase:
                 # add charge/volume
                 charges[root] += charges[max_idx]
                 volumes[root] += volumes[max_idx]
- 
+
         labels[~self.vacuum_mask] = new_roots[labels[~self.vacuum_mask]]
         self._maxima_vox = self.maxima_vox[final_maxima]
         self._maxima_children = [self.maxima_children[i] for i in final_maxima]
@@ -399,6 +405,16 @@ class MethodBase:
                     break
 
                 pointers = new_parents
+        # We now have our roots. Relabel so that they go from 0 to the length of our
+        # roots
+        # vacuum_val = np.iinfo(pointers.dtype).max
+        unique_roots = np.unique(pointers)
+        dtype = get_lowest_uint(len(unique_roots))
+        pointers = np.searchsorted(unique_roots, pointers).astype(dtype, copy=False)
+        
+        # # if we have any vacuum, relabel to the highest available value
+        # if vacuum_val in unique_roots:
+        #     pointers[pointers==pointers.max()] = np.iinfo.dtype.max
         return pointers, shifts
     
     def condense_shifts(self, shifts: NDArray[int]):

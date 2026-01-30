@@ -11,6 +11,12 @@ def get_lowest_uint(max_value):
             break
     return dtype
 
+def get_lowest_int(max_value):
+    for dtype in (np.int8, np.int16, np.int32, np.int64):
+        if np.iinfo(dtype).max > max_value:
+            break
+    return dtype
+
 @njit(cache=True, inline="always")
 def dist(p1, p2):
     x, y, z = p1

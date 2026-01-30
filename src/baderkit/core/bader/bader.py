@@ -54,6 +54,12 @@ class Bader(BaseAnalysis):
         If a float is provided, this is the value below which a point will
         be considered part of the vacuum. If a bool is provided, no vacuum
         will be used on False, and the default tolerance (0.001) will be used on True.
+    nna_cutoff : float | bool, optional
+        If a float is provided, any basins found at a distance in Angstroms greater
+        than this cutoff will be considered non-nuclear attractors. If any are
+        found, dummy atoms will be appended to the structure and regarded as
+        separate species. If a bool is provided, NNAs will be assigned to the
+        nearest atom on False or a default value (1 Ang) will be used on True.
 
     """
 
@@ -88,6 +94,7 @@ class Bader(BaseAnalysis):
     def __init__(
         self,
         method: str | Method = Method.weight,
+        nna_cutoff: float | bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -102,6 +109,10 @@ class Bader(BaseAnalysis):
             raise ValueError(
                 f"Invalid method '{method}'. Available options are: {valid_methods}"
             )
+        
+        if nna_cutoff is True:
+            nna_cutoff = 1.0
+        self._nna_cutoff = nna_cutoff
 
         # whether or not to use overdetermined gradients in neargrid methods.
         self._use_overdetermined = False
@@ -135,7 +146,44 @@ class Bader(BaseAnalysis):
             raise ValueError(
                 f"Invalid method '{value}'. Available options are: {valid_values}"
             )
-        self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
+        self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum", "vacuum_charge", "vacuum_volume",])
+        
+    @property
+    def nna_cutoff(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The distance cutoff in angstroms above which a basin will be considered
+            a non-nuclear attractor.
+            
+            If a float is provided, any basins found at a distance in Angstroms greater
+            than this cutoff will be considered non-nuclear attractors. If any are
+            found, dummy atoms will be appended to the structure and regarded as
+            separate species. If a bool is provided, NNAs will be assigned to the
+            nearest atom on False or a default value (1 Ang) will be used on True.
+
+        """
+        return self._nna_cutoff
+        
+    @nna_cutoff.setter
+    def nna_cutoff(self, value: str | Method):
+        self._nna_cutoff = value
+        # reset atom properties
+        self._reset_properties(include_properties=[
+            "structure",
+            "atom_edges",
+            "atom_surface_areas",
+            "atom_contact_surface_areas",
+            "basin_atoms",
+            "basin_atom_dists",
+            "atom_labels",
+            "atom_charges",
+            "atom_volumes",
+            "atom_min_surface_distances",
+            "atom_avg_surface_distances",
+            ])
 
     ###########################################################################
     # Calculated Properties
@@ -601,7 +649,36 @@ class Bader(BaseAnalysis):
         logging.info("Bader Algorithm Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
 
-    def assign_basins_to_structure(self, structure: Structure):
+    def assign_basins_to_structure(self, structure: Structure, nna_cutoff: bool | float = False):
+        """
+        Gets atom assignments for the provided structure.
+
+        Parameters
+        ----------
+        structure : Structure
+            The structure to assign basins to.
+        nna_cutoff : bool | float, optional
+            A distance cutoff. Any basins with maxima further from an atom than
+            this value (in Angstroms) will be counted as its own species. Dummy
+            atoms will be added to the structure. The default is False.
+
+        Returns
+        -------
+        atom_labels : NDArray
+            A 3D array with the same shape as the grid where each entry represents
+            the atom that point belongs to.
+        atom_charges : NDArray
+            The charge assigned to each atom.
+        atom_volumes : NDArray
+            The volume assigned to each atom.
+        basin_atoms : NDArray
+            The atom each basin was assigned to.
+        basin_atom_dists : NDArray
+            The distance from each basin to the nearest atom.
+
+        """
+        if nna_cutoff is True:
+            nna_cutoff = 1.0
 
         # Get basin and atom frac coords
         basins = self.basin_maxima_frac  # (N_basins, 3)
@@ -610,23 +687,41 @@ class Bader(BaseAnalysis):
         # get lattice matrix and number of atoms/basins
         L = structure.lattice.matrix  # (3, 3)
         N_basins = len(basins)
-
-        # Vectorized deltas, minimum‑image wrapping
-        diffs = atoms[None, :, :] - basins[:, None, :]
-        diffs += np.where(diffs <= -0.5, 1, 0)
-        diffs -= np.where(diffs >= 0.5, 1, 0)
-
-        # Cartesian diffs & distances
-        cart = np.einsum("bij,jk->bik", diffs, L)
-        dists = np.linalg.norm(cart, axis=2)
-
-        # Basin→atom assignment & distances
-        basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
-        basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
+        def get_atom_basins(atoms, basins):
+            # Vectorized deltas, minimum‑image wrapping
+            diffs = atoms[None, :, :] - basins[:, None, :]
+            diffs += np.where(diffs <= -0.5, 1, 0)
+            diffs -= np.where(diffs >= 0.5, 1, 0)
+    
+            # Cartesian diffs & distances
+            cart = np.einsum("bij,jk->bik", diffs, L)
+            dists = np.linalg.norm(cart, axis=2)
+            
+            # Basin→atom assignment & distances
+            basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
+            basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
+            return basin_atoms, basin_atom_dists
+        basin_atoms, basin_atom_dists = get_atom_basins(atoms, basins)
+        
+        if nna_cutoff:
+            # add dummy atoms at basin maxima far from atoms
+            for coords, dist in zip(basins, basin_atom_dists):
+                if dist > nna_cutoff:
+                    # add a dummy atom to the structure
+                    structure.append("X", coords)
+            # recalculate distances
+            atoms = structure.frac_coords
+            basin_atoms, basin_atom_dists = get_atom_basins(atoms, basins)
+        
+        # vacuum is represented by an index one above the highest label. we add
+        # that to our basin atoms temporarily
+        basin_atoms = np.insert(basin_atoms, len(basin_atoms), len(structure))
 
         # Atom labels per grid point
-        atom_labels = np.full_like(self.basin_labels, np.iinfo(self.basin_labels.dtype).max, dtype=self.basin_labels.dtype)
-        atom_labels[~self.vacuum_mask] = basin_atoms[self.basin_labels[~self.vacuum_mask]]
+        atom_labels = basin_atoms[self.basin_labels]
+        
+        # remove vacuum pointer in basin atoms
+        basin_atoms = basin_atoms[:-1]
 
         atom_charges = np.bincount(
             basin_atoms, weights=self.basin_charges, minlength=len(structure)
@@ -652,7 +747,7 @@ class Bader(BaseAnalysis):
         logging.info("Assigning Atom Properties")
         # get basin assignments for this bader objects structure
         atom_labels, atom_charges, atom_volumes, basin_atoms, basin_atom_dists = (
-            self.assign_basins_to_structure(structure)
+            self.assign_basins_to_structure(structure, self.nna_cutoff)
         )
 
         # Store everything
