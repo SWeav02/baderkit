@@ -131,7 +131,7 @@ def get_gradient_overdetermined(
 def get_gradient_pointers_simple(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
-    shifts: NDArray[np.int64],
+    images: NDArray[np.int64],
     dir2lat: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
@@ -147,8 +147,8 @@ def get_gradient_pointers_simple(
         A 3D grid of values for each point.
     labels : NDArray[np.int64]
         A 1D grid with maxima assignments
-    shifts : NDArray[np.int64]
-        A Nx3 array of shifts tracking cycles around periodic edges
+    images : NDArray[np.int64]
+        A Nx3 array of images tracking cycles around periodic edges
     dir2lat : NDArray[np.float64]
         A matrix for converting from direct coordinates to lattice coords
     neighbor_transforms : NDArray[np.int64]
@@ -217,7 +217,7 @@ def get_gradient_pointers_simple(
                     # this instance
                     gradients[i, j, k] = (si, sj, sk)
                     labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
-                    shifts[flat_idx] = shift
+                    images[flat_idx] = shift
 
                     continue
                 # Normalize
@@ -244,8 +244,8 @@ def get_gradient_pointers_simple(
                 # save neighbor, dr, and pointer
                 gradients[i, j, k] = (gi, gj, gk)
                 labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
-                shifts[flat_idx] = shift
-    return labels, shifts, gradients
+                images[flat_idx] = shift
+    return labels, images, gradients
 
 
 # NOTE: This is an alternative method that calculates the gradient using all
@@ -257,7 +257,7 @@ def get_gradient_pointers_simple(
 def get_gradient_pointers_overdetermined(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
-    shifts: NDArray[np.int64],
+    images: NDArray[np.int64],
     car2lat,
     inv_norm_cart_trans,
     neighbor_transforms: NDArray[np.int64],
@@ -274,8 +274,8 @@ def get_gradient_pointers_overdetermined(
         A 3D grid of values for each point.
     labels : NDArray[np.int64]
         A 1D grid with maxima assignments
-    shifts : NDArray[np.int64]
-        A Nx3 array of shifts tracking cycles around periodic edges
+    images : NDArray[np.int64]
+        A Nx3 array of images tracking cycles around periodic edges
     car2lat : NDArray[np.float64]
         A matrix for converting from cartesian coordinates to lattice coords
     inv_norm_cart_trans : NDArray[np.float64]
@@ -354,7 +354,7 @@ def get_gradient_pointers_overdetermined(
                     # this instance
                     gradients[i, j, k] = (si, sj, sk)
                     labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
-                    shifts[flat_idx] = shift
+                    images[flat_idx] = shift
                     continue
                 # Normalize
                 gi /= max_grad
@@ -379,7 +379,8 @@ def get_gradient_pointers_overdetermined(
                 # save neighbor, dr, and pointer
                 gradients[i, j, k] = (gi, gj, gk)
                 labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
-                shifts[flat_idx] = shift
+                images[flat_idx] = shift
+                
     return labels, gradients
 
 
@@ -387,7 +388,7 @@ def get_gradient_pointers_overdetermined(
 def refine_fast_neargrid(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
-    shifts: NDArray[np.int64],
+    images: NDArray[np.int64],
     refinement_mask: NDArray[np.bool_],
     maxima_mask: NDArray[np.bool_],
     gradients: NDArray[np.float32],
@@ -405,8 +406,8 @@ def refine_fast_neargrid(
         A 3D grid of values for each point.
     labels : NDArray[np.int64]
         A 3D grid of labels representing current voxel assignments.
-    shifts : NDArray[np.int64]
-        A Nx3 array of shifts tracking cycles around periodic edges
+    images : NDArray[np.int64]
+        A Nx3 array of images tracking cycles around periodic edges
     refinement_mask : NDArray[np.bool_]
         A 3D mask that is true at the voxel indices to be refined.
     maxima_mask : NDArray[np.bool_]
@@ -479,9 +480,9 @@ def refine_fast_neargrid(
                     # relabel just this voxel then stop the loop
                     labels[i, j, k] = -current_label
                     flat_idx=coords_to_flat(i,j,k,ny_nz,nz)
-                    shifts[flat_idx,0] = wi
-                    shifts[flat_idx,1] = wj
-                    shifts[flat_idx,2] = wk
+                    images[flat_idx,0] = wi
+                    images[flat_idx,1] = wj
+                    images[flat_idx,2] = wk
                     break
 
                 # Otherwise, we have not reached a maximum and want to continue
@@ -536,4 +537,4 @@ def refine_fast_neargrid(
                 wk += sk
         print(f"{reassignments} values changed")
 
-    return labels, shifts
+    return labels, images

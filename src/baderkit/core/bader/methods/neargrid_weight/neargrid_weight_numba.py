@@ -4,7 +4,6 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.bader.methods.shared_numba import get_best_neighbor
 from baderkit.core.utilities.basic import coords_to_flat, flat_to_coords, wrap_point
 
 

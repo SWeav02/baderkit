@@ -5,13 +5,14 @@ from numba import njit, prange
 from numpy.typing import NDArray
 
 from baderkit.core.bader.methods.shared_numba import get_best_neighbor
-from baderkit.core.utilities.basic import coords_to_flat, flat_to_coords, wrap_point
+from baderkit.core.utilities.basic import coords_to_flat, flat_to_coords, wrap_point, wrap_point_w_shift
 
 
 @njit(parallel=True, cache=True)
 def get_weight_assignments(
     reference_data,
     labels,
+    images,
     charge_data,
     sorted_indices,
     neighbor_transforms: NDArray[np.int64],
@@ -31,9 +32,24 @@ def get_weight_assignments(
     neigh_nums = np.empty(num_coords, dtype=np.uint8)
     # Create 1D arrays to store flattened charge
     flat_charge = np.empty(full_num_coords, dtype=np.float64)
-    # Create lists to store basin charges/volumes
+    # Create arrays to store basin charges/volumes
     charges = np.zeros(len(maxima_indices), dtype=np.float64)
     volumes = np.zeros(len(maxima_indices), dtype=np.float64)
+    # create array to store the highest contributing neighbor. We will use this
+    # for periodic shift tracking
+    highest_neighs = np.empty(num_coords, dtype=np.uint8)
+    unlabeled_value = np.iinfo(labels.dtype).max
+    
+    # create map from shifts to index
+    shift_to_int = np.empty((3,3,3), dtype=np.int64)
+    int_to_shift = np.empty((27, 3), dtype=np.int64)
+    idx = 0
+    for i in (-1,0,1):
+        for j in (-1,0,1):
+            for k in (-1,0,1):
+                shift_to_int[i,j,k] = idx
+                int_to_shift[idx] = (i,j,k)
+                idx += 1
 
     ###########################################################################
     # Get neighbors
@@ -65,6 +81,8 @@ def get_weight_assignments(
 
         # get higher neighbors at each point
         neigh_num = 0
+        highest_neigh = -1
+        highest_val = -np.inf
         for si, sj, sk in neighbor_transforms:
             # get neighbor and wrap around periodic boundary
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
@@ -73,15 +91,19 @@ def get_weight_assignments(
             # if this value is below the current points value, continue
             if neigh_value <= base_value:
                 continue
+                
             # get this neighbors index and add it to our array
             neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
             neigh_array[sorted_idx, neigh_num] = neigh_idx
             neigh_num += 1
+            if neigh_value > highest_val:
+                highest_neigh = shift_to_int[si,sj,sk]
+                highest_val = neigh_value
 
         # Check if we had any higher neighbors
         if neigh_num == 0:
             # this is not a real maximum. Assign it to the highest neighbor
-            shift, (ni, nj, nk) = get_best_neighbor(
+            (si, sj, sk), (ni, nj, nk) = get_best_neighbor(
                 data=reference_data,
                 i=i,
                 j=j,
@@ -92,8 +114,10 @@ def get_weight_assignments(
             neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
             neigh_nums[sorted_idx] = 1  # note a single neighbor
             neigh_array[sorted_idx, 0] = neigh_idx
+            highest_neigh = shift_to_int[si, sj, sk]
         else:
             neigh_nums[sorted_idx] = neigh_num
+        highest_neighs[sorted_idx] = highest_neigh
 
     ###########################################################################
     # Assign interior
@@ -107,30 +131,40 @@ def get_weight_assignments(
     for sorted_idx, (idx, neighs, neigh_num) in enumerate(
         zip(sorted_indices, neigh_array, neigh_nums)
     ):
-
         if neigh_num > 0:
             # This is not a maximum. Check if interior point (single basin)
-            best_label = -1
+            best_label = unlabeled_value
             for neigh_idx, neigh in enumerate(neighs):
                 if neigh_idx == neigh_num:
                     break
                 label = labels[neigh]
-                if label == -1:
+                if label == unlabeled_value:
                     # This neighbor is not an interior and this one can't be either
-                    best_label = -1
+                    best_label = unlabeled_value
                     break
-                elif label != best_label and best_label != -1:
+                elif label != best_label and best_label != unlabeled_value:
                     # We have two different basin assignments and this is not an
                     # interior
-                    best_label = -1
+                    best_label = unlabeled_value
                     break
                 best_label = label
 
-            # If the best label isn't -1, this is an interior point and we assign
-            if best_label != -1:
+            # If the best label isn't unassigned, this is an interior point and we assign
+            if best_label != unlabeled_value:
                 labels[idx] = label
                 charges[label] += flat_charge[idx]
                 volumes[label] += 1.0
+                # get the shift to the nearest neighbor
+                si, sj, sk = int_to_shift[highest_neighs[sorted_idx]]
+
+                i,j,k = flat_to_coords(idx, ny_nz, nz)
+                ni,nj,nk,si,sj,sk = wrap_point_w_shift(i+si, j+sj, k+sk, nx, ny, nz)
+                # combine neighbors shift
+                neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
+                nsi, nsj, nsk = images[neigh_idx]
+                images[idx,0] += si + nsi
+                images[idx,1] += sj + nsj
+                images[idx,2] += sk + nsk
             # Otherwise, this point is an exterior point that is partially assigned
             # to multiple basins. We add it to our list.
             else:
@@ -157,6 +191,7 @@ def get_weight_assignments(
                 max_idx = np.searchsorted(maxima_indices, root_idx)
                 labels[root_idx] = max_idx
                 charges[max_idx] += flat_charge[root_idx]
+
                 volumes[max_idx] += 1.0
             else:
                 max_idx = labels[root_idx]
@@ -195,6 +230,8 @@ def get_weight_assignments(
         flat_charge[idx] = charge_data[i, j, k]
         # get higher neighbors at each point
         total_flux = 0.0
+        best_flux = 0.0
+        best_neigh = -1
         neigh_labels = neigh_array[edge_idx]
         neigh_fluxes = flux_array[edge_idx]
         neigh_num = 0
@@ -210,11 +247,14 @@ def get_weight_assignments(
             neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
             # calculate the flux flowing to this voxel
             flux = (neigh_value - base_value) * alpha
+            if flux > best_flux:
+                best_flux = flux
+                best_neigh = shift_to_int[si,sj,sk]
             total_flux += flux
             # get this neighbors label
             neigh_label = labels[neigh_idx]
             # if the neighbor hasn't been assigned, assign flux to this neighbor
-            if neigh_label == -1:
+            if neigh_label == unlabeled_value:
                 # at least one neighbor is also an exterior point
                 neigh_fluxes[neigh_num] = flux
                 neigh_labels[neigh_num] = -neigh_idx - 1
@@ -242,7 +282,7 @@ def get_weight_assignments(
         # ended up being an edge point or another false maximum. To correct for
         # this, we can assign a full flux of 1 to the best ongrid neighbor
         if neigh_num == 0:
-            shift, (ni, nj, nk) = get_best_neighbor(
+            (si, sj, sk), (ni, nj, nk) = get_best_neighbor(
                 data=reference_data,
                 i=i,
                 j=j,
@@ -253,9 +293,10 @@ def get_weight_assignments(
             neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
             neigh_label = labels[neigh_idx]
             neigh_fluxes[0] = 1.0
+            best_neigh = shift_to_int[si,sj,sk]
             # If the neighbor belongs to a basin, assign to the same one. Otherwise,
             # it's an edge and we note the connections
-            if neigh_label >= 0:
+            if neigh_label >= 0 and neigh_label != unlabeled_value:
                 neigh_labels[0] = neigh_label
             else:
                 neigh_labels[0] = -neigh_idx - 1
@@ -265,6 +306,8 @@ def get_weight_assignments(
         neigh_nums[edge_idx] = neigh_num
         # normalize fluxes
         neigh_fluxes /= total_flux
+        # update the highest neighbor to be the highest flux neighbor
+        highest_neighs[sorted_idx] = best_neigh
 
     ###########################################################################
     # Edge assignments
@@ -318,7 +361,7 @@ def get_weight_assignments(
         current_labels = np.array(current_labels, dtype=np.int64)
         current_labels = np.sort(current_labels)
 
-        # Now loop over each label and assign charges, volumes, and labels
+        # Now loop over each label and assign charges, volumes, images, and labels
         best_label = -1
         best_weight = 0.0
         total_weight = 0.0
@@ -387,9 +430,48 @@ def get_weight_assignments(
                     best_label = label
             labels[idx] = best_label
             approx_charges[best_label] += charge
+        
+        # update shift
+
+        # get the shift to the nearest neighbor
+        si, sj, sk = int_to_shift[highest_neighs[sorted_idx]]
+        i,j,k = flat_to_coords(idx, ny_nz, nz)
+        ni,nj,nk,si,sj,sk = wrap_point_w_shift(i+si, j+sj, k+sk, nx, ny, nz)
+        
+        # combine neighbors shift
+        neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
+        
+        if labels[neigh_idx] != best_label:
+            # back up to the highest neighbor with the same label
+            highest_neigh = -1
+            highest_val = -np.inf
+            for ti, tj, tk in neighbor_transforms:
+                # get neighbor and wrap around periodic boundary
+                ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(i + ti, j + tj, k + tk, nx, ny, nz)
+                # get the neighbors value
+                neigh_value = reference_data[ii, jj, kk]
+                # if this value is below the current points value, continue
+                if neigh_value > highest_val:
+                    neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
+                    if labels[neigh_idx] != best_label:
+                        continue
+                    highest_neigh = neigh_idx
+                    highest_val = neigh_value
+                    si = ssi
+                    sj = ssj
+                    sk = ssk
+            neigh_idx = highest_neigh
+                    
+        nsi, nsj, nsk = images[neigh_idx]
+        images[idx,0] += si + nsi
+        images[idx,1] += sj + nsj
+        images[idx,2] += sk + nsk
+            
+            
 
     return (
         labels,
+        images,
         charges,
         volumes,
     )
@@ -397,7 +479,6 @@ def get_weight_assignments(
 
 @njit(parallel=True, cache=True)
 def sort_maxima_frac(
-    maxima_frac,
     maxima_vox,
     grid_shape,
 ):
@@ -413,7 +494,6 @@ def sort_maxima_frac(
     sorted_indices = np.argsort(flat_indices)
     # sort maxima from lowest index to highest
     return (
-        maxima_frac[sorted_indices],
         maxima_vox[sorted_indices],
         flat_indices[sorted_indices],
     )

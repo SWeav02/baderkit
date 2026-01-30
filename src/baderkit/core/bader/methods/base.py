@@ -97,7 +97,7 @@ class MethodBase:
             - basin_maxima_vox
             - maxima_children
             - basin_labels
-            - basin_shifts
+            - basin_images
             - basin_maxima_ref_values
             - basin_charges
             - basin_volumes
@@ -119,7 +119,7 @@ class MethodBase:
         # ok to not try and do it during the actual method
 
         # get our initial maxima
-        labels, shifts, self._maxima_vox, self._maxima_children = initialize_labels_from_maxima(
+        labels, images, self._maxima_vox, self._maxima_children = initialize_labels_from_maxima(
             labels=labels,
             data=self.reference_grid.total,
             maxima_mask=self.maxima_mask,
@@ -130,7 +130,7 @@ class MethodBase:
         )
 
         # now run bader
-        results = self._run_bader(labels, shifts)
+        results = self._run_bader(labels, images)
         labels = results["basin_labels"]
         
         # Now we want to combine any remaining noisy maxima based on their
@@ -206,12 +206,12 @@ class MethodBase:
         )
         return results
 
-    def _run_bader(self, labels, shifts) -> dict:
+    def _run_bader(self, labels, images) -> dict:
         """
         This is the main function that each method must have. It must return a
         dictionary with values for:
             - basin_maxima_frac
-            - basin_shifts
+            - basin_images
             - basin_charges
             - basin_volumes
             - vacuum_charges
@@ -351,16 +351,16 @@ class MethodBase:
             "vacuum_volume": vacuum_volume,
         }
 
-    def get_roots(self, pointers: NDArray[int], shifts: NDArray[int]) -> NDArray[int]:
+    def get_roots(self, pointers: NDArray[int], images: NDArray[int]) -> NDArray[int]:
         """
         Finds the roots of a 1D array of pointers where each index points to its
-        parent and sums shifts across periodic boundaries
+        parent and sums images across periodic boundaries
 
         Parameters
         ----------
         pointers : NDArray[int]
             A 1D array where each entry points to that entries parent.
-        shifts : NDArray[int]
+        images : NDArray[int]
             A Nx3 array where each entry indicates a shift across a periodic
             boundary
         Returns
@@ -381,7 +381,7 @@ class MethodBase:
 
                 # for non-vacuum entries, reassign each index to the value at the
                 # index it is pointing to
-                shifts[valid] += shifts[pointers[valid]]
+                images[valid] += images[pointers[valid]]
                 new_parents[valid] = pointers[pointers[valid]]
 
                 # check if we have the same value as before
@@ -395,7 +395,7 @@ class MethodBase:
                 # create a copy to avoid modifying in-place before comparison
                 new_parents = pointers.copy()
 
-                shifts += shifts[pointers]
+                images += images[pointers]
                 # for non-vacuum entries, reassign each index to the value at the
                 # index it is pointing to
                 new_parents = pointers[pointers]
@@ -415,16 +415,16 @@ class MethodBase:
         # # if we have any vacuum, relabel to the highest available value
         # if vacuum_val in unique_roots:
         #     pointers[pointers==pointers.max()] = np.iinfo.dtype.max
-        return pointers, shifts
+        return pointers, images
     
-    def condense_shifts(self, shifts: NDArray[int]):
+    def condense_images(self, images: NDArray[int]):
         """
-        Converts Nx3 shifts into N shifts where each possible shift is represented
+        Converts Nx3 images into N images where each possible shift is represented
         as a single uint8
 
         Parameters
         ----------
-        shifts : NDArray[int]
+        images : NDArray[int]
             A Nx3 array where each entry indicates a shift across a periodic
             boundary
 
@@ -438,8 +438,8 @@ class MethodBase:
         for shift_idx, (i,j,k) in enumerate(shift_trans):
             shift_map[i,j,k] = shift_idx
             
-        shifts = shift_map[shifts[:,0],shifts[:,1],shifts[:,2]]
-        return shifts
+        images = shift_map[images[:,0],images[:,1],images[:,2]]
+        return images
         
 
     def copy(self) -> Self:

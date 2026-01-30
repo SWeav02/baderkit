@@ -101,7 +101,7 @@ def wrap_point_w_shift(i, j, k, nx, ny, nz):
     return i, j, k, si, sj, sk
 
 
-@njit(fastmath=True, cache=True, inline="always")
+@njit(fastmath=True, cache=True)
 def flat_to_coords(idx, ny_nz, nz):
     i = idx // (ny_nz)
     j = (idx % (ny_nz)) // nz
@@ -109,7 +109,7 @@ def flat_to_coords(idx, ny_nz, nz):
     return i, j, k
 
 
-@njit(fastmath=True, cache=True, inline="always")
+@njit(fastmath=True, cache=True)
 def coords_to_flat(i, j, k, ny_nz, nz):
     return i * (ny_nz) + j * nz + k
 

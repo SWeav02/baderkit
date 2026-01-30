@@ -14,7 +14,7 @@ from .weight_numba import (  # reduce_charge_volume,; get_labels,
 
 class WeightMethod(MethodBase):
 
-    def _run_bader(self, labels, shifts):
+    def _run_bader(self, labels, images):
         """
         Assigns basin weights to each voxel and assigns charge using
         the weight method:
@@ -35,8 +35,8 @@ class WeightMethod(MethodBase):
 
         # We need our maxima to follow the same ordering as the other methods.
         # We want to get this order down before we run our method
-        self._maxima_frac, self._maxima_vox, maxima_indices = sort_maxima_frac(
-            self.maxima_frac, self.maxima_vox, shape
+        self._maxima_vox, maxima_indices = sort_maxima_frac(
+            self.maxima_vox, shape
         )
 
         logging.info("Sorting Reference Data")
@@ -63,9 +63,10 @@ class WeightMethod(MethodBase):
             reference_grid.point_neighbor_transforms
         )
 
-        labels, charges, volumes = get_weight_assignments(
+        labels, images, charges, volumes = get_weight_assignments(
             reference_data,
             labels,
+            images,
             charge_data,
             sorted_indices,
             neighbor_transforms,
@@ -83,9 +84,12 @@ class WeightMethod(MethodBase):
         charges /= shape.prod()
         # adjust volumes from voxel count
         volumes *= reference_grid.point_volume
+        # condense images
+        images = self.condense_images(images)
         # assign all values
         results = {
             "basin_labels": labels,
+            "basin_images": images,
             "basin_charges": charges,
             "basin_volumes": volumes,
             "vacuum_charge": self.charge_grid.total[self.vacuum_mask].sum()

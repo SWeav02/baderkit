@@ -12,7 +12,7 @@ from baderkit.core.utilities.basic import coords_to_flat
 def get_steepest_pointers(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
-    shifts: NDArray[np.int8],
+    images: NDArray[np.int8],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.int64],
     vacuum_mask: NDArray[np.bool_],
@@ -28,8 +28,8 @@ def get_steepest_pointers(
         A 3D grid of values for each point.
     labels : NDArray[np.int64]
         A 1D grid of assignments for each point in the grid
-    shifts : NDArray[np.int64]
-        A Nx3 array of shifts tracking cycles around periodic edges
+    images : NDArray[np.int64]
+        A Nx3 array of images tracking cycles around periodic edges
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.int64]
@@ -74,6 +74,6 @@ def get_steepest_pointers(
                     neighbor_dists=neighbor_dists,
                 )
                 labels[flat_idx] = coords_to_flat(x, y, z, ny_nz, nz)
-                shifts[flat_idx] = shift
+                images[flat_idx] = shift
 
-    return labels, shifts
+    return labels, images

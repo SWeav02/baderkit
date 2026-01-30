@@ -13,7 +13,7 @@ from .ongrid_numba import get_steepest_pointers
 
 class OngridMethod(MethodBase):
 
-    def _run_bader(self, labels, shifts):
+    def _run_bader(self, labels, images):
         """
         Assigns voxels to basins and calculates charge using the on-grid
         method:
@@ -29,15 +29,15 @@ class OngridMethod(MethodBase):
         grid = self.reference_grid
         data = grid.total
         shape = data.shape
-        # get shifts to move from a voxel to the 26 surrounding voxels
+        # get images to move from a voxel to the 26 surrounding voxels
         neighbor_transforms, neighbor_dists = grid.point_neighbor_transforms
         # For each voxel, get the label of the surrounding voxel that has the highest
         # density
         logging.info("Calculating Steepest Neighbors")
-        labels, shifts = get_steepest_pointers(
+        labels, images = get_steepest_pointers(
             data=data,
             labels=labels,
-            shifts=shifts,
+            images=images,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             vacuum_mask=self.vacuum_mask,
@@ -52,17 +52,17 @@ class OngridMethod(MethodBase):
         # NOTE: Vacuum points are indicated by a value of -1 and we want to
         # ignore these
         logging.info("Finding Roots")
-        labels, shifts = self.get_roots(labels, shifts)
-        shifts = self.condense_shifts(shifts)
+        labels, images = self.get_roots(labels, images)
+        images = self.condense_images(images)
             
         # reconstruct a 3D array with our labels and images
         labels = labels.reshape(shape)
-        shifts = shifts.reshape(shape)
+        images = images.reshape(shape)
 
         # assign all results
         results = {
             "basin_labels": labels,
-            "basin_shifts": shifts,
+            "basin_images": images,
         }
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")

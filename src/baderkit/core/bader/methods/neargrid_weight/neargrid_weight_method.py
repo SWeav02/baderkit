@@ -23,7 +23,7 @@ class NeargridWeightMethod(MethodBase):
 
     _use_overdetermined = False
 
-    def _run_bader(self, labels, shifts):
+    def _run_bader(self, labels, images):
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
@@ -46,10 +46,10 @@ class NeargridWeightMethod(MethodBase):
         logging.info("Calculating Gradients")
         if not self._use_overdetermined:
             # calculate gradients and pointers to best neighbors
-            labels, shifts, gradients = get_gradient_pointers_simple(
+            labels, images, gradients = get_gradient_pointers_simple(
                 data=reference_data,
                 labels=labels,
-                shifts=shifts,
+                images=images,
                 dir2lat=self.dir2lat,
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
@@ -68,10 +68,10 @@ class NeargridWeightMethod(MethodBase):
             # get the pseudo inverse
             inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms[:13])
             # calculate gradients and pointers to best neighbors
-            labels, shifts, gradients, self._maxima_mask = get_gradient_pointers_overdetermined(
+            labels, images, gradients, self._maxima_mask = get_gradient_pointers_overdetermined(
                 data=reference_data,
                 labels=labels,
-                shifts=shifts,
+                images=images,
                 car2lat=self.car2lat,
                 inv_norm_cart_trans=inv_norm_cart_trans,
                 neighbor_dists=neighbor_dists,
@@ -82,7 +82,7 @@ class NeargridWeightMethod(MethodBase):
 
         # Find roots
         logging.info("Finding Roots")
-        labels, shifts = self.get_roots(labels, shifts)
+        labels, images = self.get_roots(labels, images)
 
         # reconstruct a 3D array with our labels. make sure our data type can
         # include negative values so that we can mark points needing refinement
@@ -105,10 +105,10 @@ class NeargridWeightMethod(MethodBase):
         refinement_mask[self.maxima_mask] = False
         # note these labels and the vacuum should not be reassigned again in future cycles
         labels[refinement_mask&self.vacuum_mask] = -labels[refinement_mask&self.vacuum_mask]
-        labels, shifts = refine_fast_neargrid(
+        labels, images = refine_fast_neargrid(
             data=reference_data,
             labels=labels,
-            shifts=shifts,
+            images=images,
             refinement_mask=refinement_mask,
             maxima_mask=self.maxima_mask,
             gradients=gradients,
@@ -122,8 +122,8 @@ class NeargridWeightMethod(MethodBase):
         dtype = get_lowest_uint(len(self.maxima_vox)+1)
         labels = labels.reshape(shape).astype(dtype)
         
-        # condense shifts
-        shifts = self.condense_shifts(shifts)
+        # condense images
+        images = self.condense_images(images)
 
         # get final edges
         edge_mask = get_edges(
@@ -173,7 +173,7 @@ class NeargridWeightMethod(MethodBase):
 
         volumes = volumes * reference_grid.structure.volume / reference_grid.ngridpts
         charges = charges / reference_grid.ngridpts
-
+        
         # get all results
         results = {
             "basin_labels": labels,
@@ -181,6 +181,6 @@ class NeargridWeightMethod(MethodBase):
             "basin_volumes": volumes,
             "vacuum_charge": vacuum_charge,
             "vacuum_volume": vacuum_volume,
-            "basin_shifts": shifts,
+            "basin_images": images,
         }
         return results

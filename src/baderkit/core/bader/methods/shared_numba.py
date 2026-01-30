@@ -475,7 +475,7 @@ def initialize_labels_from_maxima(
 
     # create a flat array of shifs for tracking wrapping around edges. These
     # will initially all be (0,0,0)
-    shifts = np.zeros((nx*ny*nz, 3), dtype=np.int8)
+    images = np.zeros((nx*ny*nz, 3), dtype=np.int8)
 
     # Now we initialize the maxima
     for max_idx, (i, j, k) in enumerate(maxima_vox):
@@ -698,11 +698,13 @@ def initialize_labels_from_maxima(
     # get the remaining maxima after reduction
     maxima_roots = []
     for max_idx in maxima_labels:
-        maxima_roots.append(find_root_no_compression(labels, max_idx))
+        root = find_root_no_compression(labels, max_idx)
+        labels[max_idx] = root
+        maxima_roots.append(root)
     maxima_roots = np.array(maxima_roots, dtype=np.int64)
     
     root_maxima = []
-    # now we get the shifts across unit cell borders for each maximum.
+    # now we get the images across unit cell borders for each maximum.
     for max_idx, max_root in enumerate(maxima_roots):
         if maxima_labels[max_idx] == max_root:
             root_maxima.append(max_idx)
@@ -710,7 +712,7 @@ def initialize_labels_from_maxima(
         max_frac = maxima_frac[max_idx]
         root_idx = np.searchsorted(maxima_labels, max_root)
         root_frac = maxima_frac[root_idx]
-        shifts[maxima_labels[max_idx]] = compute_wrap_offset(max_frac, root_frac)
+        images[maxima_labels[max_idx]] = compute_wrap_offset(max_frac, root_frac)
     root_maxima = np.array(root_maxima, dtype=np.uint16)
     
     # Finally, we group our maxima so we have a history of which false maxima
@@ -728,7 +730,7 @@ def initialize_labels_from_maxima(
     maxima_coords = maxima_vox[root_maxima]
     maxima_children = [maxima_vox[i] for i in child_maxima]
 
-    return labels, shifts, maxima_coords, maxima_children
+    return labels, images, maxima_coords, maxima_children
 
 @njit(cache=True)
 def get_persistence_scores(

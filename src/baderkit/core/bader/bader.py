@@ -66,6 +66,7 @@ class Bader(BaseAnalysis):
     _reset_props = [
         # assigned by run_bader
         "basin_labels",
+        "basin_images",
         "basin_maxima_frac",
         "basin_maxima_charge_values",
         "basin_maxima_ref_values",
@@ -95,6 +96,7 @@ class Bader(BaseAnalysis):
         self,
         method: str | Method = Method.weight,
         nna_cutoff: float | bool = False,
+        persistence_tol: float = 0.01,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -113,6 +115,7 @@ class Bader(BaseAnalysis):
         if nna_cutoff is True:
             nna_cutoff = 1.0
         self._nna_cutoff = nna_cutoff
+        self._persistence_tol = persistence_tol
 
         # whether or not to use overdetermined gradients in neargrid methods.
         self._use_overdetermined = False
@@ -184,6 +187,44 @@ class Bader(BaseAnalysis):
             "atom_min_surface_distances",
             "atom_avg_surface_distances",
             ])
+        
+    @property
+    def persistence_tol(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            It is common for false maxima to be found using only nearest neighbor
+            points. To deal with this we combine pairs of basins that have low
+            topological persistence.
+            
+            The persistence score is calculated as:
+                
+                score = dist * (lower_max - saddle_value) / higher_max
+                
+            where 'dist' is the cartesian distance between the maxima, lower_max
+            is the value at the maximum with a lower value, saddle_value is the
+            highest value at which there is a connection between the two maximas
+            descending manifold (basin), and higher_max is the value at the maximum
+            with a higher value. Any pairs that score below the tolerance will be
+            combined.
+
+        """
+        return self._nna_cutoff
+        
+    @persistence_tol.setter
+    def persistence_tol(self, value: str | Method):
+        self._persistence_tol = value
+        # reset atom properties
+        self._reset_properties(exclude_properties=[
+            "vacuum_mask",
+            "num_vacuum",
+            "vacuum_charge",
+            "vacuum_volume",
+            "structure",
+            
+            ])
 
     ###########################################################################
     # Calculated Properties
@@ -205,6 +246,51 @@ class Bader(BaseAnalysis):
         if self._basin_labels is None:
             self.run_bader()
         return self._basin_labels
+    
+    @property
+    def basin_images(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            a 3D array of the same shape as the reference grid with entries
+            representing which periodic neighbor each point is assigned to. For
+            example, a point may be assigned to atom 0, but following the gradient
+            leads to atom zero in the unit cell at (1, 0, 0). Images are represented
+            by integers to save memory and follow the values created by itertools:
+                0: [-1, -1, -1]
+                 1: [-1, -1,  0]
+                 2: [-1, -1,  1]
+                 3: [-1,  0, -1]
+                 4: [-1,  0,  0]
+                 5: [-1,  0,  1]
+                 6: [-1,  1, -1]
+                 7: [-1,  1,  0]
+                 8: [-1,  1,  1]
+                 9: [ 0, -1, -1]
+                10: [ 0, -1,  0]
+                11: [ 0, -1,  1]
+                12: [ 0,  0, -1]
+                13: [ 0,  0,  0]
+                14: [ 0,  0,  1]
+                15: [ 0,  1, -1]
+                16: [ 0,  1,  0]
+                17: [ 0,  1,  1]
+                18: [ 1, -1, -1]
+                19: [ 1, -1,  0]
+                20: [ 1, -1,  1]
+                21: [ 1,  0, -1]
+                22: [ 1,  0,  0]
+                23: [ 1,  0,  1]
+                24: [ 1,  1, -1]
+                25: [ 1,  1,  0]
+                26: [ 1,  1,  1]
+
+        """
+        if self._basin_images is None:
+            self.run_bader()
+        return self._basin_images
 
     @property
     def basin_maxima_frac(self) -> NDArray[float]:
