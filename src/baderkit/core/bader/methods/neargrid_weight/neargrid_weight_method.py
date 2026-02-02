@@ -124,6 +124,7 @@ class NeargridWeightMethod(MethodBase):
         
         # condense images
         images = self.condense_images(images)
+        images = images.reshape(shape)
 
         # get final edges
         edge_mask = get_edges(

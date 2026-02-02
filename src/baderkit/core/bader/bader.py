@@ -64,7 +64,7 @@ class Bader(BaseAnalysis):
     """
 
     _reset_props = [
-        # assigned by run_bader
+        # assigned by _run_bader
         "basin_labels",
         "basin_images",
         "basin_maxima_frac",
@@ -82,6 +82,8 @@ class Bader(BaseAnalysis):
         "basin_contact_surface_areas",
         "atom_surface_areas",
         "atom_contact_surface_areas",
+        "minima_basin_labels",
+        "minima_basin_images",
         # Assigned by run_atom_assignment
         "basin_atoms",
         "basin_atom_dists",
@@ -238,14 +240,29 @@ class Bader(BaseAnalysis):
         -------
         NDArray[float]
             A 3D array of the same shape as the reference grid with entries
-            representing the basin the voxel belongs to. Note that for some
-            methods (e.g. weight) the voxels have weights for each basin.
-            These will be stored in the basin_weights property.
+            representing the basin the voxel belongs to.
 
         """
         if self._basin_labels is None:
-            self.run_bader()
+            self._run_bader()
         return self._basin_labels
+    
+    @property
+    def minima_basin_labels(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The equivalent of bader basins for the desending gradient to local
+            minima. This is each minima's ascending manifold and can be used
+            in combination with the bader basins to locate important topological
+            features.
+
+        """
+        if self._minima_basin_labels is None:
+            self._run_minima_bader()
+        return self._minima_basin_labels
     
     @property
     def basin_images(self) -> NDArray[int]:
@@ -289,8 +306,22 @@ class Bader(BaseAnalysis):
 
         """
         if self._basin_images is None:
-            self.run_bader()
+            self._run_bader()
         return self._basin_images
+    
+    @property
+    def minima_basin_images(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The equivalent of the basin_images property for minima basins.
+
+        """
+        if self._minima_basin_images is None:
+            self._run_minima_bader()
+        return self._minima_basin_images
 
     @property
     def basin_maxima_frac(self) -> NDArray[float]:
@@ -303,7 +334,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._basin_maxima_frac is None:
-            self.run_bader()
+            self._run_bader()
         return self._basin_maxima_frac
 
     @property
@@ -337,7 +368,7 @@ class Bader(BaseAnalysis):
         if self._basin_maxima_ref_values is None:
             # we get these values during each bader method anyways, so
             # we run this here.
-            self.run_bader()
+            self._run_bader()
         return self._basin_maxima_ref_values.round(10)
 
     @property
@@ -353,7 +384,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._basin_maxima_vox is None:
-            self.run_bader()
+            self._run_bader()
         return self._basin_maxima_vox
 
     @property
@@ -367,7 +398,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._basin_charges is None:
-            self.run_bader()
+            self._run_bader()
         return self._basin_charges.round(10)
 
     @property
@@ -381,7 +412,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._basin_volumes is None:
-            self.run_bader()
+            self._run_bader()
         return self._basin_volumes.round(10)
 
     @property
@@ -699,7 +730,7 @@ class Bader(BaseAnalysis):
 
         return [i.value for i in Method]
 
-    def run_bader(self) -> None:
+    def _run_bader(self) -> None:
         """
         Runs the entire Bader process and saves results to class variables.
 
@@ -731,6 +762,51 @@ class Bader(BaseAnalysis):
 
         for key, value in results.items():
             setattr(self, f"_{key}", value)
+        t1 = time.time()
+        logging.info("Bader Algorithm Complete")
+        logging.info(f"Time: {round(t1-t0,2)}")
+        
+    def _run_minima_bader(self) -> None:
+        """
+        Runs the entire Bader process and saves results to class variables.
+
+        """
+        t0 = time.time()
+        logging.info(f"Beginning Minima Bader Algorithm Using '{self.method.name}' Method")
+        # Normalize the method name to a module and class name
+        module_name = self.method.replace(
+            "-", "_"
+        )  # 'pseudo-neargrid' -> 'pseudo_neargrid'
+        class_name = (
+            "".join(part.capitalize() for part in module_name.split("_")) + "Method"
+        )
+
+        # import method
+        mod = importlib.import_module(f"baderkit.core.bader.methods.{module_name}")
+        Method = getattr(mod, class_name)
+        
+        # create a temporary grid object with the scalar field flipped.
+        temp_reference = self.reference_grid.copy()
+        temp_reference.total *= -1
+        # shift so that the values are above our vacuum cutoff. Mask out any
+        # vacuum points from the regular function
+        temp_reference.total += temp_reference.total.min() + self.vacuum_tol + 1e-6
+        temp_reference.total[self.vacuum_mask] = 0.0
+
+        # Instantiate and run the selected method
+        method = Method(
+            charge_grid=self.charge_grid,
+            reference_grid=temp_reference,
+            vacuum_mask=self.vacuum_mask,
+            num_vacuum=self.num_vacuum,
+        )
+        if self._use_overdetermined:
+            method._use_overdetermined = True
+        results = method.run()
+        # set related properties
+        self._minima_basin_labels = results["basin_labels"]
+        self._minima_basin_images = results["basin_images"]
+        
         t1 = time.time()
         logging.info("Bader Algorithm Complete")
         logging.info(f"Time: {round(t1-t0,2)}")

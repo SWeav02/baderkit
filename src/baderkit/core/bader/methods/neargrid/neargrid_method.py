@@ -116,6 +116,7 @@ class NeargridMethod(MethodBase):
         
         # condense images
         images = self.condense_images(images)
+        images = images.reshape(shape)
         # get all results
         results = {
             "basin_labels": labels,

@@ -153,7 +153,7 @@ class MethodBase:
             edge_mask=edge_mask,
             label_num=len(self.maxima_vox),
             )
-        
+
         # get maxima unions based on persistence
         maxima_roots = group_by_persistence(
             data=self.reference_grid.total,
@@ -182,7 +182,8 @@ class MethodBase:
         self._maxima_children = [self.maxima_children[i] for i in final_maxima]
         final_charges = charges[final_maxima]
         final_volumes = volumes[final_maxima]
-                
+        
+        logging.info("Refining Maxima")
         # refine maxima using a quadratic fit
         self._maxima_vox, refined_maxima_frac, maxima_values = refine_maxima(
             maxima_coords=self.maxima_vox,

@@ -86,6 +86,7 @@ class WeightMethod(MethodBase):
         volumes *= reference_grid.point_volume
         # condense images
         images = self.condense_images(images)
+        images = images.reshape(shape)
         # assign all values
         results = {
             "basin_labels": labels,
