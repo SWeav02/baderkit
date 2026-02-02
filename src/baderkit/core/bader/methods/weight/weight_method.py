@@ -89,8 +89,8 @@ class WeightMethod(MethodBase):
         images = images.reshape(shape)
         # assign all values
         results = {
-            "basin_labels": labels,
-            "basin_images": images,
+            "maxima_basin_labels": labels,
+            "maxima_basin_images": images,
             "basin_charges": charges,
             "basin_volumes": volumes,
             "vacuum_charge": self.charge_grid.total[self.vacuum_mask].sum()

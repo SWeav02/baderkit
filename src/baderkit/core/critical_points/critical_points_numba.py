@@ -1,266 +1,328 @@
-# -*- coding: utf-8 -*-
-
-from numba import njit, prange
+from baderkit.core.utilities.basic import wrap_point_w_shift
 import numpy as np
+from numpy.typing import NDArray
+from numba import njit, prange
 
-from baderkit.core.utilities.basic import wrap_point
+# Things to do:
+    # get grid with labels for each type of critical point and manifold
+    # Label ascending/descending manifolds
+    # create connection map between critical points
+    # determine what else is useful to make easily available. 
+        # - integral lines?
+        # - bader bonded atoms
+        # - etc.
 
+@njit(parallel=True)
+def get_manifolds(
+    labeled_array: NDArray[np.int64],
+    images: NDArray[np.int64],
+    image_to_int: NDArray[np.int64],
+    int_to_image: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+):
+    """
+    Finds the edges of maxima/minima 3-manifolds. Points that have 1 different
+    neighbor lie on the dividing surface of the 3-manifold and correspond to
+    2-manifolds. Points that have more than 1 different neighbor lie on the bounding
+    edges of these 2-manifolds making up 1-manifolds. The complete description
+    is as follows:
+        maxima 3-manifolds:
+            bounding 2-manifolds are descending connections from type-2 saddles
+            to type-1 saddles
+            bounding 1-manifolds are descending connections from type-1 saddles
+            to minima
+        minima 3-manifolds:
+            bounding 2-manifolds are ascending connections from type-1 saddles
+            to type-2 saddles
+            bounding 1-manifolds are ascending connections from type-2 saddles
+            to maxima
 
-def f_edge(vertices):
-    # give value of edge based on highest and second highest facets
-    if vertices[0] > vertices[1]:
-        return vertices
-    else:
-        return np.flip(vertices)
+    Parameters
+    ----------
+    labeled_array : NDArray[np.int64]
+        A 3D array where each entry represents the basin label of the point.
+    images : NDArray[np.int64]
+        A 3D array where each entry represents the periodic image of the maximum
+        or minimum this point belongs to
+    image_to_int : NDArray[np.int64]
+        A mapping from the 3 integer shifts to each periodic image to a 1 integer
+        representation
+    int_to_image : NDArray[np.int64]
+        A mapping from the 1 integer representation of a periodic image to the
+        3 integer shift
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
 
+    Returns
+    -------
+    edges : NDArray[uint8]
+        An array with the same shape as the input array that is 1 at 2-manifolds
+        2 at 1-manifolds and 0 elsewhere
 
-def f_poly(vertices):
-    # get the edge with the highest value
-    edges = np.array([[0, 1], [1, 2], [2, 3], [3, 0]])
-    best_edge_idx = 0
-    best_edge = f_edge(vertices[edges[0]])
+    """
+    nx, ny, nz = labeled_array.shape
 
-    for edge_idx, indices in enumerate(edges[1:]):
-        new_edge = f_edge(vertices[indices])
-        if new_edge[0] > best_edge[0]:
-            best_edge_idx = edge_idx + 1
-            best_edge = new_edge
-        elif new_edge[0] == best_edge[0] and new_edge[1] > best_edge[1]:
-            best_edge_idx = edge_idx + 1
-            best_edge = new_edge
+    # create 3D array to store edges
+    edges = np.zeros_like(labeled_array, dtype=np.uint8)
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
 
-    # Now get the edge disjoint from the one we found
-    best_edge_idx = (best_edge_idx + 2) % 4
-    next_edge = f_edge(vertices[edges[edge_idx]])
+                # get this voxels label and image
+                label = labeled_array[i, j, k]
+                image = images[i, j, k]
 
-    # replace vertices and return
-    vertices[:2] = best_edge
-    vertices[2:] = next_edge
+                # iterate over the neighboring voxels
+                current_label = -1
+                current_image = -1
+                unique = 0
+                for si, sj, sk in neighbor_transforms:
+                    if unique == 2:
+                        break
+                    # wrap points
+                    ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(i + si, j + sj, k + sk, nx, ny, nz)
+                    # skip vacuum
+                    if vacuum_mask[ii,jj,kk]:
+                        continue
+                    # get neighbors label and image
+                    neigh_label = labeled_array[ii, jj, kk]
+                    neigh_image = images[ii, jj, kk]
+                    
+                    # adjust neigh image
+                    si1, sj1, sk1 = int_to_image[neigh_image]
+                    si1 += ssi
+                    sj1 += ssj
+                    sk1 += ssk
+                    neigh_image = image_to_int[si1,sj1,sk1]
+                    
+                    # if the neighbor has a different label, this is an edge
+                    if neigh_label != label:
+                        if current_label != neigh_label:
+                            current_label = neigh_label
+                            current_image = neigh_image
+                            unique +=1
+                            continue
 
-    return vertices
+                    # if the neighbor has a different image it may be an edge.
+                    # We don't count this if the neighbor wrapped around
+                    if image == neigh_image or neigh_image == current_image:
+                        continue
+                    if ssi != 0 or ssj != 0 or ssk != 0:
+                        continue
 
+                    current_label = neigh_label
+                    current_image = neigh_image
+                    unique += 1
+                edges[i,j,k] = unique
+    return edges
 
-def f_voxel(vertices):
-    # get the polynomial with the highest value
-    polys = np.array(
-        [
-            [0, 1, 2, 3],
-            [0, 1, 5, 4],
-            [0, 3, 7, 4],
-            [6, 3, 4, 7],
-            [6, 2, 3, 7],
-            [6, 2, 1, 3],
-        ]
-    )
+@njit(parallel=True)
+def get_saddles(
+    minima_manifolds,
+    maxima_manifolds,
+):
+    """
+    Uses the 
 
-    best_poly_idx = 0
-    best_poly = f_poly(vertices[polys[0]])
+    Parameters
+    ----------
+    minima_manifolds : TYPE
+        DESCRIPTION.
+    maxima_manifolds : TYPE
+        DESCRIPTION.
 
-    for poly_idx, indices in enumerate(polys[1:]):
-        new_poly = f_poly(vertices[indices])
-        for i in range(4):
-            if new_poly[i] < best_poly[i]:
-                break
-            elif new_poly[i] > best_poly[i]:
-                best_poly = new_poly
-                best_poly_idx = poly_idx
-                break
+    Returns
+    -------
+    edges : TYPE
+        DESCRIPTION.
 
-    # Now get the polynomial on the opposite side of the voxel
-    best_poly_idx = (best_poly_idx + 3) % 6
-    next_poly = f_edge(vertices[polys[best_poly_idx]])
+    """
 
-    # replace vertices and return
-    vertices[:4] = best_poly
-    vertices[4:] = next_poly
+    nx, ny, nz = minima_manifolds.shape
 
-    return vertices
+    # create 3D array to store saddles
+    edges = np.zeros_like(minima_manifolds, dtype=np.uint8)
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                min_val = minima_manifolds[i,j,k]
+                max_val = maxima_manifolds[i,j,k]
+                if min_val == 0 or max_val == 0:
+                    continue
+                
+                # saddle 1-manifolds?
+                if min_val == 1 and max_val == 1:
+                    edges[i,j,k] = 1
+                
+                # type1 saddle
+                elif min_val == 1 and max_val == 2:
+                    edges[i,j,k] = 2
+                
+                # type2 saddle
+                elif min_val == 2 and max_val == 1:
+                    edges[i,j,k] = 3
 
+    return edges
 
 @njit
-def get_uint8_flag(crit: int, face: int, neigh: int):
-    """
-    Converts connection info to an 8bit integer.
-    Assumes following order:
-        0: empty
-        1: 1 if crit point
-        2-4: transform index of pointer to highest valued face.
-        5-7: transform index of pointer to unioned cofacet
+def get_edge_type(
+    i,j,k,
+    nx,ny,nz,
+    transforms,
+    labels,
+    images,
+    int_to_image,
+    image_to_int,
+    vacuum_mask,
+        ):
+    # get this voxels label and image
+    label = labels[i, j, k]
+    image = images[i, j, k]
 
-    """
-    value = np.uint8(0)
-
-    # if critical, add 64 (1 index of bit)
-    value += 64 * crit
-
-    # update face pointer. 32, 16, and 8 (2, 3, 4 indices of bit)
-    value += 8 * face
-
-    # update union pointer. 4, 2, and 1
-    value += neigh
-
-    return value
-
-
-def get_connection_from_flag(value: np.uint8):
-
-    crit = value // 64
-    value %= 64
-
-    face = value // 8
-    value %= 8
-
-    # neigh = value
-    return crit, face, value
-
-
-def pair_vertex(i, j, k, data, f):
-    nx, ny, nz = data.shape
-    # convert to data units
-    di = i / 2
-    dj = j / 2
-    dk = k / 2
-    value = data[di, dj, dk]
-    # check neighbors
-    neighbor_transforms = np.array(
-        [
-            [1, 0, 0],
-            [0, 1, 0],
-            [0, 0, 1],
-            [-1, 0, 0],
-            [0, -1, 0],
-            [0, 0, -1],
-        ]
-    )
-    best_idx = -1
-    best_value = None
-    for transform_idx, (si, sj, sk) in enumerate(neighbor_transforms):
-        ni, nj, nk = wrap_point(di + si, dj + sj, dk + sk, nx, ny, nz)
-        # skip edges that are above the vertices point
-        neigh_value = data[ni, nj, nk]
-        if neigh_value > value:
-            continue
-        if best_value is None or neigh_value > best_value:
-            best_idx = transform_idx
-            best_value = neigh_value
-    # get 8-bit int representation
-    if best_idx == -1:
-        crit = 1
-        best_idx = 0
-        best_value = 0
-    else:
-        crit = 0
-    flag = get_uint8_flag(crit, 0, best_idx)
-    f[i, j, k] = flag
-
-
-def pair_edge(i, j, k, data, f):
-    nx, ny, nz = data
-    # get the direction of the edge
-    for vec, x in enumerate((i, j, k)):
-        if x % 2 == 1:
+    # iterate over the neighboring voxels
+    current_label = -1
+    current_image = -1
+    unique = 0
+    for si, sj, sk in transforms:
+        if unique == 2:
             break
-
-    # get transformations to neighboring polynomials
-    neighbor_transforms = np.array(
-        [
-            [1, 0, 0],
-            [0, 1, 0],
-            [0, 0, 1],
-            [-1, 0, 0],
-            [0, -1, 0],
-            [0, 0, -1],
-        ]
-    )
-
-    # get transforms to vertices
-    vertices = np.empty((10, 3), dtype=np.int8)
-    vertices[0, vec] = 1
-    vertices[1, vec] = -1
-    for trans_idx, trans in enumerate(neighbor_transforms):
-        if trans[vec] != 0:
+        # wrap points
+        ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(i + si, j + sj, k + sk, nx, ny, nz)
+        # skip vacuum
+        if vacuum_mask[ii,jj,kk]:
             continue
-        # get next available vertex row
-        vec_idx = (trans_idx + 1) * 2
-        # add vertices with negative vec first to ensure a proper loop
-        vertices[vec_idx] = vertices[1] + trans * 2
-        vertices[vec_idx + 1] = vertices[0] + trans * 2
-
-    values = np.empty(10, dtype=np.float64)
-
-    # get vertex values
-    for vert_idx, (si, sj, sk) in enumerate(vertices):
-        ni, nj, nk = wrap_point((i + si) / 2, (j + sj) / 2, (k + sk) / 2, nx, ny, nz)
-        values[vert_idx] = data[ni, nj, nk]
-
-    # get main edge value
-    value = f_edge(values[0, 1])
-
-    best_idx = -1
-    best_value = None
-    # get best poly
-    for trans_idx, trans in enumerate(neighbor_transforms):
-        # skip irrelavent transformations
-        if trans[vec] != 0:
-            continue
-        vec_idx = (trans_idx + 1) * 2
-        neigh_value = f_poly(values[0, 1, vec_idx, vec_idx + 1])
-        # if this edge isn't the highest facet of this poly, we skip
-        for i in range(2):
-            if neigh_value[i] != value[i]:
+        # get neighbors label and image
+        neigh_label = labels[ii, jj, kk]
+        neigh_image = images[ii, jj, kk]
+        
+        # adjust neigh image
+        si1, sj1, sk1 = int_to_image[neigh_image]
+        si1 += ssi
+        sj1 += ssj
+        sk1 += ssk
+        neigh_image = image_to_int[si1,sj1,sk1]
+        
+        # if the neighbor has a different label, this is an edge
+        if neigh_label != label:
+            if current_label != neigh_label:
+                current_label = neigh_label
+                current_image = neigh_image
+                unique +=1
                 continue
 
-        # if this is our first value, set it as out best
-        if best_value is None:
-            best_idx = trans_idx
-            best_value = neigh_value
+        # if the neighbor has a different image it may be an edge.
+        # We don't count this if the neighbor wrapped around
+        if image == neigh_image or neigh_image == current_image:
+            continue
+        if ssi != 0 or ssj != 0 or ssk != 0:
+            continue
 
-        # if any extra values improve the value, replace it
-        for i in range(2, 4):
-            if neigh_value[i] < best_value[i]:
-                best_idx = trans_idx
-                best_value = neigh_value
-                break
-            elif neigh_value[i] > best_value[i]:
-                break
-    # get 8-bit int representation
-    if best_idx == -1:
-        crit = 1
-        best_idx = 0
-        best_value = 0
-    else:
-        crit = 0
-    flag = get_uint8_flag(crit, 0, best_idx)
-    f[i, j, k] = flag
+        current_label = neigh_label
+        current_image = neigh_image
+        unique += 1
+    return unique
 
-    # get transformations to relavent vertices
-    # get all vertex values
-    # skip any transformations in direction parallel to edge
-    # get 2 digit value of this edge
-    # get best neighbor:
-    # get proper polynomial representation matching required order
-    # get 4 digit value of polynomial
-    # reject if first 2 digits don't match this edge
-    # reject if second 2 digits are higher than any previous
-    # convert to flag and store
+@njit(parallel=True)
+def get_manifold_labels(
+    maxima_labels: NDArray[np.int64],
+    minima_labels: NDArray[np.int64],
+    maxima_images: NDArray[np.int64],
+    minima_images: NDArray[np.int64],
+    image_to_int: NDArray[np.int64],
+    int_to_image: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+):
+    """
+    0: maxima
+    1: minima
+    2: 1-saddle
+    3: 2-saddle
+    4: 1-saddle ascending 2-manifold
+    5: 1-saddle descending 1-manifold
+    6: 2-saddle ascending 1-manifold
+    7: 2-saddle descending 2-manifold
+    8: saddle connecting 1-manifold
+    9: blank
+    """
+    
+    nx, ny, nz = maxima_labels.shape
 
+    # create 3D array to store labels
+    manifold_labels = np.empty(maxima_labels, dtype=np.uint8)
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    manifold_labels[i,j,k] = 10
+                    continue
+                
+                # get the number of neighbors with different labels
+                unique_max = get_edge_type(
+                    i, j, k, 
+                    nx, ny, nz, 
+                    neighbor_transforms, 
+                    maxima_labels, 
+                    maxima_images, 
+                    int_to_image, 
+                    image_to_int, 
+                    vacuum_mask)
+                unique_min = get_edge_type(
+                    i, j, k, 
+                    nx, ny, nz, 
+                    neighbor_transforms, 
+                    minima_labels, 
+                    minima_images, 
+                    int_to_image, 
+                    image_to_int, 
+                    vacuum_mask)
 
-def pair_poly(i, j, k, data, f):
-    pass
-    # get transformations to neighboring voxels
-    # get transformations to relavent vertices
-    # get all vertex values
-    # skip any transformations parallel to plane
-    # get 4 digit value of this poly
-    # get best neighbor:
-    # get proper voxel representation matching required order. May be tricky
-    # get 8 digit value of polynomial
-    # reject if first 4 digits don't match this edge
-    # reject if second 4 digits are higher than any previous
-    # convert to flag and store
-
-
-# figure out gradient traversal and connection mapping
-# pull out critical points and smoothed path arcs? Any other info? Decending/ascending manifolds?
-# Any way to rigorously use results to make bifurcation plot?
-# implement into bifurcations?
+                if unique_min == 0 and unique_max == 0:
+                    # this is not part of a 1 or 2 manifold
+                    label = 9
+                
+                elif unique_min == 0 and unique_max == 1:
+                    # this is a separating plane between two maxima 3-manifolds.
+                    # It represents the descending 2-manifold from a 2-saddle
+                    label = 7
+                
+                elif unique_min == 0 and unique_max > 1:
+                    # this is a bounding edge of the descending 2-manifold of
+                    # a 2-saddle. it is a 1-manifold between a minimum and 1-saddle
+                    label = 5
+                
+                elif unique_min == 1 and unique_max == 0:
+                    # this is a separating plane between two minima 3-manifolds.
+                    # It represents the ascending 2-manifold from a 1-saddle
+                    label = 4
+                
+                elif unique_min > 1 and unique_max == 0:
+                    # this is a bounding edge of the ascending 2-manifold of
+                    # a 1-saddle. it is a 1-manifold between a maximum and 2-saddle
+                    label = 6
+                
+                elif unique_min == 1 and unique_max == 1:
+                    # this is a 1-manifold connecting two saddles
+                    label = 8
+                
+                elif unique_min == 1 and unique_max > 1:
+                    # this is a 1-saddle
+                    label = 2
+                
+                elif unique_min > 1 and unique_max == 1:
+                    # this is a 2-saddle
+                    label = 3
+                
+                # is both > 2 possible?
+                manifold_labels[i,j,k] = label
+    return manifold_labels

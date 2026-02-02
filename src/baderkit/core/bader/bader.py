@@ -65,14 +65,21 @@ class Bader(BaseAnalysis):
 
     _reset_props = [
         # assigned by _run_bader
-        "basin_labels",
-        "basin_images",
-        "basin_maxima_frac",
-        "basin_maxima_charge_values",
-        "basin_maxima_ref_values",
-        "basin_maxima_vox",
+        "maxima_basin_labels",
+        "maxima_basin_images",
+        "maxima_frac",
+        "maxima_vox",
+        "maxima_charge_values",
+        "maxima_ref_values",
         "basin_charges",
         "basin_volumes",
+        # assigned by _run_minima_bader
+        "minima_basin_labels",
+        "minima_basin_images",
+        "minima_frac",
+        "minima_vox",
+        "minima_charge_values",
+        "minima_ref_values",
         # Assigned by calling the property
         "basin_min_surface_distances",
         "basin_avg_surface_distances",
@@ -82,8 +89,6 @@ class Bader(BaseAnalysis):
         "basin_contact_surface_areas",
         "atom_surface_areas",
         "atom_contact_surface_areas",
-        "minima_basin_labels",
-        "minima_basin_images",
         # Assigned by run_atom_assignment
         "basin_atoms",
         "basin_atom_dists",
@@ -229,11 +234,11 @@ class Bader(BaseAnalysis):
             ])
 
     ###########################################################################
-    # Calculated Properties
+    # Maxima Basin Properties
     ###########################################################################
 
     @property
-    def basin_labels(self) -> NDArray[float]:
+    def maxima_basin_labels(self) -> NDArray[float]:
         """
 
         Returns
@@ -243,29 +248,12 @@ class Bader(BaseAnalysis):
             representing the basin the voxel belongs to.
 
         """
-        if self._basin_labels is None:
+        if self._maxima_basin_labels is None:
             self._run_bader()
-        return self._basin_labels
+        return self._maxima_basin_labels
     
     @property
-    def minima_basin_labels(self) -> NDArray[float]:
-        """
-
-        Returns
-        -------
-        NDArray[float]
-            The equivalent of bader basins for the desending gradient to local
-            minima. This is each minima's ascending manifold and can be used
-            in combination with the bader basins to locate important topological
-            features.
-
-        """
-        if self._minima_basin_labels is None:
-            self._run_minima_bader()
-        return self._minima_basin_labels
-    
-    @property
-    def basin_images(self) -> NDArray[int]:
+    def maxima_basin_images(self) -> NDArray[int]:
         """
 
         Returns
@@ -305,26 +293,12 @@ class Bader(BaseAnalysis):
                 26: [ 1,  1,  1]
 
         """
-        if self._basin_images is None:
+        if self._maxima_basin_images is None:
             self._run_bader()
-        return self._basin_images
+        return self._maxima_basin_images
     
     @property
-    def minima_basin_images(self) -> NDArray[float]:
-        """
-
-        Returns
-        -------
-        NDArray[float]
-            The equivalent of the basin_images property for minima basins.
-
-        """
-        if self._minima_basin_images is None:
-            self._run_minima_bader()
-        return self._minima_basin_images
-
-    @property
-    def basin_maxima_frac(self) -> NDArray[float]:
+    def maxima_frac(self) -> NDArray[float]:
         """
 
         Returns
@@ -333,12 +307,12 @@ class Bader(BaseAnalysis):
             The fractional coordinates of each attractor.
 
         """
-        if self._basin_maxima_frac is None:
+        if self._maxima_frac is None:
             self._run_bader()
-        return self._basin_maxima_frac
+        return self._maxima_frac
 
     @property
-    def basin_maxima_charge_values(self) -> NDArray[float]:
+    def maxima_charge_values(self) -> NDArray[float]:
         """
 
         Returns
@@ -348,14 +322,15 @@ class Bader(BaseAnalysis):
             off grid, this value will be interpolated.
 
         """
-        if self._basin_maxima_charge_values is None:
-            self._basin_maxima_charge_values = self.charge_grid.values_at(
-                self.basin_maxima_frac
+        # TODO: change this to quadratic fit to match reference value method
+        if self._maxima_charge_values is None:
+            self._maxima_charge_values = self.charge_grid.values_at(
+                self.maxima_frac
             )
-        return self._basin_maxima_charge_values.round(10)
+        return self._maxima_charge_values.round(10)
 
     @property
-    def basin_maxima_ref_values(self) -> NDArray[float]:
+    def maxima_ref_values(self) -> NDArray[float]:
         """
 
         Returns
@@ -365,27 +340,25 @@ class Bader(BaseAnalysis):
             off grid, this value will be interpolated.
 
         """
-        if self._basin_maxima_ref_values is None:
+        if self._maxima_ref_values is None:
             # we get these values during each bader method anyways, so
             # we run this here.
             self._run_bader()
-        return self._basin_maxima_ref_values.round(10)
+        return self._maxima_ref_values.round(10)
 
     @property
-    def basin_maxima_vox(self) -> NDArray[int]:
+    def maxima_vox(self) -> NDArray[int]:
         """
 
         Returns
         -------
         NDArray[int]
-            The voxel coordinates of each attractor. There may be more of these
-            than the fractional coordinates, as some maxima sit exactly between
-            several voxels.
+            The voxel coordinates of each attractor.
 
         """
-        if self._basin_maxima_vox is None:
+        if self._maxima_vox is None:
             self._run_bader()
-        return self._basin_maxima_vox
+        return self._maxima_vox
 
     @property
     def basin_charges(self) -> NDArray[float]:
@@ -471,7 +444,178 @@ class Bader(BaseAnalysis):
         if self._basin_atom_dists is None:
             self.run_atom_assignment()
         return self._basin_atom_dists.round(10)
+    
+    @property
+    def basin_edges(self) -> NDArray[np.bool_]:
+        """
 
+        Returns
+        -------
+        NDArray[np.bool_]
+            A mask with the same shape as the input grids that is True at points
+            on basin edges.
+
+        """
+        if self._basin_edges is None:
+            self._basin_edges = get_edges(
+                labeled_array=self.maxima_basin_labels,
+                vacuum_mask=np.zeros(self.maxima_basin_labels.shape, dtype=np.bool_),
+                neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
+            )
+        return self._basin_edges
+    
+    @property
+    def basin_contact_surface_areas(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            A 2D array with indices i, j where i is the basin index, j is the neighboring
+            basin index, and the entry at i, j is the total area in contact between
+            these labels. One extra index is added that stores the number of connections
+            to the vacuum.
+
+            This value is calculated using voronoi cells of the voxels to
+            approximate the shared area between a voxel point and a neighbor in
+            another basin.
+
+        """
+        if self._basin_contact_surface_areas is None:
+            neighbor_transforms, _, neighbor_areas, _ = (
+                self.reference_grid.point_neighbor_voronoi_transforms
+            )
+            self._basin_contact_surface_areas = get_neighboring_basin_surface_area(
+                labeled_array=self.maxima_basin_labels,
+                neighbor_transforms=neighbor_transforms,
+                neighbor_areas=neighbor_areas,
+                vacuum_mask=self.vacuum_mask,
+                label_num=len(self.maxima_frac),
+            )
+        return self._basin_contact_surface_areas
+    
+    @property
+    def basin_surface_areas(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The approximate surface area of each basin.
+
+            This value is calculated using voronoi cells of the voxels to
+            approximate the shared area between a voxel point and a neighbor in
+            another basin.
+
+        """
+        if self._basin_surface_areas is None:
+            # get the contact surface area of each basin
+            contact_surfaces = self.basin_contact_surface_areas
+            # sum across axis 0 to get the total
+            self._basin_surface_areas = np.sum(contact_surfaces, axis=1)
+        return self._basin_surface_areas
+    
+    ###########################################################################
+    # Minima Basin Properties
+    ###########################################################################
+    @property
+    def minima_basin_labels(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The equivalent of bader basins for the desending gradient to local
+            minima. This is each minima's ascending manifold and can be used
+            in combination with the bader basins to locate important topological
+            features.
+
+        """
+        if self._minima_basin_labels is None:
+            self._run_minima_bader()
+        return self._minima_basin_labels
+    
+    @property
+    def minima_basin_images(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The equivalent of the basin_images property for minima basins.
+
+        """
+        if self._minima_basin_images is None:
+            self._run_minima_bader()
+        return self._minima_basin_images
+
+    @property
+    def minima_frac(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The fractional coordinates of each local minimum.
+
+        """
+        if self._minima_frac is None:
+            self._run_minima_bader()
+        return self._minima_frac
+    
+    @property
+    def minima_vox(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The voxel coordinates of each minima.
+
+        """
+        if self._minima_frac is None:
+            self._run_minima_bader()
+        return self._minima_frac
+    
+    @property
+    def minima_charge_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The charge data value at each maximum. If the maximum is
+            off grid, this value will be interpolated.
+
+        """
+        # TODO: change this to quadratic fit to match reference value method
+        if self._minima_charge_values is None:
+            self._minima_charge_values = self.charge_grid.values_at(
+                self.minima_frac
+            )
+        return self._minima_charge_values.round(10)
+    
+    @property
+    def minima_ref_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The reference data value at each maximum. If the maximum is
+            off grid, this value will be interpolated.
+
+        """
+        if self._minima_ref_values is None:
+            # we get these values during each bader method anyways, so
+            # we run this here.
+            self._run_bader()
+        return self._minima_ref_values.round(10)
+    
+
+    ###########################################################################
+    # Atom Properties
+    ###########################################################################
     @property
     def atom_labels(self) -> NDArray[float]:
         """
@@ -548,25 +692,6 @@ class Bader(BaseAnalysis):
         return self._atom_avg_surface_distances.round(10)
 
     @property
-    def basin_edges(self) -> NDArray[np.bool_]:
-        """
-
-        Returns
-        -------
-        NDArray[np.bool_]
-            A mask with the same shape as the input grids that is True at points
-            on basin edges.
-
-        """
-        if self._basin_edges is None:
-            self._basin_edges = get_edges(
-                labeled_array=self.basin_labels,
-                vacuum_mask=np.zeros(self.basin_labels.shape, dtype=np.bool_),
-                neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
-            )
-        return self._basin_edges
-
-    @property
     def atom_edges(self) -> NDArray[np.bool_]:
         """
 
@@ -584,36 +709,6 @@ class Bader(BaseAnalysis):
                 neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
         return self._atom_edges
-
-    @property
-    def basin_contact_surface_areas(self) -> NDArray[np.float64]:
-        """
-
-        Returns
-        -------
-        NDArray[np.float64]
-            A 2D array with indices i, j where i is the basin index, j is the neighboring
-            basin index, and the entry at i, j is the total area in contact between
-            these labels. One extra index is added that stores the number of connections
-            to the vacuum.
-
-            This value is calculated using voronoi cells of the voxels to
-            approximate the shared area between a voxel point and a neighbor in
-            another basin.
-
-        """
-        if self._basin_contact_surface_areas is None:
-            neighbor_transforms, _, neighbor_areas, _ = (
-                self.reference_grid.point_neighbor_voronoi_transforms
-            )
-            self._basin_contact_surface_areas = get_neighboring_basin_surface_area(
-                labeled_array=self.basin_labels,
-                neighbor_transforms=neighbor_transforms,
-                neighbor_areas=neighbor_areas,
-                vacuum_mask=self.vacuum_mask,
-                label_num=len(self.basin_maxima_frac),
-            )
-        return self._basin_contact_surface_areas
 
     @property
     def atom_contact_surface_areas(self) -> NDArray[np.float64]:
@@ -646,27 +741,6 @@ class Bader(BaseAnalysis):
         return self._atom_contact_surface_areas
 
     @property
-    def basin_surface_areas(self) -> NDArray[np.float64]:
-        """
-
-        Returns
-        -------
-        NDArray[np.float64]
-            The approximate surface area of each basin.
-
-            This value is calculated using voronoi cells of the voxels to
-            approximate the shared area between a voxel point and a neighbor in
-            another basin.
-
-        """
-        if self._basin_surface_areas is None:
-            # get the contact surface area of each basin
-            contact_surfaces = self.basin_contact_surface_areas
-            # sum across axis 0 to get the total
-            self._basin_surface_areas = np.sum(contact_surfaces, axis=1)
-        return self._basin_surface_areas
-
-    @property
     def atom_surface_areas(self) -> NDArray[np.float64]:
         """
 
@@ -686,7 +760,11 @@ class Bader(BaseAnalysis):
             # sum across axis 0 to get the total
             self._atom_surface_areas = np.sum(contact_surfaces, axis=1)
         return self._atom_surface_areas
-
+    
+    ###########################################################################
+    # Other Properties
+    ###########################################################################
+    
     @property
     def total_electron_number(self) -> float:
         """
@@ -716,6 +794,10 @@ class Bader(BaseAnalysis):
         """
 
         return round(self.atom_volumes.sum() + self.vacuum_volume, 10)
+    
+    ###########################################################################
+    # Methods
+    ###########################################################################
 
     @staticmethod
     def all_methods() -> list[str]:
@@ -804,8 +886,10 @@ class Bader(BaseAnalysis):
             method._use_overdetermined = True
         results = method.run()
         # set related properties
-        self._minima_basin_labels = results["basin_labels"]
-        self._minima_basin_images = results["basin_images"]
+        for key, value in results.items():
+            if "maxima" in key:
+                new_key = key.replace("maxima", "minima")
+                setattr(self, f"_{new_key}", value)
         
         t1 = time.time()
         logging.info("Bader Algorithm Complete")
@@ -843,7 +927,7 @@ class Bader(BaseAnalysis):
             nna_cutoff = 1.0
 
         # Get basin and atom frac coords
-        basins = self.basin_maxima_frac  # (N_basins, 3)
+        basins = self.maxima_frac  # (N_basins, 3)
         atoms = structure.frac_coords  # (N_atoms, 3)
 
         # get lattice matrix and number of atoms/basins
@@ -880,7 +964,7 @@ class Bader(BaseAnalysis):
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), len(structure))
 
         # Atom labels per grid point
-        atom_labels = basin_atoms[self.basin_labels]
+        atom_labels = basin_atoms[self.maxima_basin_labels]
         
         # remove vacuum pointer in basin atoms
         basin_atoms = basin_atoms[:-1]
@@ -900,7 +984,7 @@ class Bader(BaseAnalysis):
 
         """
         # ensure bader has run (otherwise our time will include the bader time)
-        self.basin_maxima_frac
+        self.maxima_frac
 
         # Default structure
         structure = self.structure
@@ -989,8 +1073,8 @@ class Bader(BaseAnalysis):
         # get the minimum distances
         self._basin_min_surface_distances, self._basin_avg_surface_distances = (
             get_min_avg_surface_dists(
-                labels=self.basin_labels,
-                frac_coords=self.basin_maxima_frac,
+                labels=self.maxima_basin_labels,
+                frac_coords=self.maxima_frac,
                 edge_mask=self.basin_edges,
                 matrix=self.reference_grid.matrix,
                 max_value=np.max(self.structure.lattice.abc) * 2,
@@ -1019,7 +1103,7 @@ class Bader(BaseAnalysis):
         """
         for basin in basin_indices:
             # get a mask everywhere but the requested basin
-            mask = self.basin_labels == basin
+            mask = self.maxima_basin_labels == basin
             kwargs["suffix"] = f"_b{basin}"
 
             self._write_volume(volume_mask=mask, **kwargs)
@@ -1063,7 +1147,7 @@ class Bader(BaseAnalysis):
 
         """
         # create a mask including each of the requested basins
-        mask = np.isin(self.basin_labels, basin_indices)
+        mask = np.isin(self.maxima_basin_labels, basin_indices)
         # write
         kwargs["suffix"] = "_bsum"
         self._write_volume(volume_mask=mask, **kwargs)
@@ -1191,7 +1275,7 @@ class Bader(BaseAnalysis):
 
         """
         subset = self.basin_charges > basin_tol
-        basin_frac_coords = self.basin_maxima_frac[subset]
+        basin_frac_coords = self.maxima_frac[subset]
         basin_df = pd.DataFrame(
             {
                 "atoms": np.array(self.structure.labels)[self.basin_atoms[subset]],
@@ -1353,10 +1437,14 @@ class Bader(BaseAnalysis):
             "basin_atom_dists",
             "basin_charges",
             "basin_volumes",
-            "basin_maxima_frac",
-            "basin_maxima_charge_values",
-            "basin_maxima_ref_values",
-            "basin_maxima_vox",
+            "maxima_frac",
+            "maxima_charge_values",
+            "maxima_ref_values",
+            "maxima_vox",
+            "minima_frac",
+            "minima_charge_values",
+            "minima_ref_values",
+            "minima_vox",
             "basin_min_surface_distances",
             "basin_avg_surface_distances",
         ]:
@@ -1378,10 +1466,14 @@ class Bader(BaseAnalysis):
 
             # get serializable versions of each basin attribute
             for key in [
-                "basin_maxima_frac",
-                "basin_maxima_charge_values",
-                "basin_maxima_ref_values",
-                "basin_maxima_vox",
+                "maxima_frac",
+                "maxima_charge_values",
+                "maxima_ref_values",
+                "maxima_vox",
+                "minima_frac",
+                "minima_charge_values",
+                "minima_ref_values",
+                "minima_vox",
                 "basin_charges",
                 "basin_volumes",
                 "basin_min_surface_distances",

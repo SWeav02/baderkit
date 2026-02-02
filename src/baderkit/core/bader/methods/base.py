@@ -93,12 +93,12 @@ class MethodBase:
     def run(self) -> dict:
         """
         Runs the main bader method and returns a dictionary with values for:
-            - basin_maxima_frac
-            - basin_maxima_vox
+            - maxima_frac
+            - maxima_vox
             - maxima_children
-            - basin_labels
-            - basin_images
-            - basin_maxima_ref_values
+            - maxima_basin_labels
+            - maxima_basin_images
+            - maxima_ref_values
             - basin_charges
             - basin_volumes
             - vacuum_charges
@@ -131,7 +131,7 @@ class MethodBase:
 
         # now run bader
         results = self._run_bader(labels, images)
-        labels = results["basin_labels"]
+        labels = results["maxima_basin_labels"]
         
         # Now we want to combine any remaining noisy maxima based on their
         # rigorous discrete persistence.
@@ -197,12 +197,12 @@ class MethodBase:
 
         results.update(
             {
-                "basin_maxima_vox": self.maxima_vox,
+                "maxima_vox": self.maxima_vox,
                 "basin_charges": final_charges,
                 "basin_volumes": final_volumes,
                 "basin_maxima_children": self.maxima_children,
-                "basin_maxima_frac": self.maxima_frac,
-                "basin_maxima_ref_values": maxima_values,
+                "maxima_frac": self.maxima_frac,
+                "maxima_ref_values": maxima_values,
             }
         )
         return results
@@ -211,8 +211,8 @@ class MethodBase:
         """
         This is the main function that each method must have. It must return a
         dictionary with values for:
-            - basin_maxima_frac
-            - basin_images
+            - maxima_frac
+            - maxima_basin_images
             - basin_charges
             - basin_volumes
             - vacuum_charges

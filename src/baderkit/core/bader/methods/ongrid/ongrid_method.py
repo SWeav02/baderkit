@@ -61,8 +61,8 @@ class OngridMethod(MethodBase):
 
         # assign all results
         results = {
-            "basin_labels": labels,
-            "basin_images": images,
+            "maxima_basin_labels": labels,
+            "maxima_basin_images": images,
         }
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")

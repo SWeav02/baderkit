@@ -177,11 +177,11 @@ class NeargridWeightMethod(MethodBase):
         
         # get all results
         results = {
-            "basin_labels": labels,
+            "maxima_basin_labels": labels,
             "basin_charges": charges,
             "basin_volumes": volumes,
             "vacuum_charge": vacuum_charge,
             "vacuum_volume": vacuum_volume,
-            "basin_images": images,
+            "maxima_basin_images": images,
         }
         return results
