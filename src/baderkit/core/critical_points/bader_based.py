@@ -348,8 +348,10 @@ for shift_idx, (i,j,k) in enumerate(int_to_image):
     
 neighbor_transforms, _ = bader.reference_grid.point_neighbor_transforms
 
-maxima_groups = bader.maxima_persistence_groups
-minima_groups = bader.minima_persistence_groups
+# maxima_groups = bader.maxima_voxel_groups
+# minima_groups = bader.minima_voxel_groups
+
+maxima_groups, minima_groups = bader.get_persistence_groups()
 
 test = get_manifold_labels(
     maxima_labels, 

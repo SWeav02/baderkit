@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import math
+import itertools
 
 import numpy as np
 from numba import njit, prange
@@ -218,12 +219,85 @@ def get_edges(
                         break
     return edges
 
+IMAGE_TO_INT = np.empty([3,3,3], dtype=np.int64)
+INT_TO_IMAGE = np.array(list(itertools.product((-1,0,1), repeat=3)))
+for shift_idx, (i,j,k) in enumerate(INT_TO_IMAGE):
+    IMAGE_TO_INT[i,j,k] = shift_idx
+
+@njit(parallel=True, cache=True)
+def get_edges_w_images(
+    labeled_array: NDArray[np.int64],
+    images: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+):
+    """
+    In a 3D array of labeled voxels, finds the voxels that neighbor at
+    least one voxel with a different label.
+
+    Parameters
+    ----------
+    labeled_array : NDArray[np.int64]
+        A 3D array where each entry represents the basin label of the point.
+    images : NDArray[np.int64]
+        A 3D array where each entry represents the periodic image of the basin
+        the point belongs to
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
+
+    Returns
+    -------
+    edges : NDArray[np.bool_]
+        A mask with the same shape as the input grid that is True at points
+        on basin edges.
+
+    """
+    nx, ny, nz = labeled_array.shape
+    # create 3D array to store edges
+    edges = np.zeros_like(labeled_array, dtype=np.bool_)
+    
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
+                # get this voxels label and image
+                label = labeled_array[i, j, k]
+                image = images[i,j,k]
+                # iterate over the neighboring voxels
+                for si, sj, sk in neighbor_transforms:
+                    # wrap points
+                    ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(i + si, j + sj, k + sk, nx, ny, nz)
+                    # skip vacuum neighs
+                    if vacuum_mask[ii,jj,kk]:
+                        continue
+                    # get neighbors label and image
+                    neigh_label = labeled_array[ii, jj, kk]
+                    neigh_image = images[ii, jj, kk]
+                    if neigh_label !=label:
+                        edges[i,j,k] = True
+                        break
+                    
+                    # adjust neigh image
+                    si1, sj1, sk1 = INT_TO_IMAGE[neigh_image]
+                    si1 += ssi
+                    sj1 += ssj
+                    sk1 += ssk
+                    neigh_image = IMAGE_TO_INT[si1,sj1,sk1]
+                    if neigh_image != image:
+                        edges[i,j,k] = True
+                        break
+    return edges
+
 @njit(cache=True)
 def get_neighboring_basin_connections(
     labeled_array: NDArray[np.int64],
     data: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
-    vacuum_mask: NDArray[np.bool_],
     edge_mask: NDArray[np.bool_],
     label_num: int,
         ):
@@ -240,7 +314,7 @@ def get_neighboring_basin_connections(
         for j in range(ny):
             for k in range(nz):
                 # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
+                if not edge_mask[i, j, k]:
                     continue
                 # get this voxels label
                 label = labeled_array[i, j, k]
@@ -249,6 +323,8 @@ def get_neighboring_basin_connections(
                 for (si, sj, sk) in neighbor_transforms:
                     # wrap points
                     ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                    if not edge_mask[ii,jj,kk]:
+                        continue
                     # get neighbors label
                     neigh_label = labeled_array[ii, jj, kk]
                     # if this is the same label, skip it
@@ -266,6 +342,79 @@ def get_neighboring_basin_connections(
     values = np.empty(len(connections), dtype=np.float64)
     for idx, (i,j) in enumerate(connections):
         values[idx] = connection_values[i,j]
+
+    return connections, values
+
+@njit(cache=True)
+def get_neighboring_basin_connections_w_images(
+    labeled_array: NDArray[np.int64],
+    images: NDArray[np.int64],
+    data: NDArray[np.float64],
+    neighbor_transforms: NDArray[np.int64],
+    edge_mask: NDArray[np.bool_],
+    label_num: int,
+        ):
+    nx, ny, nz = labeled_array.shape
+    # create a 2D array to store total number of connections
+    connection_values = np.zeros((label_num, label_num, 27, 27), dtype=np.float64)
+    
+    # remove half of the transforms as we don't need them in this case
+    neighbor_transforms = neighbor_transforms[:int(len(neighbor_transforms)/2)]
+
+    # loop over each voxel. We can't do this in parallel as we may write to the
+    # same entry and cause a race condition.
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is not part of the edge, continue
+                if not edge_mask[i, j, k]:
+                    continue
+                # get this voxels label
+                label = labeled_array[i, j, k]
+                value = data[i,j,k]
+                image = images[i,j,k]
+                # iterate over the neighboring voxels
+                for (si, sj, sk) in neighbor_transforms:
+                    # wrap points
+                    ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(i + si, j + sj, k + sk, nx, ny, nz)
+                    if not edge_mask[ii,jj,kk]:
+                        continue
+                    # get neighbors label
+                    neigh_label = labeled_array[ii, jj, kk]
+                    # get neighbors image
+                    neigh_image = images[ii,jj,kk]
+                    # adjust neigh image
+                    si1, sj1, sk1 = INT_TO_IMAGE[neigh_image]
+                    si1 += ssi
+                    sj1 += ssj
+                    sk1 += ssk
+                    neigh_image = IMAGE_TO_INT[si1,sj1,sk1]
+                    # if this is the same label, skip it
+                    if label == neigh_label and image == neigh_image:
+                        continue
+
+                    # the lower value is the value these points connect at. If
+                    # this is higher than the current best, we update
+                    lower = min(value, data[ii,jj,kk])
+                    if image != neigh_image:
+                        lower_idx = label
+                        upper_idx = neigh_label
+                        
+                    elif label < neigh_label:
+                        lower_idx = label
+                        upper_idx = neigh_label
+                        
+                    elif label > neigh_label:
+                        lower_idx = neigh_label
+                        upper_idx = label
+
+                    if connection_values[lower_idx, upper_idx, image, neigh_image] < lower:
+                        connection_values[lower_idx, upper_idx, image, neigh_image] = lower
+
+    connections = np.argwhere(connection_values>0)
+    values = np.empty(len(connections), dtype=np.float64)
+    for idx, (i,j,k,w) in enumerate(connections):
+        values[idx] = connection_values[i,j,k,w]
 
     return connections, values
     
@@ -485,6 +634,11 @@ def initialize_labels_from_maxima(
         flat_max_idx = coords_to_flat(i, j, k, ny_nz, nz)
         maxima_labels[max_idx] = flat_max_idx
         labels[flat_max_idx] = flat_max_idx
+        
+    # create an array to store the highest value at which all maxima in a group
+    # connect
+    # persistence_cutoffs = np.full(len(maxima_vox), np.inf, dtype=np.float64)
+    persistence_cutoffs = maxima_values.copy()
 
     ###########################################################################
     # 1. Remove Flat False Maxima
@@ -586,8 +740,19 @@ def initialize_labels_from_maxima(
     # them. To merge these, we use linear spline interpolation and a persistence metric
     # to combine those that have insignificant maxima between them
 
-    # sort maxima from high to low
+    # sort maxima from high to low with preference for lower indices
     sorted_indices = np.flip(np.argsort(maxima_values))
+    sorted_values = maxima_values[sorted_indices]
+    # get points indices where values differ
+    breaks = np.where(sorted_values[1:] != sorted_values[:-1])[0] + 1
+    breaks = np.append(0, breaks)
+    breaks = np.append(breaks, len(sorted_values))
+    for break_idx in range(len(breaks)-1):
+        min_idx = breaks[break_idx]
+        max_idx = breaks[break_idx+1]
+        equal_value_set = sorted_indices[min_idx:max_idx]
+        # sort indices
+        sorted_indices[min_idx:max_idx] = np.sort(equal_value_set)
 
     # Iterate over each maximum (except the first) and check for nearby maxima
     # above them
@@ -598,8 +763,9 @@ def initialize_labels_from_maxima(
         sorted_max_idx += 1
         max_frac = maxima_frac[max_idx]
         value = maxima_values[max_idx]
-        label = labels[maxima_labels[max_idx]]
-
+        # flat_idx = maxima_labels[max_idx]
+        # root = find_root(labels, flat_idx)
+        # label = labels[maxima_labels[max_idx]]
         # iterate over maxima above this point
         for neigh_max_idx in sorted_indices:
             # skip if this is the same point
@@ -612,9 +778,9 @@ def initialize_labels_from_maxima(
                 break
             
             # skip if these points are already unioned
-            neigh_label = labels[maxima_labels[neigh_max_idx]]
-            if label == neigh_label:
-                continue
+            # neigh_label = labels[maxima_labels[neigh_max_idx]]
+            # if label == neigh_label:
+            #     continue
 
             neigh_frac = maxima_frac[neigh_max_idx]
             # unwrap relative to central
@@ -638,39 +804,15 @@ def initialize_labels_from_maxima(
             # set number of interpolation points to ~20/A with a minimum of 5
             n_points = max(math.ceil(dist * 20), 5)
             values = linear_slice(
-                data, max_frac, (fi, fj, fk), n=n_points, is_frac=True, method="linear"
+                data, max_frac, (fi, fj, fk), n=n_points, is_frac=True, method="nearest"
             )
             
-            # check for a local minimum. check them against the maxima for their
-            # persistence
-            minima = (
-                np.where((values[1:-1] < values[:-2]) & (values[1:-1] <= values[2:]))[0]
-                + 1
-            )
-            maxima = (
-                np.where((values[1:-1] > values[:-2]) & (values[1:-1] >= values[2:]))[0]
-                + 1
-            )
-
-            # Add edges if they qualify as maxima
-            if values[0] >= values[1]:
-                maxima = np.append(0, maxima)
-            if values[-1] > values[-2]:
-                maxima = np.append(maxima, len(values) - 1)
-                
             # get the maxima belonging to each point. These should be the first
-            # maxima on the left and right
-            maxima0 = maxima[0]
-            maxima1 = maxima[-1]
-            maxima0_val = values[maxima0]
-            maxima1_val = values[maxima1]
+            # points on the left and right
+            maxima0_val = values[0]
+            maxima1_val = values[-1]
             # get the minimum value reached between these points
-            lowest = max(maxima0_val, maxima1_val)
-            for min_idx in minima:
-                if min_idx < maxima0 or min_idx>maxima1:
-                    continue
-                if values[min_idx] < lowest:
-                    lowest = values[min_idx]
+            lowest = values.min()
             
             # get the persistence of this pair. We score it relative to the
             # higher value and scale it by cartesian distance. 
@@ -681,8 +823,9 @@ def initialize_labels_from_maxima(
                 max_label = maxima_labels[max_idx]
                 neigh_label = maxima_labels[neigh_max_idx]
                 # Get the higher maximum. If theres a tie, get the lower index
-                i, j, k = flat_to_coords(max_label, ny_nz, nz)
-                ni, nj, nk = flat_to_coords(neigh_label, ny_nz, nz)
+                i, j, k = maxima_vox[max_idx]
+                ni, nj, nk = maxima_vox[neigh_max_idx]
+
                 if data[i,j,k] > data[ni,nj,nk]:
                     lower = max_label
                     upper = neigh_label
@@ -693,7 +836,11 @@ def initialize_labels_from_maxima(
                     lower = min(max_label, neigh_label)
                     upper = max(max_label, neigh_label)
                 union(labels, upper, lower)
-                break
+                # update lowest cutoff for these maxima
+                if lowest < persistence_cutoffs[max_idx]:
+                    persistence_cutoffs[max_idx] = lowest
+                if lowest < persistence_cutoffs[neigh_max_idx]:
+                    persistence_cutoffs[neigh_max_idx] = lowest
 
     # get the remaining maxima after reduction
     maxima_roots = []
@@ -714,23 +861,33 @@ def initialize_labels_from_maxima(
         root_frac = maxima_frac[root_idx]
         images[maxima_labels[max_idx]] = compute_wrap_offset(max_frac, root_frac)
     root_maxima = np.array(root_maxima, dtype=np.uint16)
-    
+
     # Finally, we group our maxima so we have a history of which false maxima
     # are joined to the final list of "true" maxima 
     child_maxima = []
+    reduced_persistence_cutoffs = []
     for root_idx in root_maxima:
         children = []
         unique_maximum = maxima_labels[root_idx]
+        lowest_persistence = persistence_cutoffs[root_idx]
         for max_idx, max_root in enumerate(maxima_roots):
             if max_root == unique_maximum:
                 children.append(max_idx)
+                # if this child has a lower persistence cutoff, update the parents
+                # cutoff. Only do this if the combination was from persistence
+                if flat_maxima_mask[max_idx]:
+                    continue
+                if persistence_cutoffs[max_idx] < lowest_persistence:
+                    lowest_persistence = persistence_cutoffs[max_idx]
+        reduced_persistence_cutoffs.append(lowest_persistence)
         children = np.array(children, dtype=np.uint16)
         child_maxima.append(children)
     
     maxima_coords = maxima_vox[root_maxima]
     maxima_children = [maxima_vox[i] for i in child_maxima]
+    reduced_persistence_cutoffs = np.array(reduced_persistence_cutoffs, dtype=np.float64)
 
-    return labels, images, maxima_coords, maxima_children
+    return labels, images, maxima_coords, maxima_children, reduced_persistence_cutoffs
 
 @njit(cache=True)
 def get_persistence_scores(
@@ -747,7 +904,8 @@ def get_persistence_scores(
     persistence_scores = np.empty(len(connections), dtype=np.float64)
     
     for pair_idx in prange(len(connection_values)):
-        crit1, crit2 = connections[pair_idx]
+        crit1, crit2, image1, image2 = connections[pair_idx]
+        
         saddle_val = connection_values[pair_idx]
     
         # We define a persistence score as follows:
@@ -760,15 +918,10 @@ def get_persistence_scores(
         val2 = critical_values[crit2]
         
         # get distance
-        crit_frac = critical_frac[crit1]
-        neigh_frac = critical_frac[crit2]
+        crit_frac = critical_frac[crit1] + INT_TO_IMAGE[image1]
+        neigh_frac = critical_frac[crit2] + INT_TO_IMAGE[image2]
         
-        # unwrap relative to central
-        fi, fj, fk = neigh_frac - np.round(neigh_frac - crit_frac)
-        # get offset in frac coords
-        oi = fi - crit_frac[0]
-        oj = fj - crit_frac[1]
-        ok = fk - crit_frac[2]
+        oi, oj, ok = neigh_frac - crit_frac
     
         # calculate the distance in cart coords
         ci = lattice[0, 0] * oi + lattice[1, 0] * oj + lattice[2, 0] * ok
@@ -779,6 +932,7 @@ def get_persistence_scores(
         # calculate persistence score
         persistence_score = dist * (min(val1, val2) - saddle_val) / max(val1, val2)
         persistence_scores[pair_idx] = persistence_score
+
     return persistence_scores
 
 @njit(cache=True)
@@ -789,9 +943,30 @@ def group_by_persistence(
         connection_values,
         lattice,
         persistence_tol,
+        persistence_cutoffs,
         ):
+    num_critical = len(critical_vox)
+    unions = np.arange(num_critical)
+    # create an array to track crit and their periodic images
+    crit_image_map = np.full((num_critical, 27), -1, dtype=np.int64)
+    for i in range(num_critical):
+        crit_image_map[i,13] = i
+    for crit1, crit2, image1, image2 in connections:
+        if crit_image_map[crit1,image1] == -1:
+            crit_image_map[crit1, image1] = num_critical
+            num_critical += 1
+        if crit_image_map[crit2,image2] == -1:
+            crit_image_map[crit2, image2] = num_critical
+            num_critical += 1
+    image_crit_map = np.argwhere(crit_image_map != -1)
+    crit_vals = np.empty(len(image_crit_map), dtype=np.int64)
+    for idx, (i,j) in enumerate(image_crit_map):
+        crit_vals[idx] = crit_image_map[i,j]
+    crit_sort = np.argsort(crit_vals)
+    image_crit_map = image_crit_map[crit_sort]
+    
     # create array to track unions
-    unions = np.arange(len(critical_vox))
+    unions_w_image = np.arange(num_critical)
     
     # get the fractional representation of each critical point
     critical_frac = critical_vox / np.array(data.shape, dtype=np.int64)
@@ -818,22 +993,40 @@ def group_by_persistence(
             current_connection_values,
             lattice,
             )
-        # loop over persistence and combine maxima below the tolerance
-        for pair_idx, ((crit1, crit2), score) in enumerate(zip(current_connections, persistence_scores)):
+        # loop over persistence and combine crit below the tolerance
+        for pair_idx, ((crit1, crit2, image1, image2), score, conn_val) in enumerate(zip(current_connections, persistence_scores, current_connection_values)):
             # skip anything with a high score
             if score > persistence_tol:
                 continue
+            if crit1 == crit2 and image1==image2:
+                continue
             # we want to union the lower maximum to the higher one. For ties,
             # we use the lower index
-            if critical_values[crit1] >= critical_values[crit2]:
+            value1 = critical_values[crit1]
+            value2 = critical_values[crit2]
+            if value1 >= value2:
                 higher = crit1
                 lower = crit2
+                higher_image = crit_image_map[crit1, image1]
+                lower_image = crit_image_map[crit2, image2]
             else:
                 higher = crit2
                 lower = crit1
+                higher_image = crit_image_map[crit2, image2]
+                lower_image = crit_image_map[crit1, image1]
             # make the union
             union(unions, lower, higher)
+            union(unions_w_image, lower_image, higher_image)
+            
             connection_mask[pair_idx] = True
+            
+            # update persistence cutoffs if the connection value is similar
+            higher_val = max(value1, value2)
+            # if abs((higher_val-conn_val)/higher_val) < 0.05:
+            if conn_val < persistence_cutoffs[crit1]:
+                persistence_cutoffs[crit1] = conn_val
+            if conn_val < persistence_cutoffs[crit2]:
+                persistence_cutoffs[crit2] = conn_val
 
         # get unchanged connections
         connection_indices = np.where(~connection_mask)[0]
@@ -842,21 +1035,76 @@ def group_by_persistence(
 
         new_connections = current_connections[connection_indices]
         new_connection_values = current_connection_values[connection_indices]
-        for pair_idx, (crit1, crit2) in enumerate(new_connections):
+        for pair_idx, (crit1, crit2, image1, image2) in enumerate(new_connections):
             # update to roots
-            root1 = find_root(unions, crit1)
-            root2 = find_root(unions, crit2)
-            new_connections[pair_idx, 0] = root1
-            new_connections[pair_idx, 1] = root2
+            root1 = find_root(unions_w_image, crit1)
+            root2 = find_root(unions_w_image, crit2)
+            basin1, image1 = image_crit_map[root1]
+            basin2, image2 = image_crit_map[root2]
+            new_connections[pair_idx, 0] = basin1
+            new_connections[pair_idx, 1] = basin2
+            new_connections[pair_idx, 2] = image1
+            new_connections[pair_idx, 3] = image2
 
         # update our connections for the next round
         current_connections = new_connections
         current_connection_values = new_connection_values
-    # get the roots of all maxima
+    # get the roots of all maxima and update persistence
     roots = np.empty(len(unions), dtype=np.int64)
     for idx in range(len(roots)):
-        roots[idx] = find_root(unions, idx)
-    return roots
+        root = find_root(unions, idx)
+        roots[idx] = root
+        # if this maxima has a similar value to its root, we also update the
+        # persistence
+        value1 = critical_values[idx]
+        value2 = critical_values[root]
+        higher_val = max(value1, value2)
+        conn_val = persistence_cutoffs[idx]
+        # if abs((higher_val-conn_val)/higher_val) < 0.05:
+        if conn_val < persistence_cutoffs[root]:
+            persistence_cutoffs[root] = conn_val
+
+    return roots, persistence_cutoffs
+
+@njit(cache=True)
+def get_persistence_groups(
+    labels,
+    data,
+    persistence_cutoffs,
+    maxima_vox,
+        ):
+    nx, ny, nz = data.shape
+    max_val = len(maxima_vox)
+    
+    persistence_groups = []
+    for vox in maxima_vox:
+        persistence_groups.append([vox])
+    
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # get label
+                label = labels[i, j, k]
+                # skip unlabeled points
+                if label >= max_val:
+                    continue
+                # get value and cutoff
+                value = data[i,j,k]
+                cutoff = persistence_cutoffs[label]
+                # if value is above the cutoff, add to the group
+                if value >= cutoff:
+                    point = np.array((i,j,k), dtype=np.uint16)
+                    persistence_groups[label].append(point)
+    # convert to arrays
+    array_groups = []
+    for i in persistence_groups:
+        new_group = np.empty((len(i), 3), dtype=np.uint16)
+        for idx, val in enumerate(i):
+            new_group[idx] = val
+        array_groups.append(new_group)
+    return array_groups
+    
+    
                         
 @njit(cache=True)
 def get_min_avg_surface_dists(

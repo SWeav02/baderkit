@@ -20,6 +20,7 @@ from .methods.shared_numba import (
     get_edges,
     get_min_avg_surface_dists,
     get_neighboring_basin_surface_area,
+    get_persistence_groups,
 )
 
 # This allows for Self typing and is compatible with python 3.10
@@ -60,6 +61,21 @@ class Bader(BaseAnalysis):
         found, dummy atoms will be appended to the structure and regarded as
         separate species. If a bool is provided, NNAs will be assigned to the
         nearest atom on False or a default value (1 Ang) will be used on True.
+    persistence_tol : float, optional
+        It is common for false maxima to be found using only nearest neighbor
+        points. To deal with this we combine pairs of basins that have low
+        topological persistence.
+        
+        The persistence score is calculated as:
+            
+            score = dist * (lower_max - saddle_value) / higher_max
+            
+        where 'dist' is the cartesian distance between the maxima, lower_max
+        is the value at the maximum with a lower value, saddle_value is the
+        highest value at which there is a connection between the two maximas
+        descending manifold (basin), and higher_max is the value at the maximum
+        with a higher value. Any pairs that score below the tolerance will be
+        combined. The default is 0.01.
 
     """
 
@@ -69,9 +85,10 @@ class Bader(BaseAnalysis):
         "maxima_basin_images",
         "maxima_frac",
         "maxima_vox",
-        "maxima_persistence_groups",
+        "maxima_voxel_groups",
         "maxima_charge_values",
         "maxima_ref_values",
+        "maxima_persistence_values",
         "basin_charges",
         "basin_volumes",
         # assigned by _run_minima_bader
@@ -79,9 +96,10 @@ class Bader(BaseAnalysis):
         "minima_basin_images",
         "minima_frac",
         "minima_vox",
-        "minima_persistence_groups",
+        "minima_voxel_groups",
         "minima_charge_values",
         "minima_ref_values",
+        "minima_persistence_values",
         # Assigned by calling the property
         "basin_min_surface_distances",
         "basin_avg_surface_distances",
@@ -220,7 +238,7 @@ class Bader(BaseAnalysis):
             combined.
 
         """
-        return self._nna_cutoff
+        return self._persistence_tol
         
     @persistence_tol.setter
     def persistence_tol(self, value: str | Method):
@@ -363,7 +381,7 @@ class Bader(BaseAnalysis):
         return self._maxima_vox
     
     @property
-    def maxima_persistence_groups(self) -> NDArray[int]:
+    def maxima_voxel_groups(self) -> NDArray[int]:
         """
 
         Returns
@@ -379,9 +397,25 @@ class Bader(BaseAnalysis):
             point. This also provides some indication of these maxima.
 
         """
-        if self._maxima_persistence_groups is None:
+        if self._maxima_voxel_groups is None:
             self._run_bader()
-        return self._maxima_persistence_groups
+        return self._maxima_voxel_groups
+    
+    @property
+    def maxima_persistence_values(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Each maxima may have been combined with several voxelated maxima
+            (see maxima_voxel_groups). For each maxima group, this  is the 
+            lowest value at which all of the maxima in the group are topologically 
+            connected if one takes the all voxels at or above that value
+        """
+        if self._maxima_persistence_values is None:
+            self._run_bader()
+        return self._maxima_persistence_values
 
     @property
     def basin_charges(self) -> NDArray[float]:
@@ -636,7 +670,7 @@ class Bader(BaseAnalysis):
         return self._minima_ref_values.round(10)
     
     @property
-    def minima_persistence_groups(self) -> NDArray[int]:
+    def minima_voxel_groups(self) -> NDArray[int]:
         """
 
         Returns
@@ -652,10 +686,25 @@ class Bader(BaseAnalysis):
             point. This also provides some indication of these minima.
 
         """
-        if self._minima_persistence_groups is None:
+        if self._minima_voxel_groups is None:
             self._run_bader()
-        return self._minima_persistence_groups
+        return self._minima_voxel_groups
     
+    @property
+    def minima_persistence_values(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Each minima may have been combined with several voxelated minima
+            (see minima_voxel_groups). For each minima group, this  is the 
+            highest value at which all of the minima in the group are topologically 
+            connected if one takes the all voxels at or below that value
+        """
+        if self._maxima_persistence_values is None:
+            self._run_bader()
+        return self._maxima_persistence_values
 
     ###########################################################################
     # Atom Properties
@@ -881,6 +930,7 @@ class Bader(BaseAnalysis):
             reference_grid=self.reference_grid,
             vacuum_mask=self.vacuum_mask,
             num_vacuum=self.num_vacuum,
+            persistence_tol=self.persistence_tol,
         )
         if self._use_overdetermined:
             method._use_overdetermined = True
@@ -1089,6 +1139,47 @@ class Bader(BaseAnalysis):
             oxi_state_data.append(oxi_state)
 
         return np.array(oxi_state_data)
+    
+    def get_persistence_groups(self):
+        """
+        Gets the groups of voxels for each maximum and minimum that are within
+        the extrema's basin and above/below the persistence value for that basin.
+        The persistence value is defined as the value at which all voxelated
+        maxima/minima (see maxima_voxel_groups/minima_voxel_groups) are connected
+
+        Returns
+        -------
+        maxima_groups : list[NDArray[int64]]
+            A list of Nx3 arrays where each array represents the grid indices of voxels 
+            that are within each maximas persistence threshold.
+        minima_groups : list[NDArray[int64]]
+            A list of Nx3 arrays where each array represents the grid indices of voxels 
+            that are within each minimas persistence threshold.
+
+        """
+        maxima_groups = get_persistence_groups(
+            labels=self.maxima_basin_labels,
+            data=self.reference_grid.total,
+            persistence_cutoffs=self.maxima_persistence_values,
+            maxima_vox=self.maxima_vox,
+            )
+        
+        # create a temporary grid object with the scalar field flipped.
+        temp_reference = self.reference_grid.total.copy()
+        temp_reference *= -1
+        # shift so that the values are above our vacuum cutoff. Mask out any
+        # vacuum points from the regular function
+        temp_reference += temp_reference.min() + self.vacuum_tol + 1e-6
+        temp_reference[self.vacuum_mask] = 0.0
+        minima_groups = get_persistence_groups(
+            labels=self.minima_basin_labels,
+            data=temp_reference,
+            persistence_cutoffs=self.minima_persistence_values,
+            maxima_vox=self.minima_vox,
+            )
+        return maxima_groups, minima_groups
+        
+        
 
     def _get_atom_surface_distances(self):
         """
@@ -1485,12 +1576,12 @@ class Bader(BaseAnalysis):
             "maxima_charge_values",
             "maxima_ref_values",
             "maxima_vox",
-            "maxima_persistence_groups",
+            "maxima_voxel_groups",
             "minima_frac",
             "minima_charge_values",
             "minima_ref_values",
             "minima_vox",
-            "maxima_persistence_groups",
+            "minima_voxel_groups",
             "basin_min_surface_distances",
             "basin_avg_surface_distances",
         ]:
@@ -1532,8 +1623,8 @@ class Bader(BaseAnalysis):
                 basin_results[key] = basin_results[key].tolist()
             
             for key in [
-                "maxima_persistence_groups",
-                "minima_persistence_groups",
+                "maxima_voxel_groups",
+                "minima_voxel_groups",
                     ]:
                 basin_results[key] = [i.tolist() for i in basin_results[key]]
 

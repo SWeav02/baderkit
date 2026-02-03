@@ -16,8 +16,8 @@ from .shared_numba import (  # combine_neigh_maxima,
     get_basin_charges_and_volumes,
     get_maxima,
     initialize_labels_from_maxima,
-    get_neighboring_basin_connections,
-    get_edges,
+    get_neighboring_basin_connections_w_images,
+    get_edges_w_images,
     group_by_persistence,
 )
 
@@ -25,9 +25,10 @@ from .shared_numba import (  # combine_neigh_maxima,
 Self = TypeVar("Self", bound="MethodBase")
 
 # TODO:
-    # 1. Add periodic awareness to weight method
-    # 2. allow for non-periodic boundaries?
+    # 2. allow for setting periodic boundaries
+    # 3. get basins counting crossing boundaries as separate
     # 3. continue with critical point finder
+    # 4. update bifurcation method
 
 class MethodBase:
     """
@@ -119,7 +120,7 @@ class MethodBase:
         # ok to not try and do it during the actual method
 
         # get our initial maxima
-        labels, images, self._maxima_vox, self._maxima_children = initialize_labels_from_maxima(
+        labels, images, self._maxima_vox, self._maxima_children, persistence_cutoffs = initialize_labels_from_maxima(
             labels=labels,
             data=self.reference_grid.total,
             maxima_mask=self.maxima_mask,
@@ -132,54 +133,58 @@ class MethodBase:
         # now run bader
         results = self._run_bader(labels, images)
         labels = results["maxima_basin_labels"]
+        images = results["maxima_basin_images"]
         
         # Now we want to combine any remaining noisy maxima based on their
         # rigorous discrete persistence.
         logging.info("Combining Low-Persistence Basins")
-        
         # get edges
-        edge_mask = get_edges(
+        edge_mask = get_edges_w_images(
             labeled_array=labels,
+            images=images,
             neighbor_transforms=neighbor_transforms,
             vacuum_mask=self.vacuum_mask,
             )
         
         # get the values maxima connect at
-        basin_connections, connection_values = get_neighboring_basin_connections(
+        basin_connections, connection_values = get_neighboring_basin_connections_w_images(
             labeled_array=labels,
+            images=images,
             data=self.reference_grid.total,
             neighbor_transforms=neighbor_transforms,
-            vacuum_mask=self.vacuum_mask,
             edge_mask=edge_mask,
             label_num=len(self.maxima_vox),
             )
 
-        # get maxima unions based on persistence
-        maxima_roots = group_by_persistence(
+        # get maxima unions based on persistence and update lowest persistence
+        # values for maxima
+        maxima_roots, persistence_cutoffs = group_by_persistence(
             data=self.reference_grid.total,
             critical_vox=self.maxima_vox, 
             connections=basin_connections, 
             connection_values=connection_values, 
             lattice=self.reference_grid.structure.lattice.matrix,
             persistence_tol=self.persistence_tol,
+            persistence_cutoffs=persistence_cutoffs,
             )
-        
+
         # update maxima children, labels, charges, and volumes
         charges = results["basin_charges"]
         volumes = results["basin_volumes"]
         final_maxima, new_roots = np.unique(maxima_roots, return_inverse=True)
+        persistence_cutoffs = persistence_cutoffs[final_maxima]
 
         for max_idx, root in enumerate(maxima_roots):
             if max_idx != root:
                 # combine children
-                self.maxima_children[root]=np.append(self.maxima_children[root], self.maxima_children[max_idx], axis=0)
+                # self.maxima_children[root]=np.append(self.maxima_children[root], self.maxima_children[max_idx], axis=0)
                 # add charge/volume
                 charges[root] += charges[max_idx]
                 volumes[root] += volumes[max_idx]
-
+        # relabel combined basins
         labels[~self.vacuum_mask] = new_roots[labels[~self.vacuum_mask]]
         self._maxima_vox = self.maxima_vox[final_maxima]
-        self._maxima_children = [self.maxima_children[i] for i in final_maxima]
+        self._maxima_children = [np.array(self.maxima_children[i],dtype=np.uint16) for i in final_maxima]
         final_charges = charges[final_maxima]
         final_volumes = volumes[final_maxima]
         
@@ -194,15 +199,18 @@ class MethodBase:
         )
 
         self._maxima_frac = refined_maxima_frac
+        
+        # convert maxima vox to 
 
         results.update(
             {
-                "maxima_vox": self.maxima_vox.astype(np.int64),
+                "maxima_vox": self.maxima_vox.astype(np.uint16),
                 "basin_charges": final_charges,
                 "basin_volumes": final_volumes,
-                "maxima_persistence_groups": self.maxima_children,
+                "maxima_voxel_groups": self.maxima_children,
                 "maxima_frac": self.maxima_frac,
                 "maxima_ref_values": maxima_values,
+                "maxima_persistence_values": persistence_cutoffs,
             }
         )
         return results

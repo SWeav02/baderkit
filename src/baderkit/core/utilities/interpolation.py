@@ -371,7 +371,7 @@ def refine_maxima(
     # group, we default to the highest point or lowest index in case of a tie.
     # The parabolic refinement is then applied to the resulting point.
     
-    new_voxel_coords = np.empty_like(maxima_coords, dtype=np.float64)
+    new_voxel_coords = np.empty_like(maxima_coords, dtype=np.uint16)
     frac_coords = np.empty_like(maxima_coords, dtype=np.float64)
     refined_values = np.empty(len(maxima_coords), dtype=np.float64)
     for group_idx in prange(len(maxima_coords)):
