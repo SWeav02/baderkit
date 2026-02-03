@@ -197,10 +197,10 @@ class MethodBase:
 
         results.update(
             {
-                "maxima_vox": self.maxima_vox,
+                "maxima_vox": self.maxima_vox.astype(np.int64),
                 "basin_charges": final_charges,
                 "basin_volumes": final_volumes,
-                "basin_maxima_children": self.maxima_children,
+                "maxima_persistence_groups": self.maxima_children,
                 "maxima_frac": self.maxima_frac,
                 "maxima_ref_values": maxima_values,
             }

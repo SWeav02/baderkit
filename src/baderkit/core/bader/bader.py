@@ -26,7 +26,7 @@ from .methods.shared_numba import (
 Self = TypeVar("Self", bound="Bader")
 
 # TODO:
-# - Add handling of non-nuclear attractors (e.g. those in Li metal)
+# - Add periodicity options (i.e. on vs. off etc.)
 # - Improve docstrings, especially for write methods, so that they show kwargs
 
 
@@ -69,6 +69,7 @@ class Bader(BaseAnalysis):
         "maxima_basin_images",
         "maxima_frac",
         "maxima_vox",
+        "maxima_persistence_groups",
         "maxima_charge_values",
         "maxima_ref_values",
         "basin_charges",
@@ -78,6 +79,7 @@ class Bader(BaseAnalysis):
         "minima_basin_images",
         "minima_frac",
         "minima_vox",
+        "minima_persistence_groups",
         "minima_charge_values",
         "minima_ref_values",
         # Assigned by calling the property
@@ -359,6 +361,27 @@ class Bader(BaseAnalysis):
         if self._maxima_vox is None:
             self._run_bader()
         return self._maxima_vox
+    
+    @property
+    def maxima_persistence_groups(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            In many systems multiple nearby points will be found to be maxima
+            usually due to voxelation. We combine these maxima into one with a
+            persistence metric. This property provides all of the "false" maxima
+            that are associated with the final maxima list.
+            
+            For scalar fields like the ELF, LOL, or ELI-D, there may also be
+            ring and cage-like maxima that are not well described by a single
+            point. This also provides some indication of these maxima.
+
+        """
+        if self._maxima_persistence_groups is None:
+            self._run_bader()
+        return self._maxima_persistence_groups
 
     @property
     def basin_charges(self) -> NDArray[float]:
@@ -573,9 +596,9 @@ class Bader(BaseAnalysis):
             The voxel coordinates of each minima.
 
         """
-        if self._minima_frac is None:
+        if self._minima_vox is None:
             self._run_minima_bader()
-        return self._minima_frac
+        return self._minima_vox
     
     @property
     def minima_charge_values(self) -> NDArray[float]:
@@ -611,6 +634,27 @@ class Bader(BaseAnalysis):
             # we run this here.
             self._run_bader()
         return self._minima_ref_values.round(10)
+    
+    @property
+    def minima_persistence_groups(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            In many systems multiple nearby points will be found to be minima
+            usually due to voxelation. We combine these minima into one with a
+            persistence metric. This property provides all of the "false" minima
+            that are associated with the final minima list.
+            
+            For scalar fields like the ELF, LOL, or ELI-D, there may also be
+            ring and cage-like minima that are not well described by a single
+            point. This also provides some indication of these minima.
+
+        """
+        if self._minima_persistence_groups is None:
+            self._run_bader()
+        return self._minima_persistence_groups
     
 
     ###########################################################################
@@ -1441,10 +1485,12 @@ class Bader(BaseAnalysis):
             "maxima_charge_values",
             "maxima_ref_values",
             "maxima_vox",
+            "maxima_persistence_groups",
             "minima_frac",
             "minima_charge_values",
             "minima_ref_values",
             "minima_vox",
+            "maxima_persistence_groups",
             "basin_min_surface_distances",
             "basin_avg_surface_distances",
         ]:
@@ -1484,6 +1530,12 @@ class Bader(BaseAnalysis):
                 if basin_results[key] is None:
                     continue  # skip oxidation states if they fail
                 basin_results[key] = basin_results[key].tolist()
+            
+            for key in [
+                "maxima_persistence_groups",
+                "minima_persistence_groups",
+                    ]:
+                basin_results[key] = [i.tolist() for i in basin_results[key]]
 
             # get serializable versions of each atom attribute
             for key in [
