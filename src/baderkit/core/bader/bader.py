@@ -966,7 +966,7 @@ class Bader(BaseAnalysis):
         temp_reference.total *= -1
         # shift so that the values are above our vacuum cutoff. Mask out any
         # vacuum points from the regular function
-        temp_reference.total += temp_reference.total.min() + self.vacuum_tol + 1e-6
+        temp_reference.total += temp_reference.total.min()
         temp_reference.total[self.vacuum_mask] = 0.0
 
         # Instantiate and run the selected method

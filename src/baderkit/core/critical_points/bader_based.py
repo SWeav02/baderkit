@@ -218,15 +218,12 @@ for shift_idx, (i,j,k) in enumerate(INT_TO_IMAGE):
 def get_cell_type(
     i, j, k,
     nx, ny, nz,
+    parity,
     labels,
     images,
     vacuum_mask,
 ):
-    # get the parity of this point
-    pi = i & 1
-    pj = j & 1
-    pk = k & 1
-    parity = PARITY_TO_INT[pi, pj, pk]
+
     
     # get the corresponding transforms
     transforms = PARITY_VOXELS[parity]
@@ -303,10 +300,10 @@ def get_manifold_labels(
     1: 1-saddle
     2: 2-saddle
     3: maxima
-    4: 1-saddle ascending 2-manifold
-    5: 1-saddle descending 1-manifold
-    6: 2-saddle ascending 1-manifold
-    7: 2-saddle descending 2-manifold
+    4: 1-saddle unstable 2-manifold
+    5: 1-saddle stable 1-manifold
+    6: 2-saddle unstable 1-manifold
+    7: 2-saddle stable 2-manifold
     8: saddle connecting 1-manifold
     9: 1 manifold in both min/max. is this meaningful?
     10: blank
@@ -321,100 +318,107 @@ def get_manifold_labels(
     # and manifolds
     manifold_labels = np.full((nx2,ny2,nz2), np.iinfo(np.uint8).max, dtype=np.uint8)
     
-    # initialize maxima and minima and get the double grid groups
-    new_maxima_groups = []
-    for group in maxima_groups:
-        # adjust to double grid coords
-        group2 = group*2
-        new_group = []
-        for i,j,k in group2:
-            new_group.append(np.array((i,j,k), dtype=np.uint16))
-            for si, sj, sk in INT_TO_IMAGE:
-                ii, jj, kk = wrap_point(i+si, j+sj, k+sk, nx2, ny2, nz2)
-                manifold_labels[ii, jj, kk] = 3
-                new_group.append(np.array((ii,jj,kk), dtype=np.uint16))
-        new_maxima_groups.append(new_group)
+    # # initialize maxima and minima
+    # for group in maxima_groups:
+    #     # adjust to double grid coords
+    #     group2 = group*2
+    #     for i,j,k in group2:
+    #         for si, sj, sk in INT_TO_IMAGE:
+    #             ii, jj, kk = wrap_point(i+si, j+sj, k+sk, nx2, ny2, nz2)
+    #             manifold_labels[ii, jj, kk] = 3
         
-    new_minima_groups = []
-    for group in minima_groups:
-        # adjust to double grid coords
-        group2 = group*2
-        new_group = []
-        for i,j,k in group2:
-            new_group.append(np.array((i,j,k), dtype=np.uint16))
-            for si, sj, sk in INT_TO_IMAGE:
-                ii, jj, kk = wrap_point(i+si, j+sj, k+sk, nx2, ny2, nz2)
-                manifold_labels[ii, jj, kk] = 0
-                new_group.append(np.array((ii,jj,kk), dtype=np.uint16))
-        new_minima_groups.append(new_group)
-
+    # for group in minima_groups:
+    #     # adjust to double grid coords
+    #     group2 = group*2
+    #     for i,j,k in group2:
+    #         for si, sj, sk in INT_TO_IMAGE:
+    #             ii, jj, kk = wrap_point(i+si, j+sj, k+sk, nx2, ny2, nz2)
+    #             manifold_labels[ii, jj, kk] = 0
+    
     # loop over each voxel in parallel
     for i in prange(nx2):
         for j in range(ny2):
             for k in range(nz2):
-                
+
                 # skip maxima/minima
                 if manifold_labels[i,j,k] == 0 or manifold_labels[i,j,k] == 3:
                     continue
+                # get the parity of this point
+                pi = i & 1
+                pj = j & 1
+                pk = k & 1
+                parity = PARITY_TO_INT[pi, pj, pk]
+                # if parity > 1:
+                #     continue
                 
                 # get the number of neighboring voxels (or vertices if you prefer)
                 # in different basins
                 unique_max = get_cell_type(
                     i, j, k, 
                     nx, ny, nz, 
+                    parity,
                     maxima_labels, 
                     maxima_images, 
                     vacuum_mask)
                 unique_min = get_cell_type(
                     i, j, k, 
                     nx, ny, nz, 
+                    parity,
                     minima_labels, 
                     minima_images, 
                     vacuum_mask)
 
-                if unique_min < 2 and unique_max < 2:
-                    # this is not part of a 1 or 2 manifold
-                    label = 10
+                label = 10
+                # if unique_min < 2 and unique_max < 2:
+                #     # this is not part of a 1 or 2 manifold
+                #     label = 10
                 
-                elif unique_min < 2 and unique_max == 2:
-                    # this is a separating plane between two maxima 3-manifolds.
-                    # It represents the descending 2-manifold from a 2-saddle
-                    label = 7
+                # if unique_min < 2 and unique_max == 2:
+                #     # this is a separating plane between two maxima 3-manifolds.
+                #     # It represents the descending 2-manifold from a 2-saddle
+                #     # label = 7
+                #     label = 2
                     
-                elif unique_min == 2 and unique_max < 2:
-                    # this is a separating plane between two minima 3-manifolds.
-                    # It represents the ascending 2-manifold from a 1-saddle
-                    label = 4
+                # elif unique_min == 2 and unique_max < 2:
+                #     # this is a separating plane between two minima 3-manifolds.
+                #     # It represents the ascending 2-manifold from a 1-saddle
+                #     # label = 4
+                #     label = 1
                 
-                elif unique_min < 2 and unique_max > 2:
+                # elif unique_min == 2 and unique_max == 2:
+                #     # this is the intersection of the 2-manifolds of 1-saddles
+                #     # and 2-saddles.
+                #     # This is a 1-manifold connecting two saddles
+                #     # label = 8
+                #     label = 3
+                
+                if unique_min < 2 and unique_max > 2:
                     # this is a bounding edge of the descending 2-manifold of
                     # a 2-saddle. it is a 1-manifold between a minimum and 1-saddle
-                    label = 5
+                    # label = 5
+                    label=1
                 
                 elif unique_min > 2 and unique_max < 2:
                     # this is a bounding edge of the ascending 2-manifold of
                     # a 1-saddle. it is a 1-manifold between a maximum and 2-saddle
-                    label = 6
+                    # label = 6
+                    label=2
                 
-                elif unique_min == 2 and unique_max == 2:
-                    # this is a 1-manifold connecting two saddles
-                    label = 8
+                # elif unique_min == 2 and unique_max > 2:
+                #     # this is a 1-saddle
+                #     label = 1
                 
-                elif unique_min == 2 and unique_max > 2:
-                    # this is a 1-saddle
-                    label = 1
-                
-                elif unique_min > 2 and unique_max == 2:
-                    # this is a 2-saddle
-                    label = 2
+                # elif unique_min > 2 and unique_max == 2:
+                #     # this is a 2-saddle
+                #     label = 2
                     
-                elif unique_min > 2 and unique_max > 2:
-                    # unsure what this means or if it would just result from
-                    # voxelation
-                    label = 9
+                # elif unique_min > 2 and unique_max > 2:
+                #     # unsure what this means or if it would just result from
+                #     # voxelation
+                #     label = 9
 
                 manifold_labels[i,j,k] = label
-    return manifold_labels, new_maxima_groups, new_minima_groups
+    return manifold_labels
 
 FACE_TRANSFORMS = np.array([
     [1,0,0],
@@ -488,7 +492,162 @@ def group_saddles(
             saddle2_groups.append(children)
     return saddle1_groups, saddle2_groups
 
-bader = Bader.from_vasp("CHGCAR")
+def vertex_multilabel(labels, z, y, x):
+    """
+    True if the 2x2x2 voxel block with corner (z,y,x)
+    contains >= 3 unique basin labels.
+    """
+    Z, Y, X = labels.shape
+    labs = set()
+    for dz in (0, -1):
+        for dy in (0, -1):
+            for dx in (0, -1):
+                zz, yy, xx = z + dz, y + dy, x + dx
+                if 0 <= zz < Z and 0 <= yy < Y and 0 <= xx < X:
+                    labs.add(labels[zz, yy, xx])
+    return len(labs) >= 3
+
+
+def label_dual_edges_doubled(labels):
+    """
+    Label dual edges (1-manifold candidates) on a doubled grid,
+    with vertex-supported promotion to recover thin minima manifolds.
+    """
+
+    Z, Y, X = labels.shape
+    edge_grid = np.zeros((2*Z, 2*Y, 2*X), dtype=np.uint8)
+
+    # ---------- XY faces ----------
+    for z in range(1, Z):
+        for y in range(1, Y):
+            for x in range(X):
+                labs = {
+                    labels[z,   y,   x],
+                    labels[z,   y-1, x],
+                    labels[z-1, y,   x],
+                    labels[z-1, y-1, x],
+                }
+
+                face_ok = len(labs) >= 3
+                vertex_ok = (
+                    vertex_multilabel(labels, z,   y,   x) or
+                    vertex_multilabel(labels, z-1, y,   x) or
+                    vertex_multilabel(labels, z,   y-1, x) or
+                    vertex_multilabel(labels, z-1, y-1, x)
+                )
+
+                if face_ok or vertex_ok:
+                    edge_grid[2*z - 1, 2*y - 1, 2*x] = 1
+
+    # ---------- XZ faces ----------
+    for z in range(1, Z):
+        for y in range(Y):
+            for x in range(1, X):
+                labs = {
+                    labels[z,   y, x],
+                    labels[z,   y, x-1],
+                    labels[z-1, y, x],
+                    labels[z-1, y, x-1],
+                }
+
+                face_ok = len(labs) >= 3
+                vertex_ok = (
+                    vertex_multilabel(labels, z,   y,   x) or
+                    vertex_multilabel(labels, z-1, y,   x) or
+                    vertex_multilabel(labels, z,   y, x-1) or
+                    vertex_multilabel(labels, z-1, y, x-1)
+                )
+
+                if face_ok or vertex_ok:
+                    edge_grid[2*z - 1, 2*y, 2*x - 1] = 1
+
+    # ---------- YZ faces ----------
+    for z in range(Z):
+        for y in range(1, Y):
+            for x in range(1, X):
+                labs = {
+                    labels[z, y,   x],
+                    labels[z, y-1, x],
+                    labels[z, y,   x-1],
+                    labels[z, y-1, x-1],
+                }
+
+                face_ok = len(labs) >= 3
+                vertex_ok = (
+                    vertex_multilabel(labels, z, y,   x) or
+                    vertex_multilabel(labels, z, y-1, x) or
+                    vertex_multilabel(labels, z, y, x-1) or
+                    vertex_multilabel(labels, z, y-1, x-1)
+                )
+
+                if face_ok or vertex_ok:
+                    edge_grid[2*z, 2*y - 1, 2*x - 1] = 1
+
+    return edge_grid
+
+def edge_orientation_mask(shape):
+    Z2, Y2, X2 = shape
+
+    xy = np.zeros(shape, dtype=bool)
+    xz = np.zeros(shape, dtype=bool)
+    yz = np.zeros(shape, dtype=bool)
+
+    for z in range(Z2):
+        for y in range(Y2):
+            for x in range(X2):
+                if (z % 2 == 1) and (y % 2 == 1) and (x % 2 == 0):
+                    xy[z,y,x] = True
+                elif (z % 2 == 1) and (y % 2 == 0) and (x % 2 == 1):
+                    xz[z,y,x] = True
+                elif (z % 2 == 0) and (y % 2 == 1) and (x % 2 == 1):
+                    yz[z,y,x] = True
+
+    return xy, xz, yz
+
+def collapse_ribbons(edge_grid):
+    """
+    Collapse parallel dual-edge ribbons into single centerlines.
+    """
+
+    Z2, Y2, X2 = edge_grid.shape
+    xy, xz, yz = edge_orientation_mask(edge_grid.shape)
+
+    out = edge_grid.copy()
+
+    def neighbor_count(z,y,x, mask):
+        cnt = 0
+        for dz,dy,dx in (
+            (-1,0,0),(1,0,0),
+            (0,-1,0),(0,1,0),
+            (0,0,-1),(0,0,1),
+        ):
+            zz,yy,xx = z+dz, y+dy, x+dx
+            if 0 <= zz < Z2 and 0 <= yy < Y2 and 0 <= xx < X2:
+                if edge_grid[zz,yy,xx] and mask[zz,yy,xx]:
+                    cnt += 1
+        return cnt
+
+    for z in range(Z2):
+        for y in range(Y2):
+            for x in range(X2):
+                if edge_grid[z,y,x] == 0:
+                    continue
+
+                if xy[z,y,x]:
+                    if neighbor_count(z,y,x,xy) <= 1:
+                        out[z,y,x] = 0
+                elif xz[z,y,x]:
+                    if neighbor_count(z,y,x,xz) <= 1:
+                        out[z,y,x] = 0
+                elif yz[z,y,x]:
+                    if neighbor_count(z,y,x,yz) <= 1:
+                        out[z,y,x] = 0
+
+    return out
+
+
+
+bader = Bader.from_vasp("CHGCAR", method="neargrid", persistence_tol=0.00)
 
 # get basins
 maxima_labels = bader.maxima_basin_labels
@@ -502,12 +661,12 @@ int_to_image = np.array(list(itertools.product((-1,0,1), repeat=3)))
 for shift_idx, (i,j,k) in enumerate(int_to_image):
     image_to_int[i,j,k] = shift_idx
     
-neighbor_transforms, _ = bader.reference_grid.point_neighbor_transforms
+neighbor_transforms, neighbor_dists = bader.reference_grid.point_neighbor_transforms
 
 maxima_groups, minima_groups = bader.get_persistence_groups()
 
 t0 = time.time()
-manifold_labels, maxima_groups, minima_groups = get_manifold_labels(
+manifold_labels = get_manifold_labels(
     maxima_labels, 
     minima_labels, 
     maxima_images, 
@@ -518,11 +677,20 @@ manifold_labels, maxima_groups, minima_groups = get_manifold_labels(
     )
 t1 = time.time()
 print(f"Manifold labeling: {t1-t0}")
-saddle1_groups, saddle2_groups = group_saddles(manifold_labels)
-t2=time.time()
-print(f"Saddle grouping: {t2-t1}")
+# saddle1_groups, saddle2_groups = group_saddles(manifold_labels)
+# t2=time.time()
+# print(f"Saddle grouping: {t2-t1}")
+test = label_dual_edges_doubled(minima_labels)
+test = collapse_ribbons(test)
 
-# test_grid = bader.reference_grid.copy()
+test_grid = bader.reference_grid.copy()
+test_grid.total = test==1
+test_grid.write_vasp("ELFCAR_test")
+
+# test_grid.total = np.isin(manifold_labels, (1,3))
+# test_grid.write_vasp("ELFCAR_test_1_3")
+# test_grid.total = np.isin(manifold_labels, (2,3))
+# test_grid.write_vasp("ELFCAR_test_2_3")
 # for i in range(11):
 #     test_grid.total = manifold_labels==i
 #     test_grid.write_vasp(f"ELFCAR_test_{i}")

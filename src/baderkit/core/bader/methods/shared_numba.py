@@ -29,6 +29,7 @@ def get_best_neighbor(
     k: np.int64,
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.int64],
+    use_min: bool = False,
 ):
     """
     For a given coordinate (i,j,k) in a grid (data), finds the neighbor with
@@ -48,6 +49,8 @@ def get_best_neighbor(
         Transformations to apply to get to the voxels neighbors
     neighbor_dists : NDArray[np.int64]
         The distance to each voxels neighbor
+    use_min : bool
+        Whether or not to search for the lowest neighbor rather than the highest
 
     Returns
     -------
@@ -76,13 +79,20 @@ def get_best_neighbor(
         # loop
         ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
         # calculate the difference in value taking into account distance
-        diff = (data[ii, jj, kk] - base) / dist
+        if use_min:
+            diff = (base - data[ii, jj, kk]) / dist
+        else:
+            diff = (data[ii, jj, kk] - base) / dist
         # if better than the current best, note the best and the
         # current label
         if diff > best:
             best = diff
-            bti, btj, btk = (si, sj, sk)
-            bni, bnj, bnk = (ii, jj, kk)
+            bti = si
+            btj = sj
+            btk = sk
+            bni = ii
+            bnj = jj
+            bnk = kk
 
     # return the best shift and neighbor
     return (
