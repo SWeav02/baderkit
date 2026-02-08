@@ -154,14 +154,19 @@ def get_possible_saddles(
                     )
                 
                 if num_neighs == 1 and opp_num_neighs > 1:
+                    # saddle 1
                     edges[i,j,k] = 1
                 elif num_neighs > 1 and opp_num_neighs == 1:
+                    # saddle 2
                     edges[i,j,k] = 2
                 elif num_neighs == 1 and opp_num_neighs <1:
+                    # edge of maxima manifold
                     edges[i,j,k] = 3
                 elif num_neighs < 1 and opp_num_neighs == 1:
+                    # edge of minima manifold
                     edges[i,j,k] = 4
                 elif num_neighs == 1 and opp_num_neighs == 1:
+                    # edge of both maxima/minima manifold
                     edges[i,j,k] = 5
     return edges
 
@@ -319,7 +324,7 @@ def get_possible_saddle_vals(
                 
     return edge_mask, possible_saddles, saddle_connections, connection_vals
 
-# @njit
+@njit
 def get_saddles(
     connection_values,
     saddle_coords,
@@ -350,170 +355,103 @@ def get_saddles(
     
     return saddles, best_vals
 
-# @njit(parallel=True)
-# def get_possible_1saddles(
-#     labels: NDArray[np.int64],
-#     images: NDArray[np.int64],
-#     data: NDArray[np.float64],
-#     neighbor_transforms: NDArray[np.int64],
-#     edge_mask: NDArray[np.uint8],
-# ):
-#     nx, ny, nz = labels.shape
-#     ny_nz = ny*nz
+@njit
+def get_saddle_connections(
+    saddle1_coords,
+    saddle2_coords,
+    neighbor_transforms: NDArray[np.int64],
+    edge_mask: NDArray[np.uint8],
+):
+    nx, ny, nz = edge_mask.shape
     
-#     # get the points that may be saddles
-#     possible_saddles = np.argwhere(edge_mask==1)
+    # get the number of possible edges
+    num_edges = len(np.where(np.isin(edge_mask, (1,2,5)))[0])
+    num_edges += len(saddle1_coords) + len(saddle2_coords)
     
-#     # create an array to track connections between these points.
-#     # For each entry we will have:
-#         # 1: the lower label index
-#         # 2: the higher label index
-#         # 3: the connection image from lower basin to higher basin
-#     saddle_connections = np.empty((len(possible_saddles),3),dtype=np.uint16)
-#     connection_vals = np.empty(len(possible_saddles), dtype=np.float64)
-#     # create a mask to track important connections
-#     important = np.ones(len(possible_saddles), dtype=np.bool)
-#     max_val = np.iinfo(np.uint16).max
-#     for idx in prange(len(possible_saddles)):
-#         i,j,k = possible_saddles[idx]
-#         lower, higher, shift, connection_value = get_saddle_connection(
-#             i, j, k,
-#             nx, ny, nz,
-#             ny_nz,
-#             labels,
-#             images,
-#             data,
-#             neighbor_transforms,
-#             edge_mask,
-#             max_val,
-#         )
-#         if lower == max_val:
-#             # note this wasn't a true saddle
-#             important[idx] = False
-#             continue
-#         saddle_connections[idx, 0] = lower
-#         saddle_connections[idx, 1] = higher
-#         saddle_connections[idx, 2] = shift
-#         connection_vals[idx] = connection_value
-        
-#     # get only the connections that are important
-#     important = np.where(important)[0]
-#     possible_saddles = possible_saddles[important]
-#     saddle_connections = saddle_connections[important]
-#     connection_vals = connection_vals[important]
+    # create an empty queue for storing which points are next
+    queue = np.empty((num_edges, 3), dtype=np.uint16)
+    
+    # create arrays to store flood filled labels
+    max_val = np.iinfo(np.uint16).max
+    flood_labels = np.full_like(edge_mask, max_val, dtype=np.uint16)
+    flood_images = np.full_like(edge_mask, 13, dtype=np.uint8)
+    
+    # seed saddles
+    saddle_idx = 0
+    for i,j,k in saddle1_coords:
+        flood_labels[i,j,k] = saddle_idx
+        queue[saddle_idx] = (i,j,k)
+        saddle_idx += 1
+    for i,j,k in saddle2_coords:
+        flood_labels[i,j,k] = saddle_idx
+        queue[saddle_idx] = (i,j,k)
+        saddle_idx += 1
+    
+    # create lists to store connections
+    connections = []
+    connection_coords = []
+    queue_start = 0
+    queue_end = saddle_idx
+    
+    while queue_start != queue_end:
+        next_end = queue_end
+        for edge_idx in range(queue_start, queue_end):
+            i,j,k = queue[edge_idx]
+            # get label and image
+            label = flood_labels[i,j,k]
+            image = flood_images[i,j,k]
+            mi, mj, mk = INT_TO_IMAGE[image]
+            
+            # iterate over each neighbor. if unlabeled, assign it the same label
+            # if labeled, note a new connection
+            for trans, (si, sj, sk) in  enumerate(neighbor_transforms):
+                # get the neighbor
+                ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
+                    i+si, j+sj, k+sk, nx, ny, nz
+                )
+                # skip points that can't be part of our connections
+                if not edge_mask[ii,jj,kk] in (1,2,5):
+                    continue
                 
-#     return edge_mask, possible_saddles, saddle_connections, connection_vals
-
-# # @njit
-# def get_1saddles(
-#     connection_values,
-#     saddle_coords,
-#     connection_indices,
-#     num_connections,
-#     edges,
-# ):
-#     # create an array to store best points
-#     saddles = np.empty(num_connections, dtype=np.uint16)
-#     best_vals = np.full(num_connections, -np.inf, dtype=np.float64)
+                neigh_label = flood_labels[ii,jj,kk]
+                shift = IMAGE_TO_INT[ssi+mi, ssj+mj, ssk+mk]
+                
+                # skip points that haven't been labeled
+                if neigh_label == max_val:
+                    flood_labels[ii,jj,kk] = label
+                    flood_images[ii,jj,kk] = shift
+                    try:
+                        queue[next_end] = (ii,jj,kk)
+                        next_end += 1
+                    except: breakpoint()
+                else:
+                    # get where this image has wrapped around periodic edges
+                    neigh_image = flood_images[ii,jj,kk]
     
-#     for saddle_idx, (idx, connection_value) in enumerate(zip(connection_indices, connection_values)):
-#         if best_vals[idx] < connection_value:
-#             best_vals[idx] = connection_value
-#             saddles[idx] = saddle_idx
-            
-#     # update edge labels
-#     for idx in saddles:
-#         i,j,k = saddle_coords[idx]
-#         edges[i,j,k] = 3
+                    # if this belongs to a different saddle, we note a connection
+                    if neigh_label != label or neigh_image != shift:
+                        # get shift difference
+                        ni, nj, nk = INT_TO_IMAGE[neigh_image]
+                        si, sj, sk = INT_TO_IMAGE[shift]
+                        
+                        bi = ni - si
+                        bj = nj - sj
+                        bk = nk - sk
+                        best_image = IMAGE_TO_INT[bi,bj,bk]
+                        inv_image = IMAGE_TO_INT[-bi, -bj, -bk]
+                        
+                        connections.append((
+                            min(label, neigh_label),
+                            max(label, neigh_label),
+                            min(best_image, inv_image),
+                            ))
+                        # add coord
+                        connection_coords.append(queue[edge_idx])
+        queue_start = queue_end
+        queue_end = next_end
     
-#     return saddles, best_vals
-# @njit(parallel=True)
-# def get_possible_1saddles(
-#     labels: NDArray[np.int64],
-#     images: NDArray[np.int64],
-#     data: NDArray[np.float64],
-#     neighbor_transforms: NDArray[np.int64],
-#     edge_mask: NDArray[np.uint8],
-#     # minima_vox: NDArray[np.uint16],
-# ):
-#     nx, ny, nz = labels.shape
     
-#     # get the points that may be saddles
-#     possible_saddles = np.argwhere(edge_mask==2)
-#     # get values
-#     edge_values = np.empty(len(possible_saddles), dtype=np.float64)
-#     for idx, (i,j,k) in enumerate(possible_saddles):
-#         edge_values[idx] = data[i,j,k]
-        
-#     # sort from lowest to highest
-#     sorted_indices = np.argsort(edge_values)
-    
-#     # flood fill, labeling new minima as we go
-#     max_val = np.iinfo(np.uint16).max
-#     flood_labels = np.full_like(data, max_val, dtype=np.uint16)
-#     flood_images = np.full_like(data, 13, dtype=np.uint8)
-    
-#     minima_val = 0
-#     connected_minima = []
-#     connection_images = []
-#     connection_coords = []
-#     minima = []
-#     for edge_idx in sorted_indices:
-#         i,j,k = possible_saddles[edge_idx]
-#         # make new minima if unlabeled
-#         label = flood_labels[i,j,k]
-#         image = flood_images[i,j,k]
-#         mi, mj, mk = INT_TO_IMAGE[image]
-#         if label == max_val:
-#             flood_labels[i,j,k] = minima_val
-#             label = minima_val
-#             minima.append(possible_saddles[edge_idx])
-#             minima_val += 1
-        
-#         # iterate over each neighbor. if unlabeled, assign it the same label
-#         # if labeled, note a new connection
-#         for trans, (si, sj, sk) in  enumerate(neighbor_transforms):
-#             # get the neighbor
-#             ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
-#                 i+si, j+sj, k+sk, nx, ny, nz
-#             )
-#             # skip non-edges
-#             if edge_mask[ii,jj,kk] != 2:
-#                 continue
-            
-#             neigh_label = flood_labels[ii,jj,kk]
-#             shift = IMAGE_TO_INT[ssi+mi, ssj+mj, ssk+mk]
-            
-#             # skip points that haven't been labeled
-#             if neigh_label == max_val:
-#                 flood_labels[ii,jj,kk] = label
-#                 flood_images[ii,jj,kk] = shift
-#             else:
-#                 # get where this image has wrapped around periodic edges
-#                 neigh_image = flood_images[ii,jj,kk]
-
-#                 # if this belongs to a different minima, we note a connection
-#                 if neigh_label != label or neigh_image != shift:
-#                     connected_minima.append(np.array((min(label, neigh_label), max(label,neigh_label)), dtype=np.uint16))
-#                     # get shift difference
-#                     ni, nj, nk = INT_TO_IMAGE[neigh_image]
-#                     si, sj, sk = INT_TO_IMAGE[shift]
-                    
-#                     bi = ni - si
-#                     bj = nj - sj
-#                     bk = nk - sk
-#                     best_image = IMAGE_TO_INT[bi,bj,bk]
-#                     inv_image = IMAGE_TO_INT[-bi, -bj, -bk]
-                    
-#                     connection_images.append(min(best_image, inv_image))
-#                     # add coord
-#                     connection_coords.append(possible_saddles[edge_idx])
-    
-#     connected_minima = np.array(connected_minima, dtype=np.uint16)
-#     connection_images = np.array(connection_images, dtype=np.uint16)
-#     connections = np.column_stack((connected_minima, connection_images))
-    
-#     return np.array(minima, dtype=np.uint16), connections, np.array(connection_coords, dtype=np.uint16)
+    return connections, np.array(connection_coords, dtype=np.uint16)
 
 
 bader = Bader.from_vasp("CHGCAR", method="neargrid", persistence_tol=0.01)
@@ -584,6 +522,26 @@ saddle1_connections = saddle_connections[saddle1_indices]
 saddle1_vals = connection_vals[saddle1_indices]
 
 
+saddle_connections, saddle_conn_coords = get_saddle_connections(
+    saddle1_coords,
+    saddle2_coords,
+    neighbor_transforms,
+    edges,
+)
+
+saddle_connections = np.array(saddle_connections, dtype=np.uint16)
+unique_connections, inverse = np.unique(saddle_connections,axis=0, return_inverse=True)
+
+# TODO:
+    # I now have critical points and their direct connections. Next:
+        # 1. move code to a class
+        # 2. determine best way to store data. Graph?
+        # 3. add plotter class
+        # 4. Other useful tools:
+            # a. bonded atoms
+            # b. ?
+
+
 test_mask = np.zeros_like(edges, dtype=np.uint8)
 test_mask[saddle1_coords[:,0],saddle1_coords[:,1],saddle1_coords[:,2]] = 1
 test_mask[saddle2_coords[:,0],saddle2_coords[:,1],saddle2_coords[:,2]] = 2
@@ -595,7 +553,7 @@ for coord in bader.minima_frac:
     # coord = coord / bader.reference_grid.shape
     test_structure.append("x", coord)
 test_grid.structure = test_structure
-for i in range(2):
-    test_grid.total = test_mask==i+1
-    # test_grid.total = edges==i+1
+for i in range(5):
+    # test_grid.total = test_mask==i+1
+    test_grid.total = edges==i+1
     test_grid.write_vasp(f"ELFCAR_test_{i+1}")
