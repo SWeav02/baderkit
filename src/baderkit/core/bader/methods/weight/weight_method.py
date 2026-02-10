@@ -6,9 +6,10 @@ import numpy as np
 
 from baderkit.core.bader.methods.base import MethodBase
 
+from baderkit.core.utilities.basic import coords_to_flat
 from .weight_numba import (  # reduce_charge_volume,; get_labels,
     get_weight_assignments,
-    sort_maxima_frac,
+    sort_extrema_frac,
 )
 
 
@@ -32,21 +33,29 @@ class WeightMethod(MethodBase):
         reference_data = reference_grid.total
         charge_data = charge_grid.total
         shape = reference_grid.shape
+        nx,ny,nz = shape
+        ny_nz = ny*nz
 
-        # We need our maxima to follow the same ordering as the other methods.
-        # We want to get this order down before we run our method
-        self._maxima_vox, maxima_indices = sort_maxima_frac(
-            self.maxima_vox, shape
-        )
+        # get flat indices of extrema
+        extrema_indices = np.empty(len(self.extrema_vox), dtype=np.uint32)
+        for idx, (i,j,k) in enumerate(self.extrema_vox):
+            extrema_indices[idx] = coords_to_flat(i,j,k, ny_nz, nz)
+
+        # mark vacuum points
+        labels[self.vacuum_mask.ravel()] = np.iinfo(labels.dtype).max - 1
 
         logging.info("Sorting Reference Data")
         # sort data from lowest to highest, ignoring vacuum points
         sorted_indices = np.argsort(reference_data[~self.vacuum_mask], kind="stable")
 
         # map these truncated sorted indices back to the original flat indices.
-        # We also flip the indices to go from high to low here.
+        # We also flip the indices to go from high to low here when looking for
+        # maxima.
         non_vacuum_indices = np.where((~self.vacuum_mask).ravel())[0]
-        sorted_indices = non_vacuum_indices[np.flip(sorted_indices)]
+        if not self.use_minima:
+            sorted_indices = non_vacuum_indices[np.flip(sorted_indices)]
+        else:
+            sorted_indices = non_vacuum_indices[sorted_indices]
 
         # get the voronoi neighbors, their distances, and the area of the corresponding
         # facets. This is used to calculate the volume flux from each voxel
@@ -73,12 +82,15 @@ class WeightMethod(MethodBase):
             neighbor_alpha,
             all_neighbor_transforms,
             all_neighbor_dists,
-            self.maxima_mask,
-            maxima_indices,
+            self.extrema_mask,
+            extrema_indices,
+            use_minima=self.use_minima
         )
 
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)
+        # update vacuum mask
+        self.vacuum_mask = labels == np.iinfo(labels.dtype).max - 1
 
         # adjust charges from vasp convention
         charges /= shape.prod()
@@ -89,8 +101,8 @@ class WeightMethod(MethodBase):
         images = images.reshape(shape)
         # assign all values
         results = {
-            "maxima_basin_labels": labels,
-            "maxima_basin_images": images,
+            "extrema_basin_labels": labels,
+            "extrema_basin_images": images,
             "basin_charges": charges,
             "basin_volumes": volumes,
             "vacuum_charge": self.charge_grid.total[self.vacuum_mask].sum()

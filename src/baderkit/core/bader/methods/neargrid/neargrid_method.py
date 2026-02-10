@@ -47,7 +47,8 @@ class NeargridMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                maxima_mask=self.maxima_mask,
+                extrema_mask=self.extrema_mask,
+                use_minima=self.use_minima,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system
@@ -61,7 +62,7 @@ class NeargridMethod(MethodBase):
             # get the pseudo inverse
             inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms[:13])
             # calculate gradients and pointers to best neighbors
-            labels, images, gradients, self._maxima_mask = get_gradient_pointers_overdetermined(
+            labels, images, gradients, self._extrema_mask = get_gradient_pointers_overdetermined(
                 data=reference_data,
                 labels=labels,
                 images=images,
@@ -70,15 +71,17 @@ class NeargridMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                maxima_mask=self.maxima_mask,
+                extrema_mask=self.extrema_mask,
+                use_minima=self.use_minima,
             )
         # Find roots
+        # breakpoint()
         logging.info("Finding Roots")
         labels, images = self.get_roots(labels, images)
 
         # reconstruct a 3D array with our labels. make sure our data type can
         # include negative values so that we can mark points needing refinement
-        dtype = get_lowest_int(len(self.maxima_vox)+1)
+        dtype = get_lowest_int(len(self.extrema_vox)+1)
         labels = labels.reshape(shape).astype(dtype)
 
         logging.info("Starting Edge Refinement")
@@ -93,8 +96,8 @@ class NeargridMethod(MethodBase):
             neighbor_transforms=neighbor_transforms,
             vacuum_mask=self.vacuum_mask,
         )
-        # remove maxima from refinement
-        refinement_mask[self.maxima_mask] = False
+        # remove extrema from refinement
+        refinement_mask[self.extrema_mask] = False
         # note these labels and the vacuum should not be reassigned again in future cycles
         labels[refinement_mask&self.vacuum_mask] = -labels[refinement_mask&self.vacuum_mask]
         labels, images = refine_fast_neargrid(
@@ -102,16 +105,17 @@ class NeargridMethod(MethodBase):
             labels=labels,
             images=images,
             refinement_mask=refinement_mask,
-            maxima_mask=self.maxima_mask,
+            extrema_mask=self.extrema_mask,
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
-            vacuum_label=-(len(self.maxima_vox)+1),
+            vacuum_label=-(len(self.extrema_vox)+1),
+            use_minima=self.use_minima,
         )
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1
-        dtype = get_lowest_uint(len(self.maxima_vox)+1)
+        dtype = get_lowest_uint(len(self.extrema_vox)+1)
         labels = labels.reshape(shape).astype(dtype)
         
         # condense images
@@ -119,8 +123,8 @@ class NeargridMethod(MethodBase):
         images = images.reshape(shape)
         # get all results
         results = {
-            "maxima_basin_labels": labels,
-            "maxima_basin_images": images,
+            "extrema_basin_labels": labels,
+            "extrema_basin_images": images,
         }
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")

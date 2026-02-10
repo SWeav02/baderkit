@@ -16,7 +16,8 @@ def get_steepest_pointers(
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.int64],
     vacuum_mask: NDArray[np.bool_],
-    maxima_mask: NDArray[np.bool_],
+    extrema_mask: NDArray[np.bool_],
+    use_minima: bool = False,
 ):
     """
     For each voxel in a 3D grid of data, finds the index of the neighboring voxel with
@@ -36,16 +37,16 @@ def get_steepest_pointers(
         The distance to each neighboring voxel
     vacuum_mask : NDArray[np.bool_]
         A 3D array representing the location of the vacuum
-    vacuum_mask : NDArray[np.bool_]
-        A 3D array representing the location of local maxima in the grid
+    extrema_mask : NDArray[np.bool_]
+        A 3D array representing the location of local extrema in the grid
 
     Returns
     -------
     pointers : NDArray[np.int64]
         A 1D array where each entry is the index of the neighbor that had the
         greatest increase in value. A value of -1 indicates a vacuum point.
-    maxima_mask : NDArray[np.bool_]
-        A 3D array that is True at maxima
+    extrema_mask : NDArray[np.bool_]
+        A 3D array that is True at extrema
 
     """
     nx, ny, nz = data.shape
@@ -62,7 +63,7 @@ def get_steepest_pointers(
                     continue
                 # check if this is a maximum. If so, we should have assigned
                 # this label earlier and we continue
-                if maxima_mask[i, j, k]:
+                if extrema_mask[i, j, k]:
                     continue
                 # get the best neighbor
                 _, (x, y, z), shift = get_best_neighbor_with_shift(
@@ -72,6 +73,7 @@ def get_steepest_pointers(
                     k=k,
                     neighbor_transforms=neighbor_transforms,
                     neighbor_dists=neighbor_dists,
+                    use_minima=use_minima,
                 )
                 labels[flat_idx] = coords_to_flat(x, y, z, ny_nz, nz)
                 images[flat_idx] = shift

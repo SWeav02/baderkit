@@ -41,11 +41,12 @@ class OngridMethod(MethodBase):
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             vacuum_mask=self.vacuum_mask,
-            maxima_mask=self.maxima_mask,
+            extrema_mask=self.extrema_mask,
+            use_minima=self.use_minima
         )
         
         # Our pointers object is a 1D array pointing each voxel to its parent voxel. We
-        # essentially have a classic forest of trees problem where each maxima is
+        # essentially have a classic forest of trees problem where each extrema is
         # a root and we want to point all of our voxels to their respective root.
         # We being a while loop. In each loop, we remap our pointers to point at
         # the index that its parent was pointing at.
@@ -61,8 +62,8 @@ class OngridMethod(MethodBase):
 
         # assign all results
         results = {
-            "maxima_basin_labels": labels,
-            "maxima_basin_images": images,
+            "extrema_basin_labels": labels,
+            "extrema_basin_images": images,
         }
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")

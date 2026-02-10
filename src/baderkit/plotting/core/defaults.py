@@ -4,6 +4,12 @@
 def rgb_to_hex(rgb):
     return "#{:02X}{:02X}{:02X}".format(*(int(255 * c) for c in rgb))
 
+CRIT_COLORS = {
+    "maxima": "#BD0020",
+    "saddle2": "#BD9E00",
+    "saddle1": "#00BD9D",
+    "minima": "#0020BD",
+    }
 
 ATOM_COLORS = {
     "H": "#FFFFFF",

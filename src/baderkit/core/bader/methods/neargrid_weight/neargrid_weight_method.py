@@ -54,7 +54,8 @@ class NeargridWeightMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                maxima_mask=self.maxima_mask,
+                extrema_mask=self.extrema_mask,
+                use_minima=self.use_minima,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system
@@ -68,7 +69,7 @@ class NeargridWeightMethod(MethodBase):
             # get the pseudo inverse
             inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms[:13])
             # calculate gradients and pointers to best neighbors
-            labels, images, gradients, self._maxima_mask = get_gradient_pointers_overdetermined(
+            labels, images, gradients, self._extrema_mask = get_gradient_pointers_overdetermined(
                 data=reference_data,
                 labels=labels,
                 images=images,
@@ -77,7 +78,8 @@ class NeargridWeightMethod(MethodBase):
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                maxima_mask=self.maxima_mask,
+                extrema_mask=self.extrema_mask,
+                use_minima=self.use_minima,
             )
 
         # Find roots
@@ -86,7 +88,7 @@ class NeargridWeightMethod(MethodBase):
 
         # reconstruct a 3D array with our labels. make sure our data type can
         # include negative values so that we can mark points needing refinement
-        dtype = get_lowest_int(len(self.maxima_vox)+1)
+        dtype = get_lowest_int(len(self.extrema_vox)+1)
         labels = labels.reshape(shape).astype(dtype)
 
         logging.info("Starting Edge Refinement")
@@ -101,8 +103,8 @@ class NeargridWeightMethod(MethodBase):
             neighbor_transforms=neighbor_transforms,
             vacuum_mask=self.vacuum_mask,
         )
-        # remove maxima from refinement
-        refinement_mask[self.maxima_mask] = False
+        # remove extrema from refinement
+        refinement_mask[self.extrema_mask] = False
         # note these labels and the vacuum should not be reassigned again in future cycles
         labels[refinement_mask&self.vacuum_mask] = -labels[refinement_mask&self.vacuum_mask]
         labels, images = refine_fast_neargrid(
@@ -110,21 +112,25 @@ class NeargridWeightMethod(MethodBase):
             labels=labels,
             images=images,
             refinement_mask=refinement_mask,
-            maxima_mask=self.maxima_mask,
+            extrema_mask=self.extrema_mask,
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
-            vacuum_label=-(len(self.maxima_vox)+1),
+            vacuum_label=-(len(self.extrema_vox)+1),
+            use_minima=self.use_minima,
         )
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1
-        dtype = get_lowest_uint(len(self.maxima_vox)+1)
+        dtype = get_lowest_uint(len(self.extrema_vox)+1)
         labels = labels.reshape(shape).astype(dtype)
         
         # condense images
         images = self.condense_images(images)
         images = images.reshape(shape)
+        
+        # update vacuum labels in case new ones were found
+        self.vacuum_mask = labels == (len(self.extrema_vox)+1)
 
         # get final edges
         edge_mask = get_edges(
@@ -139,7 +145,7 @@ class NeargridWeightMethod(MethodBase):
                 data=charge_data,
                 labels=labels,
                 cell_volume=reference_grid.structure.volume,
-                maxima_num=len(self.maxima_vox),
+                extrema_num=len(self.extrema_vox),
                 edge_mask=edge_mask,
             )
         )
@@ -157,6 +163,8 @@ class NeargridWeightMethod(MethodBase):
         edge_data = reference_data[edge_mask]
         # sort the data
         sorted_indices = np.argsort(edge_data, kind="stable")
+        if self.use_minima:
+            sorted_indices = np.flip(sorted_indices)
         # get edge charge/volume
         charges, volumes = get_edge_charges_volumes(
             reference_data=reference_data,
@@ -166,10 +174,12 @@ class NeargridWeightMethod(MethodBase):
             labels=labels,
             charges=charges,
             volumes=volumes,
+            vacuum_mask=self.vacuum_mask,
             neighbor_transforms=voronoi_neighbor_transforms,
             neighbor_alpha=neighbor_alpha,
             all_neighbor_transforms=neighbor_transforms,
             all_neighbor_dists=neighbor_dists,
+            use_minima=self.use_minima,
         )
 
         volumes = volumes * reference_grid.structure.volume / reference_grid.ngridpts
@@ -177,11 +187,11 @@ class NeargridWeightMethod(MethodBase):
         
         # get all results
         results = {
-            "maxima_basin_labels": labels,
+            "extrema_basin_labels": labels,
             "basin_charges": charges,
             "basin_volumes": volumes,
             "vacuum_charge": vacuum_charge,
             "vacuum_volume": vacuum_volume,
-            "maxima_basin_images": images,
+            "extrema_basin_images": images,
         }
         return results

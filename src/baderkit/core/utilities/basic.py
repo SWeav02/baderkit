@@ -17,11 +17,53 @@ def get_lowest_int(max_value):
             break
     return dtype
 
+@njit(cache=True)
+def get_norm(i,j,k):
+    return (i**2 + j**2 + k**2)**(1/2)
+
 @njit(cache=True, inline="always")
 def dist(p1, p2):
     x, y, z = p1
     x1, y1, z1 = p2
-    return ((x1 - x) ** 2 + (y1 - y) ** 2 + (z1 - z) ** 2) ** (0.5)
+    return get_norm(x1-x, y1-y, z1-z)
+
+@njit(cache=True)
+def get_gradient_cart(i, j, k, data, dir2car):
+    # dir2car = np.linalg.inv(row_matrix).T
+    nx, ny, nz = data.shape
+    
+    c000 = data[i,j,k]
+    c100 = data[(i + 1) % nx,j,k]
+    c_100 = data[(i - 1) % nx,j,k]
+    c010 = data[i,(j + 1) % ny,k]
+    c0_10 = data[i,(j - 1) % ny,k]
+    c001 = data[i,j,(k + 1) % nz]
+    c00_1 = data[i,j,(k - 1) % nz]
+
+    # central differences in voxel coordinates
+    gi = (c100 - c_100) / (2.0)
+    gj = (c010 - c0_10) / (2.0)
+    gk = (c001 - c00_1) / (2.0)
+
+    # optional extrema clamping
+    if c100 <= c000 and c_100 <= c000:
+        gi = 0.0
+    if c010 <= c000 and c0_10 <= c000:
+        gj = 0.0
+    if c001 <= c000 and c00_1 <= c000:
+        gk = 0.0
+
+    # convert to fractional-coordinate gradient
+    gi *= nx
+    gj *= ny
+    gk *= nz
+
+    # convert to Cartesian gradient
+    gx = dir2car[0, 0] * gi + dir2car[0, 1] * gj + dir2car[0, 2] * gk
+    gy = dir2car[1, 0] * gi + dir2car[1, 1] * gj + dir2car[1, 2] * gk
+    gz = dir2car[2, 0] * gi + dir2car[2, 1] * gj + dir2car[2, 2] * gk
+
+    return gx, gy, gz
 
 
 @njit(cache=True, parallel=True, inline="always")
@@ -281,3 +323,40 @@ def get_transforms_in_radius(
     offsets = offsets[sorted_indices]
     dists = dists[sorted_indices]
     return offsets, dists
+
+@njit(cache=True)
+def get_ongrid_gradient_cart(i, j, k, data, dir2car):
+    nx, ny, nz = data.shape
+    
+    c000 = data[i,j,k]
+    c100 = data[(i + 1) % nx,j,k]
+    c_100 = data[(i - 1) % nx,j,k]
+    c010 = data[i,(j + 1) % ny,k]
+    c0_10 = data[i,(j - 1) % ny,k]
+    c001 = data[i,j,(k + 1) % nz]
+    c00_1 = data[i,j,(k - 1) % nz]
+
+    # central differences in voxel coordinates
+    gi = (c100 - c_100) / (2.0)
+    gj = (c010 - c0_10) / (2.0)
+    gk = (c001 - c00_1) / (2.0)
+
+    # optional extrema clamping
+    if c100 <= c000 and c_100 <= c000:
+        gi = 0.0
+    if c010 <= c000 and c0_10 <= c000:
+        gj = 0.0
+    if c001 <= c000 and c00_1 <= c000:
+        gk = 0.0
+
+    # convert to fractional-coordinate gradient
+    gi *= nx
+    gj *= ny
+    gk *= nz
+
+    # convert to Cartesian gradient
+    gx = dir2car[0, 0] * gi + dir2car[0, 1] * gj + dir2car[0, 2] * gk
+    gy = dir2car[1, 0] * gi + dir2car[1, 1] * gj + dir2car[1, 2] * gk
+    gz = dir2car[2, 0] * gi + dir2car[2, 1] * gj + dir2car[2, 2] * gk
+
+    return gx, gy, gz

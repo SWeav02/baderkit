@@ -666,7 +666,7 @@ class Bader(BaseAnalysis):
         if self._minima_ref_values is None:
             # we get these values during each bader method anyways, so
             # we run this here.
-            self._run_bader()
+            self._run_minima_bader()
         return self._minima_ref_values.round(10)
     
     @property
@@ -687,7 +687,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._minima_voxel_groups is None:
-            self._run_bader()
+            self._run_minima_bader()
         return self._minima_voxel_groups
     
     @property
@@ -703,7 +703,7 @@ class Bader(BaseAnalysis):
             connected if one takes the all voxels at or below that value
         """
         if self._maxima_persistence_values is None:
-            self._run_bader()
+            self._run_minima_bader()
         return self._maxima_persistence_values
 
     ###########################################################################
@@ -937,7 +937,12 @@ class Bader(BaseAnalysis):
         results = method.run()
 
         for key, value in results.items():
-            setattr(self, f"_{key}", value)
+            if "extrema" in key:
+                new_key = key.replace("extrema", "maxima")
+                setattr(self, f"_{new_key}", value)
+            else:
+                setattr(self, f"_{key}", value)
+
         t1 = time.time()
         logging.info("Bader Algorithm Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -960,29 +965,22 @@ class Bader(BaseAnalysis):
         # import method
         mod = importlib.import_module(f"baderkit.core.bader.methods.{module_name}")
         Method = getattr(mod, class_name)
-        
-        # create a temporary grid object with the scalar field flipped.
-        temp_reference = self.reference_grid.copy()
-        temp_reference.total *= -1
-        # shift so that the values are above our vacuum cutoff. Mask out any
-        # vacuum points from the regular function
-        temp_reference.total += temp_reference.total.min()
-        temp_reference.total[self.vacuum_mask] = 0.0
 
         # Instantiate and run the selected method
         method = Method(
             charge_grid=self.charge_grid,
-            reference_grid=temp_reference,
+            reference_grid=self.reference_grid,
             vacuum_mask=self.vacuum_mask,
             num_vacuum=self.num_vacuum,
+            use_minima=True,
         )
         if self._use_overdetermined:
             method._use_overdetermined = True
         results = method.run()
         # set related properties
         for key, value in results.items():
-            if "maxima" in key:
-                new_key = key.replace("maxima", "minima")
+            if "extrema" in key:
+                new_key = key.replace("extrema", "minima")
                 setattr(self, f"_{new_key}", value)
         
         t1 = time.time()
@@ -1161,7 +1159,7 @@ class Bader(BaseAnalysis):
             labels=self.maxima_basin_labels,
             data=self.reference_grid.total,
             persistence_cutoffs=self.maxima_persistence_values,
-            maxima_vox=self.maxima_vox,
+            extrema_vox=self.maxima_vox,
             )
         
         # create a temporary grid object with the scalar field flipped.
@@ -1171,11 +1169,12 @@ class Bader(BaseAnalysis):
         # vacuum points from the regular function
         temp_reference += temp_reference.min() + self.vacuum_tol + 1e-6
         temp_reference[self.vacuum_mask] = 0.0
+
         minima_groups = get_persistence_groups(
             labels=self.minima_basin_labels,
             data=temp_reference,
             persistence_cutoffs=self.minima_persistence_values,
-            maxima_vox=self.minima_vox,
+            extrema_vox=self.minima_vox,
             )
         return maxima_groups, minima_groups
         

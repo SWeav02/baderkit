@@ -12,13 +12,13 @@ def get_interior_basin_charges_and_volumes(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
     cell_volume: np.float64,
-    maxima_num: np.int64,
+    extrema_num: np.int64,
     edge_mask: NDArray[np.bool_],
 ):
     nx, ny, nz = data.shape
     # create variables to store charges/volumes
-    charges = np.zeros(maxima_num, dtype=np.float64)
-    volumes = np.zeros(maxima_num, dtype=np.float64)
+    charges = np.zeros(extrema_num, dtype=np.float64)
+    volumes = np.zeros(extrema_num, dtype=np.float64)
     vacuum_charge = 0.0
     vacuum_volume = 0.0
 
@@ -31,7 +31,7 @@ def get_interior_basin_charges_and_volumes(
                 charge = data[i, j, k]
                 label = labels[i, j, k]
                 # add vacuum charge if relavent
-                if label == maxima_num:
+                if label == extrema_num:
                     vacuum_charge += charge
                     vacuum_volume += 1
                 else:
@@ -51,10 +51,12 @@ def get_edge_charges_volumes(
     labels,
     charges,
     volumes,
+    vacuum_mask,
     neighbor_transforms,
     neighbor_alpha,
     all_neighbor_transforms,
     all_neighbor_dists,
+    use_minima: bool = False,
 ):
     nx, ny, nz = reference_data.shape
     ny_nz = ny * nz
@@ -88,16 +90,22 @@ def get_edge_charges_volumes(
         for (si, sj, sk), alpha in zip(neighbor_transforms, neighbor_alpha):
             # get neighbor and wrap around periodic boundary
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+            # if this point is part of the vacuum, continue
+            if vacuum_mask[ii,jj,kk]:
+                continue
             # get the neighbors value
             neigh_value = reference_data[ii, jj, kk]
             # if this value is below the current points value, continue
-            if neigh_value <= base_value:
+            if (
+                not use_minima and neigh_value <= base_value
+                or use_minima and neigh_value >= base_value
+                ):
                 continue
             # get this neighbors index
             neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
 
             # calculate the flux flowing to this voxel
-            flux = (neigh_value - base_value) * alpha
+            flux = abs(neigh_value - base_value) * alpha
             # assign flux
             flux_array[sorted_idx, neigh_num] = flux
             total_flux += flux
