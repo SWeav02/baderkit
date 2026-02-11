@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pyvista as pv
+import vtk
 from numpy.typing import NDArray
 from pyvistaqt import QtInteractor
 
@@ -80,6 +81,7 @@ class StructurePlotter:
         self._radii = [s.specie.atomic_radius for s in structure]
         self._colors = [ATOM_COLORS.get(s.specie.symbol, "#FFFFFF") for s in structure]
         # generate initial plotter
+        self.plotter = None
         self.plotter = self._create_structure_plot()
         self.view_indices = [1, 0, 0]
         self.up_indices = [0, 0, 1]
@@ -202,19 +204,50 @@ class StructurePlotter:
         Returns
         -------
         bool
-            Whether or not to show the axis widget. Note this currently only
-            displays the cartesian axes.
+            Whether or not to show the axis widget.
 
         """
         return self._show_axes
 
     @show_axes.setter
     def show_axes(self, show_axes: bool):
-        if show_axes:
-            self.plotter.add_axes()
-        else:
+        if not show_axes:
             self.plotter.hide_axes()
+        else:
+            self.plotter.show_axes_all()
         self._show_axes = show_axes
+    
+    def _build_axes_widget(self, plotter, show_axes: bool):
+        # lattice[0] = a-vector, lattice[1] = b-vector, lattice[2] = c-vector
+        lattice = self.structure.lattice.matrix 
+    
+        # 2. Construct the 4x4 transformation matrix
+        # The columns of the upper-left 3x3 represent where the unit X, Y, Z go.
+        # We transpose the lattice matrix to put vectors in columns.
+        matrix = np.eye(4)
+        matrix[:3, :3] = lattice.T 
+        
+        scale = [1/np.linalg.norm(a) for a in lattice]
+    
+        # 3. Create the AxesAssembly
+        # We pass our calculated matrix to 'user_matrix'
+        axes = pv.AxesAssembly(
+            user_matrix=matrix,
+            scale=scale,
+            labels=["a", "b", "c"],
+            # label_color="black",
+            label_size=24,
+        )
+
+        plotter.add_orientation_widget(
+            axes,
+            viewport=(0.0, 0.0, 0.25, 0.25),
+            interactive=False,
+        )
+        plotter.show_axes = self.show_axes
+
+        
+
 
     @property
     def parallel_projection(self) -> bool:
@@ -624,6 +657,8 @@ class StructurePlotter:
             A pyvista Plotter object representing the provided Structure object.
 
         """
+        if self.plotter is not None:
+            return self.plotter
         if self.qt_plotter:
             assert self.qt_frame is not None, "A frame must be set to use qt"
             plotter = QtInteractor(self.qt_frame)
@@ -654,6 +689,9 @@ class StructurePlotter:
             color="k",
             name="lattice",
         )
+        
+        # create axes widget
+        self._build_axes_widget(plotter, self.show_axes)
 
         # set camera perspective type
         if self.parallel_projection:
@@ -701,6 +739,7 @@ class StructurePlotter:
             StructurePlotter class.
 
         """
+        self.plotter = None
         return self._create_structure_plot()
 
     def get_plot_html(self) -> str:

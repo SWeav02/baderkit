@@ -449,22 +449,27 @@ class CriticalPoints(BaseAnalysis):
                 
                 # add forward and reverse direction edges to graph
                 
+                # saddle to first max
                 graph.add_edge(
                     saddle_node, 
                     node, 
                     image=image
                     )
+                # saddle to second max
                 graph.add_edge(
                     saddle_node, 
                     node1, 
-                    image=image1
+                    image=image1,
                     )
+                
                 # reverse
+                # first max to saddle
                 graph.add_edge(
                     node, 
                     saddle_node, 
                     image=-image
                     )
+                # second max to saddle
                 graph.add_edge(
                     node1, 
                     saddle_node, 

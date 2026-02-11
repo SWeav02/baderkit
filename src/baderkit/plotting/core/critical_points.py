@@ -247,78 +247,50 @@ class CriticalPointsPlotter(GridPlotter):
         return meshes
 
     @staticmethod
-    def _split_and_wrap_line_frac(p0, p1, image, eps=1e-12):
-        """
-        Split a periodic line segment into unit-cell-wrapped pieces.
+    def _split_and_wrap_line_frac(p0, p1, eps=1e-12):
+        p0 = np.asarray(p0, float)
+        p1 = np.asarray(p1, float)
     
-        Parameters
-        ----------
-        p0 : (3,) float
-            Start fractional coordinate
-        p1 : (3,) float
-            End fractional coordinate (in base cell)
-        image : (3,) int
-            Periodic image vector that p1 connects to
-        eps : float
-            Numerical tolerance
-    
-        Returns
-        -------
-        segments : list of (p0, p1)
-            Each p0, p1 are wrapped fractional coords in [0,1)
-        """
-    
-        p1u = p1 + image
-        delta = p1u - p0
+        v = p1 - p0
     
         ts = [0.0, 1.0]
-    
-        for d in range(3):
-            if abs(delta[d]) < eps:
+        for i in range(3):
+            if abs(v[i]) < eps:
                 continue
-    
-            kmin = int(np.floor(min(p0[d], p1u[d]))) - 1
-            kmax = int(np.ceil (max(p0[d], p1u[d]))) + 1
-    
-            for k in range(kmin, kmax + 1):
-                t = (k - p0[d]) / delta[d]
-                if eps < t < 1.0 - eps:
+            for m in range(int(np.floor(min(p0[i], p1[i]))),
+                           int(np.ceil (max(p0[i], p1[i])))):
+                t = (m - p0[i]) / v[i]
+                if eps < t < 1 - eps:
                     ts.append(t)
     
-        ts = np.array(ts)
+        ts = np.unique(ts)
         ts.sort()
     
-        # Deduplicate
-        ts_unique = [ts[0]]
-        for t in ts[1:]:
-            if abs(t - ts_unique[-1]) > eps:
-                ts_unique.append(t)
+        segs = []
+        for t0, t1 in zip(ts[:-1], ts[1:]):
+            A = p0 + t0 * v
+            B = p0 + t1 * v
     
-        segments = []
+            # choose a *single* periodic image using the midpoint
+            mid = 0.5 * (A + B)
+            shift = -np.floor(mid)
     
-        for i in range(len(ts_unique) - 1):
-            t0 = ts_unique[i]
-            t1 = ts_unique[i + 1]
+            segs.append((A + shift, B + shift))
     
-            p0 = p0 + t0 * delta
-            p1 = p0 + t1 * delta
-    
-            # Wrap into central cell
-            p0 = p0 % 1.0
-            p1 = p1 % 1.0
-    
-            segments.append((p0, p1))
-        # breakpoint()
-        return segments
+        return segs
 
 
-    def get_edge_mesh(self, p0, p1, image) -> pv.PolyData:
+
+
+
+
+    def get_edge_mesh(self, p0, p1) -> pv.PolyData:
         """
         Generates a line mesh from a starting point to an ending point, wrapping
         at periodic boundaries
 
         """
-        segments = self._split_and_wrap_line_frac(p0, p1, image)
+        segments = self._split_and_wrap_line_frac(p0, p1)
         line_actors = []
         for f0, f1 in segments:
             # convert to cartesian coords
@@ -347,8 +319,10 @@ class CriticalPointsPlotter(GridPlotter):
                     continue
                 p1 = self.critical_graph.nodes[j]["frac_coords"]
                 image = self.critical_graph.edges[i,j,0]["image"]
+                # shift p1 to image
+                p1 = p1 + image
                 # get line
-                meshes.append(self.get_edge_mesh(p0,p1,image))
+                meshes.append(self.get_edge_mesh(p0,p1))
                 edge_types.append(self.critical_graph.nodes[i]["type"])
                 edge_starts.append(i)
                 edge_ends.append(j)

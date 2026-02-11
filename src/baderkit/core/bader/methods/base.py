@@ -403,8 +403,10 @@ class MethodBase:
         # vacuum will be updated properly
         max_val = np.iinfo(pointers.dtype).max
         vacuum_mask = pointers == max_val
-        vacuum_point = np.where(vacuum_mask)[0][0]
-        pointers[vacuum_mask] = vacuum_point
+        vacuum_points = np.where(vacuum_mask)[0]
+        if len(vacuum_points) > 0:
+            vacuum_point = np.where(vacuum_mask)[0][0]
+            pointers[vacuum_mask] = vacuum_point
         n=0
         while n<100:
             n+=1
@@ -423,8 +425,9 @@ class MethodBase:
             pointers = new_parents
             
         # relabel our vacuum back to the max
-        vacuum_mask = pointers == vacuum_point
-        pointers[vacuum_mask] = max_val
+        if len(vacuum_points) > 0:
+            vacuum_mask = pointers == vacuum_point
+            pointers[vacuum_mask] = max_val
         
         # We now have our roots. Relabel so that they go from 0 to the length of our
         # roots with the highest value being the vacuum
