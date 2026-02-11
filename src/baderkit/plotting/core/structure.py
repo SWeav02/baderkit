@@ -422,7 +422,7 @@ class StructurePlotter:
             self.plotter.camera_position = camera_position
 
     @staticmethod
-    def get_edge_atom_fracs(frac_coord: NDArray, tol: float = 1e-08) -> NDArray:
+    def get_edge_atom_fracs(frac_coord: NDArray, tol: float = 1e-03) -> NDArray:
         """
         Generates translationally equivalent atoms if coords are exactly on an edge
         of the lattice

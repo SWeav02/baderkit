@@ -155,7 +155,6 @@ class CriticalPointsPlotter(GridPlotter):
 
         # add critical points
         crit_meshes = self.get_all_crit_meshes()
-
         for crit_idx, (crit_mesh, color) in enumerate(
             zip(crit_meshes, self.critical_point_colors)
         ):
@@ -168,6 +167,17 @@ class CriticalPointsPlotter(GridPlotter):
             )
             if not crit_idx in self.visible_critical_points:
                 actor.visibility = False
+                
+        # add edges
+        edge_meshes, crit_types, edge_starts, edge_ends = self.get_all_edge_meshes()
+        for edge_idx, (edge_mesh, crit_type, crit0, crit1) in enumerate(
+            zip(edge_meshes, crit_types, edge_starts, edge_ends)
+        ):
+            actor = plotter.add_mesh(
+                edge_mesh,
+                name=f"edge_{edge_idx}",
+            )
+
         return plotter
     
     def rebuild(self):
@@ -216,8 +226,8 @@ class CriticalPointsPlotter(GridPlotter):
                 pv.Sphere(
                     radius=radius * 0.3,
                     center=cart_coord,
-                    theta_resolution=30,
-                    phi_resolution=30,
+                    # theta_resolution=30,
+                    # phi_resolution=30,
                 )
             )
         # merge all meshes
@@ -236,3 +246,110 @@ class CriticalPointsPlotter(GridPlotter):
         meshes = [self.get_crit_mesh(i) for i in range(len(self.critical_graph))]
         return meshes
 
+    @staticmethod
+    def _split_and_wrap_line_frac(p0, p1, image, eps=1e-12):
+        """
+        Split a periodic line segment into unit-cell-wrapped pieces.
+    
+        Parameters
+        ----------
+        p0 : (3,) float
+            Start fractional coordinate
+        p1 : (3,) float
+            End fractional coordinate (in base cell)
+        image : (3,) int
+            Periodic image vector that p1 connects to
+        eps : float
+            Numerical tolerance
+    
+        Returns
+        -------
+        segments : list of (p0, p1)
+            Each p0, p1 are wrapped fractional coords in [0,1)
+        """
+    
+        p1u = p1 + image
+        delta = p1u - p0
+    
+        ts = [0.0, 1.0]
+    
+        for d in range(3):
+            if abs(delta[d]) < eps:
+                continue
+    
+            kmin = int(np.floor(min(p0[d], p1u[d]))) - 1
+            kmax = int(np.ceil (max(p0[d], p1u[d]))) + 1
+    
+            for k in range(kmin, kmax + 1):
+                t = (k - p0[d]) / delta[d]
+                if eps < t < 1.0 - eps:
+                    ts.append(t)
+    
+        ts = np.array(ts)
+        ts.sort()
+    
+        # Deduplicate
+        ts_unique = [ts[0]]
+        for t in ts[1:]:
+            if abs(t - ts_unique[-1]) > eps:
+                ts_unique.append(t)
+    
+        segments = []
+    
+        for i in range(len(ts_unique) - 1):
+            t0 = ts_unique[i]
+            t1 = ts_unique[i + 1]
+    
+            p0 = p0 + t0 * delta
+            p1 = p0 + t1 * delta
+    
+            # Wrap into central cell
+            p0 = p0 % 1.0
+            p1 = p1 % 1.0
+    
+            segments.append((p0, p1))
+        # breakpoint()
+        return segments
+
+
+    def get_edge_mesh(self, p0, p1, image) -> pv.PolyData:
+        """
+        Generates a line mesh from a starting point to an ending point, wrapping
+        at periodic boundaries
+
+        """
+        segments = self._split_and_wrap_line_frac(p0, p1, image)
+        line_actors = []
+        for f0, f1 in segments:
+            # convert to cartesian coords
+            c0 = self.grid.frac_to_cart(f0)
+            c1 = self.grid.frac_to_cart(f1)
+            # add line segment
+            line_actors.append(
+                pv.Line(c0, c1)
+                )
+        
+        return pv.merge(line_actors)
+
+    def get_all_edge_meshes(self):
+        meshes = []
+        edge_types = []
+        edge_starts = []
+        edge_ends = []
+        for i in range(len(self.critical_graph)):
+            edge_type=self.critical_graph.nodes[i]["type"]
+            if edge_type != "maxima":
+                continue
+            p0 = self.critical_graph.nodes[i]["frac_coords"]
+            for j in self.critical_graph.successors(i):
+                # skip points above the parent
+                if j < i:
+                    continue
+                p1 = self.critical_graph.nodes[j]["frac_coords"]
+                image = self.critical_graph.edges[i,j,0]["image"]
+                # get line
+                meshes.append(self.get_edge_mesh(p0,p1,image))
+                edge_types.append(self.critical_graph.nodes[i]["type"])
+                edge_starts.append(i)
+                edge_ends.append(j)
+        return meshes, edge_types, edge_starts, edge_ends
