@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+from itertools import product# -*- coding: utf-8 -*-
 
 import numpy as np
 import pyvista as pv
@@ -35,20 +35,19 @@ class CriticalPointsPlotter(GridPlotter):
         self.critical_graph = critical_points.morse_graph
         
         self._visible_critical_points = [i for i in range(len(self.critical_graph.nodes))]
-        self._critical_point_radii = [0.25 for s in self.critical_graph.nodes]
+        self._critical_point_radii = [0.75 for s in self.critical_graph.nodes]
         self._critical_point_colors = [CRIT_COLORS.get(self.critical_graph.nodes[cp]["type"], "#FFFFFF") for cp in self.critical_graph.nodes]
+        
+        self._visible_edges = [i for i in range(len(self.critical_graph.edges))]
+        self._edge_thicknesses = [4.0 for s in self.critical_graph.edges]
+        self._edge_colors = ["black" for edge in self.critical_graph.edges]
+        
         
         self.plotter = self._create_critical_plot()
         
         self.show_caps = False
         self.show_surface = False
         self.visible_atoms = []
-    # visible critical points
-    # visible connections
-    # critical radii
-    # connection thickness
-    # critical colors
-    # connection colors
     
 
     @property
@@ -67,13 +66,37 @@ class CriticalPointsPlotter(GridPlotter):
     def visible_critical_points(self, visible_critical_points: set[int]):
         # update visibility of critical points
         for i in range(len(self.critical_graph)):
-            actor = self.plotter.actors[f"crit_{i}"]
+            actor = self.plotter.actors[f"crit_{i}{self._actor_suffix}"]
             if i in visible_critical_points:
                 actor.visibility = True
             else:
                 actor.visibility = False
         # set visible points
         self._visible_critical_points = visible_critical_points
+        
+    @property
+    def visible_edges(self) -> list[int]:
+        """
+
+        Returns
+        -------
+        list[int]
+            A list of critical points to include in the plot
+
+        """
+        return self._visible_edges
+
+    @visible_edges.setter
+    def visible_edges(self, visible_edges: set[int]):
+        # update visibility of critical points
+        for i in range(len(self.critical_graph)):
+            actor = self.plotter.actors[f"edge_{i}{self._actor_suffix}"]
+            if i in visible_edges:
+                actor.visibility = True
+            else:
+                actor.visibility = False
+        # set visible points
+        self._visible_edges = visible_edges
 
     @property
     def critical_point_colors(self) -> list[str]:
@@ -94,9 +117,34 @@ class CriticalPointsPlotter(GridPlotter):
         for crit_idx, old_color, new_color in zip(self.critical_points, self.critical_point_colors, colors):
             if old_color == new_color:
                 continue
-            actor = self.plotter.actors[f"crit_{crit_idx}"]
-            actor.prop.color = new_color
+            for suffix in ["", "_wrapped"]:
+                actor = self.plotter.actors[f"crit_{crit_idx}{suffix}"]
+                actor.prop.color = new_color
         self._critical_point_colors = colors
+        
+    @property
+    def edge_colors(self) -> list[str]:
+        """
+
+        Returns
+        -------
+        list[str]
+            The colors to use for each atom as hex codes.
+
+        """
+        return self._edge_colors
+
+    @edge_colors.setter
+    def edge_colors(self, colors: list[str]):
+        # for each site, check if the radius has changed and if it has remove it
+        # then remake
+        for edge_idx, (old_color, new_color) in enumerate(zip(self.edge_colors, colors)):
+            if old_color == new_color:
+                continue
+            for suffix in ["", "_wrapped"]:
+                actor = self.plotter.actors[f"edge_{edge_idx}{suffix}"]
+                actor.prop.color = new_color
+        self._edge_colors = colors
         
     @property
     def critical_point_radii(self) -> list[float]:
@@ -125,6 +173,7 @@ class CriticalPointsPlotter(GridPlotter):
         # for each site, check if the radius has changed and if it has remove it
         # then remake
         for i, (crit_idx, old_r, new_r, color) in enumerate(
+                
             zip(
                 range(len(self.critical_graph)), 
                 old_critical_point_radii, 
@@ -134,16 +183,70 @@ class CriticalPointsPlotter(GridPlotter):
         ):
             if old_r == new_r:
                 continue
-            # otherwise remove the actor, regenerate, and replot
-            self.plotter.remove_actor(f"crit_{crit_idx}")
-            atom_mesh = self.get_crit_mesh(i)
-            self.plotter.add_mesh(
-                atom_mesh,
-                color=color,
-                metallic=self.atom_metallicness,
-                pbr=True,  # enable physical based rendering
-                name=f"crit_{crit_idx}",
-            )
+            crit_mesh, wrapped_crit_mesh = self.get_crit_mesh(i)
+            for suffix, mesh, hide in zip(
+                    ["", "_wrapped"], 
+                    (crit_mesh, wrapped_crit_mesh),
+                    (self.wrap_atoms, ~self.wrap_atoms)
+                    ):
+                self.plotter.remove_actor(f"crit_{crit_idx}{suffix}")
+                actor = self.plotter.add_mesh(
+                    mesh,
+                    color=color,
+                    metallic=self.atom_metallicness,
+                    pbr=True,  # enable physical based rendering
+                    name=f"crit_{crit_idx}{suffix}",
+                )
+                if hide or i not in self.visible_critical_points:
+                    actor.visibility = False
+            
+    @property
+    def edge_thicknesses(self) -> list[float]:
+        """
+
+        Returns
+        -------
+        list[float]
+            The thickness to use for each edge
+
+        """
+        return self._edge_thicknesses
+
+    @edge_thicknesses.setter
+    def edge_thicknesses(self, thicknesses: list[float]):
+        for edge_idx, (old_thickness, new_thickness) in enumerate(zip(self.edge_thicknesses, thicknesses)):
+            if old_thickness == new_thickness:
+                continue
+            for suffix in ["", "_wrapped"]:
+                actor = self.plotter.actors[f"edge_{edge_idx}{suffix}"]
+                actor.prop.line_width = new_thickness
+        self._edge_thicknesses = thicknesses
+            
+    @property
+    def wrap_atoms(self):
+        return self._wrap_atoms
+            
+    @wrap_atoms.setter
+    def wrap_atoms(self, wrap_atoms: bool):
+        self._edit_wrapped_atoms(wrap_atoms)
+        
+    def _edit_wrapped_atoms(self, wrap_atoms):
+        # call equivalent method for atoms then update critical points
+        super()._edit_wrapped_atoms(wrap_atoms)
+        if wrap_atoms:
+            suffix = "_wrapped"
+            false_suffix = ""
+        else:
+            suffix = ""
+            false_suffix = "_wrapped"
+        for crit_idx in self.critical_graph.nodes:
+            actor = self.plotter.actors[f"crit_{crit_idx}{suffix}"]
+            actor1 = self.plotter.actors[f"crit_{crit_idx}{false_suffix}"]
+            if crit_idx in self.visible_critical_points:
+                actor.visibility = True
+            else:
+                actor.visibility = False
+            actor1.visibility = False
         
     def _create_critical_plot(self) -> pv.Plotter():
         
@@ -154,7 +257,7 @@ class CriticalPointsPlotter(GridPlotter):
             plotter = self._create_grid_plot()
 
         # add critical points
-        crit_meshes = self.get_all_crit_meshes()
+        crit_meshes, wrapped_crit_meshes = self.get_all_crit_meshes()
         for crit_idx, (crit_mesh, color) in enumerate(
             zip(crit_meshes, self.critical_point_colors)
         ):
@@ -165,18 +268,61 @@ class CriticalPointsPlotter(GridPlotter):
                 pbr=True,  # enable physical based rendering
                 name=f"crit_{crit_idx}",
             )
-            if not crit_idx in self.visible_critical_points:
+            if self.wrap_atoms or not crit_idx in self.visible_critical_points:
+                actor.visibility = False
+        # add atoms with wrapping
+        for crit_idx, (atom_mesh, color) in enumerate(
+            zip(wrapped_crit_meshes, self.critical_point_colors)
+        ):
+            actor = plotter.add_mesh(
+                atom_mesh,
+                color=color,
+                metallic=self.atom_metallicness,
+                pbr=True,  # enable physical based rendering
+                name=f"crit_{crit_idx}_wrapped",
+            )
+            if not self.wrap_atoms or not crit_idx in self.visible_critical_points:
                 actor.visibility = False
                 
         # add edges
-        edge_meshes, crit_types, edge_starts, edge_ends = self.get_all_edge_meshes()
-        for edge_idx, (edge_mesh, crit_type, crit0, crit1) in enumerate(
-            zip(edge_meshes, crit_types, edge_starts, edge_ends)
+        unwrapped_meshes, wrapped_meshes, crit_types, edge_starts, edge_ends = self.get_all_edge_meshes()
+        for edge_idx, (
+                unwrapped_mesh, 
+                wrapped_mesh, 
+                crit_type, 
+                crit0, 
+                crit1,
+                thickness,
+                color
+                ) in enumerate(
+            zip(
+                unwrapped_meshes, 
+                wrapped_meshes, 
+                crit_types, 
+                edge_starts, 
+                edge_ends,
+                self.edge_thicknesses,
+                self.edge_colors
+                )
         ):
+            # add edges without wrapping
             actor = plotter.add_mesh(
-                edge_mesh,
+                unwrapped_mesh,
                 name=f"edge_{edge_idx}",
+                line_width=thickness,
+                color=color
             )
+            if self.wrap_atoms or not edge_idx in self.visible_edges:
+                actor.visibility = False
+            # add edges with wrapping
+            actor = plotter.add_mesh(
+                wrapped_mesh,
+                name=f"edge_{edge_idx}_wrapped",
+                line_width=thickness,
+                color=color
+                )
+            if not self.wrap_atoms or not edge_idx in self.visible_edges:
+                actor.visibility = False
 
         return plotter
     
@@ -206,64 +352,12 @@ class CriticalPointsPlotter(GridPlotter):
         Returns
         -------
         pv.PolyData
-            A pyvista mesh representing an atom.
+            A pyvista mesh representing a critical point.
 
         """
         critical_node = self.critical_graph.nodes[crit_idx]
         radius = self.critical_point_radii[crit_idx]
         frac_coords = critical_node["frac_coords"]
-        # wrap atom if on edge
-        if self._wrap_atoms:
-            all_frac_coords = self.get_edge_atom_fracs(frac_coords)
-        else:
-            all_frac_coords = [frac_coords]
-        # convert to cart coords
-        cart_coords = all_frac_coords @ self.structure.lattice.matrix
-        # generate meshes for each atom
-        spheres = []
-        for cart_coord in cart_coords:
-            spheres.append(
-                pv.Sphere(
-                    radius=radius * 0.3,
-                    center=cart_coord,
-                    # theta_resolution=30,
-                    # phi_resolution=30,
-                )
-            )
-        # merge all meshes
-        return pv.merge(spheres)
-    
-    def get_all_crit_meshes(self) -> list[pv.PolyData]:
-        """
-        Gets a list of pyvista meshes representing the atoms in the structure
-
-        Returns
-        -------
-        meshes : pv.PolyData
-            A list of pyvista meshes representing each atom.
-
-        """
-        meshes = [self.get_crit_mesh(i) for i in range(len(self.critical_graph))]
-        return meshes
-    
-    def get_site_mesh(self, site_idx: int) -> pv.PolyData:
-        """
-        Generates a mesh for the provided site index.
-
-        Parameters
-        ----------
-        site_idx : int
-            The index of the atom to create the mesh for.
-
-        Returns
-        -------
-        pv.PolyData
-            A pyvista mesh representing an atom.
-
-        """
-        site = self.structure[site_idx]
-        radius = self.radii[site_idx]
-        frac_coords = site.frac_coords
         # get wrapped atoms
         wrapped_coords = self.get_edge_atom_fracs(frac_coords)
 
@@ -275,8 +369,8 @@ class CriticalPointsPlotter(GridPlotter):
         unwrapped_mesh = pv.Sphere(
                 radius=radius * 0.3,
                 center=cart_coords,
-                theta_resolution=30,
-                phi_resolution=30,
+                # theta_resolution=30,
+                # phi_resolution=30,
             )
 
         # generate meshes for wrapped atoms
@@ -286,14 +380,14 @@ class CriticalPointsPlotter(GridPlotter):
                 pv.Sphere(
                     radius=radius * 0.3,
                     center=cart_coord,
-                    theta_resolution=30,
-                    phi_resolution=30,
+                    # theta_resolution=30,
+                    # phi_resolution=30,
                 )
             )
         # return unwrapped and wrapped meshes
         return unwrapped_mesh, pv.merge(spheres)
 
-    def get_all_site_meshes(self) -> list[pv.PolyData]:
+    def get_all_crit_meshes(self) -> list[pv.PolyData]:
         """
         Gets a list of pyvista meshes representing the atoms in the structure
 
@@ -305,10 +399,11 @@ class CriticalPointsPlotter(GridPlotter):
         """
         unwrapped_meshes = []
         wrapped_meshes = []
-        for i in range(len(self.structure)):
-            mesh, wrapped_mesh = self.get_site_mesh(i)
+        for i in range(len(self.critical_graph)):
+            mesh, wrapped_mesh = self.get_crit_mesh(i)
             unwrapped_meshes.append(mesh)
             wrapped_meshes.append(wrapped_mesh)
+
         return unwrapped_meshes, wrapped_meshes
 
     @staticmethod
@@ -345,27 +440,57 @@ class CriticalPointsPlotter(GridPlotter):
         return segs
 
 
-    def get_edge_mesh(self, p0, p1) -> pv.PolyData:
+    def get_edge_mesh(self, p0, p1, tol=0.01) -> pv.PolyData:
         """
         Generates a line mesh from a starting point to an ending point, wrapping
         at periodic boundaries
 
         """
+        unwrapped_line_actors = []
+        wrapped_line_actors = []
+        # get line segments
         segments = self._split_and_wrap_line_frac(p0, p1)
-        line_actors = []
         for f0, f1 in segments:
             # convert to cartesian coords
             c0 = self.grid.frac_to_cart(f0)
             c1 = self.grid.frac_to_cart(f1)
             # add line segment
-            line_actors.append(
+            unwrapped_line_actors.append(
                 pv.Line(c0, c1)
                 )
+            wrapped_line_actors.append(
+                pv.Line(c0, c1)
+                )
+            # if both points are very close to the same edges, we also get the
+            # transformed versions
         
-        return pv.merge(line_actors)
+            transforms0 = [
+                [0, 1] if abs(f) < tol else [0, -1] if abs(f - 1) < tol else [0]
+                for f in f0
+            ]
+            transforms1 = [
+                [0, 1] if abs(f) < tol else [0, -1] if abs(f - 1) < tol else [0]
+                for f in f1
+            ]
+
+            shifts0 = set(product(*transforms0))
+            shifts1 = set(product(*transforms1))
+            shifts = [np.array(i) for i in shifts0 if i in shifts1]
+            for shift in shifts:
+                x0 = f0+shift
+                x1 = f1+shift
+                # convert to cartesian coords
+                c0 = self.grid.frac_to_cart(x0)
+                c1 = self.grid.frac_to_cart(x1)
+                wrapped_line_actors.append(
+                    pv.Line(c0, c1)
+                    )
+        
+        return pv.merge(unwrapped_line_actors), pv.merge(wrapped_line_actors)
 
     def get_all_edge_meshes(self):
-        meshes = []
+        unwrapped_meshes = []
+        wrapped_meshes = []
         edge_types = []
         edge_starts = []
         edge_ends = []
@@ -377,10 +502,13 @@ class CriticalPointsPlotter(GridPlotter):
             p1 = self.critical_graph.nodes[j]["frac_coords"]
             # shift p1 to image
             p1 = p1 + image
-            # get line
-            meshes.append(self.get_edge_mesh(p0,p1))
+
+            # get lines with and without wrapping
+            unwrapped, wrapped = self.get_edge_mesh(p0,p1)
+            unwrapped_meshes.append(unwrapped)
+            wrapped_meshes.append(wrapped)
             edge_types.append(self.critical_graph.nodes[i]["type"])
             edge_starts.append(i)
             edge_ends.append(j)
             
-        return meshes, edge_types, edge_starts, edge_ends
+        return unwrapped_meshes, wrapped_meshes, edge_types, edge_starts, edge_ends

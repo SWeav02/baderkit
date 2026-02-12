@@ -71,6 +71,7 @@ class StructurePlotter:
         self._visible_atoms = [i for i in range(len(self.structure))]
         self._show_lattice = True
         self._wrap_atoms = True
+        self._actor_suffix = "_wrapped"
         self._lattice_thickness = 0.1
         self._atom_metallicness = 0.0
         self._background = "#FFFFFF"
@@ -104,13 +105,9 @@ class StructurePlotter:
     @visible_atoms.setter
     def visible_atoms(self, visible_atoms: list[int]):
         # update visibility of atoms
-        if self.wrap_atoms:
-            suffix = "_wrapped"
-        else:
-            suffix = ""
         for i, site in enumerate(self.structure):
             label = site.label
-            actor = self.plotter.actors[f"{label}{suffix}"]
+            actor = self.plotter.actors[f"{label}{self._actor_suffix}"]
             if i in visible_atoms:
                 actor.visibility = True
             else:
@@ -142,6 +139,10 @@ class StructurePlotter:
 
     @wrap_atoms.setter
     def wrap_atoms(self, wrap_atoms: bool):
+        self.edit_wrapped_atoms(wrap_atoms)
+    
+    def _edit_wrapped_atoms(self, wrap_atoms):
+        # We make this a hidden function so we can call it with super
         if wrap_atoms:
             suffix = "_wrapped"
             false_suffix = ""
@@ -159,6 +160,7 @@ class StructurePlotter:
                 actor.visibility = False
             actor1.visibility = False
         self._wrap_atoms = wrap_atoms
+        self._actor_suffix = suffix
 
     @property
     def lattice_thickness(self) -> float:
@@ -195,8 +197,9 @@ class StructurePlotter:
         # update all atoms
         for site in self.structure:
             label = site.label
-            actor = self.plotter.actors[f"{label}"]
-            actor.prop.metallic = atom_metallicness
+            for suffix in ["", "_wrapped"]:
+                actor = self.plotter.actors[f"{label}{self.suffix}"]
+                actor.prop.metallic = atom_metallicness
         self._atom_metallicness = atom_metallicness
 
     @property
@@ -321,15 +324,23 @@ class StructurePlotter:
             if old_r == new_r:
                 continue
             # otherwise remove the actor, regenerate, and replot
-            self.plotter.remove_actor(f"{site.label}")
-            atom_mesh = self.get_site_mesh(i)
-            self.plotter.add_mesh(
-                atom_mesh,
-                color=color,
-                metallic=self.atom_metallicness,
-                pbr=True,  # enable physical based rendering
-                name=f"{site.label}",
-            )
+            atom_mesh, wrapped_atom_mesh = self.get_site_mesh(i)
+            for suffix, mesh, hide in zip(
+                    ["", "_wrapped"], 
+                    (atom_mesh, wrapped_atom_mesh),
+                    (self.wrap_atoms, ~self.wrap_atoms)
+                    ):
+                self.plotter.remove_actor(f"{site.label}{suffix}")
+                actor = self.plotter.add_mesh(
+                    mesh,
+                    color=color,
+                    metallic=self.atom_metallicness,
+                    pbr=True,  # enable physical based rendering
+                    name=f"{site.label}{self._actor_suffix}",
+                )
+                if hide or i not in self.visible_atoms:
+                    actor.visibility = False
+
 
     @property
     def colors(self) -> list[str]:
@@ -350,7 +361,7 @@ class StructurePlotter:
         for site, old_color, new_color in zip(self.structure, self.colors, colors):
             if old_color == new_color:
                 continue
-            actor = self.plotter.actors[f"{site.label}"]
+            actor = self.plotter.actors[f"{site.label}{self._actor_suffix}"]
             actor.prop.color = new_color
         self._colors = colors
 
@@ -474,7 +485,7 @@ class StructurePlotter:
             self.plotter.camera_position = camera_position
 
     @staticmethod
-    def get_edge_atom_fracs(frac_coord: NDArray, tol: float = 1e-03) -> NDArray:
+    def get_edge_atom_fracs(frac_coord: NDArray, tol: float = 0.01) -> NDArray:
         """
         Generates translationally equivalent atoms if coords are exactly on an edge
         of the lattice
@@ -604,8 +615,8 @@ class StructurePlotter:
         unwrapped_mesh = pv.Sphere(
                 radius=radius * 0.3,
                 center=cart_coords,
-                theta_resolution=30,
-                phi_resolution=30,
+                # theta_resolution=30,
+                # phi_resolution=30,
             )
 
         # generate meshes for wrapped atoms
@@ -615,8 +626,8 @@ class StructurePlotter:
                 pv.Sphere(
                     radius=radius * 0.3,
                     center=cart_coord,
-                    theta_resolution=30,
-                    phi_resolution=30,
+                    # theta_resolution=30,
+                    # phi_resolution=30,
                 )
             )
         # return unwrapped and wrapped meshes
