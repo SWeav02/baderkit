@@ -104,9 +104,13 @@ class StructurePlotter:
     @visible_atoms.setter
     def visible_atoms(self, visible_atoms: list[int]):
         # update visibility of atoms
+        if self.wrap_atoms:
+            suffix = "_wrapped"
+        else:
+            suffix = ""
         for i, site in enumerate(self.structure):
             label = site.label
-            actor = self.plotter.actors[f"{label}"]
+            actor = self.plotter.actors[f"{label}{suffix}"]
             if i in visible_atoms:
                 actor.visibility = True
             else:
@@ -132,14 +136,29 @@ class StructurePlotter:
         actor.visibility = show_lattice
         self._show_lattice = show_lattice
 
-    # @property
-    # def wrap_atoms(self):
-    #     return self._wrap_atoms
+    @property
+    def wrap_atoms(self):
+        return self._wrap_atoms
 
-    # TODO: Make two sets of atoms with and without wraps?
-    # @wrap_atoms.setter
-    # def wrap_atoms(self, wrap_atoms: bool):
-    #     actor = self.plotter.
+    @wrap_atoms.setter
+    def wrap_atoms(self, wrap_atoms: bool):
+        if wrap_atoms:
+            suffix = "_wrapped"
+            false_suffix = ""
+        else:
+            suffix = ""
+            false_suffix = "_wrapped"
+            # make wrapped atoms visible
+        for i, site in enumerate(self.structure):
+            label = site.label
+            actor = self.plotter.actors[f"{label}{suffix}"]
+            actor1 = self.plotter.actors[f"{label}{false_suffix}"]
+            if i in self.visible_atoms:
+                actor.visibility = True
+            else:
+                actor.visibility = False
+            actor1.visibility = False
+        self._wrap_atoms = wrap_atoms
 
     @property
     def lattice_thickness(self) -> float:
@@ -574,16 +593,24 @@ class StructurePlotter:
         site = self.structure[site_idx]
         radius = self.radii[site_idx]
         frac_coords = site.frac_coords
-        # wrap atom if on edge
-        if self._wrap_atoms:
-            all_frac_coords = self.get_edge_atom_fracs(frac_coords)
-        else:
-            all_frac_coords = [frac_coords]
+        # get wrapped atoms
+        wrapped_coords = self.get_edge_atom_fracs(frac_coords)
+
         # convert to cart coords
-        cart_coords = all_frac_coords @ self.structure.lattice.matrix
-        # generate meshes for each atom
+        cart_coords = frac_coords @ self.structure.lattice.matrix
+        wrapped_cart_coords = wrapped_coords @ self.structure.lattice.matrix
+        
+        # get mesh for single atom
+        unwrapped_mesh = pv.Sphere(
+                radius=radius * 0.3,
+                center=cart_coords,
+                theta_resolution=30,
+                phi_resolution=30,
+            )
+
+        # generate meshes for wrapped atoms
         spheres = []
-        for cart_coord in cart_coords:
+        for cart_coord in wrapped_cart_coords:
             spheres.append(
                 pv.Sphere(
                     radius=radius * 0.3,
@@ -592,8 +619,8 @@ class StructurePlotter:
                     phi_resolution=30,
                 )
             )
-        # merge all meshes
-        return pv.merge(spheres)
+        # return unwrapped and wrapped meshes
+        return unwrapped_mesh, pv.merge(spheres)
 
     def get_all_site_meshes(self) -> list[pv.PolyData]:
         """
@@ -605,8 +632,13 @@ class StructurePlotter:
             A list of pyvista meshes representing each atom.
 
         """
-        meshes = [self.get_site_mesh(i) for i in range(len(self.structure))]
-        return meshes
+        unwrapped_meshes = []
+        wrapped_meshes = []
+        for i in range(len(self.structure)):
+            mesh, wrapped_mesh = self.get_site_mesh(i)
+            unwrapped_meshes.append(mesh)
+            wrapped_meshes.append(wrapped_mesh)
+        return unwrapped_meshes, wrapped_meshes
 
     def get_lattice_mesh(self) -> pv.PolyData:
         """
@@ -666,8 +698,9 @@ class StructurePlotter:
             plotter = pv.Plotter(off_screen=self.off_screen)
         # set background
         plotter.set_background(self.background)
-        # add atoms
-        atom_meshes = self.get_all_site_meshes()
+        
+        atom_meshes, wrapped_atom_meshes = self.get_all_site_meshes()
+        # add atoms without wrapping
         for i, (site, atom_mesh, color) in enumerate(
             zip(self.structure, atom_meshes, self.colors)
         ):
@@ -678,7 +711,20 @@ class StructurePlotter:
                 pbr=True,  # enable physical based rendering
                 name=f"{site.label}",
             )
-            if not i in self.visible_atoms:
+            if self.wrap_atoms or not i in self.visible_atoms:
+                actor.visibility = False
+        # add atoms with wrapping
+        for i, (site, atom_mesh, color) in enumerate(
+            zip(self.structure, wrapped_atom_meshes, self.colors)
+        ):
+            actor = plotter.add_mesh(
+                atom_mesh,
+                color=color,
+                metallic=self.atom_metallicness,
+                pbr=True,  # enable physical based rendering
+                name=f"{site.label}_wrapped",
+            )
+            if not self.wrap_atoms or not i in self.visible_atoms:
                 actor.visibility = False
 
         # add lattice if desired

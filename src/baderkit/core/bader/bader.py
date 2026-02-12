@@ -973,6 +973,7 @@ class Bader(BaseAnalysis):
             vacuum_mask=self.vacuum_mask,
             num_vacuum=self.num_vacuum,
             use_minima=True,
+            persistence_tol=self.persistence_tol,
         )
         if self._use_overdetermined:
             method._use_overdetermined = True

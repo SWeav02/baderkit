@@ -245,6 +245,71 @@ class CriticalPointsPlotter(GridPlotter):
         """
         meshes = [self.get_crit_mesh(i) for i in range(len(self.critical_graph))]
         return meshes
+    
+    def get_site_mesh(self, site_idx: int) -> pv.PolyData:
+        """
+        Generates a mesh for the provided site index.
+
+        Parameters
+        ----------
+        site_idx : int
+            The index of the atom to create the mesh for.
+
+        Returns
+        -------
+        pv.PolyData
+            A pyvista mesh representing an atom.
+
+        """
+        site = self.structure[site_idx]
+        radius = self.radii[site_idx]
+        frac_coords = site.frac_coords
+        # get wrapped atoms
+        wrapped_coords = self.get_edge_atom_fracs(frac_coords)
+
+        # convert to cart coords
+        cart_coords = frac_coords @ self.structure.lattice.matrix
+        wrapped_cart_coords = wrapped_coords @ self.structure.lattice.matrix
+        
+        # get mesh for single atom
+        unwrapped_mesh = pv.Sphere(
+                radius=radius * 0.3,
+                center=cart_coords,
+                theta_resolution=30,
+                phi_resolution=30,
+            )
+
+        # generate meshes for wrapped atoms
+        spheres = []
+        for cart_coord in wrapped_cart_coords:
+            spheres.append(
+                pv.Sphere(
+                    radius=radius * 0.3,
+                    center=cart_coord,
+                    theta_resolution=30,
+                    phi_resolution=30,
+                )
+            )
+        # return unwrapped and wrapped meshes
+        return unwrapped_mesh, pv.merge(spheres)
+
+    def get_all_site_meshes(self) -> list[pv.PolyData]:
+        """
+        Gets a list of pyvista meshes representing the atoms in the structure
+
+        Returns
+        -------
+        meshes : pv.PolyData
+            A list of pyvista meshes representing each atom.
+
+        """
+        unwrapped_meshes = []
+        wrapped_meshes = []
+        for i in range(len(self.structure)):
+            mesh, wrapped_mesh = self.get_site_mesh(i)
+            unwrapped_meshes.append(mesh)
+            wrapped_meshes.append(wrapped_mesh)
+        return unwrapped_meshes, wrapped_meshes
 
     @staticmethod
     def _split_and_wrap_line_frac(p0, p1, eps=1e-12):
@@ -274,14 +339,10 @@ class CriticalPointsPlotter(GridPlotter):
             # choose a *single* periodic image using the midpoint
             mid = 0.5 * (A + B)
             shift = -np.floor(mid)
-    
+
             segs.append((A + shift, B + shift))
-    
+            
         return segs
-
-
-
-
 
 
     def get_edge_mesh(self, p0, p1) -> pv.PolyData:
@@ -308,22 +369,18 @@ class CriticalPointsPlotter(GridPlotter):
         edge_types = []
         edge_starts = []
         edge_ends = []
-        for i in range(len(self.critical_graph)):
+        for i, j, image in self.critical_graph.edges(data="image"):
             edge_type=self.critical_graph.nodes[i]["type"]
-            if edge_type != "maxima":
+            if edge_type not in ["maxima", "minima"]:
                 continue
             p0 = self.critical_graph.nodes[i]["frac_coords"]
-            for j in self.critical_graph.successors(i):
-                # skip points above the parent
-                if j < i:
-                    continue
-                p1 = self.critical_graph.nodes[j]["frac_coords"]
-                image = self.critical_graph.edges[i,j,0]["image"]
-                # shift p1 to image
-                p1 = p1 + image
-                # get line
-                meshes.append(self.get_edge_mesh(p0,p1))
-                edge_types.append(self.critical_graph.nodes[i]["type"])
-                edge_starts.append(i)
-                edge_ends.append(j)
+            p1 = self.critical_graph.nodes[j]["frac_coords"]
+            # shift p1 to image
+            p1 = p1 + image
+            # get line
+            meshes.append(self.get_edge_mesh(p0,p1))
+            edge_types.append(self.critical_graph.nodes[i]["type"])
+            edge_starts.append(i)
+            edge_ends.append(j)
+            
         return meshes, edge_types, edge_starts, edge_ends

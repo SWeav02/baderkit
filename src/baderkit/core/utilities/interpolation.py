@@ -617,9 +617,9 @@ def newton_refine_extremum(
             if n_neg == target_index:
                 if is_frac:
                     # convert back to fractional coords
-                    i = i / nx % 1.0
-                    j = j / ny % 1.0
-                    k = k / nz % 1.0
+                    i = i / nx# % 1.0
+                    j = j / ny #% 1.0
+                    k = k / nz #% 1.0
                 return i, j, k, 0, g_norm, evals
             # else: we have small gradient but wrong signature -> continue attempting to adjust
 
@@ -652,9 +652,9 @@ def newton_refine_extremum(
                 # avoid runaway and return original point
                 if is_frac:
                     # convert back to fractional coords
-                    i = i / nx % 1.0
-                    j = j / ny % 1.0
-                    k = k / nz % 1.0
+                    i = i / nx# % 1.0
+                    j = j / ny# % 1.0
+                    k = k / nz# % 1.0
                 return i, j, k, 2, g_norm, evals
                 # return point[0], point[1], point[2], False, g_norm, evals
             continue
@@ -703,9 +703,9 @@ def newton_refine_extremum(
     
     if is_frac:
         # convert back to fractional coords
-        i = i / nx % 1.0
-        j = j / ny % 1.0
-        k = k / nz % 1.0
+        i = i / nx# % 1.0
+        j = j / ny# % 1.0
+        k = k / nz# % 1.0
 
     return i, j, k, success, grad_norm_final, evals_final
 
@@ -806,5 +806,5 @@ def refine_extrema(
         refined_values[group_idx] = best_value
     # round and wrap coords
     frac_coords = np.round(frac_coords, 6)
-    frac_coords %= 1
+    # frac_coords %= 1
     return new_voxel_coords, frac_coords, refined_values

@@ -147,7 +147,6 @@ class MethodBase:
             persistence_tol=self.persistence_tol,
             use_minima=self.use_minima,
         )
-        # breakpoint()
 
         # now run bader
         results = self._run_bader(labels, images)
@@ -176,29 +175,38 @@ class MethodBase:
         # update extrema children, labels, charges, and volumes
         charges = results["basin_charges"]
         volumes = results["basin_volumes"]
-        final_extrema, indices, new_roots  = np.unique(extrema_roots, return_inverse=True, return_index=True)
+        # get unique roots and mapping to extrema_vox
+        final_extrema, inverse, indices = np.unique(extrema_roots, return_inverse=True, return_index=True)
         extrema_vox = self.extrema_vox[indices]
         
-        # reorder from highest to lowest
-        extrema_vals = self.reference_grid.total[extrema_vox[:,0],extrema_vox[:,1],extrema_vox[:,2]]
-        ordered_indices = np.flip(np.argsort(extrema_vals))
+        # values at extrema, descending order
+        extrema_vals = self.reference_grid.total[extrema_vox[:,0], extrema_vox[:,1], extrema_vox[:,2]]
+        ordered_indices = np.argsort(extrema_vals)[::-1]  # descending
         
+        # new mapping from old root index -> new root index
+        new_roots = np.zeros_like(inverse)
+        for new_idx, old_idx in enumerate(ordered_indices):
+            new_roots[inverse == old_idx] = new_idx
+        
+        # reorder final_extrema, persistence_cutoffs
         final_extrema = final_extrema[ordered_indices]
-        new_roots = ordered_indices[new_roots]
         persistence_cutoffs = persistence_cutoffs[final_extrema]
         
-
+        # combine children, charges, volumes
         for max_idx, root in enumerate(extrema_roots):
             if max_idx != root:
-                # combine children
-                self.extrema_children[root]=np.append(self.extrema_children[root], self.extrema_children[max_idx], axis=0)
-                # add charge/volume
-                charges[root] += charges[max_idx]
-                volumes[root] += volumes[max_idx]
-        # relabel combined basins
-        labels[~self.vacuum_mask] = new_roots[labels[~self.vacuum_mask]]
+                r = new_roots[root]
+                c = new_roots[max_idx]
+                self.extrema_children[r] = np.append(self.extrema_children[r], self.extrema_children[c], axis=0)
+                charges[r] += charges[c]
+                volumes[r] += volumes[c]
+        
+        # relabel grid
+        labels[~self.vacuum_mask] = np.take(new_roots, labels[~self.vacuum_mask])
+        
+        # save final results
         self._extrema_vox = self.extrema_vox[final_extrema]
-        self._extrema_children = [np.array(self.extrema_children[i],dtype=np.uint16) for i in final_extrema]
+        self._extrema_children = [np.array(self.extrema_children[i], dtype=np.uint16) for i in final_extrema]
         final_charges = charges[final_extrema]
         final_volumes = volumes[final_extrema]
         

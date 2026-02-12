@@ -369,7 +369,9 @@ class CriticalPoints(BaseAnalysis):
         if not np.all(refined_status==0):
             logging.warning("Not all critical points successfully refined. Check results with care.")
         frac_points = np.round(refined_points / self.reference_grid.shape, 6)
-        frac_points %= 1.0
+        # BUGFIX: We don't want to wrap here because it throws off our connections
+        # later
+        # frac_points %= 1.0
         return frac_points
 
     def _get_morse_graph(self) -> MultiDiGraph:
@@ -476,7 +478,7 @@ class CriticalPoints(BaseAnalysis):
                     image=-image1
                     )
                 saddle_idx += 1
-                
+
         # finally, we get the connections between saddles
         saddle_connections, saddle_conn_coords = get_saddle_connections(
             self.saddle1_vox,

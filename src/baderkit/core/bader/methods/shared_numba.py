@@ -988,6 +988,18 @@ def initialize_labels_from_extrema(
     for ext_label in flat_extrema_labels:
         i, j, k = flat_to_coords(ext_label, ny_nz, nz)
         extrema_mask[i, j, k] = True
+        
+    # Combine adjacent extrema
+    for label, (i,j,k) in zip(extrema_labels, extrema_vox):
+        for si, sj, sk in neighbor_transforms:
+            # get neighbor and wrap
+            ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+            if not extrema_mask[ii,jj,kk]:
+                continue
+            # get flat index 
+            neigh_label = coords_to_flat(ii, jj, kk, ny_nz, nz)
+            # union
+            union(labels, label, neigh_label)
 
     ###########################################################################
     # 2. Combine low-persistence extrema
@@ -1017,6 +1029,11 @@ def initialize_labels_from_extrema(
     # Iterate over each maximum (except the first) and check for nearby extrema
     # above/below (extrema/minima)
     for sorted_ext_idx, ext_idx in enumerate(sorted_indices[1:]):
+        # NOTE: For now we don't allow minima to union this way because their
+        # persistence is often much lower than maxima and it is difficult to
+        # predict
+        if use_minima:
+            continue
         # skip fake flat extrema (we've already found their higher neighbors)
         if flat_extrema_mask[ext_idx]:
             continue
