@@ -20,10 +20,10 @@ from baderkit.core.utilities.basic import wrap_point_w_shift
 from baderkit.core.utilities.interpolation import refine_critical_points
 
 from .critical_points_numba import (
-    get_manifold_labels,
-    get_saddle_connections,
-    get_canonical_saddle_connections,
-    get_single_point_saddles,
+    get_manifold_labels_doublegrid,
+    get_saddle_connections_doublegrid,
+    get_canonical_saddle_connections_doublegrid,
+    get_single_point_saddles_doublegrid,
     INT_TO_IMAGE,
     IMAGE_TO_INT
 )
@@ -163,15 +163,15 @@ class CriticalPoints(BaseAnalysis):
         """
         if self._manifold_labels is None:
             neighbor_transforms, neighbor_dists, _, _ = self.bader.reference_grid.point_neighbor_voronoi_transforms
-            maxima_groups, minima_groups = self.bader.get_persistence_groups()
-
-            self._manifold_labels = get_manifold_labels(
+            # maxima_groups, minima_groups = self.bader.get_persistence_groups()
+            # neighbor_transforms, neighbor_dists = self.bader.reference_grid.point_neighbor_transforms
+            self._manifold_labels = get_manifold_labels_doublegrid(
                 maxima_labels=self.bader.maxima_basin_labels,
                 maxima_images=self.bader.maxima_basin_images,
-                maxima_groups=maxima_groups,
+                maxima_groups=self.bader.maxima_voxel_groups,
                 minima_labels=self.bader.minima_basin_labels,
                 minima_images=self.bader.minima_basin_images,
-                minima_groups=minima_groups,
+                minima_groups=self.bader.minima_voxel_groups,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.bader.vacuum_mask,
                 
@@ -198,25 +198,25 @@ class CriticalPoints(BaseAnalysis):
     @property
     def saddle1_vox(self) -> NDArray:
         if self._saddle1_vox is None:
-            self._saddle1_vox = self._get_saddle_coords(use_minima=True)
+            self._saddle1_vox, self._saddle1_extrema_connections = self._get_saddle_coords(use_minima=True)
         return self._saddle1_vox
     
     @property
     def saddle1_frac(self) -> NDArray:
         if self._saddle1_frac is None:
-            self._saddle1_frac = self._refine_saddles(self.saddle1_vox, 1)
+            self._saddle1_frac, self._saddle1_extrema_connections = self._refine_saddles(self.saddle1_vox, self._saddle1_extrema_connections, 1)
         return self._saddle1_frac
 
     @property
     def saddle2_vox(self) -> NDArray:
         if self._saddle2_vox is None:
-            self._saddle2_vox = self._get_saddle_coords(use_minima=False)
+            self._saddle2_vox, self._saddle2_extrema_connections = self._get_saddle_coords(use_minima=False)
         return self._saddle2_vox
     
     @property
     def saddle2_frac(self) -> NDArray:
         if self._saddle2_frac is None:
-            self._saddle2_frac = self._refine_saddles(self.saddle2_vox, 2)
+            self._saddle2_frac, self._saddle2_extrema_connections = self._refine_saddles(self.saddle2_vox, self._saddle2_extrema_connections, 2)
         return self._saddle2_frac
     
     @property
@@ -252,10 +252,11 @@ class CriticalPoints(BaseAnalysis):
             crit_indices = np.append(crit_indices, np.arange(len(self.minima_vox)))
             
             # get the values at each critical point
+            points_temp = np.round(critical_points).astype(int) % self.reference_grid.shape
             critical_values = self.bader.reference_grid.total[
-                critical_points[:,0],
-                critical_points[:,1],
-                critical_points[:,2],
+                points_temp[:,0],
+                points_temp[:,1],
+                points_temp[:,2],
                 ]
             # sort high to low
             ordered = np.flip(np.argsort(critical_values))
@@ -316,8 +317,6 @@ class CriticalPoints(BaseAnalysis):
     def _get_saddle_coords(self, use_minima=False):
 
         # get neighbors
-        neighbor_transforms, neighbor_dists, _, _ = self.bader.reference_grid.point_neighbor_voronoi_transforms
-        
         if use_minima:
             labels = self.bader.minima_basin_labels
             images = self.bader.minima_basin_images
@@ -327,21 +326,21 @@ class CriticalPoints(BaseAnalysis):
         
         dir2car = np.linalg.inv(self.reference_grid.matrix).T
         # get canonical connection representations of saddles between basins
-        possible_saddles, saddle_connections, connection_vals = get_canonical_saddle_connections(
+        possible_saddles, canonical_saddle_connections, extrema_connections, connection_vals = get_canonical_saddle_connections_doublegrid(
             labels,
             images,
             self.bader.reference_grid.total,
-            neighbor_transforms,
+            self.bader.vacuum_mask,
             self.manifold_labels,
             dir2car,
             use_minima=use_minima,
         )
+
         # get unique connections
         unique_connections, inverse = np.unique(
-            saddle_connections[:, :3], axis=0, return_inverse=True)
+            canonical_saddle_connections, axis=0, return_inverse=True)
         # get the highest connecting point between basins
-        saddle_indices, saddle_vals = get_single_point_saddles(
-            data=self.bader.reference_grid.total,
+        saddle_indices, saddle_vals = get_single_point_saddles_doublegrid(
             connection_values=connection_vals,
             saddle_coords=possible_saddles,
             connection_indices=inverse,
@@ -352,11 +351,14 @@ class CriticalPoints(BaseAnalysis):
         # sort highest to lowest
         sorted_indices = np.flip(np.argsort(saddle_vals))
         saddle_indices = saddle_indices[sorted_indices]
-        
 
-        return possible_saddles[saddle_indices]
+        # get coords and convert from double grid to single grid
+        saddle_coords = possible_saddles[saddle_indices] / 2
+        
+        # get the extrema this saddle connects to
+        return saddle_coords, extrema_connections[saddle_indices]
     
-    def _refine_saddles(self, saddle_vox, target_index):
+    def _refine_saddles(self, saddle_vox, saddle_connections, target_index):
         points = saddle_vox
         data = self.reference_grid.total
         refined_points, refined_status = refine_critical_points(
@@ -365,14 +367,27 @@ class CriticalPoints(BaseAnalysis):
             target_index,
             is_frac=False
             )
-        # refined_points %= self.reference_grid.shape
+
+        refined_points = refined_points[np.where(refined_status==0)[0]]
+
         if not np.all(refined_status==0):
             logging.warning("Not all critical points successfully refined. Check results with care.")
         frac_points = np.round(refined_points / self.reference_grid.shape, 6)
-        # BUGFIX: We don't want to wrap here because it throws off our connections
-        # later
-        # frac_points %= 1.0
-        return frac_points
+        
+        # now we need to wrap our points into the central unit cell. We need to
+        # record the shifts so that we can update our saddle connections to
+        # point to the proper extrema.
+        shifts = (frac_points // 1.0).astype(np.int64)
+        for idx, (shift, (_, image0, _, image1)) in enumerate(zip(shifts, saddle_connections)):
+            # update images
+            i,j,k = INT_TO_IMAGE[image0] + shift
+            saddle_connections[idx,1] = IMAGE_TO_INT[i,j,k]
+            i,j,k = INT_TO_IMAGE[image1] + shift
+            saddle_connections[idx,3] = IMAGE_TO_INT[i,j,k]
+        # update fracs
+        frac_points %= 1.0
+
+        return frac_points, saddle_connections
 
     def _get_morse_graph(self) -> MultiDiGraph:
         # get graph
@@ -401,6 +416,7 @@ class CriticalPoints(BaseAnalysis):
             graph.add_node(
                 crit_idx, 
                 type=name,
+                type_idx=crit_type,
                 vox_coords=crit_vox,
                 frac_coords=crit_frac,
                 value=crit_val,
@@ -410,52 +426,28 @@ class CriticalPoints(BaseAnalysis):
                     # color
                 )
             
-        
-        # add connections from saddles to minima/maxima
-        neighbor_transforms, neighbor_dists, _, _ = self.bader.reference_grid.point_neighbor_voronoi_transforms
-        nx,ny,nz = self.bader.reference_grid.shape
-        
         saddle_idx = 0
-        for saddle_vox, labels, images, extrema in zip(
-                (self.saddle2_vox, self.saddle1_vox),
-                (self.bader.maxima_basin_labels, self.bader.minima_basin_labels),
-                (self.bader.maxima_basin_images, self.bader.minima_basin_images),
+        for saddle_connections, extrema in zip(
+                (self._saddle2_extrema_connections, self._saddle1_extrema_connections),
                 ("maxima", "minima")
                 ):
-            for i,j,k in saddle_vox:
-                label = labels[i,j,k]
-                image = images[i,j,k]
-                # get differing neighbor
-                label1 = -1; image1 = -1
-                for si, sj, sk in neighbor_transforms:
-                    ni, nj, nk, ssi, ssj, ssk= wrap_point_w_shift(i+si, j+sj, k+sk, nx, ny, nz)
-                    neigh_label = labels[ni,nj,nk]
-                    neigh_image = images[ni,nj,nk]
-                    # adjust image
-                    si1 = INT_TO_IMAGE[neigh_image, 0] + ssi
-                    sj1 = INT_TO_IMAGE[neigh_image, 1] + ssj
-                    sk1 = INT_TO_IMAGE[neigh_image, 2] + ssk
-                    neigh_image = IMAGE_TO_INT[si1, sj1, sk1]
-    
-                    if neigh_label != label or neigh_image != image:
-                        label1=neigh_label
-                        image1=neigh_image
-                        break
-            
-                # get the corresponding minima node indices and images
+                
+            for (label0, image0, label1, image1) in saddle_connections:
+                # get corresponding nodes for this saddle and its neighbors
                 saddle_node = self._crit_map["saddle"][saddle_idx]
-                node = self._crit_map[extrema][label]
+                node = self._crit_map[extrema][label0]
+
                 node1 = self._crit_map[extrema][label1]
-                image = INT_TO_IMAGE[image]
+                # get the image the connected extrema belongs to
+                image0 = INT_TO_IMAGE[image0]
                 image1 = INT_TO_IMAGE[image1]
                 
                 # add forward and reverse direction edges to graph
-                
-                # saddle to first max
+                # saddle to first neighbor
                 graph.add_edge(
                     saddle_node, 
                     node, 
-                    image=image
+                    image=image0
                     )
                 # saddle to second max
                 graph.add_edge(
@@ -469,7 +461,7 @@ class CriticalPoints(BaseAnalysis):
                 graph.add_edge(
                     node, 
                     saddle_node, 
-                    image=-image
+                    image=-image0
                     )
                 # second max to saddle
                 graph.add_edge(
@@ -480,36 +472,40 @@ class CriticalPoints(BaseAnalysis):
                 saddle_idx += 1
 
         # finally, we get the connections between saddles
-        saddle_connections, saddle_conn_coords = get_saddle_connections(
-            self.saddle1_vox,
-            self.saddle2_vox,
-            neighbor_transforms,
-            self.manifold_labels,
-        )
+        # saddle1_coords = (self.saddle1_vox * 2).astype(np.int64)
+        # saddle2_coords = (self.saddle2_vox * 2).astype(np.int64)
+        # neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
+        # saddle_connections, saddle_conn_coords = get_saddle_connections_doublegrid(
+        #     saddle1_coords, 
+        #     saddle2_coords, 
+        #     neighbor_transforms, 
+        #     self.manifold_labels,
+        #     )
 
-        saddle_connections = np.array(saddle_connections, dtype=np.uint16)
-        saddle_conn_coords = np.array(saddle_conn_coords, dtype=np.uint16)
+        # saddle_connections = np.array(saddle_connections, dtype=np.uint16)
+        # saddle_conn_coords = np.array(saddle_conn_coords, dtype=np.uint16)
 
-        unique_connections, indices = np.unique(saddle_connections[:, :3],axis=0, return_index=True)
-        unique_connections = saddle_connections[indices]
+        # unique_connections, indices = np.unique(saddle_connections[:, :3],axis=0, return_index=True)
+        # unique_connections = saddle_connections[indices]
 
-        for idx1, idx2, image, is_reverse in unique_connections:
-            node1 = self._crit_map["saddle"][idx1]
-            node2 = self._crit_map["saddle"][idx2]
-            image = INT_TO_IMAGE[image]
-            if is_reverse:
-                image = -image
-            graph.add_edge(
-                node1,
-                node2,
-                image=image
-                )
-            # reverse
-            graph.add_edge(
-                node2,
-                node1,
-                image=-image
-                )
+        # for idx1, idx2, image, is_reverse in unique_connections:
+        #     node1 = self._crit_map["saddle"][idx1]
+        #     node2 = self._crit_map["saddle"][idx2]
+        #     image = INT_TO_IMAGE[image]
+        #     if is_reverse:
+        #         image = -image
+                
+        #     graph.add_edge(
+        #         node1,
+        #         node2,
+        #         image=image
+        #         )
+        #     # reverse
+        #     graph.add_edge(
+        #         node2,
+        #         node1,
+        #         image=-image
+        #         )
         return graph
     
     def to_dict(self):

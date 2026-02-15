@@ -61,21 +61,24 @@ class Bader(BaseAnalysis):
         found, dummy atoms will be appended to the structure and regarded as
         separate species. If a bool is provided, NNAs will be assigned to the
         nearest atom on False or a default value (1 Ang) will be used on True.
-    persistence_tol : float, optional
+    maxima_persistence_tol : float, optional
         It is common for false maxima to be found using only nearest neighbor
         points. To deal with this we combine pairs of basins that have low
         topological persistence.
         
         The persistence score is calculated as:
             
-            score = dist * (lower_max - saddle_value) / higher_max
+            score = (lower_max - connection_value) / connection_value
+    maxima_persistence_tol : float, optional
+        It is common for false minima to be found using only nearest neighbor
+        points. To deal with this we combine pairs of basins that have low
+        topological persistence. We use a separate tolerance as minima typically
+        have lower persistence values.
+        
+        The persistence score is calculated as:
             
-        where 'dist' is the cartesian distance between the maxima, lower_max
-        is the value at the maximum with a lower value, saddle_value is the
-        highest value at which there is a connection between the two maximas
-        descending manifold (basin), and higher_max is the value at the maximum
-        with a higher value. Any pairs that score below the tolerance will be
-        combined. The default is 0.01.
+            score = (connection_value - higher_min) / connection_value
+
 
     """
 
@@ -123,7 +126,8 @@ class Bader(BaseAnalysis):
         self,
         method: str | Method = Method.weight,
         nna_cutoff: float | bool = False,
-        persistence_tol: float = 0.01,
+        maxima_persistence_tol: float = 0.05,
+        minima_persistence_tol: float = 0.005,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -142,7 +146,8 @@ class Bader(BaseAnalysis):
         if nna_cutoff is True:
             nna_cutoff = 1.0
         self._nna_cutoff = nna_cutoff
-        self._persistence_tol = persistence_tol
+        self._maxima_persistence_tol = maxima_persistence_tol
+        self._minima_persistence_tol = minima_persistence_tol
 
         # whether or not to use overdetermined gradients in neargrid methods.
         self._use_overdetermined = False
@@ -216,7 +221,7 @@ class Bader(BaseAnalysis):
             ])
         
     @property
-    def persistence_tol(self) -> float:
+    def maxima_persistence_tol(self) -> float:
         """
 
         Returns
@@ -228,21 +233,15 @@ class Bader(BaseAnalysis):
             
             The persistence score is calculated as:
                 
-                score = dist * (lower_max - saddle_value) / higher_max
-                
-            where 'dist' is the cartesian distance between the maxima, lower_max
-            is the value at the maximum with a lower value, saddle_value is the
-            highest value at which there is a connection between the two maximas
-            descending manifold (basin), and higher_max is the value at the maximum
-            with a higher value. Any pairs that score below the tolerance will be
-            combined.
+                score = (lower_maximum - connection_value) / connection_value
+
 
         """
-        return self._persistence_tol
+        return self._maxima_persistence_tol
         
-    @persistence_tol.setter
-    def persistence_tol(self, value: str | Method):
-        self._persistence_tol = value
+    @maxima_persistence_tol.setter
+    def maxima_persistence_tol(self, value: str | Method):
+        self._maxima_persistence_tol = value
         # reset atom properties
         self._reset_properties(exclude_properties=[
             "vacuum_mask",
@@ -250,7 +249,6 @@ class Bader(BaseAnalysis):
             "vacuum_charge",
             "vacuum_volume",
             "structure",
-            
             ])
 
     ###########################################################################
@@ -705,6 +703,37 @@ class Bader(BaseAnalysis):
         if self._maxima_persistence_values is None:
             self._run_minima_bader()
         return self._maxima_persistence_values
+    
+    @property
+    def minima_persistence_tol(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            It is common for false maxima to be found using only nearest neighbor
+            points. To deal with this we combine pairs of basins that have low
+            topological persistence.
+            
+            The persistence score is calculated as:
+                
+                score = (connection_value - higher_minimum) / connection_value
+
+
+        """
+        return self._minima_persistence_tol
+    
+    @minima_persistence_tol.setter
+    def minima_persistence_tol(self, value: str | Method):
+        self._minima_persistence_tol = value
+        # reset atom properties
+        self._reset_properties(exclude_properties=[
+            "vacuum_mask",
+            "num_vacuum",
+            "vacuum_charge",
+            "vacuum_volume",
+            "structure",
+            ])
 
     ###########################################################################
     # Atom Properties
@@ -930,7 +959,7 @@ class Bader(BaseAnalysis):
             reference_grid=self.reference_grid,
             vacuum_mask=self.vacuum_mask,
             num_vacuum=self.num_vacuum,
-            persistence_tol=self.persistence_tol,
+            persistence_tol=self.maxima_persistence_tol,
         )
         if self._use_overdetermined:
             method._use_overdetermined = True
@@ -973,7 +1002,7 @@ class Bader(BaseAnalysis):
             vacuum_mask=self.vacuum_mask,
             num_vacuum=self.num_vacuum,
             use_minima=True,
-            persistence_tol=self.persistence_tol,
+            persistence_tol=self.minima_persistence_tol,
         )
         if self._use_overdetermined:
             method._use_overdetermined = True

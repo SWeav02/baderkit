@@ -536,7 +536,6 @@ def newton_refine_extremum(
     is_frac: bool = True,
     max_iter=30,
     grad_tol=1e-6,
-    max_step=1.0,
     lambda0=1.0e-2,
     lambda_up=10.0,
     lambda_down=0.3,
@@ -590,6 +589,8 @@ def newton_refine_extremum(
         
     nx, ny, nz = data.shape
     
+    max_step = 0.25 * min(nx, ny, nz)
+    
     i, j, k = point
     i = float(i)
     j = float(j)
@@ -632,12 +633,24 @@ def newton_refine_extremum(
         # For i >= target_index -> force positive: +max(|evals[i]|, lam)
         # This ensures invertibility and desired signature.
         evals_mod = np.empty_like(evals)
+        lam = max(lambda0, 0.05 * np.max(np.abs(evals)))
+        if g_norm < 10 * grad_tol:
+            enforce = True
+        else:
+            enforce = False
         for idx_ev in range(3):
-            mag = max(abs(evals[idx_ev]), lambda0)
-            if idx_ev < target_index:
-                evals_mod[idx_ev] = -mag
+            
+            mag = max(abs(evals[idx_ev]), lam)
+
+            if enforce:
+                if idx_ev < target_index:
+                    evals_mod[idx_ev] = -mag
+                else:
+                    evals_mod[idx_ev] = +mag
             else:
-                evals_mod[idx_ev] = +mag
+                s = 1.0 if evals[idx_ev] >= 0 else -1.0
+                evals_mod[idx_ev] = s * mag
+
 
         # Reconstruct modified Hessian in original basis: H_mod = V diag(evals_mod) V^T
         H_mod = (vecs * evals_mod[np.newaxis, :]) @ vecs.T  # efficient diag-multiply then matmul
@@ -661,11 +674,17 @@ def newton_refine_extremum(
 
         # clamp step length
         step_norm = get_norm(di,dj,dk)
-        if step_norm > max_step:
-            adj = max_step / step_norm
-            di = di * adj
-            dj = dj * adj
-            dk = dk * adj
+        
+        if step_norm < 1e-8:
+            #escape
+            break
+
+        
+        scale = min(1.0, max_step / (step_norm + 1e-12))
+        di *= scale**0.5
+        dj *= scale**0.5
+        dk *= scale**0.5
+
 
         i_trial = i + di
         j_trial = j + dj
@@ -676,7 +695,9 @@ def newton_refine_extremum(
         g_trial_norm = get_norm(gi_trial, gj_trial, gk_trial)
 
         # Acceptance rule: accept if gradient norm decreases
-        if g_trial_norm < g_norm:
+        pred = abs(gi*di + gj*dj + gk*dk)
+        c = 0.1 if lambda0 < 1e-2 else 0.5
+        if g_trial_norm < g_norm + c * pred:
             # accept
             i = i_trial
             j = j_trial
@@ -717,7 +738,6 @@ def refine_critical_points(
     is_frac: bool = True,
     max_iter=30,
     grad_tol=1e-6,
-    max_step=1.0,
     lambda0=1.0e-2,
     lambda_up=10.0,
     lambda_down=0.3,
@@ -738,7 +758,6 @@ def refine_critical_points(
             is_frac,
             max_iter,
             grad_tol,
-            max_step,
             lambda0,
             lambda_up,
             lambda_down,
@@ -784,7 +803,7 @@ def refine_extrema(
         # get average frac weighted by value
         average_frac = merge_frac_coords_weighted(group_frac, values)
         # get equivalent grid point
-        ai, aj, ak = np.round(average_frac*shape).astype(np.int64)
+        ai, aj, ak = np.round(average_frac*shape).astype(np.int64) % shape
         # check if this point is in the right basin and has the highest value
         label = labels[ai, aj, ak]
         value = data[ai,aj,ak]
