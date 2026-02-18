@@ -138,7 +138,7 @@ class MethodBase:
             )
         
         # initialize our labels, combining false extrema
-        labels, images, self._extrema_vox, self._extrema_frac, self._extrema_children = initialize_labels_from_extrema(
+        labels, images, self._extrema_vox, self._extrema_frac, self._extrema_children, persistence_cutoffs = initialize_labels_from_extrema(
             labels=labels,
             data=self.reference_grid.total,
             extrema_frac=extrema_frac,
@@ -163,15 +163,15 @@ class MethodBase:
         
         # get extrema unions based on persistence and update lowest persistence
         # values for extrema
-        extrema_roots, root_transforms= group_by_persistence(
+        extrema_roots, root_transforms, persistence_cutoffs= group_by_persistence(
             data=self.reference_grid.total,
             critical_vox=self.extrema_vox, 
             basin_connections=saddle_connections, 
             saddle_values=saddle_values, 
             persistence_tol=self.persistence_tol,
+            persistence_cutoffs=persistence_cutoffs,
             use_minima=self.use_minima,
             )
-        
 
         # update extrema children, labels, charges, and volumes
         charges = results["basin_charges"]
@@ -220,6 +220,7 @@ class MethodBase:
         # save final results
         self._extrema_vox = self.extrema_vox[final_extrema]
         self._extrema_children = extrema_children
+        persistence_cutoffs = persistence_cutoffs[final_extrema]
 
         if self.use_minima:
             logging.info("Refining Minima")  
@@ -236,7 +237,7 @@ class MethodBase:
         )
 
         self._extrema_frac = refined_extrema_frac
-        
+
         results.update(
             {
                 "extrema_basin_labels": labels,
@@ -247,7 +248,7 @@ class MethodBase:
                 "extrema_voxel_groups": self.extrema_children,
                 "extrema_frac": self.extrema_frac,
                 "extrema_ref_values": extrema_values,
-                # "extrema_persistence_values": persistence_cutoffs,
+                "extrema_persistence_values": persistence_cutoffs,
             }
         )
         return results

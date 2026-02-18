@@ -246,7 +246,7 @@ TETS = np.array([
     (0, 5, 1, 7),
 ], dtype=np.int8)
 
-# @njit(cache=True)
+# #@njit(cache=True)
 def get_ongrid_gradient_cart(i, j, k, data, dir2car):
     nx, ny, nz = data.shape
     
@@ -373,7 +373,7 @@ def get_differing_neighs_doublegrid(
 
     return unique
 
-# @njit(parallel=True,  cache=True)
+# #@njit(parallel=True,  cache=True)
 def get_manifold_labels_doublegrid(
     maxima_labels: NDArray[np.int64],
     minima_labels: NDArray[np.int64],
@@ -492,7 +492,7 @@ def get_manifold_labels_doublegrid(
 # double grid test
 ###############################################################################
 
-# @njit(inline='always', cache=True)
+# #@njit(inline='always', cache=True)
 def get_differing_neighs_doublegrid(
     i, j, k,
     nx, ny, nz,
@@ -562,7 +562,7 @@ def get_differing_neighs_doublegrid(
 
     return unique
 
-# @njit(parallel=True,  cache=True)
+# #@njit(parallel=True,  cache=True)
 def get_manifold_labels_doublegrid(
     maxima_labels: NDArray[np.int64],
     minima_labels: NDArray[np.int64],
@@ -678,7 +678,7 @@ def get_manifold_labels_doublegrid(
     return edges
 
 
-# @njit(inline='always', cache=True)
+# #@njit(inline='always', cache=True)
 def get_extrema_saddle_connections_doublegrid(
     i, j, k,
     nx, ny, nz,
@@ -790,7 +790,7 @@ def get_extrema_saddle_connections_doublegrid(
         image1,
         )
 
-# @njit(parallel=True, cache=True)
+# #@njit(parallel=True, cache=True)
 def get_canonical_saddle_connections_doublegrid(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -864,7 +864,7 @@ def get_canonical_saddle_connections_doublegrid(
     return saddle_coords, canonical_saddle_connections, extrema_connections, connection_vals
 
 
-# @njit(cache=True)
+# #@njit(cache=True)
 def get_single_point_saddles_doublegrid(
     connection_values,
     saddle_coords,
@@ -889,7 +889,7 @@ def get_single_point_saddles_doublegrid(
     
     return saddles, best_vals
 
-# @njit(cache=True)
+# #@njit(cache=True)
 def get_saddle_connections_doublegrid(
     saddle1_coords,
     saddle2_coords,
@@ -992,7 +992,7 @@ def get_saddle_connections_doublegrid(
 ###############################################################################
 
 
-# @njit(inline='always', cache=True)
+#@njit(inline='always', cache=True)
 def get_differing_neighs(
     i, j, k,
     nx, ny, nz,
@@ -1052,102 +1052,102 @@ def get_differing_neighs(
 
     return unique
 
-# @njit(parallel=True,  cache=True)
-# def get_manifold_labels(
-#     maxima_labels: NDArray[np.int64],
-#     minima_labels: NDArray[np.int64],
-#     maxima_images: NDArray[np.int64],
-#     minima_images: NDArray[np.int64],
-#     maxima_groups: list[NDArray],
-#     minima_groups: list[NDArray],
-#     neighbor_transforms: NDArray[np.int64],
-#     vacuum_mask: NDArray[np.bool_],
-# ):
-#     """
-#     Takes the 3-manifolds of maxima and minima and determines the rough locations
-#     of the following manifolds:
+#@njit(parallel=True,  cache=True)
+def get_manifold_labels(
+    maxima_labels: NDArray[np.int64],
+    minima_labels: NDArray[np.int64],
+    maxima_images: NDArray[np.int64],
+    minima_images: NDArray[np.int64],
+    maxima_groups: list[NDArray],
+    minima_groups: list[NDArray],
+    neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+):
+    """
+    Takes the 3-manifolds of maxima and minima and determines the rough locations
+    of the following manifolds:
         
-#         0: minima
-#         1: 1-saddle
-#         2: 2-saddle
-#         3: maxima
-#         4: meeting of 2 minima basins (saddle-1 unstable manifold)
-#         5: meeting of 2 maxima basins (saddle-2 stable manifold)
-#         6: meeting of 2 minima basins and 2 maxima basins (1D connections between critical points)
-#         7: meeting of at least 3 minima basin borders (saddle-2 unstable manifold)
-#         8: meeting of at least 3 maxima basin borders (saddle-1 stable manifold)
+        0: minima
+        1: 1-saddle
+        2: 2-saddle
+        3: maxima
+        4: meeting of 2 minima basins (saddle-1 unstable manifold)
+        5: meeting of 2 maxima basins (saddle-2 stable manifold)
+        6: meeting of 2 minima basins and 2 maxima basins (1D connections between critical points)
+        7: meeting of at least 3 minima basin borders (saddle-2 unstable manifold)
+        8: meeting of at least 3 maxima basin borders (saddle-1 stable manifold)
 
-#         255: overlapping maxima/minima basin
-#     """
-#     nx, ny, nz = maxima_labels.shape
-#     # create 3D array to store edges
-#     edges = np.full_like(maxima_labels, np.iinfo(np.uint8).max, dtype=np.uint8)
+        255: overlapping maxima/minima basin
+    """
+    nx, ny, nz = maxima_labels.shape
+    # create 3D array to store edges
+    edges = np.full_like(maxima_labels, np.iinfo(np.uint8).max, dtype=np.uint8)
     
-#     # add maxima/minima
-#     for group in minima_groups:
-#         for i,j,k in group:
-#             edges[i,j,k] = 0
+    # add maxima/minima
+    for group in minima_groups:
+        for i,j,k in group:
+            edges[i,j,k] = 0
             
-#     for group in maxima_groups:
-#         for i,j,k in group:
-#             edges[i,j,k] = 3
+    for group in maxima_groups:
+        for i,j,k in group:
+            edges[i,j,k] = 3
     
-#     # loop over each voxel in parallel
-#     for i in prange(nx):
-#         for j in range(ny):
-#             for k in range(nz):
-#                 # if this voxel is part of the vacuum, continue
-#                 if vacuum_mask[i, j, k]:
-#                     continue
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
                 
-#                 # if this voxel is part of a minimum or maximum, continue
-#                 if edges[i,j,k] == 0 or edges[i,j,k] == 3:
-#                     continue
+                # if this voxel is part of a minimum or maximum, continue
+                if edges[i,j,k] == 0 or edges[i,j,k] == 3:
+                    continue
                 
-#                 # check if this point has 0, 1, or 2 neighbors with different
-#                 # labels
-#                 num_neighs = get_differing_neighs(
-#                     i, j, k, 
-#                     nx, ny, nz, 
-#                     maxima_labels, 
-#                     maxima_images, 
-#                     neighbor_transforms, 
-#                     vacuum_mask,
-#                     )
-#                 opp_num_neighs = get_differing_neighs(
-#                     i, j, k, 
-#                     nx, ny, nz, 
-#                     minima_labels, 
-#                     minima_images, 
-#                     neighbor_transforms, 
-#                     vacuum_mask,
-#                     )
+                # check if this point has 0, 1, or 2 neighbors with different
+                # labels
+                num_neighs = get_differing_neighs(
+                    i, j, k, 
+                    nx, ny, nz, 
+                    maxima_labels, 
+                    maxima_images, 
+                    neighbor_transforms, 
+                    vacuum_mask,
+                    )
+                opp_num_neighs = get_differing_neighs(
+                    i, j, k, 
+                    nx, ny, nz, 
+                    minima_labels, 
+                    minima_images, 
+                    neighbor_transforms, 
+                    vacuum_mask,
+                    )
                 
-#                 if num_neighs == 1 and opp_num_neighs > 1:
-#                     # saddle 1
-#                     edges[i,j,k] = 1
-#                 elif num_neighs > 1 and opp_num_neighs == 1:
-#                     # saddle 2
-#                     edges[i,j,k] = 2
-#                 elif num_neighs < 1 and opp_num_neighs == 1:
-#                     # edge of minima manifold
-#                     edges[i,j,k] = 4
-#                 elif num_neighs == 1 and opp_num_neighs <1:
-#                     # edge of maxima manifold
-#                     edges[i,j,k] = 5
-#                 elif num_neighs == 1 and opp_num_neighs == 1:
-#                     # edge of both maxima/minima manifold
-#                     edges[i,j,k] = 6
-#                 elif num_neighs < 1 and opp_num_neighs > 1:
-#                     # meeting of at least three minima manifolds
-#                     edges[i,j,k] = 7
-#                 elif num_neighs > 1 and opp_num_neighs < 1:
-#                     # meeting of at least three maxima manifolds
-#                     edges[i,j,k] = 8
+                if num_neighs == 1 and opp_num_neighs > 1:
+                    # saddle 1
+                    edges[i,j,k] = 1
+                elif num_neighs > 1 and opp_num_neighs == 1:
+                    # saddle 2
+                    edges[i,j,k] = 2
+                elif num_neighs < 1 and opp_num_neighs == 1:
+                    # edge of minima manifold
+                    edges[i,j,k] = 4
+                elif num_neighs == 1 and opp_num_neighs <1:
+                    # edge of maxima manifold
+                    edges[i,j,k] = 5
+                elif num_neighs == 1 and opp_num_neighs == 1:
+                    # edge of both maxima/minima manifold
+                    edges[i,j,k] = 6
+                elif num_neighs < 1 and opp_num_neighs > 1:
+                    # meeting of at least three minima manifolds
+                    edges[i,j,k] = 7
+                elif num_neighs > 1 and opp_num_neighs < 1:
+                    # meeting of at least three maxima manifolds
+                    edges[i,j,k] = 8
 
-#     return edges
+    return edges
 
-# @njit(inline='always', cache=True)
+# #@njit(inline='always', cache=True)
 # def get_extrema_saddle_connections(
 #     i, j, k,
 #     nx, ny, nz,
@@ -1243,7 +1243,7 @@ def get_differing_neighs(
 #         is_reversed,
 #         best_value)
 
-# # @njit(cache=True)
+# # #@njit(cache=True)
 # def get_ongrid_gradient_cart(i, j, k, data, dir2car):
 #     nx, ny, nz = data.shape
     
@@ -1280,7 +1280,7 @@ def get_differing_neighs(
 
 #     return gx, gy, gz
 
-# # @njit(parallel=True, cache=True)
+# # #@njit(parallel=True, cache=True)
 # def get_canonical_saddle_connections(
 #     labels: NDArray[np.int64],
 #     images: NDArray[np.int64],
@@ -1344,7 +1344,7 @@ def get_differing_neighs(
 #     return saddle_coords, saddle_connections, connection_vals
 
 
-# # @njit(cache=True)
+# # #@njit(cache=True)
 # def get_single_point_saddles(
 #     data,
 #     connection_values,
@@ -1378,7 +1378,7 @@ def get_differing_neighs(
     
 #     return saddles, best_vals
 
-# # @njit(cache=True)
+# # #@njit(cache=True)
 # def get_saddle_connections(
 #     saddle1_coords,
 #     saddle2_coords,

@@ -6,11 +6,13 @@ import time
 import warnings
 from pathlib import Path
 from typing import TypeVar
+import itertools
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 from networkx import MultiDiGraph
+from scipy.spatial import ConvexHull
 
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Structure, Grid
@@ -20,13 +22,11 @@ from baderkit.core.utilities.basic import wrap_point_w_shift
 from baderkit.core.utilities.interpolation import refine_critical_points
 
 from .critical_points_numba import (
-    get_manifold_labels_doublegrid,
-    get_saddle_connections_doublegrid,
-    get_canonical_saddle_connections_doublegrid,
-    get_single_point_saddles_doublegrid,
+    get_manifold_labels,
     INT_TO_IMAGE,
     IMAGE_TO_INT
 )
+from .hessian_based import find_saddle_points, refine_saddle_points
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="CriticalPoints")
@@ -82,6 +82,8 @@ class CriticalPoints(BaseAnalysis):
         "saddle2_frac",
         "minima_vox",
         "maxima_vox",
+        "maxima_persistence_groups",
+        "minima_persistence_groups",
         "saddle1_vox",
         "saddle2_vox",
         "critical_vox",
@@ -165,7 +167,7 @@ class CriticalPoints(BaseAnalysis):
             neighbor_transforms, neighbor_dists, _, _ = self.bader.reference_grid.point_neighbor_voronoi_transforms
             # maxima_groups, minima_groups = self.bader.get_persistence_groups()
             # neighbor_transforms, neighbor_dists = self.bader.reference_grid.point_neighbor_transforms
-            self._manifold_labels = get_manifold_labels_doublegrid(
+            self._manifold_labels = get_manifold_labels(
                 maxima_labels=self.bader.maxima_basin_labels,
                 maxima_images=self.bader.maxima_basin_images,
                 maxima_groups=self.bader.maxima_voxel_groups,
@@ -186,6 +188,12 @@ class CriticalPoints(BaseAnalysis):
     @property
     def maxima_frac(self) -> NDArray:
         return self.bader.maxima_frac
+    
+    @property
+    def maxima_persistence_groups(self):
+        if self._maxima_persistence_groups is None:
+            self._get_extrema_persistence_groups()
+        return self._maxima_persistence_groups
 
     @property
     def minima_vox(self) -> NDArray:
@@ -194,29 +202,35 @@ class CriticalPoints(BaseAnalysis):
     @property
     def minima_frac(self) -> NDArray:
         return self.bader.minima_frac
+    
+    @property
+    def minima_persistence_groups(self):
+        if self._minima_persistence_groups is None:
+            self._get_extrema_persistence_groups()
+        return self._minima_persistence_groups
 
     @property
     def saddle1_vox(self) -> NDArray:
         if self._saddle1_vox is None:
-            self._saddle1_vox, self._saddle1_extrema_connections = self._get_saddle_coords(use_minima=True)
+            self._get_saddle_coords()
         return self._saddle1_vox
     
     @property
     def saddle1_frac(self) -> NDArray:
         if self._saddle1_frac is None:
-            self._saddle1_frac, self._saddle1_extrema_connections = self._refine_saddles(self.saddle1_vox, self._saddle1_extrema_connections, 1)
+            self._get_saddle_coords()
         return self._saddle1_frac
 
     @property
     def saddle2_vox(self) -> NDArray:
         if self._saddle2_vox is None:
-            self._saddle2_vox, self._saddle2_extrema_connections = self._get_saddle_coords(use_minima=False)
+            self._get_saddle_coords()
         return self._saddle2_vox
     
     @property
     def saddle2_frac(self) -> NDArray:
         if self._saddle2_frac is None:
-            self._saddle2_frac, self._saddle2_extrema_connections = self._refine_saddles(self.saddle2_vox, self._saddle2_extrema_connections, 2)
+            self._get_saddle_coords()
         return self._saddle2_frac
     
     @property
@@ -314,78 +328,92 @@ class CriticalPoints(BaseAnalysis):
             self._morse_graph = self._get_morse_graph()
         return self._morse_graph
 
-    def _get_saddle_coords(self, use_minima=False):
-
-        # get neighbors
-        if use_minima:
-            labels = self.bader.minima_basin_labels
-            images = self.bader.minima_basin_images
-        else:
-            labels = self.bader.maxima_basin_labels
-            images = self.bader.maxima_basin_images
+    def _get_saddle_coords(self):
         
-        # get canonical connection representations of saddles between basins
-        possible_saddles, canonical_saddle_connections, extrema_connections, connection_vals = get_canonical_saddle_connections_doublegrid(
-            labels,
-            images,
-            self.bader.reference_grid.total,
-            self.bader.vacuum_mask,
-            self.manifold_labels,
-            use_minima=use_minima,
-        )
-
-        # get unique connections
-        unique_connections, inverse = np.unique(
-            canonical_saddle_connections, axis=0, return_inverse=True)
-        # get the highest connecting point between basins
-        saddle_indices, saddle_vals = get_single_point_saddles_doublegrid(
-            connection_values=connection_vals,
-            saddle_coords=possible_saddles,
-            connection_indices=inverse,
-            num_connections=len(unique_connections),
-            use_minima=use_minima,
-        )
-
-        # sort highest to lowest
-        sorted_indices = np.flip(np.argsort(saddle_vals))
-        saddle_indices = saddle_indices[sorted_indices]
-
-        # get coords and convert from double grid to single grid
-        saddle_coords = possible_saddles[saddle_indices] / 2
-        
-        # get the extrema this saddle connects to
-        return saddle_coords, extrema_connections[saddle_indices]
-    
-    def _refine_saddles(self, saddle_vox, saddle_connections, target_index):
-        points = saddle_vox
-        data = self.reference_grid.total
-        refined_points, refined_status = refine_critical_points(
-            points, 
-            data,
-            target_index,
-            is_frac=False
+        # get the edges of each dual
+        # allowed_points = np.isin(self.manifold_labels, (1,2,4,5,6))
+        allowed_points = np.ones_like(self.manifold_labels, dtype=bool)
+        # get saddle coords
+        saddle_mask = find_saddle_points(
+            data=self.bader.reference_grid.total,
+            matrix=self.bader.reference_grid.matrix,
+            allowed_points=allowed_points,
             )
-
-        refined_points = refined_points[np.where(refined_status==0)[0]]
-
-        if not np.all(refined_status==0):
-            logging.warning("Not all critical points successfully refined. Check results with care.")
-        frac_points = np.round(refined_points / self.reference_grid.shape, 6)
+        breakpoint()
         
-        # now we need to wrap our points into the central unit cell. We need to
-        # record the shifts so that we can update our saddle connections to
-        # point to the proper extrema.
-        shifts = (frac_points // 1.0).astype(np.int64)
-        for idx, (shift, (_, image0, _, image1)) in enumerate(zip(shifts, saddle_connections)):
-            # update images
-            i,j,k = INT_TO_IMAGE[image0] + shift
-            saddle_connections[idx,1] = IMAGE_TO_INT[i,j,k]
-            i,j,k = INT_TO_IMAGE[image1] + shift
-            saddle_connections[idx,3] = IMAGE_TO_INT[i,j,k]
-        # update fracs
-        frac_points %= 1.0
+        # refine and get exact coords
+        saddle1_coords, saddle2_coords = refine_saddle_points(
+            saddle_mask=saddle_mask,
+            data=self.bader.reference_grid.total,
+            matrix=self.bader.reference_grid.matrix,
+            )
+        
+        # get voxel/fractional coords
+        saddle1_frac = np.round(saddle1_coords / self.reference_grid.shape, 6)
+        saddle2_frac = np.round(saddle2_coords / self.reference_grid.shape, 6)
+        
+        self._saddle1_vox = saddle1_coords
+        self._saddle2_vox = saddle2_coords
+        self._saddle1_frac = saddle1_frac
+        self._saddle2_frac = saddle2_frac
+        
+    def _get_extrema_persistence_groups(self):
+        
+        maxima_groups, minima_groups = self.bader.get_persistence_groups()
 
-        return frac_points, saddle_connections
+        # make lists to store new groups
+        new_maxima_groups = []
+        group_types = []
+        for group in maxima_groups:
+            if len(group) <= 2:
+                # this group can't form a convex hull and must therefore be a
+                # point extremum
+                new_maxima_groups.append(group)
+                group_types.append(0)
+                continue
+            # adjust all points relative to a single reference point
+            frac_coords = self.reference_grid.grid_to_frac(group)
+            ref = frac_coords[0]
+            d = frac_coords - ref
+            d -= np.round(d)
+            frac_coords = ref + d
+            # convert back to grid indices
+            coords = frac_coords * self.reference_grid.shape
+            # construct hull
+            hull = ConvexHull(coords)
+            breakpoint()
+            
+
+    # def _refine_saddles(self, saddle_vox, saddle_connections, target_index):
+    #     points = saddle_vox
+    #     data = self.reference_grid.total
+    #     refined_points, refined_status = refine_critical_points(
+    #         points, 
+    #         data,
+    #         target_index,
+    #         is_frac=False
+    #         )
+
+    #     refined_points = refined_points[np.where(refined_status==0)[0]]
+
+    #     if not np.all(refined_status==0):
+    #         logging.warning("Not all critical points successfully refined. Check results with care.")
+    #     frac_points = np.round(refined_points / self.reference_grid.shape, 6)
+        
+    #     # now we need to wrap our points into the central unit cell. We need to
+    #     # record the shifts so that we can update our saddle connections to
+    #     # point to the proper extrema.
+    #     shifts = (frac_points // 1.0).astype(np.int64)
+    #     for idx, (shift, (_, image0, _, image1)) in enumerate(zip(shifts, saddle_connections)):
+    #         # update images
+    #         i,j,k = INT_TO_IMAGE[image0] + shift
+    #         saddle_connections[idx,1] = IMAGE_TO_INT[i,j,k]
+    #         i,j,k = INT_TO_IMAGE[image1] + shift
+    #         saddle_connections[idx,3] = IMAGE_TO_INT[i,j,k]
+    #     # update fracs
+    #     frac_points %= 1.0
+
+    #     return frac_points, saddle_connections
 
     def _get_morse_graph(self) -> MultiDiGraph:
         # get graph

@@ -16,7 +16,7 @@ from baderkit.core.utilities.basic import (
 ###############################################################################
 
 
-@njit(inline="always", cache=True, fastmath=True)
+#@njit(inline="always", cache=True, fastmath=True)
 def interp_nearest(i, j, k, data, is_frac=True):
     nx, ny, nz = data.shape
     if is_frac:
@@ -36,7 +36,7 @@ def interp_nearest(i, j, k, data, is_frac=True):
 ###############################################################################
 # Linear interpolation
 ###############################################################################
-@njit(inline="always", cache=True, fastmath=True)
+#@njit(inline="always", cache=True, fastmath=True)
 def interp_linear(i, j, k, data, is_frac=True):
     nx, ny, nz = data.shape
 
@@ -87,7 +87,7 @@ def interp_linear(i, j, k, data, is_frac=True):
 ###############################################################################
 
 
-@njit(cache=True, inline="always", fastmath=True)
+#@njit(cache=True, inline="always", fastmath=True)
 def cubic_bspline_weights(di, dj, dk):
     weights = np.empty((3, 4), dtype=np.float64)
     for d_idx, d in enumerate((di, dj, dk)):
@@ -104,7 +104,7 @@ def cubic_bspline_weights(di, dj, dk):
     return weights
 
 
-@njit(cache=True, fastmath=True)
+#@njit(cache=True, fastmath=True)
 def interp_spline(i, j, k, data, is_frac=True):
     nx, ny, nz = data.shape
 
@@ -155,7 +155,7 @@ def interp_spline(i, j, k, data, is_frac=True):
 ###############################################################################
 
 
-@njit(cache=True)
+#@njit(cache=True)
 def interpolate_point(
     point,
     method,
@@ -175,7 +175,7 @@ def interpolate_point(
     return value
 
 
-@njit(parallel=True, cache=True)
+#@njit(parallel=True, cache=True)
 def interpolate_points(points, method, data, is_frac=True):
     out = np.empty(len(points))
     if method == "nearest":
@@ -198,7 +198,7 @@ def interpolate_points(points, method, data, is_frac=True):
     return out
 
 
-@njit(cache=True)
+#@njit(cache=True)
 def linear_slice(
     data,
     p1: NDArray[float],
@@ -219,7 +219,7 @@ def linear_slice(
 ###############################################################################
 # Parabolic Fitting
 ###############################################################################
-@njit(fastmath=True, cache=True)
+#@njit(fastmath=True, cache=True)
 def refine_frac_extrema_parabolic(grid, frac_coords, lattice, use_minima=False):
     """
     Numerically stable refinement of a local maximum or minimum on a 3D periodic grid.
@@ -381,7 +381,7 @@ def refine_frac_extrema_parabolic(grid, frac_coords, lattice, use_minima=False):
 
 
 
-@njit(parallel=True, cache=True)
+#@njit(parallel=True, cache=True)
 def refine_extrema_parabolic(
     extrema_coords,
     extrema_children,
@@ -431,7 +431,7 @@ def refine_extrema_parabolic(
 # Newton Refinement
 ###############################################################################
 
-@njit(fastmath=True)
+#@njit(fastmath=True)
 def spline_grad(i, j, k, data, h=0.5, is_frac=False):
     """
     Gradient of spline-interpolated scalar field
@@ -465,7 +465,7 @@ def spline_grad(i, j, k, data, h=0.5, is_frac=False):
     return gx, gy, gz
    
 
-@njit(fastmath=True)
+#@njit(fastmath=True)
 def spline_hess(i, j, k, data, h=0.5, is_frac=False):
     """
     Hessian of spline-interpolated scalar field
@@ -541,7 +541,7 @@ def spline_hess(i, j, k, data, h=0.5, is_frac=False):
 
     return H
 
-@njit(fastmath=True)
+#@njit(fastmath=True)
 def spline_grad_and_hess(i, j, k, data, h=0.5, is_frac=False):
     """
     Compute both gradient and Hessian of a spline-interpolated scalar field
@@ -616,154 +616,8 @@ def spline_grad_and_hess(i, j, k, data, h=0.5, is_frac=False):
     return gx, gy, gz, H
 
 
-@njit(fastmath=True)
-def newton_step_exceeds_cutoff(
-    i,j,k,
-    data,
-    inv_G,
-    is_frac: bool = True,
-    max_iter=30,
-    grad_tol=1e-6,
-    lambda0=1.0e-2,
-    lambda_up=10.0,
-    lambda_down=0.3,
-    h=0.25,
-    eig_tol=1e-10,
-):
-    """
-    Damped Newton refinement for extrema or saddles in 3D.
-    Determines Morse index automatically and stops if refinement exits voxel.
-    
-    Returns
-    -------
-    i, j, k : float
-        Refined coordinates (fractional if is_frac=True)
-    success : int
-        0 if converged, 1 if failed, 2 if exited voxel
-    grad_norm : float
-        Final Cartesian gradient norm
-    morse_index : int
-        Number of negative eigenvalues of the Hessian
-    """
 
-    nx, ny, nz = data.shape
-    max_step = 0.25 * min(nx, ny, nz)
-
-    # Convert fractional -> voxel coordinates
-    i = float(i)
-    j = float(j)
-    k = float(k)
-    if is_frac:
-        i *= nx
-        j *= ny
-        k *= nz
-
-    voxel_min = np.array([i - 0.5, j - 0.5, k - 0.5])
-    voxel_max = np.array([i + 0.5, j + 0.5, k + 0.5])
-
-    for it in range(max_iter):
-        # Gradient (fractional)
-        gi, gj, gk, H = spline_grad_and_hess(i, j, k, data, h)
-        g_cart2 = (
-            gi*(inv_G[0,0]*gi + inv_G[0,1]*gj + inv_G[0,2]*gk) +
-            gj*(inv_G[1,0]*gi + inv_G[1,1]*gj + inv_G[1,2]*gk) +
-            gk*(inv_G[2,0]*gi + inv_G[2,1]*gj + inv_G[2,2]*gk)
-        )
-        g_norm = np.sqrt(g_cart2)
-
-        # Convergence by gradient norm
-        if g_norm < grad_tol:
-            evals, _ = np.linalg.eigh(H)
-            morse_index = np.sum(evals < -eig_tol)
-            if is_frac:
-                return i/nx, j/ny, k/nz, True, g_norm, morse_index
-            return i, j, k, True, g_norm, morse_index
-
-        # Eigen-decomposition
-        evals, vecs = np.linalg.eigh(H)
-        evals_mod = np.empty_like(evals)
-        lam = max(lambda0, 0.05 * np.max(np.abs(evals)))
-        enforce = g_norm < 10*grad_tol
-        for idx_ev in range(3):
-            mag = max(abs(evals[idx_ev]), lam)
-            if enforce:
-                evals_mod[idx_ev] = mag if evals[idx_ev] >= 0 else -mag
-            else:
-                evals_mod[idx_ev] = mag if evals[idx_ev] >= 0 else -mag
-
-        H_mod = (vecs * evals_mod[np.newaxis, :]) @ vecs.T
-
-        try:
-            di, dj, dk = np.linalg.solve(H_mod, -np.array((gi, gj, gk), dtype=np.float64))
-        except:
-            lambda0 *= lambda_up
-            if lambda0 > 1e12:
-                if is_frac:
-                    return i/nx, j/ny, k/nz, False, g_norm, np.sum(evals < -eig_tol)
-                return i, j, k, False, g_norm, np.sum(evals < -eig_tol)
-            continue
-
-        # Clamp step length
-        step_norm = get_norm(di, dj, dk)
-        if step_norm < 1e-8:
-            break
-        scale = min(1.0, max_step / (step_norm + 1e-12))
-        di *= scale**0.5
-        dj *= scale**0.5
-        dk *= scale**0.5
-
-        i_trial = i + di
-        j_trial = j + dj
-        k_trial = k + dk
-
-        # Voxel exit check
-        if (i_trial < voxel_min[0] or i_trial > voxel_max[0] or
-            j_trial < voxel_min[1] or j_trial > voxel_max[1] or
-            k_trial < voxel_min[2] or k_trial > voxel_max[2]):
-            if is_frac:
-                return i/nx, j/ny, k/nz, False, g_norm, np.sum(evals < -eig_tol)
-            return i, j, k, False, g_norm, np.sum(evals < -eig_tol)
-
-        # Trial gradient
-        gi_trial, gj_trial, gk_trial = spline_grad(i_trial, j_trial, k_trial, data, h)
-        g_trial_cart2 = (
-            gi_trial*(inv_G[0,0]*gi_trial + inv_G[0,1]*gj_trial + inv_G[0,2]*gk_trial) +
-            gj_trial*(inv_G[1,0]*gi_trial + inv_G[1,1]*gj_trial + inv_G[1,2]*gk_trial) +
-            gk_trial*(inv_G[2,0]*gi_trial + inv_G[2,1]*gj_trial + inv_G[2,2]*gk_trial)
-        )
-        g_trial_norm = np.sqrt(g_trial_cart2)
-
-        # Accept if gradient norm decreases
-        pred = abs(gi*di + gj*dj + gk*dk)
-        c = 0.1 if lambda0 < 1e-2 else 0.5
-        if g_trial_norm < g_norm + c*pred:
-            i, j, k = i_trial, j_trial, k_trial
-            lambda0 = max(lambda0*lambda_down, 1e-16)
-        else:
-            lambda0 *= lambda_up
-
-    # Final diagnostics
-    evals_final, _ = np.linalg.eigh(spline_hess(i, j, k, data, h))
-    gi_final, gj_final, gk_final = spline_grad(i, j, k, data, h)
-    g_cart2_final = (
-        gi_final*(inv_G[0,0]*gi_final + inv_G[0,1]*gj_final + inv_G[0,2]*gk_final) +
-        gj_final*(inv_G[1,0]*gi_final + inv_G[1,1]*gj_final + inv_G[1,2]*gk_final) +
-        gk_final*(inv_G[2,0]*gi_final + inv_G[2,1]*gj_final + inv_G[2,2]*gk_final)
-    )
-    grad_norm_final = np.sqrt(g_cart2_final)
-    morse_index = np.sum(evals_final < -eig_tol)
-    success = grad_norm_final < grad_tol
-
-    if is_frac:
-        i /= nx
-        j /= ny
-        k /= nz
-
-    return i, j, k, success, grad_norm_final, morse_index
-
-
-
-@njit(fastmath=True)
+#@njit(fastmath=True)
 def spline_grad_cart(i, j, k, data, dir2car, h=0.5, is_frac=False):
     nx,ny,nz = data.shape
     
@@ -782,7 +636,7 @@ def spline_grad_cart(i, j, k, data, dir2car, h=0.5, is_frac=False):
     
     return gx, gy, gz
 
-@njit(fastmath=True)
+#@njit(fastmath=True)
 def spline_hess_cart(i, j, k, data, dir2car, h=0.5, is_frac=False):
     
     # get hessian in grid coords
@@ -792,7 +646,159 @@ def spline_hess_cart(i, j, k, data, dir2car, h=0.5, is_frac=False):
     return dir2car @ H @ dir2car.T
 
 
-@njit(fastmath=True)
+#@njit(fastmath=True)
+def cartesian_grad_norm2(gi, gj, gk, inv_G):
+    return (
+        gi * (inv_G[0, 0] * gi + inv_G[0, 1] * gj + inv_G[0, 2] * gk) +
+        gj * (inv_G[1, 0] * gi + inv_G[1, 1] * gj + inv_G[1, 2] * gk) +
+        gk * (inv_G[2, 0] * gi + inv_G[2, 1] * gj + inv_G[2, 2] * gk)
+    )
+
+#@njit(fastmath=True)
+def compute_morse_index(H, eig_tol):
+    evals, _ = np.linalg.eigh(H)
+    
+    n_neg = 0
+    n_flat = 0
+    for i in evals:
+        if i < -eig_tol:
+            n_neg += 1
+        elif abs(i) < eig_tol:
+            n_flat += 1
+
+    return n_neg, n_flat, evals
+
+#@njit(fastmath=True)
+def check_flat_extrema(evals, eig_tol):
+    n_flat = 0
+    for i in evals:
+        if abs(i) < eig_tol:
+            n_flat += 1
+    return n_flat == 1
+
+#@njit(fastmath=True)
+def modified_hessian(H, g_norm, lambda0, grad_tol):
+    evals, vecs = np.linalg.eigh(H)
+    lam = max(lambda0, 0.05 * np.max(np.abs(evals)))
+    # enforce = g_norm < 10 * grad_tol
+
+    evals_mod = np.empty_like(evals)
+    for i in range(3):
+        mag = max(abs(evals[i]), lam)
+        evals_mod[i] = mag if evals[i] >= 0 else -mag
+
+    H_mod = (vecs * evals_mod[np.newaxis, :]) @ vecs.T
+    return H_mod, evals
+
+#@njit(fastmath=True)
+def clamp_step(di, dj, dk, max_step):
+    step_norm = get_norm(di, dj, dk)
+    if step_norm < 1e-8:
+        return di, dj, dk, False
+
+    scale = min(1.0, max_step / (step_norm + 1e-12))
+    scale = scale ** 0.5
+    return di * scale, dj * scale, dk * scale, True
+
+#@njit(fastmath=True)
+def outside_voxel(i, j, k, vmin, vmax):
+    return (
+        i < vmin[0] or i > vmax[0] or
+        j < vmin[1] or j > vmax[1] or
+        k < vmin[2] or k > vmax[2]
+    )
+
+#@njit(fastmath=True)
+def newton_refine_in_voxel(
+    i, j, k,
+    data,
+    inv_G,
+    max_iter=30,
+    grad_tol=1e-6,
+    lambda0=1.0e-2,
+    lambda_up=10.0,
+    lambda_down=0.3,
+    h=0.25,
+    eig_tol=1e-10,
+):
+    nx, ny, nz = data.shape
+    max_step = 0.25 * min(nx, ny, nz)
+
+    i = float(i)
+    j = float(j)
+    k = float(k)
+
+    voxel_min = np.array([i - 0.5, j - 0.5, k - 0.5])
+    voxel_max = np.array([i + 0.5, j + 0.5, k + 0.5])
+    
+    converged = False
+
+    for _ in range(max_iter):
+        gi, gj, gk, H = spline_grad_and_hess(i, j, k, data, h)
+        g_norm = np.sqrt(cartesian_grad_norm2(gi, gj, gk, inv_G))
+        
+        # check if we've reached convergence
+        if g_norm < grad_tol:
+            converged = True
+            break
+
+        H_mod, evals = modified_hessian(H, g_norm, lambda0, grad_tol)
+        
+        # check if the region is a flat extremum
+        if check_flat_extrema(evals, eig_tol):
+            break
+
+        try:
+            di, dj, dk = np.linalg.solve(
+                H_mod, -np.array((gi, gj, gk), dtype=np.float64)
+            )
+        except:
+            lambda0 *= lambda_up
+            if lambda0 > 1e12:
+                converged = False
+                break
+            continue
+
+        di, dj, dk, ok = clamp_step(di, dj, dk, max_step)
+        if not ok:
+            break
+
+        i_trial = i + di
+        j_trial = j + dj
+        k_trial = k + dk
+
+        if outside_voxel(i_trial, j_trial, k_trial, voxel_min, voxel_max):
+            converged = False
+            break
+
+        gi_t, gj_t, gk_t = spline_grad(i_trial, j_trial, k_trial, data, h)
+        g_trial_norm = np.sqrt(cartesian_grad_norm2(gi_t, gj_t, gk_t, inv_G))
+
+        pred = abs(gi * di + gj * dj + gk * dk)
+        c = 0.1 if lambda0 < 1e-2 else 0.5
+
+        if g_trial_norm < g_norm + c * pred:
+            i, j, k = i_trial, j_trial, k_trial
+            lambda0 = max(lambda0 * lambda_down, 1e-16)
+        else:
+            lambda0 *= lambda_up
+
+    
+    # Final diagnostics
+    H_final = spline_hess(i, j, k, data, h)
+    morse_index, n_flat, _ = compute_morse_index(H_final, eig_tol)
+
+    # check for flat extremum
+    if n_flat == 1:
+        converged = True
+        morse_index = 4
+    
+    return i, j, k, converged, morse_index
+
+
+
+
+#@njit(fastmath=True)
 def newton_refine_critical(
     point,
     data,
@@ -994,7 +1000,7 @@ def newton_refine_critical(
 
     return i, j, k, success, grad_norm_final, evals_final
 
-@njit(parallel=True, cache=True)
+#@njit(parallel=True, cache=True)
 def refine_critical_points(
     points,
     data,
@@ -1034,7 +1040,7 @@ def refine_critical_points(
         refined_status[idx] = success
     return refined_points, refined_status
         
-@njit(parallel=True, cache=True)
+#@njit(parallel=True, cache=True)
 def refine_extrema(
     extrema_coords,
     extrema_children,
@@ -1094,7 +1100,7 @@ def refine_extrema(
 
 
 
-# @njit(fastmath=True)
+# #@njit(fastmath=True)
 # def check_valid_newton_step_interp(
 #     i, j, k,
 #     data,
@@ -1149,7 +1155,7 @@ def refine_extrema(
 #     delta_est2 = (gi/(Hxx + eps))**2 + (gj/(Hyy + eps))**2 + (gk/(Hzz + eps))**2
 #     return delta_est2 > r_voxel_cart2
 
-# def newton_step_exceeds_cutoff_fast(
+# def newton_refine_in_voxel_fast(
 #     i, j, k,
 #     data,
 #     H_max_frac,

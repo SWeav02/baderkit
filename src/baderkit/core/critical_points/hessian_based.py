@@ -7,10 +7,10 @@ from baderkit.core.utilities.interpolation import (
     newton_refine_critical, 
     spline_grad_cart, 
     spline_hess_cart, 
-    newton_step_exceeds_cutoff,
+    newton_refine_in_voxel,
     )
 
-@njit(cache=True)
+#@njit(cache=True)
 def gather_cell_gradients(i, j, k, gradients):
     nx, ny, nz, _ = gradients.shape
     G = np.empty((8, 3), dtype=np.float64)
@@ -26,18 +26,18 @@ def gather_cell_gradients(i, j, k, gradients):
                 idx += 1
     return G
 
-@njit(cache=True)
+#@njit(cache=True)
 def encloses_zero_component(vals):
     return vals.min() <= 0.0 and vals.max() >= 0.0
 
-@njit(cache=True)
+#@njit(cache=True)
 def gradient_enclosure_test(G):
     return (
         encloses_zero_component(G[:, 0]) and
         encloses_zero_component(G[:, 1]) and
         encloses_zero_component(G[:, 2])
     )
-@njit(cache=True)
+#@njit(cache=True)
 def grad_norm_lower_bound(G):
     return np.sqrt(
         np.min(G[:, 0] * G[:, 0]) +
@@ -46,7 +46,7 @@ def grad_norm_lower_bound(G):
     )
 
 
-@njit(cache=True)
+#@njit(cache=True)
 def classify_critical_point(H):
     eigvals = np.linalg.eigvalsh(H)
 
@@ -66,14 +66,13 @@ def classify_critical_point(H):
 
 # NOTE: This ongrid method seems to work almost as well as the interpolation
 # version even on rough grids
-@njit(fastmath=True)
+#@njit(fastmath=True, cache=True)
 def check_valid_newton_step(
     i, j, k,
     data,
     r_voxel_cart2,
     inv_G,
     H_frac_to_cart,
-    is_frac=True,
 ):
     """
     Newton-step rejection using *full local neighborhood information*.
@@ -81,11 +80,6 @@ def check_valid_newton_step(
     """
     nx, ny, nz = data.shape
     eps = 1e-12
-
-    if is_frac:
-        i *= nx
-        j *= ny
-        k *= nz
 
     i = int(i)
     j = int(j)
@@ -205,10 +199,11 @@ def check_valid_newton_step(
 
 
 
-@njit(parallel=True)
-def find_critical_points(
+# #@njit(parallel=True, cache=True)
+def find_saddle_points(
     data,
     matrix,
+    allowed_points,
 ):
     nx, ny, nz = data.shape
 
@@ -227,62 +222,103 @@ def find_critical_points(
     r_voxel_cart = 0.5 * frac_to_cart
     r_voxel_cart2 = r_voxel_cart * r_voxel_cart
 
-    critical_points = np.full(
+    saddle_mask = np.full(
         (nx, ny, nz),
         np.iinfo(np.uint8).max,
-        dtype=np.uint8
+        dtype=np.uint16
     )
+    
+    # get range of values
+    eig_tol = 1e-4*(data.max() - data.min())
+    
+    # get points to check
+    allowed_coords = np.argwhere(allowed_points)
+    
+    for coord_idx in prange(len(allowed_coords)):
+        i,j,k = allowed_coords[coord_idx]
 
-    for i in prange(nx):
-        for j in range(ny):
-            for k in range(nz):
+        valid, morse =  check_valid_newton_step(
+            i,j,k,
+            data,
+            r_voxel_cart2,
+            inv_G,
+            H_frac_to_cart,
+        )
+        
+        # skip maxima, minima and invalid points
+        if not valid:
+            continue
+        # if morse == 0 or morse == 3:
+        #     continue
+                        
+        ii, jj, kk, success, morse_index = newton_refine_in_voxel(
+            i,j,k,
+            data=data,
+            inv_G=inv_G,
+            eig_tol=eig_tol,
+            )
+        
+        if not success:
+            continue
 
-                valid, morse =  check_valid_newton_step(
-                    float(i), float(j), float(k),
-                    data,
-                    r_voxel_cart2,
-                    inv_G,
-                    H_frac_to_cart,
-                    is_frac=False,
-                )
-                
-                # skip maxima, minima and invalid points
-                if not valid:
-                    continue
-                if morse == 0 or morse == 3:
-                    critical_points[i,j,k] = 4
-                    continue
-                                
-                ii, jj, kk, success, _, morse_index = newton_step_exceeds_cutoff(
-                    float(i), float(j), float(k), 
-                    data=data,
-                    inv_G=inv_G,
-                    is_frac = False,
-                    )
-                if not success:
-                    critical_points[i,j,k] = 3
-                    continue
+        saddle_mask[i, j, k] = morse_index
 
-                critical_points[i, j, k] = morse_index
+    return saddle_mask
 
-    return critical_points
-
-
-from baderkit.core import Grid
-import time
-grid = Grid.from_vasp("ELFCAR")
-matrix = grid.matrix
-t0 = time.time()
-test = find_critical_points(
-    grid.total, 
+#@njit(parallel=True, cache=True)
+def refine_saddle_points(
+    saddle_mask,
+    data,
     matrix,
-    )
-t1 = time.time()
-print(t1-t0)
-test_grid = grid.copy()
-for i in range(5):
-    test_grid.total = test==i
-    test_grid.write_vasp(f"ELFCAR_test_{i}")
+        ):
+    G = matrix @ matrix.T
+    inv_G = np.linalg.inv(G)
+    
+    # get coordinates of saddles
+    saddle1s = np.argwhere(saddle_mask == 1)
+    saddle2s = np.argwhere(saddle_mask == 2)
+    
+    # create arrays to store partial coordinates
+    saddle1_coords = np.empty_like(saddle1s, dtype=np.float64)
+    saddle2_coords = np.empty_like(saddle2s, dtype=np.float64)
+
+    for coord_idx in prange(len(saddle1s)):
+        i,j,k = saddle1s[coord_idx]
+        # refine
+        ii, jj, kk, success, _, morse_index = newton_refine_in_voxel(
+            float(i), float(j), float(k), 
+            data=data,
+            inv_G=inv_G,
+            is_frac = False,
+            )
+        saddle1_coords[coord_idx] = (ii,jj,kk)
+
+    for coord_idx in prange(len(saddle2s)):
+        i,j,k = saddle2s[coord_idx]
+        # refine
+        ii, jj, kk, success, _, morse_index = newton_refine_in_voxel(
+            float(i), float(j), float(k), 
+            data=data,
+            inv_G=inv_G,
+            is_frac = False,
+            )
+        saddle2_coords[coord_idx] = (ii,jj,kk)
+    return saddle1_coords, saddle2_coords
+# from baderkit.core import Grid
+# import time
+# grid = Grid.from_vasp("ELFCAR")
+# matrix = grid.matrix
+# t0 = time.time()
+# test = find_critical_points(
+#     grid.total, 
+#     matrix,
+#     )
+# t1 = time.time()
+# print(t1-t0)
+# test_grid = grid.copy()
+# for i in range(5):
+#     test_grid.total = test==i
+#     test_grid.write_vasp(f"ELFCAR_test_{i}")
     
 # Next Steps:
     # 1. Update maxima finding method.

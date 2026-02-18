@@ -700,9 +700,9 @@ class Bader(BaseAnalysis):
             highest value at which all of the minima in the group are topologically 
             connected if one takes the all voxels at or below that value
         """
-        if self._maxima_persistence_values is None:
+        if self._minima_persistence_values is None:
             self._run_minima_bader()
-        return self._maxima_persistence_values
+        return self._minima_persistence_values
     
     @property
     def minima_persistence_tol(self) -> float:
@@ -1185,26 +1185,21 @@ class Bader(BaseAnalysis):
             that are within each minimas persistence threshold.
 
         """
+
         maxima_groups = get_persistence_groups(
             labels=self.maxima_basin_labels,
             data=self.reference_grid.total,
             persistence_cutoffs=self.maxima_persistence_values,
             extrema_vox=self.maxima_vox,
+            use_minima=False,
             )
-        
-        # create a temporary grid object with the scalar field flipped.
-        temp_reference = self.reference_grid.total.copy()
-        temp_reference *= -1
-        # shift so that the values are above our vacuum cutoff. Mask out any
-        # vacuum points from the regular function
-        temp_reference += temp_reference.min() + self.vacuum_tol + 1e-6
-        temp_reference[self.vacuum_mask] = 0.0
 
         minima_groups = get_persistence_groups(
             labels=self.minima_basin_labels,
-            data=temp_reference,
+            data=self.reference_grid.total,
             persistence_cutoffs=self.minima_persistence_values,
             extrema_vox=self.minima_vox,
+            use_minima=True,
             )
         return maxima_groups, minima_groups
         

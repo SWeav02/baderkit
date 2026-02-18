@@ -828,8 +828,9 @@ def initialize_labels_from_extrema(
                 union(labels, ext_label, neigh_label)
 
     # Now we look for any points that have neighbors with the same value that
-    # aren't maxima. We hill climbe from that point to find the corresponding
+    # aren't maxima. We hill climb from that point to find the corresponding
     # maximum
+    flat_false_maxima = np.zeros(len(extrema_vox), dtype=np.bool_)
     for ext_idx, ((i, j, k), value, ext_label) in enumerate(
         zip(extrema_vox, extrema_values, extrema_labels)
     ):
@@ -844,7 +845,7 @@ def initialize_labels_from_extrema(
                 continue
             # If we're still here, this point is a false maximum. We follow the
             # path to the maximum and union
-
+            flat_false_maxima[ext_idx] = True
             while True:
                 _, (ni, nj, nk) = get_best_neighbor(
                     data,
@@ -882,9 +883,16 @@ def initialize_labels_from_extrema(
     else:
         sorted_indices = np.argsort(extrema_values)
 
+    # record the points and values that connect
+    connections = []
+    
     # Iterate over each maximum (except the first) and check for nearby extrema
     # above/below (extrema/minima)
     for sorted_ext_idx, ext_idx in enumerate(sorted_indices[1:]):
+        
+        # skip flat maxima
+        if flat_false_maxima[ext_idx]:
+            continue
 
         sorted_ext_idx += 1
         max_frac = extrema_frac[ext_idx]
@@ -938,6 +946,7 @@ def initialize_labels_from_extrema(
                 min_indices = np.where((s[:-1] <= 0) & (s[1:] >= 0))[0]
                 if len(min_indices) < 2:
                     persistence_score = 0
+                    conn_val = values.max()
                 else:
                     min0 = min_indices[0]
                     min1 = min_indices[-1]
@@ -952,6 +961,7 @@ def initialize_labels_from_extrema(
                 max_indices = np.where((s[:-1] >= 0) & (s[1:] <= 0))[0]
                 if len(max_indices) < 2:
                     persistence_score = 0
+                    conn_val = values.min()
                 else:
                     max0 = max_indices[0]
                     max1 = max_indices[-1]
@@ -962,6 +972,7 @@ def initialize_labels_from_extrema(
             # points are not separated and we union.
             if persistence_score < persistence_tol:
                 union(labels, extrema_labels[ext_idx], extrema_labels[neigh_ext_idx])
+                connections.append((ext_idx, neigh_ext_idx, conn_val))
     
     ###########################################################################
     # Root finding
@@ -1024,8 +1035,19 @@ def initialize_labels_from_extrema(
     
     extrema_coords = extrema_vox[root_extrema]
     extrema_frac = extrema_frac[root_extrema]
+    
+    persistence_cutoffs = extrema_values[root_extrema]
+    # get the lowest/highest connection values for each root maxima/minima
+    for ext_idx, _, conn_val in connections:
+        root = extrema_roots[ext_idx]
+        root_idx = np.searchsorted(extrema_labels, root)
+        if use_minima:
+            persistence_cutoffs[root_idx] = max(persistence_cutoffs[root_idx], conn_val)
+        else:
+            persistence_cutoffs[root_idx] = min(persistence_cutoffs[root_idx], conn_val)
 
-    return labels, images, extrema_coords, extrema_frac, extrema_groups
+
+    return labels, images, extrema_coords, extrema_frac, extrema_groups, persistence_cutoffs
 
 @njit(cache=True)
 def get_basin_min_and_max(
@@ -1097,6 +1119,7 @@ def group_by_persistence(
         basin_connections,
         saddle_values,
         persistence_tol,
+        persistence_cutoffs,
         use_minima = False,
         ):
     num_critical = len(critical_vox)
@@ -1108,6 +1131,7 @@ def group_by_persistence(
     
     # create array to track the important saddles
     important_saddles = np.ones(len(saddle_values), dtype=np.bool_)
+    active_connections = np.zeros(len(saddle_values), dtype=np.bool_)
     saddle_indices = np.arange(len(important_saddles))
     
     # get values at critical points
@@ -1168,6 +1192,7 @@ def group_by_persistence(
             
             connection_mask[pair_idx] = True
             important_saddles[saddle_idx] = False
+            active_connections[saddle_idx] = True
 
         # get unchanged connections
         connection_indices = np.where(~connection_mask)[0]
@@ -1201,8 +1226,20 @@ def group_by_persistence(
         crit_frac = critical_frac[ext_idx]
         root_frac = critical_frac[root_idx]
         root_transforms[ext_idx] = compute_wrap_offset(crit_frac, root_frac)
+        
+    # update persistence cutoffs
+    for active, (crit1, crit2, _, _), value in zip(active_connections, basin_connections, saddle_values):
+        # skip connections that didn't activate
+        if not active:
+            continue
+        # get the root
+        root = find_root(unions, crit1)
+        if use_minima:
+            persistence_cutoffs[root] = max(persistence_cutoffs[root], value)
+        else:
+            persistence_cutoffs[root] = min(persistence_cutoffs[root], value)
 
-    return roots, root_transforms
+    return roots, root_transforms, persistence_cutoffs
 
 @njit(parallel=True, cache=True)
 def update_labels_and_images(
@@ -1371,6 +1408,7 @@ def get_persistence_groups(
     data,
     persistence_cutoffs,
     extrema_vox,
+    use_minima,
         ):
     nx, ny, nz = data.shape
     max_val = len(extrema_vox)
@@ -1391,9 +1429,13 @@ def get_persistence_groups(
                 value = data[i,j,k]
                 cutoff = persistence_cutoffs[label]
                 # if value is above the cutoff, add to the group
-                if value >= cutoff:
+                if (
+                    not use_minima and value >= cutoff
+                    or use_minima and value <= cutoff
+                    ):
                     point = np.array((i,j,k), dtype=np.uint16)
                     persistence_groups[label].append(point)
+
     # convert to arrays
     array_groups = []
     for i in persistence_groups:
