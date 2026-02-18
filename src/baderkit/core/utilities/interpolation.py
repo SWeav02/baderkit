@@ -444,6 +444,10 @@ def spline_grad(i, j, k, data, h=0.5, is_frac=False):
         i = i * nx
         j = j * ny
         k = k * nz
+        
+    i = float(i)
+    j = float(j)
+    k = float(k)
 
     fxp = interp_spline(i + h, j, k, data, False)
     fxm = interp_spline(i - h, j, k, data, False)
@@ -459,6 +463,7 @@ def spline_grad(i, j, k, data, h=0.5, is_frac=False):
     gz = (fzp - fzm) / (2.0 * h)
 
     return gx, gy, gz
+   
 
 @njit(fastmath=True)
 def spline_hess(i, j, k, data, h=0.5, is_frac=False):
@@ -471,27 +476,37 @@ def spline_hess(i, j, k, data, h=0.5, is_frac=False):
         i = i * nx
         j = j * ny
         k = k * nz
+        
+    i = float(i)
+    j = float(j)
+    k = float(k)
+    
+    h2 = 2.0*h
+    hh = h*h
+    hh4 = 4.0*hh
+
 
     f0 = interp_spline(i, j, k, data, False)
+    f02 = f0*2
 
     # Second derivatives
     f_xx = (
         interp_spline(i + h, j, k, data, False)
-        - 2.0 * f0
+        - f02
         + interp_spline(i - h, j, k, data, False)
-    ) / (h * h)
+    ) / hh
 
     f_yy = (
         interp_spline(i, j + h, k, data, False)
-        - 2.0 * f0
+        - f02
         + interp_spline(i, j - h, k, data, False)
-    ) / (h * h)
+    ) / hh
 
     f_zz = (
         interp_spline(i, j, k + h, data, False)
-        - 2.0 * f0
+        - f02
         + interp_spline(i, j, k - h, data, False)
-    ) / (h * h)
+    ) / hh
 
     # Mixed partials
     f_xy = (
@@ -499,21 +514,21 @@ def spline_hess(i, j, k, data, h=0.5, is_frac=False):
         - interp_spline(i + h, j - h, k, data, False)
         - interp_spline(i - h, j + h, k, data, False)
         + interp_spline(i - h, j - h, k, data, False)
-    ) / (4.0 * h * h)
+    ) / hh4
 
     f_xz = (
         interp_spline(i + h, j, k + h, data, False)
         - interp_spline(i + h, j, k - h, data, False)
         - interp_spline(i - h, j, k + h, data, False)
         + interp_spline(i - h, j, k - h, data, False)
-    ) / (4.0 * h * h)
+    ) / hh4
 
     f_yz = (
         interp_spline(i, j + h, k + h, data, False)
         - interp_spline(i, j + h, k - h, data, False)
         - interp_spline(i, j - h, k + h, data, False)
         + interp_spline(i, j - h, k - h, data, False)
-    ) / (4.0 * h * h)
+    ) / hh4
 
     H = np.empty((3, 3))
     H[0, 0] = f_xx
@@ -526,10 +541,259 @@ def spline_hess(i, j, k, data, h=0.5, is_frac=False):
 
     return H
 
+@njit(fastmath=True)
+def spline_grad_and_hess(i, j, k, data, h=0.5, is_frac=False):
+    """
+    Compute both gradient and Hessian of a spline-interpolated scalar field
+    with respect to grid coordinates (i, j, k), minimizing redundant interpolations.
+    """
+    nx, ny, nz = data.shape
+    if is_frac:
+        i = i * nx
+        j = j * ny
+        k = k * nz
+        
+    i = float(i)
+    j = float(j)
+    k = float(k)
+    
+    h2 = 2.0*h
+    hh = h*h
+    hh4 = 4.0*hh
+
+    # Central point
+    f0 = interp_spline(i, j, k, data, False)
+    f02 = f0*2
+
+    # Neighbor points for gradient and Hessian
+    fxp = interp_spline(i + h, j, k, data, False)
+    fxm = interp_spline(i - h, j, k, data, False)
+    fyp = interp_spline(i, j + h, k, data, False)
+    fym = interp_spline(i, j - h, k, data, False)
+    fzp = interp_spline(i, j, k + h, data, False)
+    fzm = interp_spline(i, j, k - h, data, False)
+
+    # Gradient
+    gx = (fxp - fxm) / h2
+    gy = (fyp - fym) / h2
+    gz = (fzp - fzm) / h2
+
+    # Second derivatives (Hessian diagonal)
+    f_xx = (fxp - f02 + fxm) / hh
+    f_yy = (fyp - f02 + fym) / hh
+    f_zz = (fzp - f02 + fzm) / hh
+
+    # Mixed partials
+    f_xy = (
+        interp_spline(i + h, j + h, k, data, False)
+        - interp_spline(i + h, j - h, k, data, False)
+        - interp_spline(i - h, j + h, k, data, False)
+        + interp_spline(i - h, j - h, k, data, False)
+    ) / hh4
+
+    f_xz = (
+        interp_spline(i + h, j, k + h, data, False)
+        - interp_spline(i + h, j, k - h, data, False)
+        - interp_spline(i - h, j, k + h, data, False)
+        + interp_spline(i - h, j, k - h, data, False)
+    ) / hh4
+
+    f_yz = (
+        interp_spline(i, j + h, k + h, data, False)
+        - interp_spline(i, j + h, k - h, data, False)
+        - interp_spline(i, j - h, k + h, data, False)
+        + interp_spline(i, j - h, k - h, data, False)
+    ) / hh4
+
+    H = np.empty((3, 3))
+    H[0, 0] = f_xx
+    H[1, 1] = f_yy
+    H[2, 2] = f_zz
+    H[0, 1] = H[1, 0] = f_xy
+    H[0, 2] = H[2, 0] = f_xz
+    H[1, 2] = H[2, 1] = f_yz
+
+    return gx, gy, gz, H
 
 
 @njit(fastmath=True)
-def newton_refine_extremum(
+def newton_step_exceeds_cutoff(
+    i,j,k,
+    data,
+    inv_G,
+    is_frac: bool = True,
+    max_iter=30,
+    grad_tol=1e-6,
+    lambda0=1.0e-2,
+    lambda_up=10.0,
+    lambda_down=0.3,
+    h=0.25,
+    eig_tol=1e-10,
+):
+    """
+    Damped Newton refinement for extrema or saddles in 3D.
+    Determines Morse index automatically and stops if refinement exits voxel.
+    
+    Returns
+    -------
+    i, j, k : float
+        Refined coordinates (fractional if is_frac=True)
+    success : int
+        0 if converged, 1 if failed, 2 if exited voxel
+    grad_norm : float
+        Final Cartesian gradient norm
+    morse_index : int
+        Number of negative eigenvalues of the Hessian
+    """
+
+    nx, ny, nz = data.shape
+    max_step = 0.25 * min(nx, ny, nz)
+
+    # Convert fractional -> voxel coordinates
+    i = float(i)
+    j = float(j)
+    k = float(k)
+    if is_frac:
+        i *= nx
+        j *= ny
+        k *= nz
+
+    voxel_min = np.array([i - 0.5, j - 0.5, k - 0.5])
+    voxel_max = np.array([i + 0.5, j + 0.5, k + 0.5])
+
+    for it in range(max_iter):
+        # Gradient (fractional)
+        gi, gj, gk, H = spline_grad_and_hess(i, j, k, data, h)
+        g_cart2 = (
+            gi*(inv_G[0,0]*gi + inv_G[0,1]*gj + inv_G[0,2]*gk) +
+            gj*(inv_G[1,0]*gi + inv_G[1,1]*gj + inv_G[1,2]*gk) +
+            gk*(inv_G[2,0]*gi + inv_G[2,1]*gj + inv_G[2,2]*gk)
+        )
+        g_norm = np.sqrt(g_cart2)
+
+        # Convergence by gradient norm
+        if g_norm < grad_tol:
+            evals, _ = np.linalg.eigh(H)
+            morse_index = np.sum(evals < -eig_tol)
+            if is_frac:
+                return i/nx, j/ny, k/nz, True, g_norm, morse_index
+            return i, j, k, True, g_norm, morse_index
+
+        # Eigen-decomposition
+        evals, vecs = np.linalg.eigh(H)
+        evals_mod = np.empty_like(evals)
+        lam = max(lambda0, 0.05 * np.max(np.abs(evals)))
+        enforce = g_norm < 10*grad_tol
+        for idx_ev in range(3):
+            mag = max(abs(evals[idx_ev]), lam)
+            if enforce:
+                evals_mod[idx_ev] = mag if evals[idx_ev] >= 0 else -mag
+            else:
+                evals_mod[idx_ev] = mag if evals[idx_ev] >= 0 else -mag
+
+        H_mod = (vecs * evals_mod[np.newaxis, :]) @ vecs.T
+
+        try:
+            di, dj, dk = np.linalg.solve(H_mod, -np.array((gi, gj, gk), dtype=np.float64))
+        except:
+            lambda0 *= lambda_up
+            if lambda0 > 1e12:
+                if is_frac:
+                    return i/nx, j/ny, k/nz, False, g_norm, np.sum(evals < -eig_tol)
+                return i, j, k, False, g_norm, np.sum(evals < -eig_tol)
+            continue
+
+        # Clamp step length
+        step_norm = get_norm(di, dj, dk)
+        if step_norm < 1e-8:
+            break
+        scale = min(1.0, max_step / (step_norm + 1e-12))
+        di *= scale**0.5
+        dj *= scale**0.5
+        dk *= scale**0.5
+
+        i_trial = i + di
+        j_trial = j + dj
+        k_trial = k + dk
+
+        # Voxel exit check
+        if (i_trial < voxel_min[0] or i_trial > voxel_max[0] or
+            j_trial < voxel_min[1] or j_trial > voxel_max[1] or
+            k_trial < voxel_min[2] or k_trial > voxel_max[2]):
+            if is_frac:
+                return i/nx, j/ny, k/nz, False, g_norm, np.sum(evals < -eig_tol)
+            return i, j, k, False, g_norm, np.sum(evals < -eig_tol)
+
+        # Trial gradient
+        gi_trial, gj_trial, gk_trial = spline_grad(i_trial, j_trial, k_trial, data, h)
+        g_trial_cart2 = (
+            gi_trial*(inv_G[0,0]*gi_trial + inv_G[0,1]*gj_trial + inv_G[0,2]*gk_trial) +
+            gj_trial*(inv_G[1,0]*gi_trial + inv_G[1,1]*gj_trial + inv_G[1,2]*gk_trial) +
+            gk_trial*(inv_G[2,0]*gi_trial + inv_G[2,1]*gj_trial + inv_G[2,2]*gk_trial)
+        )
+        g_trial_norm = np.sqrt(g_trial_cart2)
+
+        # Accept if gradient norm decreases
+        pred = abs(gi*di + gj*dj + gk*dk)
+        c = 0.1 if lambda0 < 1e-2 else 0.5
+        if g_trial_norm < g_norm + c*pred:
+            i, j, k = i_trial, j_trial, k_trial
+            lambda0 = max(lambda0*lambda_down, 1e-16)
+        else:
+            lambda0 *= lambda_up
+
+    # Final diagnostics
+    evals_final, _ = np.linalg.eigh(spline_hess(i, j, k, data, h))
+    gi_final, gj_final, gk_final = spline_grad(i, j, k, data, h)
+    g_cart2_final = (
+        gi_final*(inv_G[0,0]*gi_final + inv_G[0,1]*gj_final + inv_G[0,2]*gk_final) +
+        gj_final*(inv_G[1,0]*gi_final + inv_G[1,1]*gj_final + inv_G[1,2]*gk_final) +
+        gk_final*(inv_G[2,0]*gi_final + inv_G[2,1]*gj_final + inv_G[2,2]*gk_final)
+    )
+    grad_norm_final = np.sqrt(g_cart2_final)
+    morse_index = np.sum(evals_final < -eig_tol)
+    success = grad_norm_final < grad_tol
+
+    if is_frac:
+        i /= nx
+        j /= ny
+        k /= nz
+
+    return i, j, k, success, grad_norm_final, morse_index
+
+
+
+@njit(fastmath=True)
+def spline_grad_cart(i, j, k, data, dir2car, h=0.5, is_frac=False):
+    nx,ny,nz = data.shape
+    
+    # get gradient in voxel coords
+    gi, gj, gk = spline_grad(i,j,k,data,h,is_frac)
+    
+    # convert to fractional-coordinate gradient
+    gi *= nx
+    gj *= ny
+    gk *= nz
+
+    # convert to Cartesian gradient
+    gx = dir2car[0, 0] * gi + dir2car[0, 1] * gj + dir2car[0, 2] * gk
+    gy = dir2car[1, 0] * gi + dir2car[1, 1] * gj + dir2car[1, 2] * gk
+    gz = dir2car[2, 0] * gi + dir2car[2, 1] * gj + dir2car[2, 2] * gk
+    
+    return gx, gy, gz
+
+@njit(fastmath=True)
+def spline_hess_cart(i, j, k, data, dir2car, h=0.5, is_frac=False):
+    
+    # get hessian in grid coords
+    H = spline_hess(i, j, k, data, h, is_frac)
+    
+    # convert to cartesian and return
+    return dir2car @ H @ dir2car.T
+
+
+@njit(fastmath=True)
+def newton_refine_critical(
     point,
     data,
     target_index,
@@ -751,7 +1015,7 @@ def refine_critical_points(
     for idx in prange(len(points)):
         point = points[idx]
         
-        i, j, k, success, _, _ = newton_refine_extremum(
+        i, j, k, success, _, _ = newton_refine_critical(
             point,
             data,
             target_index,
@@ -813,7 +1077,7 @@ def refine_extrema(
             average_frac = extrema_coords[group_idx] / shape
         new_voxel_coords[group_idx] = (ai, aj, ak)
         
-        i, j, k, success, _, _ = newton_refine_extremum(
+        i, j, k, success, _, _ = newton_refine_critical(
             (ai,aj,ak),
             data,
             target_index,
@@ -827,3 +1091,199 @@ def refine_extrema(
     frac_coords = np.round(frac_coords, 6)
     # frac_coords %= 1
     return new_voxel_coords, frac_coords, refined_values
+
+
+
+# @njit(fastmath=True)
+# def check_valid_newton_step_interp(
+#     i, j, k,
+#     data,
+#     H_cart_max2,
+#     r_voxel_cart2,
+#     inv_G,
+#     is_frac=True,
+#     h=0.25,
+# ):
+#     """
+#     Newton-step rejection using spline interpolation for gradient + Hessian diagonal.
+#     """
+#     nx, ny, nz = data.shape
+
+#     if is_frac:
+#         i *= nx
+#         j *= ny
+#         k *= nz
+
+#     inv_2h = 1.0 / (2.0*h)
+#     inv_h2 = 1.0 / (h*h)
+
+#     # interpolate function values
+#     f0  = interp_spline(i,j,k,data,False)
+#     fxp = interp_spline(i+h,j,k,data,False)
+#     fxm = interp_spline(i-h,j,k,data,False)
+#     fyp = interp_spline(i,j+h,k,data,False)
+#     fym = interp_spline(i,j-h,k,data,False)
+#     fzp = interp_spline(i,j,k+h,data,False)
+#     fzm = interp_spline(i,j,k-h,data,False)
+
+#     # gradient
+#     gi = (fxp - fxm) * inv_2h
+#     gj = (fyp - fym) * inv_2h
+#     gk = (fzp - fzm) * inv_2h
+
+#     g_cart2 = (
+#         gi*(inv_G[0,0]*gi + inv_G[0,1]*gj + inv_G[0,2]*gk) +
+#         gj*(inv_G[1,0]*gi + inv_G[1,1]*gj + inv_G[1,2]*gk) +
+#         gk*(inv_G[2,0]*gi + inv_G[2,1]*gj + inv_G[2,2]*gk)
+#     )
+#     if g_cart2 > H_cart_max2:
+#         return True
+
+#     # Hessian diagonal
+#     Hxx = (fxp - 2.0*f0 + fxm) * inv_h2
+#     Hyy = (fyp - 2.0*f0 + fym) * inv_h2
+#     Hzz = (fzp - 2.0*f0 + fzm) * inv_h2
+
+#     # step estimate
+#     eps = 1e-12
+#     delta_est2 = (gi/(Hxx + eps))**2 + (gj/(Hyy + eps))**2 + (gk/(Hzz + eps))**2
+#     return delta_est2 > r_voxel_cart2
+
+# def newton_step_exceeds_cutoff_fast(
+#     i, j, k,
+#     data,
+#     H_max_frac,
+#     H_frac_to_cart,
+#     r_voxel_cart,
+#     inv_G,
+#     is_frac=True,
+#     h=0.25,
+# ):
+#     """
+#     Progressive, conservative Newton-step rejection test
+#     using Cartesian metric (skew-lattice aware).
+
+#     Returns
+#     -------
+#     exceeds : bool
+#         True if any Newton-like step must exceed cutoff_cart
+#     """
+
+#     nx, ny, nz = data.shape
+
+#     # fractional -> voxel
+#     if is_frac:
+#         i *= nx
+#         j *= ny
+#         k *= nz
+
+#     inv_2h = 1.0 / (2.0 * h)
+#     inv_h2 = 1.0 / hh
+
+#     # ------------------------------------------------------------
+#     # Interpolate values needed for gradient
+#     # ------------------------------------------------------------
+#     f0   = interp_spline(i, j, k, data, False)
+#     fxp  = interp_spline(i + h, j, k, data, False)
+#     fxm  = interp_spline(i - h, j, k, data, False)
+#     fyp  = interp_spline(i, j + h, k, data, False)
+#     fym  = interp_spline(i, j - h, k, data, False)
+#     fzp  = interp_spline(i, j, k + h, data, False)
+#     fzm  = interp_spline(i, j, k - h, data, False)
+
+#     # ------------------------------------------------------------
+#     # Gradient (fractional)
+#     # ------------------------------------------------------------
+#     gi = (fxp - fxm) * inv_2h
+#     gj = (fyp - fym) * inv_2h
+#     gk = (fzp - fzm) * inv_2h
+
+#     # Cartesian gradient norm
+#     g_cart2 = (
+#         gi * (inv_G[0,0]*gi + inv_G[0,1]*gj + inv_G[0,2]*gk) +
+#         gj * (inv_G[1,0]*gi + inv_G[1,1]*gj + inv_G[1,2]*gk) +
+#         gk * (inv_G[2,0]*gi + inv_G[2,1]*gj + inv_G[2,2]*gk)
+#     )
+#     g_cart = np.sqrt(g_cart2)
+
+#     # ------------------------------------------------------------
+#     # Stage 1: global curvature bound (Cartesian)
+#     # ------------------------------------------------------------
+#     H_cart_max = H_max_frac * H_frac_to_cart
+#     if g_cart > r_voxel_cart * H_cart_max:
+#         return True
+
+#     # ------------------------------------------------------------
+#     # Stage 2: Hessian diagonal (local bound)
+#     # ------------------------------------------------------------
+#     Hxx = (fxp - 2.0*f0 + fxm) * inv_h2
+#     Hyy = (fyp - 2.0*f0 + fym) * inv_h2
+#     Hzz = (fzp - 2.0*f0 + fzm) * inv_h2
+    
+#     # estimate step size
+#     delta_est = np.sqrt((gi/Hxx)**2 + (gj/Hyy)**2 + (gk/Hzz)**2)
+    
+#     if delta_est > r_voxel_cart:
+#         return True
+
+#     # ------------------------------------------------------------
+#     # Stage 2.5: Gershgorin max eigenvalue bound (signature-agnostic)
+#     # ------------------------------------------------------------
+#     # Mixed partials for Gershgorin
+#     f_xyp = interp_spline(i + h, j + h, k, data, False)
+#     f_xym = interp_spline(i + h, j - h, k, data, False)
+#     f_xmy = interp_spline(i - h, j + h, k, data, False)
+#     f_xmm = interp_spline(i - h, j - h, k, data, False)
+
+#     f_xzp = interp_spline(i + h, j, k + h, data, False)
+#     f_xzm = interp_spline(i + h, j, k - h, data, False)
+#     f_xmz = interp_spline(i - h, j, k + h, data, False)
+#     f_xmmz = interp_spline(i - h, j, k - h, data, False)
+
+#     f_yzp = interp_spline(i, j + h, k + h, data, False)
+#     f_yzm = interp_spline(i, j + h, k - h, data, False)
+#     f_ymz = interp_spline(i, j - h, k + h, data, False)
+#     f_ymmz = interp_spline(i, j - h, k - h, data, False)
+
+#     Hxy = (f_xyp - f_xym - f_xmy + f_xmm) * (0.25 * inv_h2)
+#     Hxz = (f_xzp - f_xzm - f_xmz + f_xmmz) * (0.25 * inv_h2)
+#     Hyz = (f_yzp - f_yzm - f_ymz + f_ymmz) * (0.25 * inv_h2)
+
+#     # estimate step size
+#     H_g_dir = Hxx*gi*gi + Hyy*gj*gj + Hzz*gk*gk + 2*Hxy*gi*gj + 2*Hxz*gi*gk + 2*Hyz*gj*gk
+#     lambda_eff = abs(H_g_dir / (gi*gi + gj*gj + gk*gk)) + 1e-12
+#     step_dir = np.sqrt(g_cart2) / lambda_eff
+    
+#     if step_dir > r_voxel_cart:
+#         return True
+
+
+#     # ------------------------------------------------------------
+#     # Stage 3: full Newton solve (exact step)
+#     # ------------------------------------------------------------
+#     H = np.empty((3,3))
+#     H[0,0] = Hxx
+#     H[1,1] = Hyy
+#     H[2,2] = Hzz
+#     H[0,1] = H[1,0] = Hxy
+#     H[0,2] = H[2,0] = Hxz
+#     H[1,2] = H[2,1] = Hyz
+
+#     try:
+#         di, dj, dk = np.linalg.solve(
+#             H, -np.array((gi, gj, gk), dtype=np.float64)
+#         )
+#     except:
+#         # singular Hessian → step unbounded
+#         return True
+
+#     # ------------------------------------------------------------
+#     # Stage 4: ellipsoidal voxel containment (Cartesian)
+#     # ------------------------------------------------------------
+#     step_cart2 = (
+#         di * (inv_G[0,0]*di + inv_G[0,1]*dj + inv_G[0,2]*dk) +
+#         dj * (inv_G[1,0]*di + inv_G[1,1]*dj + inv_G[1,2]*dk) +
+#         dk * (inv_G[2,0]*di + inv_G[2,1]*dj + inv_G[2,2]*dk)
+#     )
+
+#     return np.sqrt(step_cart2) > r_voxel_cart

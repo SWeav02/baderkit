@@ -324,7 +324,6 @@ class CriticalPoints(BaseAnalysis):
             labels = self.bader.maxima_basin_labels
             images = self.bader.maxima_basin_images
         
-        dir2car = np.linalg.inv(self.reference_grid.matrix).T
         # get canonical connection representations of saddles between basins
         possible_saddles, canonical_saddle_connections, extrema_connections, connection_vals = get_canonical_saddle_connections_doublegrid(
             labels,
@@ -332,7 +331,6 @@ class CriticalPoints(BaseAnalysis):
             self.bader.reference_grid.total,
             self.bader.vacuum_mask,
             self.manifold_labels,
-            dir2car,
             use_minima=use_minima,
         )
 
