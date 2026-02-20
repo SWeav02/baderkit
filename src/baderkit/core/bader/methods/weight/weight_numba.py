@@ -229,6 +229,7 @@ def get_weight_assignments(
                 labels[root_idx] = max_idx
                 charges[max_idx] += flat_charge[root_idx]
                 volumes[max_idx] += 1.0
+                
 
             else:
                 max_idx = labels[root_idx]

@@ -40,6 +40,8 @@ class WeightMethod(MethodBase):
         extrema_indices = np.empty(len(self.extrema_vox), dtype=np.uint32)
         for idx, (i,j,k) in enumerate(self.extrema_vox):
             extrema_indices[idx] = coords_to_flat(i,j,k, ny_nz, nz)
+        # sort low to high so that searchsorted works
+        extrema_indices = np.sort(extrema_indices)
 
         # mark vacuum points
         labels[self.vacuum_mask.ravel()] = np.iinfo(labels.dtype).max - 1

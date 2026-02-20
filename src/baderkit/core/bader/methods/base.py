@@ -94,7 +94,7 @@ class MethodBase:
         # These variables are also often needed but are calculated during the run
         self._extrema_mask = None
         self._extrema_vox = None
-        self._extrema_children = None
+        self._extrema_groups = None
         self._extrema_frac = None
         self._car2lat = None
         self._dir2lat = None
@@ -104,7 +104,7 @@ class MethodBase:
         Runs the main bader method and returns a dictionary with values for:
             - extrema_frac
             - extrema_vox
-            - extrema_children
+            - extrema_groups
             - extrema_basin_labels
             - extrema_basin_images
             - extrema_ref_values
@@ -138,7 +138,14 @@ class MethodBase:
             )
         
         # initialize our labels, combining false extrema
-        labels, images, self._extrema_vox, self._extrema_frac, self._extrema_children, persistence_cutoffs = initialize_labels_from_extrema(
+        (
+            labels, 
+            images, 
+            self._extrema_vox, 
+            self._extrema_frac, 
+            self._extrema_groups, 
+            # persistence_cutoffs
+        ) = initialize_labels_from_extrema(
             labels=labels,
             data=self.reference_grid.total,
             extrema_frac=extrema_frac,
@@ -154,22 +161,36 @@ class MethodBase:
         results = self._run_bader(labels, images)
         labels = results["extrema_basin_labels"]
         images = results["extrema_basin_images"]
+        
+        # sort extrema coordinates ensuring they go from lowest to highest label
+        extrema_labels = labels[
+            self.extrema_vox[:,0],
+            self.extrema_vox[:,1],
+            self.extrema_vox[:,2],
+            ]
+        extrema_sorted = np.argsort(extrema_labels)
+        self._extrema_vox = self.extrema_vox[extrema_sorted]
+        self._extrema_groups = [self.extrema_groups[i] for i in extrema_sorted]
 
         # Now we want to combine any remaining noisy extrema based on their
         # persistence.
         logging.info("Combining Low-Persistence Basins")
         
         saddle_connections, saddle_coords, saddle_values = self.get_saddle_connections(labels, images)
-        
+
         # get extrema unions based on persistence and update lowest persistence
         # values for extrema
-        extrema_roots, root_transforms, persistence_cutoffs= group_by_persistence(
+        (
+            extrema_roots, 
+            root_transforms, 
+            # persistence_cutoffs
+            )= group_by_persistence(
             data=self.reference_grid.total,
             critical_vox=self.extrema_vox, 
             basin_connections=saddle_connections, 
             saddle_values=saddle_values, 
             persistence_tol=self.persistence_tol,
-            persistence_cutoffs=persistence_cutoffs,
+            # persistence_cutoffs=persistence_cutoffs,
             use_minima=self.use_minima,
             )
 
@@ -179,11 +200,20 @@ class MethodBase:
         # get unique roots. The indices that result are the labels we want to
         # assign our points to
         final_extrema, inverse, indices = np.unique(extrema_roots, return_inverse=True, return_index=True)
-        
+                
         # next we want to sort the final indices from low to high
         extrema_vox = self.extrema_vox[final_extrema]
         extrema_vals = self.reference_grid.total[extrema_vox[:,0], extrema_vox[:,1], extrema_vox[:,2]]
         ordered_indices = np.argsort(extrema_vals)[::-1]  # descending
+        # reorder final_extrema, persistence_cutoffs
+        final_extrema = final_extrema[ordered_indices]
+        # get the final extrema groups and voxels
+        extrema_groups = [self.extrema_groups[i] for i in final_extrema]
+        extrema_vox = self.extrema_vox[final_extrema]
+
+        # persistence_cutoffs = persistence_cutoffs[final_extrema]
+        final_charges = charges[final_extrema]
+        final_volumes = volumes[final_extrema]
 
         # For each old maximum, get the new index we want to map them onto.
         new_roots = np.empty_like(inverse, dtype=int)
@@ -194,17 +224,12 @@ class MethodBase:
         for idx, old_idx in enumerate(indices):
             final_roots[idx] = new_roots[old_idx]
         
-        # reorder final_extrema, persistence_cutoffs
-        final_extrema = final_extrema[ordered_indices]
-        # persistence_cutoffs = persistence_cutoffs[final_extrema]
-        extrema_children = [self.extrema_children[i] for i in final_extrema]
-        final_charges = charges[final_extrema]
-        final_volumes = volumes[final_extrema]
+
         
         # combine children, charges, volumes
         for max_idx, (root, old_root) in enumerate(zip(final_roots, extrema_roots)):
             if max_idx != old_root:
-                extrema_children[root] = np.append(extrema_children[root], self.extrema_children[max_idx], axis=0)
+                extrema_groups[root] = np.append(extrema_groups[root], self.extrema_groups[max_idx], axis=0)
                 final_charges[root] += charges[max_idx]
                 final_volumes[root] += volumes[max_idx]
 
@@ -216,20 +241,19 @@ class MethodBase:
             image_map=root_transforms,
             vacuum_mask=self.vacuum_mask
             )
-
         # save final results
-        self._extrema_vox = self.extrema_vox[final_extrema]
-        self._extrema_children = extrema_children
-        persistence_cutoffs = persistence_cutoffs[final_extrema]
+        self._extrema_vox = extrema_vox
+        self._extrema_groups = extrema_groups
+        # persistence_cutoffs = persistence_cutoffs[final_extrema]
 
         if self.use_minima:
             logging.info("Refining Minima")  
         else:
             logging.info("Refining Maxima")
         # refine extrema using a quadratic fit
-        self._extrema_vox, refined_extrema_frac, extrema_values = refine_extrema(
+        self._extrema_vox, refined_extrema_frac= refine_extrema(
             extrema_coords=self.extrema_vox,
-            extrema_children=self.extrema_children,
+            extrema_groups=self.extrema_groups,
             data=self.reference_grid.total,
             labels=labels,
             lattice=self.reference_grid.matrix,
@@ -237,6 +261,12 @@ class MethodBase:
         )
 
         self._extrema_frac = refined_extrema_frac
+        
+        extrema_values = self.reference_grid.total[
+            self.extrema_vox[:,0],
+            self.extrema_vox[:,1],
+            self.extrema_vox[:,2],
+            ]
 
         results.update(
             {
@@ -245,10 +275,10 @@ class MethodBase:
                 "extrema_vox": self.extrema_vox.astype(np.uint16),
                 "basin_charges": final_charges,
                 "basin_volumes": final_volumes,
-                "extrema_voxel_groups": self.extrema_children,
+                "extrema_voxel_groups": self.extrema_groups,
                 "extrema_frac": self.extrema_frac,
                 "extrema_ref_values": extrema_values,
-                "extrema_persistence_values": persistence_cutoffs,
+                # "extrema_persistence_values": persistence_cutoffs,
             }
         )
         return results
@@ -310,7 +340,7 @@ class MethodBase:
         return self._extrema_vox
     
     @property
-    def extrema_children(self) -> NDArray[int]:
+    def extrema_groups(self) -> NDArray[int]:
         """
 
         Returns
@@ -319,8 +349,8 @@ class MethodBase:
             An Nx3 array representing the voxel indices of each local maximum.
 
         """
-        assert self._extrema_children is not None, "Maxima children must be set by run method"
-        return self._extrema_children
+        assert self._extrema_groups is not None, "Maxima children must be set by run method"
+        return self._extrema_groups
 
     @property
     def extrema_frac(self) -> NDArray[float]:

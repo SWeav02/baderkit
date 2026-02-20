@@ -884,7 +884,7 @@ def initialize_labels_from_extrema(
         sorted_indices = np.argsort(extrema_values)
 
     # record the points and values that connect
-    connections = []
+    # connections = []
     
     # Iterate over each maximum (except the first) and check for nearby extrema
     # above/below (extrema/minima)
@@ -972,7 +972,7 @@ def initialize_labels_from_extrema(
             # points are not separated and we union.
             if persistence_score < persistence_tol:
                 union(labels, extrema_labels[ext_idx], extrema_labels[neigh_ext_idx])
-                connections.append((ext_idx, neigh_ext_idx, conn_val))
+                # connections.append((ext_idx, conn_val))
     
     ###########################################################################
     # Root finding
@@ -988,11 +988,12 @@ def initialize_labels_from_extrema(
     
     # group the maxima and set them to the highest member in their group
     extrema_groups = []
-    
+    root_extrema = []
+
     for root_label in unique_roots:
         i,j,k = flat_to_coords(root_label, ny_nz, nz)
-        group = [np.array((i,j,k), dtype=np.uint16)]
-        group_labels = [root_label]
+        group = []
+        group_labels = []
         best_point = root_label
         best_value = data[i,j,k]
         for ext_idx, ext_root in enumerate(extrema_roots):
@@ -1019,35 +1020,46 @@ def initialize_labels_from_extrema(
         for idx, array in enumerate(group):
             group_array[idx] = array
         extrema_groups.append(group_array)
-    
-    root_extrema = []
+        # find the ext_idx of the best point
+        root_idx = np.searchsorted(extrema_labels, best_point)
+        root_extrema.append(root_idx)
+    root_extrema = np.array(root_extrema, np.uint32)
+
     # Update roots again, and note the images each grouped maximum must cross
     for ext_idx, ext_label in enumerate(extrema_labels):
-        root = find_root(labels, ext_label)
-        if extrema_labels[ext_idx] == root:
-            root_extrema.append(ext_idx)
-            continue
+        root = labels[ext_label]
+        # get fractional coordinates
         ext_frac = extrema_frac[ext_idx]
         root_idx = np.searchsorted(extrema_labels, root)
         root_frac = extrema_frac[root_idx]
+        # get best image to wrap the maxima to its root
         images[extrema_labels[ext_idx]] = compute_wrap_offset(ext_frac, root_frac)
-    root_extrema = np.array(root_extrema, dtype=np.uint16)
     
+    # root_labels = extrema_labels[root_extrema]
+    # root_values = extrema_values[root_extrema]
     extrema_coords = extrema_vox[root_extrema]
     extrema_frac = extrema_frac[root_extrema]
-    
-    persistence_cutoffs = extrema_values[root_extrema]
-    # get the lowest/highest connection values for each root maxima/minima
-    for ext_idx, _, conn_val in connections:
-        root = extrema_roots[ext_idx]
-        root_idx = np.searchsorted(extrema_labels, root)
-        if use_minima:
-            persistence_cutoffs[root_idx] = max(persistence_cutoffs[root_idx], conn_val)
-        else:
-            persistence_cutoffs[root_idx] = min(persistence_cutoffs[root_idx], conn_val)
+
+    # persistence_cutoffs = extrema_values[root_extrema]
+    # # get the lowest/highest connection values for each root maxima/minima
+    # for ext_idx, conn_val in connections:
+    #     root = extrema_roots[ext_idx]
+    #     root_idx = np.searchsorted(root_labels, root)
+        
+    #     # check that these extrema are reasonably close in value
+    #     val = extrema_values[ext_idx]
+    #     root_val = root_values[root_idx]
+        
+    #     if (root_val-val)/val > persistence_tol:
+    #         continue
+
+    #     if use_minima:
+    #         persistence_cutoffs[root_idx] = max(persistence_cutoffs[root_idx], conn_val)
+    #     else:
+    #         persistence_cutoffs[root_idx] = min(persistence_cutoffs[root_idx], conn_val)
 
 
-    return labels, images, extrema_coords, extrema_frac, extrema_groups, persistence_cutoffs
+    return labels, images, extrema_coords, extrema_frac, extrema_groups#, persistence_cutoffs
 
 @njit(cache=True)
 def get_basin_min_and_max(
@@ -1109,9 +1121,6 @@ def get_persistence_scores(
 
     return persistence_scores
 
-
-
-
 @njit(cache=True)
 def group_by_persistence(
         data,
@@ -1119,7 +1128,7 @@ def group_by_persistence(
         basin_connections,
         saddle_values,
         persistence_tol,
-        persistence_cutoffs,
+        # persistence_cutoffs,
         use_minima = False,
         ):
     num_critical = len(critical_vox)
@@ -1226,20 +1235,29 @@ def group_by_persistence(
         crit_frac = critical_frac[ext_idx]
         root_frac = critical_frac[root_idx]
         root_transforms[ext_idx] = compute_wrap_offset(crit_frac, root_frac)
-        
-    # update persistence cutoffs
-    for active, (crit1, crit2, _, _), value in zip(active_connections, basin_connections, saddle_values):
-        # skip connections that didn't activate
-        if not active:
-            continue
-        # get the root
-        root = find_root(unions, crit1)
-        if use_minima:
-            persistence_cutoffs[root] = max(persistence_cutoffs[root], value)
-        else:
-            persistence_cutoffs[root] = min(persistence_cutoffs[root], value)
 
-    return roots, root_transforms, persistence_cutoffs
+    # # update persistence cutoffs
+    # for active, (crit1, crit2, _, _), value in zip(active_connections, basin_connections, saddle_values):
+    #     # skip connections that didn't activate
+    #     if not active:
+    #         continue
+
+    #     # get the root
+    #     root = roots[crit1]
+        
+    #     # check that these extrema are reasonably close in value
+    #     val = critical_values[ext_idx]
+    #     root_val = critical_values[root_idx]
+        
+    #     if (root_val-val)/val > persistence_tol:
+    #         continue
+        
+    #     if use_minima:
+    #         persistence_cutoffs[root] = max(persistence_cutoffs[root], value)
+    #     else:
+    #         persistence_cutoffs[root] = min(persistence_cutoffs[root], value)
+
+    return roots, root_transforms#, persistence_cutoffs
 
 @njit(parallel=True, cache=True)
 def update_labels_and_images(
@@ -1415,7 +1433,9 @@ def get_persistence_groups(
     
     persistence_groups = []
     for vox in extrema_vox:
-        persistence_groups.append([vox])
+        temp = [vox]
+        temp = temp[1:]
+        persistence_groups.append(temp)
     
     for i in range(nx):
         for j in range(ny):

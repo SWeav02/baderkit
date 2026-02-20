@@ -126,7 +126,7 @@ class Bader(BaseAnalysis):
         self,
         method: str | Method = Method.weight,
         nna_cutoff: float | bool = False,
-        maxima_persistence_tol: float = 0.05,
+        maxima_persistence_tol: float = 0.03,
         minima_persistence_tol: float = 0.005,
         **kwargs,
     ):
@@ -412,7 +412,28 @@ class Bader(BaseAnalysis):
             connected if one takes the all voxels at or above that value
         """
         if self._maxima_persistence_values is None:
-            self._run_bader()
+            # get groups
+            maxima_groups = self.maxima_voxel_groups
+            maxima_values = self.maxima_ref_values
+            # get the lowest value that the maximum would connect to with the
+            # current persistence tol
+            persistence_values = []
+            for group, max_val in zip(maxima_groups, maxima_values):
+                group_vals = self.reference_grid.total[
+                    group[:,0],
+                    group[:,1],
+                    group[:,2],
+                    ]
+                valid_mask = ((max_val - group_vals) / group_vals) < self.maxima_persistence_tol
+                best_val = group_vals[valid_mask].min()
+                # get lowest possible persistence below this value
+                # (max_val - val) / val < persistence_tol
+                # --> val = max_val / (1+persistence_tol)
+                persistence_values.append(
+                    best_val / (1+self.maxima_persistence_tol)
+                    )
+
+            self._maxima_persistence_values = np.array(persistence_values)
         return self._maxima_persistence_values
 
     @property
@@ -701,7 +722,29 @@ class Bader(BaseAnalysis):
             connected if one takes the all voxels at or below that value
         """
         if self._minima_persistence_values is None:
-            self._run_minima_bader()
+            # self._run_minima_bader()
+            # get groups
+            minima_groups = self.minima_voxel_groups
+            minima_values = self.minima_ref_values
+            # get the lowest value that the maximum would connect to with the
+            # current persistence tol
+            persistence_values = []
+            for group, min_val in zip(minima_groups, minima_values):
+                group_vals = self.reference_grid.total[
+                    group[:,0],
+                    group[:,1],
+                    group[:,2],
+                    ]
+                valid_mask = ((group_vals - min_val) / group_vals) < self.minima_persistence_tol
+                best_val = group_vals[valid_mask].max()
+                # get lowest possible persistence below this value
+                # (val - max_val) / val < persistence_tol
+                # --> val = max_val / (1+persistence_tol)
+                persistence_values.append(
+                    best_val / (1-self.minima_persistence_tol)
+                    )
+
+            self._minima_persistence_values = np.array(persistence_values)
         return self._minima_persistence_values
     
     @property
@@ -1201,6 +1244,7 @@ class Bader(BaseAnalysis):
             extrema_vox=self.minima_vox,
             use_minima=True,
             )
+
         return maxima_groups, minima_groups
         
         

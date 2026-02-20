@@ -2,15 +2,16 @@
 
 from numba import njit, prange
 import numpy as np
-from baderkit.core.utilities.basic import coords_to_flat
+from baderkit.core.utilities.basic import coords_to_flat, get_norm
 from baderkit.core.utilities.interpolation import (
     newton_refine_critical, 
     spline_grad_cart, 
     spline_hess_cart, 
-    newton_refine_in_voxel,
+    spline_grad_and_hess,
+    
     )
 
-#@njit(cache=True)
+@njit(cache=True)
 def gather_cell_gradients(i, j, k, gradients):
     nx, ny, nz, _ = gradients.shape
     G = np.empty((8, 3), dtype=np.float64)
@@ -26,18 +27,18 @@ def gather_cell_gradients(i, j, k, gradients):
                 idx += 1
     return G
 
-#@njit(cache=True)
+@njit(cache=True)
 def encloses_zero_component(vals):
     return vals.min() <= 0.0 and vals.max() >= 0.0
 
-#@njit(cache=True)
+@njit(cache=True)
 def gradient_enclosure_test(G):
     return (
         encloses_zero_component(G[:, 0]) and
         encloses_zero_component(G[:, 1]) and
         encloses_zero_component(G[:, 2])
     )
-#@njit(cache=True)
+@njit(cache=True)
 def grad_norm_lower_bound(G):
     return np.sqrt(
         np.min(G[:, 0] * G[:, 0]) +
@@ -46,7 +47,7 @@ def grad_norm_lower_bound(G):
     )
 
 
-#@njit(cache=True)
+@njit(cache=True)
 def classify_critical_point(H):
     eigvals = np.linalg.eigvalsh(H)
 
@@ -64,11 +65,14 @@ def classify_critical_point(H):
 
     return -1
 
+###############################################################################
+# Fast pass cutoff
+###############################################################################
 # NOTE: This ongrid method seems to work almost as well as the interpolation
 # version even on rough grids
-#@njit(fastmath=True, cache=True)
+@njit(fastmath=True, cache=True)
 def check_valid_newton_step(
-    i, j, k,
+    coord,
     data,
     r_voxel_cart2,
     inv_G,
@@ -80,7 +84,7 @@ def check_valid_newton_step(
     """
     nx, ny, nz = data.shape
     eps = 1e-12
-
+    i,j,k = coord
     i = int(i)
     j = int(j)
     k = int(k)
@@ -139,7 +143,7 @@ def check_valid_newton_step(
     # Stage 1: gradient rejection
     # -----------------------------
     if g_cart2 > H_cart_max2:
-        return 0, -1
+        return -1
 
     # -----------------------------
     # Stage 2: directionally-aware Newton bound
@@ -164,7 +168,7 @@ def check_valid_newton_step(
     
     
     if delta_est2 > r_voxel_cart2:
-        return 0, -1
+        return -1
 
     # -----------------------------
     # Morse index via LDLᵀ
@@ -195,17 +199,184 @@ def check_valid_newton_step(
     if D3 < 0.0:
         morse += 1
 
-    return 1, morse
+    return morse
 
+###############################################################################
+# Newton Refinement
+###############################################################################
 
+@njit(fastmath=True)
+def cartesian_grad_norm2(g, inv_G):
+    return (
+        g[0] * (inv_G[0, 0] * g[0] + inv_G[0, 1] * g[1] + inv_G[0, 2] * g[2]) +
+        g[1] * (inv_G[1, 0] * g[0] + inv_G[1, 1] * g[1] + inv_G[1, 2] * g[2]) +
+        g[2] * (inv_G[2, 0] * g[0] + inv_G[2, 1] * g[1] + inv_G[2, 2] * g[2])
+    )
 
-# #@njit(parallel=True, cache=True)
+@njit(fastmath=True)
+def compute_signature(H, eig_rel_tol):
+    evals, _ = np.linalg.eigh(H)
+    
+    tol = eig_rel_tol * np.max(np.abs(evals))
+    
+    n_neg = 0
+    n_flat = 0
+    for i in evals:
+        if i < -tol:
+            n_neg += 1
+        elif abs(i) < tol:
+            n_flat += 1
+
+    return n_neg, n_flat
+
+@njit(fastmath=True)
+def check_flat_extrema(evals, eig_tol):
+    n_flat = 0
+    for i in evals:
+        if abs(i) < eig_tol:
+            n_flat += 1
+    return n_flat == 1
+
+@njit(fastmath=True)
+def modified_hessian(H, g_norm, Q, g, lambda0, grad_tol):
+
+    evals, vecs = np.linalg.eigh(H)  
+    lam = max(lambda0, 0.05 * np.max(np.abs(evals)))
+    
+    # Only allow clamping once gradient is already small
+    if g_norm < 10.0 * grad_tol:
+        flat = np.abs(evals) < lam
+    else:
+        flat = np.zeros_like(evals, dtype=bool)
+        
+        # Clamp flat directions permanently
+    if np.any(flat):
+        Q = Q @ vecs[:, ~flat]
+        evals = evals[~flat]
+        vecs = vecs[:, ~flat]
+        
+    # Project gradient
+    g_proj = Q.T @ g
+    
+    # If fully flat, return zero Hessian
+    if evals.size == 0:
+        H_mod = np.zeros_like(H)
+        return H_mod, evals, Q, g_proj
+    
+    # Enforce well-conditioned curvature
+    evals_mod = np.empty_like(evals)
+    for i in range(len(evals)):
+        mag = max(abs(evals[i]), lam)
+        evals_mod[i] = mag if evals[i] >= 0 else -mag
+        
+    # Reconstruct modified Hessian in full space
+    H_mod = Q @ (evals_mod[:, None] * Q.T)
+
+    return H_mod, evals, Q, g_proj
+
+@njit(fastmath=True)
+def clamp_step(dx, max_step):
+    step_norm = get_norm(dx[0], dx[1], dx[2])
+    if step_norm < 1e-8:
+        return dx, False
+
+    scale = min(1.0, max_step / (step_norm + 1e-12))
+    scale = scale ** 0.5
+    return dx*scale, True
+
+@njit(fastmath=True)
+def outside_voxel(coord, vmin, vmax):
+    return (
+        np.any(coord < vmin)
+        or np.any(coord > vmax)
+    )
+
+@njit(cache=True)
+def flat_aware_newton_step(
+    g,
+    H,
+    eig_rel_tol,
+        ):
+    evals, vecs = np.linalg.eigh(H)
+
+    tol = eig_rel_tol * np.max(np.abs(evals))
+    
+    dx = np.zeros_like(g)
+    
+    for i in range(3):
+        if abs(evals[i]) > tol:
+            dx += -(vecs[:, i] @ g) / evals[i] * vecs[:, i]
+
+    return dx
+
+@njit(fastmath=True)
+def newton_refine_in_voxel(
+    coord,
+    data,
+    inv_G,
+    max_change,
+    max_iter,
+    grad_tol,
+    h,
+    eig_rel_tol,
+):
+    nx, ny, nz = data.shape
+    max_step = 0.25 * min(nx, ny, nz)
+
+    # make sure our coord is a float
+    coord = coord.astype(np.float64)
+
+    voxel_min = np.array(coord - max_change)
+    voxel_max = np.array(coord + max_change)
+    
+    converged = False
+
+    for _ in range(max_iter):
+        # get gradient and hessian at this point
+        g, H = spline_grad_and_hess(coord, data, h)
+        
+        # get step
+        dx = flat_aware_newton_step(g, H, eig_rel_tol)
+    
+        # check for convergence
+        if np.linalg.norm(dx) < grad_tol:
+            converged = True
+            break
+    
+        # enforce small step size
+        dx, ok = clamp_step(dx, max_step)
+        if not ok:
+            break
+    
+        # update coord
+        coord = coord + dx
+        
+        # check if we exit the allowed distance
+        if outside_voxel(coord, voxel_min, voxel_max):
+            break
+            
+    # final classification
+    morse_index, n_flat = compute_signature(H, eig_rel_tol)
+    
+    return coord, converged, morse_index
+
+###############################################################################
+# Critical Point Finder
+###############################################################################
+
+@njit(parallel=True, cache=True)
 def find_saddle_points(
     data,
     matrix,
-    allowed_points,
+    saddle_mask,
+    max_change=1,
+    max_iter=30,
+    grad_tol=1e-6,
+    h=0.25,
+    eig_rel_tol=1e-04,
 ):
     nx, ny, nz = data.shape
+    shape = np.array(data.shape, dtype=np.int64)
 
     # Metric tensors
     G = matrix @ matrix.T
@@ -221,24 +392,16 @@ def find_saddle_points(
     # Voxel radius in Cartesian
     r_voxel_cart = 0.5 * frac_to_cart
     r_voxel_cart2 = r_voxel_cart * r_voxel_cart
-
-    saddle_mask = np.full(
-        (nx, ny, nz),
-        np.iinfo(np.uint8).max,
-        dtype=np.uint16
-    )
     
     # get range of values
-    eig_tol = 1e-4*(data.max() - data.min())
-    
-    # get points to check
-    allowed_coords = np.argwhere(allowed_points)
+    # eig_tol = 1e-4*(data.max() - data.min())
+    allowed_coords = np.argwhere(saddle_mask == np.iinfo(saddle_mask.dtype).max)
     
     for coord_idx in prange(len(allowed_coords)):
-        i,j,k = allowed_coords[coord_idx]
+        coord = allowed_coords[coord_idx]
 
-        valid, morse =  check_valid_newton_step(
-            i,j,k,
+        morse_index =  check_valid_newton_step(
+            coord,
             data,
             r_voxel_cart2,
             inv_G,
@@ -246,26 +409,30 @@ def find_saddle_points(
         )
         
         # skip maxima, minima and invalid points
-        if not valid:
+        if morse_index in (-1, 0, 3):
             continue
-        # if morse == 0 or morse == 3:
-        #     continue
                         
-        ii, jj, kk, success, morse_index = newton_refine_in_voxel(
-            i,j,k,
+        new_coord, success, morse_index = newton_refine_in_voxel(
+            coord,
             data=data,
             inv_G=inv_G,
-            eig_tol=eig_tol,
+            max_change=max_change,
+            max_iter=max_iter,
+            grad_tol=grad_tol,
+            h=h,
+            eig_rel_tol=eig_rel_tol,
             )
         
         if not success:
             continue
+        
+        new_coord = np.round(new_coord).astype(np.int64) % shape
 
-        saddle_mask[i, j, k] = morse_index
+        saddle_mask[new_coord[0],new_coord[1],new_coord[2]] = morse_index
 
     return saddle_mask
 
-#@njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def refine_saddle_points(
     saddle_mask,
     data,
@@ -304,6 +471,8 @@ def refine_saddle_points(
             )
         saddle2_coords[coord_idx] = (ii,jj,kk)
     return saddle1_coords, saddle2_coords
+
+
 # from baderkit.core import Grid
 # import time
 # grid = Grid.from_vasp("ELFCAR")

@@ -12,7 +12,8 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 from networkx import MultiDiGraph
-from scipy.spatial import ConvexHull
+from scipy.spatial import ConvexHull, Delaunay
+from scipy.ndimage import binary_erosion, distance_transform_edt, label
 
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Structure, Grid
@@ -26,6 +27,7 @@ from .critical_points_numba import (
     INT_TO_IMAGE,
     IMAGE_TO_INT
 )
+from .betti_numbers import get_all_betti_numbers
 from .hessian_based import find_saddle_points, refine_saddle_points
 
 # This allows for Self typing and is compatible with python 3.10
@@ -84,6 +86,8 @@ class CriticalPoints(BaseAnalysis):
         "maxima_vox",
         "maxima_persistence_groups",
         "minima_persistence_groups",
+        "maxima_group_types",
+        "minima_group_types",
         "saddle1_vox",
         "saddle2_vox",
         "critical_vox",
@@ -194,6 +198,12 @@ class CriticalPoints(BaseAnalysis):
         if self._maxima_persistence_groups is None:
             self._get_extrema_persistence_groups()
         return self._maxima_persistence_groups
+    
+    @property
+    def maxima_group_types(self):
+        if self._maxima_group_types is None:
+            self._get_extrema_persistence_groups()
+        return self._maxima_group_types
 
     @property
     def minima_vox(self) -> NDArray:
@@ -202,6 +212,12 @@ class CriticalPoints(BaseAnalysis):
     @property
     def minima_frac(self) -> NDArray:
         return self.bader.minima_frac
+    
+    @property
+    def minima_group_types(self):
+        if self._minima_group_types is None:
+            self._get_extrema_persistence_groups()
+        return self._minima_group_types
     
     @property
     def minima_persistence_groups(self):
@@ -338,8 +354,8 @@ class CriticalPoints(BaseAnalysis):
             data=self.bader.reference_grid.total,
             matrix=self.bader.reference_grid.matrix,
             allowed_points=allowed_points,
+            eig_rel_tol=1e-4,
             )
-        breakpoint()
         
         # refine and get exact coords
         saddle1_coords, saddle2_coords = refine_saddle_points(
@@ -357,20 +373,114 @@ class CriticalPoints(BaseAnalysis):
         self._saddle1_frac = saddle1_frac
         self._saddle2_frac = saddle2_frac
         
-    def _get_extrema_persistence_groups(self):
-        
-        maxima_groups, minima_groups = self.bader.get_persistence_groups()
+    
+    @staticmethod
+    def _classify_extrema_group(
+        group_set,
+        pad=1,
+        voxel_tol=1.0,
+        coplanar_tol=1e-3,
+    ):
+        """
+        Returns:
+            0 : blob / filled object
+            1 : ring-like (coplanar hollow)
+            2 : cage-like (non-coplanar hollow)
+            3 : thin shell / surface blob (no interior)
+        """
+    
 
-        # make lists to store new groups
-        new_maxima_groups = []
+        # Build local voxel volume
+        P = np.asarray(list(group_set), dtype=float)
+        if P.shape[0] < 4:
+            return 0
+    
+        mins = np.floor(P.min(axis=0)).astype(int) - pad
+        maxs = np.ceil(P.max(axis=0)).astype(int) + pad
+    
+        shape = (maxs - mins + 1)
+        vol = np.zeros(shape, dtype=bool)
+    
+        idx = (P.astype(int) - mins)
+        vol[idx[:, 0], idx[:, 1], idx[:, 2]] = True
+    
+
+        # Coplanarity test (PCA / SVD)
+        centroid = P.mean(axis=0)
+        X = P - centroid
+    
+        # Robust even for near-flat groups
+        _, s, _ = np.linalg.svd(X, full_matrices=False)
+    
+        coplanar = False
+        if s[1] > 0:
+            coplanar = (s[2] / s[1]) < coplanar_tol
+    
+
+        # Extract true surface
+        structure = np.ones((3, 3, 3))
+        eroded = binary_erosion(vol, structure=structure)
+        surface = vol & ~eroded
+    
+
+        # All group points must lie near surface
+        dist = distance_transform_edt(~surface)
+        if not np.all(dist[vol] <= voxel_tol):
+            return 0  # filled blob
+    
+
+        # Hollow interior test
+        empty = ~vol
+    
+        # label connected components of empty space
+        labels, num = label(empty)
+    
+        # labels touching the boundary are exterior
+        exterior_labels = set()
+    
+        # collect labels on the volume boundary
+        for axis in range(3):
+            exterior_labels |= set(labels.take(0, axis=axis).ravel())
+            exterior_labels |= set(labels.take(-1, axis=axis).ravel())
+    
+        # any empty component not touching boundary is interior
+        hollow = False
+        for lab in range(1, num + 1):
+            if lab not in exterior_labels:
+                hollow = True
+    
+        if hollow:
+            # Hollow object
+            if coplanar:
+                return 1  # ring
+            else:
+                return 2  # cage
+        else:
+            # Thin shell without interior
+            return 3
+
+
+    def _update_persistence_groups(
+            self,
+            groups,
+            base_extrema,
+            ):
+        # get betti numbers for each group
+        betti_numbers = get_all_betti_numbers(
+            groups,
+            self.reference_grid.shape
+            )
+        
+        new_groups = []
         group_types = []
-        for group in maxima_groups:
+        for base_ext, group in zip(base_extrema, groups):
             if len(group) <= 2:
                 # this group can't form a convex hull and must therefore be a
                 # point extremum
-                new_maxima_groups.append(group)
+                new_groups.append(base_ext)
                 group_types.append(0)
                 continue
+            
             # adjust all points relative to a single reference point
             frac_coords = self.reference_grid.grid_to_frac(group)
             ref = frac_coords[0]
@@ -379,9 +489,40 @@ class CriticalPoints(BaseAnalysis):
             frac_coords = ref + d
             # convert back to grid indices
             coords = frac_coords * self.reference_grid.shape
-            # construct hull
-            hull = ConvexHull(coords)
-            breakpoint()
+            # convert group to a set for easy comparisons
+            group_set = {tuple(p) for p in coords}
+            # get type
+            extrema_type = self._classify_extrema_group(
+                group_set
+                )
+            if extrema_type == 0:
+                new_groups.append(base_ext)
+            else:
+                new_groups.append(group)
+            group_types.append(extrema_type)
+
+        return new_groups, group_types
+        
+    def _get_extrema_persistence_groups(self):
+        
+        maxima_groups, minima_groups = self.bader.get_persistence_groups()
+        
+        maxima_vox = self.bader.maxima_vox
+        minima_vox = self.bader.minima_vox
+        
+        new_maxima_groups, maxima_group_types = self._update_persistence_groups(
+            maxima_groups,
+            maxima_vox,
+            )
+        new_minima_groups, minima_group_types = self._update_persistence_groups(
+            minima_groups,
+            minima_vox
+            )
+        self._maxima_persistence_groups = new_maxima_groups
+        self._minima_persistence_groups = new_minima_groups
+        self._maxima_group_types = maxima_group_types
+        self._minima_group_types = minima_group_types
+
             
 
     # def _refine_saddles(self, saddle_vox, saddle_connections, target_index):
