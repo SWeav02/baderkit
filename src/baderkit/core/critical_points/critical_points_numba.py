@@ -1124,11 +1124,11 @@ def get_manifold_labels(
                     )
                 
                 if num_neighs == 1 and opp_num_neighs > 1:
-                    # saddle 1
-                    edges[i,j,k] = 1
-                elif num_neighs > 1 and opp_num_neighs == 1:
                     # saddle 2
                     edges[i,j,k] = 2
+                elif num_neighs > 1 and opp_num_neighs == 1:
+                    # saddle 1
+                    edges[i,j,k] = 1
                 elif num_neighs < 1 and opp_num_neighs == 1:
                     # edge of minima manifold
                     edges[i,j,k] = 4

@@ -1,13 +1,18 @@
-from itertools import product# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
+from itertools import product
 
 import numpy as np
 import pyvista as pv
 from numpy.typing import NDArray
+from scipy.spatial import ConvexHull
 
 from baderkit.core.critical_points import CriticalPoints
 from .grid import GridPlotter
 from baderkit.plotting.core.defaults import CRIT_COLORS, CONNECTION_COLORS
     
+# TODO:
+    # get integral paths rather than just connections
+
 class CriticalPointsPlotter(GridPlotter):
     def __init__(
         self,
@@ -36,156 +41,391 @@ class CriticalPointsPlotter(GridPlotter):
         self.critical_points = critical_points
         self.morse_graph = critical_points.morse_graph
         
-        # set critical coord properties
-        self._visible_critical_points = np.array([1.0 for i in range(4)], dtype=float)
-        self._critical_point_radii = np.array([0.75 for s in range(4)])
-        self._critical_point_colors = np.array([pv.Color(CRIT_COLORS.get(crit_type, "#FFFFFF")).float_rgb for crit_type in range(4)])
+        # critical point settings
+        self._show_minima = True
+        self._show_saddle1 = True
+        self._show_saddle2 = True
+        self._show_maxima = True
         
-        # set edge properties
-        self._visible_connections = np.array([1.0 for i in range(3)])
-        self._connection_thickness = 4.0
-        self._connection_colors = np.array([pv.Color(CONNECTION_COLORS.get(crit_type, "#FFFFFF")).float_rgb for crit_type in range(3)])
+        self._minima_color = pv.Color(CRIT_COLORS.get(0, "#FFFFFF"))
+        self._saddle1_color = pv.Color(CRIT_COLORS.get(1, "#FFFFFF"))
+        self._saddle2_color = pv.Color(CRIT_COLORS.get(2, "#FFFFFF"))
+        self._maxima_color = pv.Color(CRIT_COLORS.get(3, "#FFFFFF"))
         
+        self._critical_radii = 0.25
+        self._ring_cage_opacity = 0.5
+
+        # edge settings
+        self._show_saddle1_minima = True
+        self._show_saddle2_maxima = True
+        self._show_saddle1_saddle2 = True
         
-        # meshes
-        self._wrapped_crit_poly = None
-        self._crit_poly = None
-        self._map_wrapped_to_crits = None
-        self._map_to_crits = None
-        self._connection_meshes = None
-        self._wrapped_connection_meshes = None
+        self._saddle1_minima_color = pv.Color(CONNECTION_COLORS.get(0,  "#FFFFFF"))
+        self._saddle2_maxima_color = pv.Color(CONNECTION_COLORS.get(1,  "#FFFFFF"))
+        self._saddle1_saddle2_color = pv.Color(CONNECTION_COLORS.get(2,  "#FFFFFF"))
+        
+        self._connection_thickness = 3.0
+        
+        # crit meshes
+        self._minima_point_polydata = None
+        self._minima_ring_meshes = None
+        self._minima_cage_meshes = None
+        
+        self._saddle1_point_polydata = None
+        self._saddle1_ring_meshes = None
+        self._saddle1_cage_meshes = None
+        
+        self._saddle2_point_polydata = None
+        self._saddle2_ring_meshes = None
+        self._saddle2_cage_meshes = None
+        
+        self._maxima_point_polydata = None
+        self._maxima_ring_meshes = None
+        self._maxima_cage_meshes = None
+        
+        # connection meshes
+        self._saddle1_minima_meshes = None
+        self._saddle2_maxima_meshes = None
+        self._saddle1_saddle2_meshes = None
+        
         super().__init__(grid=grid, **grid_kwargs)
         
         # update to hide by default        
         self.show_caps = False
         self.show_surface = False
-
+        
+    ###########################################################################
+    # Crit Property Setting
+    ###########################################################################
     @property
-    def visible_critical_points(self) -> list[int]:
+    def show_minima(self) -> bool:
         """
 
         Returns
         -------
-        list[int]
-            A list of critical points to include in the plot
+        bool
+            whether or not to show minima points
 
         """
-        return self._visible_critical_points
+        return self._show_minima
 
-    @visible_critical_points.setter
-    def visible_critical_points(self, visible_critical_points: set[int]):
-        # convert to array
-        visible_critical_points = np.array(visible_critical_points, dtype=np.float64)
-        
-        # make sure we have the write shape
-        assert self.visible_critical_points.shape == (4,), "Length must be 4"
-
+    @show_minima.setter
+    def show_minima(self, show_minima: bool):
         # set visible atoms
-        self._visible_critical_points = visible_critical_points
+        self._show_minima = show_minima
         # update
         self._update_critical_meshes()
         
     @property
-    def visible_connections(self) -> list[int]:
+    def show_saddle1(self) -> bool:
         """
 
         Returns
         -------
-        list[int]
-            A list of critical points to include in the plot
+        bool
+            whether or not to show saddle1 points
 
         """
-        return self._visible_connections
+        return self._show_saddle1
 
-    @visible_connections.setter
-    def visible_connections(self, visible_connections: set[int]):
-        # convert to array
-        visible_connections = np.array(visible_connections, dtype=np.float64)
-        
-        # make sure we have the write shape
-        assert self.visible_connections.shape == (3,), "Length must be 3"
-
-        # set visible connections
-        self._visible_connections = visible_connections
+    @show_saddle1.setter
+    def show_saddle1(self, show_saddle1: bool):
+        # set visible atoms
+        self._show_saddle1 = show_saddle1
         # update
-        self._update_connection_meshes()
-
-    @property
-    def critical_point_colors(self) -> list[str]:
-        """
-
-        Returns
-        -------
-        list[str]
-            The colors to use for each atom as hex codes.
-
-        """
-        return self._critical_point_colors
-
-    @critical_point_colors.setter
-    def critical_point_colors(self, colors: list[str]):
-        # for each site, check if the radius has changed and if it has remove it
-        # then remake
-        assert len(colors) == (4,), "Length must be 4"
-        
-        # convert provided colors to rgb
-        crit_colors = np.array([pv.Color(i).float_rgb for i in colors], dtype=np.float64)
-        self._critical_point_colors = crit_colors
         self._update_critical_meshes()
         
     @property
-    def connection_colors(self) -> list[str]:
+    def show_saddle2(self) -> bool:
         """
 
         Returns
         -------
-        list[str]
-            The colors to use for each atom as hex codes.
+        bool
+            whether or not to show saddle2 points
 
         """
-        return self._connection_colors
+        return self._show_saddle2
 
-    @connection_colors.setter
-    def connection_colors(self, colors: list[str]):
-        # for each site, check if the radius has changed and if it has remove it
-        # then remake
-        assert len(colors) == (3,), "Length must be 3"
+    @show_saddle2.setter
+    def show_saddle2(self, show_saddle2: bool):
+        # set visible atoms
+        self._show_saddle2 = show_saddle2
+        # update
+        self._update_critical_meshes()
         
-        # convert provided colors to rgb
-        connection_colors = np.array([pv.Color(i).float_rgb for i in colors], dtype=np.float64)
-        self._connection_colors = connection_colors
+    @property
+    def show_maxima(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            whether or not to show maxima points
+
+        """
+        return self._show_maxima
+
+    @show_maxima.setter
+    def show_maxima(self, show_maxima: bool):
+        # set visible atoms
+        self._show_maxima = show_maxima
+        # update
+        self._update_critical_meshes()
+        
+    @property
+    def minima_color(self) -> pv.Color:
+        """
+
+        Returns
+        -------
+        pv.Color
+            The color to display the minima as
+
+        """
+        return self._minima_color
+
+    @minima_color.setter
+    def minima_color(self, minima_color: pv.Color | str):
+        # convert to color
+        color = pv.Color(minima_color)
+        # set visible atoms
+        self._minima_color = color
+        # update
+        self._update_critical_meshes()
+        
+    @property
+    def saddle1_color(self) -> pv.Color:
+        """
+
+        Returns
+        -------
+        pv.Color
+            The color to display the saddle1 as
+
+        """
+        return self._saddle1_color
+
+    @saddle1_color.setter
+    def saddle1_color(self, saddle1_color: pv.Color | str):
+        # convert to color
+        color = pv.Color(saddle1_color)
+        # set visible atoms
+        self._saddle1_color = color
+        # update
+        self._update_critical_meshes()
+        
+    @property
+    def saddle2_color(self) -> pv.Color:
+        """
+
+        Returns
+        -------
+        pv.Color
+            The color to display the saddle2 as
+
+        """
+        return self._saddle2_color
+
+    @saddle2_color.setter
+    def saddle2_color(self, saddle2_color: pv.Color | str):
+        # convert to color
+        color = pv.Color(saddle2_color)
+        # set visible atoms
+        self._saddle2_color = color
+        # update
+        self._update_critical_meshes()
+        
+    @property
+    def maxima_color(self) -> pv.Color:
+        """
+
+        Returns
+        -------
+        pv.Color
+            The color to display the maxima as
+
+        """
+        return self._maxima_color
+
+    @maxima_color.setter
+    def maxima_color(self, maxima_color: pv.Color | str):
+        # convert to color
+        color = pv.Color(maxima_color)
+        # set visible atoms
+        self._maxima_color = color
+        # update
+        self._update_critical_meshes()
+        
+
+    @property
+    def critical_radii(self) -> float:
+        """
+
+        Returns
+        -------
+            The radius to display for each critical point in the structure. 
+            The actual displayed radius will be 0.3*radius.
+
+        """
+        return self._critical_radii
+
+    @critical_radii.setter
+    def critical_radii(self, critical_radii: float):
+        
+        critical_radii = max(critical_radii, 0.1)
+        
+        self._critical_radii = critical_radii
+        self._update_critical_meshes()
+        
+    @property
+    def ring_cage_opacity(self) -> float:
+        """
+
+        Returns
+        -------
+            The opacity of ring and cage meshes
+
+        """
+        return self._ring_cage_opacity
+        
+    @ring_cage_opacity.setter
+    def ring_cage_opacity(self, ring_cage_opacity: float):
+        
+        self._ring_cage_opacity = ring_cage_opacity
+        self._update_critical_meshes()
+        
+    ###########################################################################
+    # Connection Mesh Creation
+    ###########################################################################
+    
+    @property
+    def show_saddle1_minima(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            whether or not to show connections between type1 saddles and minima
+
+        """
+        return self._show_saddle1_minima
+
+    @show_saddle1_minima.setter
+    def show_saddle1_minima(self, show_saddle1_minima: bool):
+        # set visible atoms
+        self._show_saddle1_minima = show_saddle1_minima
+        # update
         self._update_connection_meshes()
         
     @property
-    def critical_point_radii(self) -> list[float]:
+    def show_saddle2_maxima(self) -> bool:
         """
 
         Returns
         -------
-        list[float]
-            The radius to display for each atom in the structure. The actual
-            displayed radius will be 0.3*radius.
+        bool
+            whether or not to show connections between type2 saddles and maxima
 
         """
-        return self._critical_point_radii
+        return self._show_saddle2_maxima
 
-    @critical_point_radii.setter
-    def critical_point_radii(self, critical_point_radii: NDArray[float]):
-        # fix atom_radii to be a list and make any negative values == 0.01
-        critical_point_radii = np.array(critical_point_radii, dtype=np.float64)
-        assert self.critical_point_radii.shape == critical_point_radii.shape, "Length match the number of critical points"
+    @show_saddle2_maxima.setter
+    def show_saddle2_maxima(self, show_saddle2_maxima: bool):
+        # set visible atoms
+        self._show_saddle2_maxima = show_saddle2_maxima
+        # update
+        self._update_connection_meshes()
         
-        critical_point_radii[critical_point_radii<=0.01] = 0.01
-        self._critical_point_radii = critical_point_radii
-        self._update_crit_meshes()
-            
     @property
-    def connection_thickness(self) -> list[float]:
+    def show_saddle1_saddle2(self) -> bool:
         """
 
         Returns
         -------
-        list[float]
+        bool
+            whether or not to show connections between type1 and type2 saddles
+
+        """
+        return self._show_saddle1_saddle2
+
+    @show_saddle1_saddle2.setter
+    def show_saddle1_saddle2(self, show_saddle1_saddle2: bool):
+        # set visible atoms
+        self._show_saddle1_saddle2 = show_saddle1_saddle2
+        # update
+        self._update_connection_meshes()
+        
+    @property
+    def saddle1_minima_color(self) -> pv.Color:
+        """
+
+        Returns
+        -------
+        pv.Color
+            The color to display saddle1 to minima connections as
+
+        """
+        return self._saddle1_minima_color
+
+    @saddle1_minima_color.setter
+    def saddle1_minima_color(self, saddle1_minima_color: pv.Color | str):
+        # convert to color
+        color = pv.Color(saddle1_minima_color)
+        # set visible atoms
+        self._saddle1_minima_color = color
+        # update
+        self._update_connection_meshes()
+        
+    @property
+    def saddle2_maxima_color(self) -> pv.Color:
+        """
+
+        Returns
+        -------
+        pv.Color
+            The color to display saddle2 to maxima connections as
+
+        """
+        return self._saddle2_maxima_color
+
+    @saddle2_maxima_color.setter
+    def saddle2_maxima_color(self, saddle2_maxima_color: pv.Color | str):
+        # convert to color
+        color = pv.Color(saddle2_maxima_color)
+        # set visible atoms
+        self._saddle2_maxima_color = color
+        # update
+        self._update_connection_meshes()
+        
+    @property
+    def saddle1_saddle2_color(self) -> pv.Color:
+        """
+
+        Returns
+        -------
+        pv.Color
+            The color to display saddle1 to saddle2 connections as
+
+        """
+        return self._saddle1_saddle2_color
+
+    @saddle1_saddle2_color.setter
+    def saddle1_saddle2_color(self, saddle1_saddle2_color: pv.Color | str):
+        # convert to color
+        color = pv.Color(saddle1_saddle2_color)
+        # set visible atoms
+        self._saddle1_saddle2_color = color
+        # update
+        self._update_connection_meshes()
+        
+    @property
+    def connection_thickness(self) -> float:
+        """
+
+        Returns
+        -------
+        float
             The thickness to use for each connection
 
         """
@@ -196,19 +436,211 @@ class CriticalPointsPlotter(GridPlotter):
         self._connection_thickness = thickness
         # TODO: this can probably be updated with out removing/adding actors
         self._update_connection_meshes()
-            
-    @property
-    def wrap_atoms(self):
-        return self._wrap_atoms
-            
-    @wrap_atoms.setter
-    def wrap_atoms(self, wrap_atoms: bool):
-        assert type(wrap_atoms) == bool, "wrap_atoms must be a bool"
+    
+    ###########################################################################
+    # Critical Point Mesh Creation
+    ###########################################################################
+    
+    @staticmethod
+    def _create_polyhull(coords):
+        x=coords[:,0]
+        y=coords[:,1]
+        z=coords[:,2]
+        hull = ConvexHull(np.column_stack((x, y, z)))
+        faces = np.column_stack(
+            (3*np.ones((len(hull.simplices), 1), dtype=int), 
+             hull.simplices)
+            ).flatten()
+        poly = pv.PolyData(hull.points, faces)
+        return poly
+
+    @staticmethod
+    def _sort_ring_points(coords: np.ndarray) -> NDArray:
+        """
+        Sort unordered ring points into cyclic order.
+        coords: (N,3) array
+        returns: (N,3) array in ring order
+        """
+        # center
+        center = coords.mean(axis=0)
+        X = coords - center
+    
+        # PCA via SVD
+        _, _, vh = np.linalg.svd(X, full_matrices=False)
+        e1, e2 = vh[0], vh[1]  # plane basis
+    
+        # project to 2D
+        x = X @ e1
+        y = X @ e2
+    
+        # polar angles
+        angles = np.arctan2(y, x)
+        order = np.argsort(angles)
+    
+        return coords[order]
+    
+    def _create_ring_polyline(self, coords, n_sides=12):
+        """
+        Create a tubular ring mesh from sorted coords.
+        """
         
-        # update
-        self._wrap_atoms = wrap_atoms
-        self._update_site_meshes()
-        self._update_critical_meshes()   
+        n = len(coords)
+    
+        # close loop
+        points = np.vstack([coords, coords[0]])
+    
+        # polyline connectivity
+        lines = np.column_stack((
+            np.full(n, 2),
+            np.arange(n),
+            np.arange(1, n + 1)
+        )).astype(np.int64).ravel()
+    
+        poly = pv.PolyData(points)
+        poly.lines = lines
+        breakpoint()
+    
+        return poly.tube(radius=self.critical_radii*0.05, n_sides=n_sides)
+    
+    def _create_crit_meshes_by_type(self, crit_type):
+        point_coords = []
+        ring_meshes = []
+        cage_meshes = []
+        
+        for i in self.morse_graph.nodes:
+            crit_type1 = self.morse_graph.nodes[i]["type_idx"]
+            # skip points that are not part of the requested critical type
+            if crit_type != crit_type1:
+                continue
+            frac_coords = self.morse_graph.nodes[i]["frac_coords"]
+            group_type = self.morse_graph.nodes[i]["group_type"]
+            group = self.morse_graph.nodes[i]["voxel_group"]
+
+            # get voxel group in fractional coordinates and wrap to be as close
+            # as possible
+            group_frac = self.grid.grid_to_frac(group)
+            ref = frac_coords
+            group_frac = group_frac - np.round(group_frac - ref)
+            
+            if group_type == 0:
+                # get shifted coords near edges of cell
+                wrapped_coords, shifts = self._wrap_near_edge(frac_coords)
+                point_coords.extend(wrapped_coords @ self.structure.lattice.matrix)
+            elif group_type == 1:
+                # sort coords
+                group_frac = self._sort_ring_points(group_frac)
+                # get all shifts with part of the polyhedra in the cell
+                shifts = self._wrap_group_near_edge_shifts(group_frac)
+                for shift in shifts:
+                    # shift voxel group
+                    group_frac1 = group_frac + shift
+                    # convert to cartesian coordinates
+                    group_cart = group_frac1 @ self.structure.lattice.matrix
+                    # create mesh
+                    mesh = self._create_ring_polyline(group_cart)
+                    cage_meshes.append(mesh)
+            elif group_type == 2:
+                # get all shifts with part of the polyhedra in the cell
+                shifts = self._wrap_group_near_edge_shifts(group_frac)
+                for shift in shifts:
+                    # shift voxel group
+                    group_frac1 = group_frac + shift
+                    # convert to cartesian coordinates
+                    group_cart = group_frac1 @ self.structure.lattice.matrix
+                    # create mesh
+                    mesh = self._create_polyhull(group_cart)
+                    cage_meshes.append(mesh)
+        # create polydata from points if any
+        if point_coords:
+            point_polydata = pv.PolyData(point_coords)
+        else:
+            point_polydata = False
+        # merge meshes if they exist
+        if ring_meshes:
+            ring_meshes = pv.merge(ring_meshes)
+        else:
+            ring_meshes = False
+            
+        if cage_meshes:
+            cage_meshes = pv.merge(cage_meshes)
+        else:
+            cage_meshes = False
+        
+        return point_polydata, ring_meshes, cage_meshes
+    
+    def _create_all_crit_meshes(self):
+        # set all mesh types
+        for i, name in enumerate(("minima", "saddle1", "saddle2", "maxima")):
+            point_polydata, ring_meshes, cage_meshes = self._create_crit_meshes_by_type(i)
+            setattr(self, f"_{name}_point_polydata", point_polydata)
+            setattr(self, f"_{name}_ring_meshes", ring_meshes)
+            setattr(self, f"_{name}_cage_meshes", cage_meshes)
+    
+    def _update_critical_meshes(self):
+        if self._minima_point_polydata is None:
+            self._create_all_crit_meshes()
+        
+        # add each set of critical points
+        for i, name in enumerate(("minima", "saddle1", "saddle2", "maxima")):
+            visible = getattr(self, f"show_{name}")
+            color = getattr(self, f"{name}_color")
+            
+            # remove connections that aren't visible
+            if not visible:
+                actor0 = self.plotter.actors.get(f"{name}_glyph", None)
+                actor1 = self.plotter.actors.get(f"{name}_poly", None)
+                if actor0 is not None:
+                    self.plotter.remove_actor(actor0)
+                if actor1 is not None:
+                    self.plotter.remove_actor(actor1)
+                continue
+            
+            point_polydata = getattr(self, f"_{name}_point_polydata")
+            ring_meshes = getattr(self, f"_{name}_ring_meshes")
+            cage_meshes = getattr(self, f"_{name}_cage_meshes")
+            
+            
+            if point_polydata:
+                # make point glyphs
+                radii = self.critical_radii * self.radii_scale
+                
+                # generate glyphs
+                glyphs = point_polydata.glyph(
+                    geom=self._sphere_mesh, 
+                    factor=radii, 
+                    orient=False)
+                # add to plot
+                self.plotter.add_mesh(
+                    glyphs,
+                    name=f"{name}_glyph",
+                    color=color,
+                    pbr=self.pbr,
+                )
+
+            all_meshes = []
+            # append ring/cage meshes if they exist
+            if ring_meshes:
+                all_meshes.append(ring_meshes)
+            if cage_meshes:
+                all_meshes.append(cage_meshes)
+                
+            # if we have any meshes, merge them
+            if all_meshes:
+                # merge all meshes to reduce total number of actors
+                total_mesh = pv.merge(all_meshes)
+                
+                # add to plotter
+                self.plotter.add_mesh(
+                    total_mesh,
+                    name=f"{name}_crit",
+                    color=color,
+                    opacity=self.ring_cage_opacity,
+                    pbr=self.pbr,
+                )
+            
+    ###########################################################################
+    # Connection Mesh Creation
+    ###########################################################################
     
 
     @staticmethod
@@ -251,7 +683,6 @@ class CriticalPointsPlotter(GridPlotter):
         at periodic boundaries
 
         """
-        unwrapped_line_actors = []
         wrapped_line_actors = []
         # get line segments
         segments = self._split_and_wrap_line_frac(p0, p1)
@@ -260,9 +691,6 @@ class CriticalPointsPlotter(GridPlotter):
             c0 = self.grid.frac_to_cart(f0)
             c1 = self.grid.frac_to_cart(f1)
             # add line segment
-            unwrapped_line_actors.append(
-                pv.Line(c0, c1)
-                )
             wrapped_line_actors.append(
                 pv.Line(c0, c1)
                 )
@@ -291,128 +719,65 @@ class CriticalPointsPlotter(GridPlotter):
                     pv.Line(c0, c1)
                     )
         
-        return pv.merge(unwrapped_line_actors), pv.merge(wrapped_line_actors)
+        if wrapped_line_actors:
+            return pv.merge(wrapped_line_actors)
+        else:
+            return False
 
     def _create_connection_meshes(self):
-        unwrapped_meshes = [[] for i in range(3)]
-        wrapped_meshes = [[] for i in range(3)]
+        for connection, (crit1, crit2) in zip(
+                ("saddle1_minima", "saddle2_maxima", "saddle1_saddle2"),
+                ((1,0), (2,3), (1,2)),
+                ):
+            meshes = []
+            for (i,j,_), data_dict in self.morse_graph.edges.items():
+                crit_type0=self.morse_graph.nodes[i]["type_idx"]
+                crit_type1=self.morse_graph.nodes[j]["type_idx"]
+                if crit_type0 != crit1 or crit_type1 != crit2:
+                    continue
+                
+                p0 = data_dict["p0"]
+                p1 = data_dict["p1"]
+                # get lines with and without wrapping
+                wrapped = self._get_connection_mesh(p0,p1)
+                if wrapped:
+                    meshes.append(wrapped)
+                
+            # merge meshes and set
+            if meshes:
+                meshes = pv.merge(meshes)
+            else:
+                meshes = False
+            setattr(self, f"_{connection}_meshes", meshes)
 
-        for i, j, image in self.morse_graph.edges(data="image"):
-            crit_type0=self.morse_graph.nodes[i]["type_idx"]
-            crit_type1=self.morse_graph.nodes[j]["type_idx"]
-            # only allow connections from lower to higher critical point types
-            if crit_type0 >= crit_type1:
-                continue
-            
-            # get fractional coords of each point
-            p0 = self.morse_graph.nodes[i]["frac_coords"]
-            p1 = self.morse_graph.nodes[j]["frac_coords"]
-            # shift p1 to image
-            p1 = p1 + image
-
-            # get lines with and without wrapping
-            unwrapped, wrapped = self._get_connection_mesh(p0,p1)
-            unwrapped_meshes[crit_type0].append(unwrapped)
-            wrapped_meshes[crit_type0].append(wrapped)
-
-        self._connection_meshes = unwrapped_meshes
-        self._wrapped_connection_meshes = wrapped_meshes
         
     def _update_connection_meshes(self):
-        if self._wrapped_connection_meshes is None or self._connection_meshes is None:
+        if self._saddle1_minima_meshes is None:
             self._create_connection_meshes()
             
-        # get appropriate poly data
-        if self.wrap_atoms:
-            connections = self._wrapped_connection_meshes
-        else:
-            connections = self._connection_meshes
-        
-        # get connection colors
-        connection_colors = self.connection_colors
-        # get visible connections
-        visible_connections = self.visible_connections
-        
-        for idx, (color, visible) in enumerate(zip(connection_colors, visible_connections)):
+        for connection in ("saddle1_minima", "saddle2_maxima", "saddle1_saddle2"):
+            visible = getattr(self, f"show_{connection}")
+            color = getattr(self, f"{connection}_color")
+
+            # remove connections that aren't visible
             if not visible:
-                # remove related actors
-                actor = self.plotter.actors.get(f"connections_{idx}", None)
+                actor = self.plotter.actors.get(f"{connection}", None)
                 if actor is not None:
                     self.plotter.remove_actor(actor)
                 continue
-            # update actor
-            mesh = pv.merge(connections[idx])
-
-            self.plotter.add_mesh(
-                mesh,
-                color=color,
-                name=f"connections_{idx}",
-                render_lines_as_tubes=True,
-                line_width=self.connection_thickness,
-            )
-
-    def _create_critical_polydata(self):
-        wrapped_crit_coords = []
-        crit_coords = []
-        corresponding_sites = []
-        wrapped_corresponding_sites = []
-        
-        for i in self.morse_graph.nodes:
-            crit_type = self.morse_graph.nodes[i]["type_idx"]
-            frac_coords = self.morse_graph.nodes[i]["frac_coords"]
-            crit_coords.append(frac_coords @ self.structure.lattice.matrix)
-            corresponding_sites.append(crit_type)
-            # get wrapped coords as well
-            wrapped_coords, shifts = self._wrap_near_edge(frac_coords)
-            cart_coords = wrapped_coords @ self.structure.lattice.matrix
-            # add to lists
-            wrapped_crit_coords.extend(cart_coords)
-            for j, shift in enumerate(shifts):
-                wrapped_corresponding_sites.append(crit_type)
-
-        # save the map from wrapped points to their original site
-        self._map_wrapped_to_crits = np.array(wrapped_corresponding_sites, dtype=int)
-        self._map_to_crits = np.array(corresponding_sites, dtype=int)
-        
-        # create poly data of points for both the atoms with and without wrapping
-        self._crit_poly = pv.PolyData(crit_coords)
-        self._wrapped_crit_poly = pv.PolyData(wrapped_crit_coords)
-
-    def _update_critical_meshes(self):
-        if self._wrapped_crit_poly is None or self._crit_poly is None:
-            self._create_critical_polydata()
             
-        # get appropriate poly data
-        if self.wrap_atoms:
-            crit_map = self._map_wrapped_to_crits
-            # get poly data including wrapped atoms
-            crits = self._wrapped_crit_poly
-        else:
-            crit_map = self._map_to_crits
-            # get poly data including wrapped atoms
-            crits = self._crit_poly
-        
-        # get crit colors
-        crit_colors = self.critical_point_colors[crit_map]
-        # get alpha values
-        alpha = self.visible_critical_points[crit_map]
-        
-        # update poly data scalars
-        crits["crit_colors"] = np.column_stack((crit_colors, alpha))
-        crits["crit_radii"] = self.critical_point_radii[crit_map] * self.radii_scale
-        
-        # generate glyphs
-        glyphs = crits.glyph(geom=self._sphere_mesh, scale="crit_radii", orient=False)
+            # add mesh
+            mesh = getattr(self, f"_{connection}_meshes")
 
-        # add the crit glyphs to our plotter. This automatically overwrites any
-        # previous meshes
-        self.plotter.add_mesh(
-            glyphs,
-            scalars="crit_colors",
-            rgb=True,
-            name="crit_glyphs",
-            pbr=True,
-        )
+            if mesh:
+                self.plotter.add_mesh(
+                    mesh,
+                    color=color,
+                    name=f"{connection}",
+                    line_width=self.connection_thickness,
+                    render_lines_as_tubes=True,
+                )
+    
 
     def _create_plot(self) -> pv.Plotter:
         """

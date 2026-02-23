@@ -1259,6 +1259,58 @@ def group_by_persistence(
 
     return roots, root_transforms#, persistence_cutoffs
 
+@njit(cache=True, parallel=True)
+def get_persistence_cutoffs(
+    data,
+    groups,
+    max_dist=5
+        ):
+    persistence_cutoffs = np.full(len(groups), np.inf, dtype=np.float64)
+    shape = np.array(data.shape)
+    for group_idx in prange(len(groups)):
+        # get group
+        group = groups[group_idx]
+        # wrap all to the same region
+        group_frac = group / shape
+        ref = group_frac[0]
+        group_frac = group_frac - np.round(group_frac - ref)
+        # convert back to vox
+        group = group_frac * shape
+        # get distances between them
+        neighs = np.empty((len(group)), dtype=np.int32)
+        dists = np.empty((len(group)), dtype=np.float64)
+        for i in range(len(group)):
+            best_dist = np.inf
+            best_neigh = -1
+            ci,cj,ck = group[i]
+            for j in range(len(group)):
+                if i == j:
+                    continue
+                ci1,cj1,ck1 = group[j]
+                dist = ci*ci1 + cj*cj1 + ck*ck1
+                if dist < best_dist:
+                    best_dist = dist
+                    best_neigh = j
+            neighs[i] = best_neigh
+            dists[i] = best_dist
+        # for each point, get the closest point
+        lowest_val = np.inf
+        for j, (i, dist) in enumerate(zip(neighs, dists)):
+            # skip dists above our cutoff
+            if dist > max_dist:
+                continue
+            p1 = group[i]
+            p2 = group[j]
+            n = math.ceil(dist*3)
+            # otherwise get values between
+            values=linear_slice(data=data, p1=p1, p2=p2, n=n, is_frac=False,method="nearest")
+            lowest = values.min()
+            lowest_val = min(lowest, lowest_val)
+        persistence_cutoffs[group_idx] = lowest_val
+    return persistence_cutoffs
+        
+        
+
 @njit(parallel=True, cache=True)
 def update_labels_and_images(
     labels,
@@ -1287,6 +1339,35 @@ def update_labels_and_images(
                 labels[i,j,k] = label_map[label]
                 
     return labels, images
+
+@njit(parallel=True, cache=True)
+def update_final_images(
+    labels,
+    images,
+    image_map,
+    important_mask,
+    vacuum_mask,
+        ):
+    nx,ny,nz = labels.shape
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
+                # get current label
+                label = labels[i,j,k]
+                if not important_mask[label]:
+                    continue
+                # get the current shift
+                shift = INT_TO_IMAGE[images[i,j,k]]
+                # get the shift from this maxima to its root
+                maxima_shift = image_map[label]
+                # update the image
+                si,sj,sk = shift+maxima_shift
+                images[i,j,k] = IMAGE_TO_INT[si,sj,sk]
+                
+    return images
 
 # @njit(cache=True)
 # def group_by_persistence(

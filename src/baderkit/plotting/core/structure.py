@@ -47,6 +47,7 @@ class StructurePlotter(VtkPlotter):
         self._radii_scale = radii_scale
         self._atom_radii = np.array([s.specie.atomic_radius for s in structure])
         self._atom_colors = np.array([ATOM_COLORS.get(s.specie.symbol, (1.00,1.00,1.00)) for s in structure])
+
         # atom poly data
         self._map_wrapped_to_atoms = None
         self._atom_poly = None
@@ -240,7 +241,6 @@ class StructurePlotter(VtkPlotter):
 
         # save the map from wrapped points to their original site
         self._map_wrapped_to_atoms = np.array(corresponding_sites, dtype=int)
-        
         # create poly data of points for both the atoms with and without wrapping
         self._atom_poly = pv.PolyData(self.structure.cart_coords)
         self._wrapped_atom_poly = pv.PolyData(wrapped_atom_coords)
@@ -268,7 +268,7 @@ class StructurePlotter(VtkPlotter):
             alpha = self.visible_atoms
             # get radii
             radii = self.atom_radii * self.radii_scale
-        
+
         sphere = self._sphere_mesh
         # add alpha to colors
         colors = np.column_stack((atom_colors, alpha))
@@ -287,7 +287,7 @@ class StructurePlotter(VtkPlotter):
             scalars="atom_colors",
             rgb=True,
             name="atom_glyphs",
-            pbr=True,
+            pbr=self.pbr,
         )
 
 

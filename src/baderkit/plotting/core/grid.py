@@ -571,7 +571,7 @@ class GridPlotter(StructurePlotter):
                 scalars="atom_colors",
                 rgb=True,
                 name="atom_glyphs",
-                pbr=True,
+                pbr=self.pbr,
             )
         else:
             # otherwise, remove all atoms from the plot

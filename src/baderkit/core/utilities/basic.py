@@ -210,6 +210,8 @@ def merge_frac_coords(
 def merge_frac_coords_weighted(
     frac_coords,
     values,
+    ref_coord = None,
+    wrap = True,
 ):
     # normalize values
     values /= values.sum()
@@ -220,10 +222,16 @@ def merge_frac_coords_weighted(
     total2 = 0.0
 
     # reference coord used for unwrapping
-    ref0 = 0.0
-    ref1 = 0.0
-    ref2 = 0.0
-    ref_set = False
+    if ref_coord is None:
+        ref0 = 0.0
+        ref1 = 0.0
+        ref2 = 0.0
+        ref_set = False
+    else:
+        ref0 = ref_coord[0]
+        ref1 = ref_coord[1]
+        ref2 = ref_coord[2]
+        ref_set = True
 
     # scan all maxima and pick those that belong to this target_group
     for (c0, c1, c2), weight in zip(frac_coords, values):
@@ -245,7 +253,10 @@ def merge_frac_coords_weighted(
         total1 += un1 * weight
         total2 += un2 * weight
 
-    return np.array((total0 % 1.0, total1 % 1.0, total2 % 1.0), dtype=np.float64)
+    if wrap:
+        return np.array((total0 % 1.0, total1 % 1.0, total2 % 1.0), dtype=np.float64)
+    else:
+        return np.array((total0, total1, total2), dtype=np.float64)
 
 
 @njit(parallel=True)

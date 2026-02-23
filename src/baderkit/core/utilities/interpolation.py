@@ -426,7 +426,7 @@ def refine_extrema_parabolic(
 ###############################################################################
 
 @njit(fastmath=True)
-def spline_grad(i, j, k, data, h=0.5, is_frac=False):
+def spline_grad(i, j, k, data, h=0.25, is_frac=False):
     """
     Gradient of spline-interpolated scalar field
     with respect to grid coordinates (i, j, k).
@@ -460,7 +460,7 @@ def spline_grad(i, j, k, data, h=0.5, is_frac=False):
    
 
 @njit(fastmath=True)
-def spline_hess(i, j, k, data, h=0.5, is_frac=False):
+def spline_hess(i, j, k, data, h=0.25, is_frac=False):
     """
     Hessian of spline-interpolated scalar field
     with respect to grid coordinates (i, j, k).
@@ -475,7 +475,6 @@ def spline_hess(i, j, k, data, h=0.5, is_frac=False):
     j = float(j)
     k = float(k)
     
-    h2 = 2.0*h
     hh = h*h
     hh4 = 4.0*hh
 
@@ -536,7 +535,7 @@ def spline_hess(i, j, k, data, h=0.5, is_frac=False):
     return H
 
 @njit(fastmath=True)
-def spline_grad_and_hess(coord, data, h=0.5):
+def spline_grad_and_hess(coord, data, h=0.25):
     """
     Compute both gradient and Hessian of a spline-interpolated scalar field
     with respect to grid coordinates (i, j, k), minimizing redundant interpolations.
@@ -605,7 +604,7 @@ def spline_grad_and_hess(coord, data, h=0.5):
 
 
 @njit(fastmath=True)
-def spline_grad_cart(i, j, k, data, dir2car, h=0.5, is_frac=False):
+def spline_grad_cart(i, j, k, data, dir2car, h=0.25, is_frac=False):
     nx,ny,nz = data.shape
     
     # get gradient in voxel coords
@@ -624,7 +623,7 @@ def spline_grad_cart(i, j, k, data, dir2car, h=0.5, is_frac=False):
     return gx, gy, gz
 
 @njit(fastmath=True)
-def spline_hess_cart(i, j, k, data, dir2car, h=0.5, is_frac=False):
+def spline_hess_cart(i, j, k, data, dir2car, h=0.25, is_frac=False):
     
     # get hessian in grid coords
     H = spline_hess(i, j, k, data, h, is_frac)
@@ -643,7 +642,6 @@ def newton_refine_critical(
     lambda0=1.0e-2,
     lambda_up=10.0,
     lambda_down=0.3,
-    h=0.25,
     eig_tol=1e-10,
 ):
     """
@@ -708,11 +706,11 @@ def newton_refine_critical(
 
     for it in range(max_iter):
         # gradient and its norm
-        gi, gj, gk = spline_grad(i, j, k, data, h)
+        gi, gj, gk = spline_grad(i, j, k, data)
         g_norm = get_norm(gi,gj,gk)
 
         # compute Hessian
-        H = spline_hess(i, j, k, data, h)
+        H = spline_hess(i, j, k, data)
 
         # check convergence by gradient norm
         if g_norm < grad_tol:
@@ -795,7 +793,7 @@ def newton_refine_critical(
         k_trial = k + dk
 
         # trial gradient
-        gi_trial, gj_trial, gk_trial = spline_grad(i_trial, j_trial, k_trial, data, h)
+        gi_trial, gj_trial, gk_trial = spline_grad(i_trial, j_trial, k_trial, data)
         g_trial_norm = get_norm(gi_trial, gj_trial, gk_trial)
 
         # Acceptance rule: accept if gradient norm decreases
@@ -815,8 +813,8 @@ def newton_refine_critical(
 
     # finished loop without meeting convergence criteria
     # return final diagnostic information and original point
-    evals_final, _ = np.linalg.eigh(spline_hess(i, j, k, data, h))
-    gi_final, gj_final, gk_final = spline_grad(i, j, k, data, h)
+    evals_final, _ = np.linalg.eigh(spline_hess(i, j, k, data))
+    gi_final, gj_final, gk_final = spline_grad(i, j, k, data)
     grad_norm_final = get_norm(gi_final, gj_final, gk_final)
     
     n_neg_final = np.sum(evals_final < -eig_tol)
@@ -845,7 +843,6 @@ def refine_critical_points(
     lambda0=1.0e-2,
     lambda_up=10.0,
     lambda_down=0.3,
-    h=0.25,
     eig_tol=1e-10,
         ):
     
@@ -865,7 +862,6 @@ def refine_critical_points(
             lambda0,
             lambda_up,
             lambda_down,
-            h,
             eig_tol,
         )
         refined_points[idx, 0] = i
@@ -877,7 +873,6 @@ def refine_critical_points(
 @njit(parallel=True, cache=True)
 def refine_extrema(
     extrema_coords,
-    extrema_groups,
     data,
     labels,
     lattice,
@@ -895,32 +890,10 @@ def refine_extrema(
         target_index = 3
     
     new_voxel_coords = np.empty_like(extrema_coords, dtype=np.uint16)
-    frac_coords = np.empty_like(extrema_coords, dtype=np.float64)
+    
+    for coord_idx in prange(len(extrema_coords)):
+        ai, aj, ak = extrema_coords[coord_idx]
 
-    for group_idx in prange(len(extrema_coords)):
-        group = extrema_groups[group_idx]
-        values = np.empty(len(group), dtype=np.float64)
-        for idx, (i,j,k) in enumerate(group):
-            values[idx] = data[i,j,k]
-            
-        if not use_minima:
-            best_value = values.max()
-        else:
-            best_value = values.min()
-        group_frac = group / shape
-        # get average frac weighted by value
-        average_frac = merge_frac_coords_weighted(group_frac, values)
-        # get equivalent grid point
-        ai, aj, ak = np.round(average_frac*shape).astype(np.int64) % shape
-        # check if this point is in the right basin and has the highest value
-        label = labels[ai, aj, ak]
-        value = data[ai,aj,ak]
-        if label != group_idx or value != best_value:
-            # default to current extrema representing this group
-            ai, aj, ak = extrema_coords[group_idx]
-            average_frac = extrema_coords[group_idx] / shape
-        new_voxel_coords[group_idx] = (ai, aj, ak)
-        
         i, j, k, success, _, _ = newton_refine_critical(
             (ai,aj,ak),
             data,
@@ -928,11 +901,9 @@ def refine_extrema(
             is_frac=False,
         )
 
-        frac_coords[group_idx] = (i/nx,j/ny,k/nz)
-    # round and wrap coords
-    frac_coords = np.round(frac_coords, 6)
-    # frac_coords %= 1
-    return new_voxel_coords, frac_coords
+        new_voxel_coords[coord_idx] = (i, j, k)
+
+    return new_voxel_coords
 
 
 

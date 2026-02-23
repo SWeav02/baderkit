@@ -1,132 +1,158 @@
 # -*- coding: utf-8 -*-
 from numba import njit, prange
+import numpy as np
+
 from baderkit.core.utilities.union_find import union, find_root
 from baderkit.core.utilities.basic import coords_to_flat
 
-import numpy as np
+# Full 26-neighborhood (excluding (0,0,0))
+NEIGHBOR_TRANSFORMS = np.array(
+    [(dx, dy, dz)
+     for dx in (-1, 0, 1)
+     for dy in (-1, 0, 1)
+     for dz in (-1, 0, 1)
+     if not (dx == dy == dz == 0)],
+    dtype=np.int8
+)
 
-UPPER_TRANSFORMS = np.array([
-    [1,0,0],
-    [0,1,0],
-    [0,0,1],
-    [1,1,0],
-    [1,0,1],
-    [0,1,1],
-    [1,1,1]
-    ], dtype=np.uint8)
-
-# @njit
+@njit(cache=True)
 def get_betty0(vol):
     nx, ny, nz = vol.shape
-    num_vox = nx*ny*nz
-    ny_nz = ny*nz
+    num_vox = nx * ny * nz
+    ny_nz = ny * nz
+
     flat_vol = vol.ravel()
     labels = np.arange(num_vox, dtype=np.uint32)
-    
+
     no_vol = True
-    for i in range(nx-1):
-        for j in range(ny-1):
-            for k in range(nz-1):
+
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
                 # skip points not in the volume
-                if not vol[i,j,k]:
+                if not vol[i, j, k]:
                     continue
+                
+                # note we have some volume and get flat label
                 no_vol = False
-                # get flat label of this coord
                 flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
                 label = labels[flat_idx]
-                # check all neighbors above this point
-                for si, sj, sk in UPPER_TRANSFORMS:
-                    ni = i+si
-                    nj = j+sj
-                    nk = k+sk
-                    # skip if neighbor not in volume
-                    if not vol[ni,nj,nk]:
+
+                # check all neighbors
+                for di, dj, dk in NEIGHBOR_TRANSFORMS:
+                    ni = i + di
+                    nj = j + dj
+                    nk = k + dk
+
+                    # skip if we're outside our bounds or the neighbor is not
+                    # part of the volume
+                    if ni < 0 or nj < 0 or nk < 0:
                         continue
-                    # get neighbor label
-                    flat_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
-                    # make unions
-                    neigh_label = labels[flat_idx]
-                    union(labels, label, neigh_label)
-    # if we have no volume, we immediately return 0
+                    if ni >= nx or nj >= ny or nk >= nz:
+                        continue
+                    if not vol[ni, nj, nk]:
+                        continue
+                    
+                    # get neighbors label
+                    neigh_flat = coords_to_flat(ni, nj, nk, ny_nz, nz)
+
+                    # only check if the neighbor has a lower index, to avoid
+                    # extra union calls
+                    if neigh_flat <= flat_idx:
+                        continue
+
+                    union(labels, label, labels[neigh_flat])
+
     if no_vol:
         return 0
-    
-    # otherwise we get the number of unique labels
-    label_roots = np.empty_like(labels, dtype=np.uint32)
-    for idx, (label, is_vol) in enumerate(zip(labels, flat_vol)):
+
+    # Compress roots only for occupied voxels
+    roots = np.empty_like(labels, dtype=np.uint32)
+
+    for idx, is_vol in enumerate(flat_vol):
         if not is_vol:
-            label_roots[idx] = num_vox
-            continue
+            roots[idx] = num_vox
+        else:
+            roots[idx] = find_root(labels, labels[idx])
 
-        label_roots[idx] = find_root(labels, label)
-        
-    # we return the number of unique roots, not including the empty regions. By
-    # construction we always have at least some empty regions, and they all have
-    # the same label, so we subtract 1
-    return len(np.unique(label_roots)) - 1
+    # Count unique connected components, excluding empty space
+    return len(np.unique(roots)) - 1
 
-FACE_TRANFORMS = np.array([
+FACE_TRANSFORMS = np.array([
     [1,0,0],
     [0,1,0],
     [0,0,1],
-    ], dtype=np.uint8)
+    [-1,0,0],
+    [0,-1,0],
+    [0,0,-1],
+    ], dtype=np.int8)
 
-# @njit
+@njit(cache=True)
 def get_betty2(vol):
     nx, ny, nz = vol.shape
-    num_vox = nx*ny*nz
-    ny_nz = ny*nz
+    num_vox = nx * ny * nz
+    ny_nz = ny * nz
+
     flat_vol = vol.ravel()
     labels = np.arange(num_vox, dtype=np.uint32)
 
     no_vol = True
+
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
                 # skip points in the volume
-                if vol[i,j,k]:
+                if vol[i, j, k]:
+                    # note we have some volume and get flat label
                     no_vol = False
                     continue
-
-                # get flat label of this coord
+                                
                 flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
                 label = labels[flat_idx]
-                # check all faces above this point
-                for si, sj, sk in FACE_TRANFORMS:
-                    ni = i+si
-                    nj = j+sj
-                    nk = k+sk
-                    # skip if we're outside the allowed range
-                    if ni>=nx or nj>=ny or nk>=nz:
+
+                # check all neighbors
+                for di, dj, dk in FACE_TRANSFORMS:
+                    ni = i + di
+                    nj = j + dj
+                    nk = k + dk
+
+                    # skip if we're outside our bounds or the neighbor is part
+                    # of the volume
+                    if ni < 0 or nj < 0 or nk < 0:
                         continue
-                    # skip if neighbor in volume
-                    if vol[ni,nj,nk]:
+                    if ni >= nx or nj >= ny or nk >= nz:
                         continue
-                    # get neighbor label
-                    flat_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
-                    # make unions
-                    neigh_label = labels[flat_idx]
-                    union(labels, label, neigh_label)
-    # if we have no volume, we cannot have any other betti numbers and we continue
+                    if vol[ni, nj, nk]:
+                        continue
+                    
+                    # get neighbors label
+                    neigh_flat = coords_to_flat(ni, nj, nk, ny_nz, nz)
+
+                    # only check if the neighbor has a lower index, to avoid
+                    # extra union calls
+                    if neigh_flat <= flat_idx:
+                        continue
+
+                    union(labels, label, labels[neigh_flat])
+
     if no_vol:
         return 0
-    
-    # otherwise we get the number of unique labels
-    label_roots = np.empty_like(labels, dtype=np.uint32)
-    for idx, (label, is_vol) in enumerate(zip(labels, flat_vol)):
-        # label volume with label outside allowed
-        if is_vol:
-            label_roots[idx] = num_vox
-            continue
 
-        label_roots[idx] = find_root(labels, label)
+    # Compress roots only for occupied voxels
+    roots = np.empty_like(labels, dtype=np.uint32)
+
+    for idx, is_vol in enumerate(flat_vol):
+        if is_vol:
+            roots[idx] = num_vox
+        else:
+            roots[idx] = find_root(labels, labels[idx])
 
     # we want to return the number of unique roots that are not part of the
     # volume or the edges. By construction the edges are fully connected, and
     # the volume has 1 label, so we subtract 2.
-    return len(np.unique(label_roots)) - 2
+    return len(np.unique(roots)) - 2
 
-@njit
+@njit(cache=True)
 def get_euler_characteristic(vol):
     """
     Compute Euler characteristic of a 3D boolean array
@@ -269,7 +295,7 @@ def get_euler_characteristic(vol):
 
     return N0 - N1 + N2 - N3
 
-# @njit
+@njit(cache=True)
 def get_betti_numbers(vol):
     b0 = get_betty0(vol)
     b2 = get_betty2(vol)
@@ -277,7 +303,7 @@ def get_betti_numbers(vol):
     b1 = b0 + b2 - chi
     return b0, b1, b2
 
-# @njit(parallel=True)
+@njit(parallel=True, cache=True)
 def get_all_betti_numbers(groups, shape):
     
     betti_nums = np.empty((len(groups),3), dtype=np.uint16)
@@ -309,17 +335,18 @@ def get_all_betti_numbers(groups, shape):
             mins[i] = np.min(coords[:,i])
             maxs[i] = np.max(coords[:,i])
     
-        box_shape = (maxs - mins + 3)
-        vol = np.zeros(box_shape, dtype=bool)
+        bi, bj, bk = maxs - mins + 3
+        vol = np.zeros((bi, bj, bk), dtype=np.bool_)
         
         # create volume vol. get indices starting one voxel from the edge
-        idx = (coords.astype(int) - mins)+1
+        idx = (coords - mins)+1
         for i,j,k in idx:
             vol[i,j,k] = True
             
         # get betti numbers
         b0, b1, b2 = get_betti_numbers(vol)
         betti_nums[group_idx] = (b0, b1, b2)
+
 
         
     return betti_nums

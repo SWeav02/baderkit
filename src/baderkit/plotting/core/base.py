@@ -39,6 +39,7 @@ class VtkPlotter:
         view_hkl: list[int] = [1, 0, 0],
         show_axes = True,
         parallel_projection = True,
+        pbr = False,
         **kwargs,
     ):
         """
@@ -55,8 +56,6 @@ class VtkPlotter:
 
         """
         # sort and relabel structure for consistency
-        structure = structure.copy()
-        structure.sort()
         structure.relabel_sites()
         # create initial class variables
         self.structure = structure
@@ -69,11 +68,12 @@ class VtkPlotter:
         self._background_color = background_color
         self._show_axes = show_axes
         self._parallel_projection = parallel_projection
+        self._pbr = pbr
 
         # generate initial plotter
         self._suppressing = False
         self.plotter = None
-        self.rebuild()
+        self.soft_rebuild()
         h,k,l=view_hkl
         self.set_camera_to_hkl(h, k, l)
 
@@ -189,6 +189,24 @@ class VtkPlotter:
         else:
             self.plotter.renderer.disable_parallel_projection()
         self._parallel_projection = parallel_projection
+        
+    @property
+    def pbr(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            If True, physically based rendering will be used
+
+        """
+        return self._pbr
+
+    @pbr.setter
+    def pbr(self, pbr: bool):
+        self._pbr = pbr
+        # pbr is set when adding a mesh, so we need to rebuild
+        self.soft_rebuild()
 
     def set_camera_to_hkl(self, h, k, l, rotation=0.0):
         normal = self.structure.get_cart_from_miller(h, k, l)
@@ -265,6 +283,27 @@ class VtkPlotter:
 
         shifts = set(product(*transforms))
         return [np.array(frac_coord) + np.array(shift) for shift in shifts], shifts
+
+    @staticmethod
+    def _wrap_group_near_edge_shifts(frac_coords, tol=0.01):
+        transforms = []
+    
+        for i in (-1, 0, 1):
+            for j in (-1, 0, 1):
+                for k in (-1, 0, 1):
+                    shift = np.array((i, j, k), float)
+                    coords = frac_coords + shift
+    
+                    # point-wise interior test
+                    interior = np.all(
+                        (coords > tol) & (coords < 1 - tol),
+                        axis=1
+                    )
+    
+                    if np.any(interior):
+                        transforms.append(shift)
+    
+        return np.array(transforms)
 
     def _add_lattice_mesh(self) -> pv.PolyData:
         """
@@ -420,6 +459,27 @@ class VtkPlotter:
         self._create_plot()
         plotter.suppress_rendering=False
         self._suppressing = True
+        
+    def soft_rebuild(self) -> pv.Plotter:
+        """
+        reuilds the current pyvista plotter object with current settings.
+
+        Returns
+        -------
+        pv.Plotter
+            A pyvista Plotter object representing the current state of the
+            StructurePlotter class.
+
+        """
+        plotter = self.plotter
+        if plotter is None:
+            plotter = self._create_plotter()
+        plotter.suppress_rendering=True
+        self._suppressing = True
+        self._create_plot()
+        plotter.suppress_rendering=False
+        self._suppressing = True
+        
 
     def get_plot_html(self) -> str:
         """

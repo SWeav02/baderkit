@@ -24,6 +24,7 @@ from .shared_numba import (  # combine_neigh_extrema,
     get_single_point_saddles,
     update_labels_and_images,
     get_basin_min_and_max,
+    update_final_images,
 )
 from baderkit.core.utilities.interpolation import refine_critical_points
 
@@ -250,23 +251,41 @@ class MethodBase:
             logging.info("Refining Minima")  
         else:
             logging.info("Refining Maxima")
-        # refine extrema using a quadratic fit
-        self._extrema_vox, refined_extrema_frac= refine_extrema(
-            extrema_coords=self.extrema_vox,
-            extrema_groups=self.extrema_groups,
-            data=self.reference_grid.total,
-            labels=labels,
-            lattice=self.reference_grid.matrix,
-            use_minima=self.use_minima
-        )
-
-        self._extrema_frac = refined_extrema_frac
-        
+            
+        # todo: interpolate this instead?
         extrema_values = self.reference_grid.total[
             self.extrema_vox[:,0],
             self.extrema_vox[:,1],
             self.extrema_vox[:,2],
             ]
+        # refine extrema using a newton refinement
+        extrema_vox = refine_extrema(
+            extrema_coords=self.extrema_vox,
+            data=self.reference_grid.total,
+            labels=labels,
+            lattice=self.reference_grid.matrix,
+            use_minima=self.use_minima
+        )
+        
+        # get shifts
+        extrema_vox_rounded = np.round(extrema_vox).astype(np.uint16)
+        shifts = extrema_vox_rounded // self.reference_grid.shape
+        
+        extrema_frac = self.reference_grid.grid_to_frac(extrema_vox) - shifts
+        
+        self._extrema_vox = extrema_vox_rounded % self.reference_grid.shape
+        self._extrema_frac = extrema_frac
+
+        # update images one last time for any shifts
+        nonzero_shifts = np.max(np.abs(shifts), axis=1) > 0
+        if np.any(nonzero_shifts):
+            images = update_final_images(
+                labels=labels,
+                images=images,
+                image_map=-shifts,
+                important_mask=nonzero_shifts,
+                vacuum_mask=self.vacuum_mask,
+                    )
 
         results.update(
             {

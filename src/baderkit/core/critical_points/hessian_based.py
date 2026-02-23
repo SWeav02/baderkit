@@ -326,8 +326,8 @@ def newton_refine_in_voxel(
     # make sure our coord is a float
     coord = coord.astype(np.float64)
 
-    voxel_min = np.array(coord - max_change)
-    voxel_max = np.array(coord + max_change)
+    voxel_min = coord - max_change
+    voxel_max = coord + max_change
     
     converged = False
 
@@ -369,7 +369,7 @@ def find_saddle_points(
     data,
     matrix,
     saddle_mask,
-    max_change=1,
+    max_change=1.0,
     max_iter=30,
     grad_tol=1e-6,
     h=0.25,
@@ -394,7 +394,6 @@ def find_saddle_points(
     r_voxel_cart2 = r_voxel_cart * r_voxel_cart
     
     # get range of values
-    # eig_tol = 1e-4*(data.max() - data.min())
     allowed_coords = np.argwhere(saddle_mask == np.iinfo(saddle_mask.dtype).max)
     
     for coord_idx in prange(len(allowed_coords)):
@@ -437,7 +436,14 @@ def refine_saddle_points(
     saddle_mask,
     data,
     matrix,
+    max_change=0.5,
+    max_iter=30,
+    grad_tol=1e-6,
+    h=0.25,
+    eig_rel_tol=1e-04,
         ):
+    shape = np.array(saddle_mask.shape, dtype=np.int64)
+    
     G = matrix @ matrix.T
     inv_G = np.linalg.inv(G)
     
@@ -446,30 +452,38 @@ def refine_saddle_points(
     saddle2s = np.argwhere(saddle_mask == 2)
     
     # create arrays to store partial coordinates
-    saddle1_coords = np.empty_like(saddle1s, dtype=np.float64)
-    saddle2_coords = np.empty_like(saddle2s, dtype=np.float64)
+    saddle1_coords = np.empty((len(saddle1s),3), dtype=np.float64)
+    saddle2_coords = np.empty((len(saddle2s),3), dtype=np.float64)
 
     for coord_idx in prange(len(saddle1s)):
-        i,j,k = saddle1s[coord_idx]
+        coord = saddle1s[coord_idx]
         # refine
-        ii, jj, kk, success, _, morse_index = newton_refine_in_voxel(
-            float(i), float(j), float(k), 
+        new_coord, success, morse_index = newton_refine_in_voxel(
+            coord,
             data=data,
             inv_G=inv_G,
-            is_frac = False,
+            max_change=max_change,
+            max_iter=max_iter,
+            grad_tol=grad_tol,
+            h=h,
+            eig_rel_tol=eig_rel_tol,
             )
-        saddle1_coords[coord_idx] = (ii,jj,kk)
+        saddle1_coords[coord_idx] = new_coord % shape
 
     for coord_idx in prange(len(saddle2s)):
-        i,j,k = saddle2s[coord_idx]
+        coord = saddle2s[coord_idx]
         # refine
-        ii, jj, kk, success, _, morse_index = newton_refine_in_voxel(
-            float(i), float(j), float(k), 
+        new_coord, success, morse_index = newton_refine_in_voxel(
+            coord,
             data=data,
             inv_G=inv_G,
-            is_frac = False,
+            max_change=max_change,
+            max_iter=max_iter,
+            grad_tol=grad_tol,
+            h=h,
+            eig_rel_tol=eig_rel_tol,
             )
-        saddle2_coords[coord_idx] = (ii,jj,kk)
+        saddle2_coords[coord_idx] = new_coord % shape
     return saddle1_coords, saddle2_coords
 
 
