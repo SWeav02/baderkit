@@ -455,41 +455,71 @@ class CriticalPointsPlotter(GridPlotter):
         return poly
 
     @staticmethod
-    def _sort_ring_points(coords: np.ndarray) -> NDArray:
-        """
-        Sort unordered ring points into cyclic order.
-        coords: (N,3) array
-        returns: (N,3) array in ring order
-        """
-        # center
+    def _sort_ring_points(coords: np.ndarray):
         center = coords.mean(axis=0)
         X = coords - center
     
-        # PCA via SVD
         _, _, vh = np.linalg.svd(X, full_matrices=False)
-        e1, e2 = vh[0], vh[1]  # plane basis
+        e1, e2 = vh[0], vh[1]
     
-        # project to 2D
         x = X @ e1
         y = X @ e2
-    
-        # polar angles
         angles = np.arctan2(y, x)
-        order = np.argsort(angles)
     
-        return coords[order]
+        order = np.argsort(angles)
+        return coords[order], angles[order], center, e1, e2
+    
+    def _smooth_ring_polar(self, coords, window=5, n_iter=2):
+        coords, angles, center, e1, e2 = self._sort_ring_points(coords)
+    
+        # polar radius
+        X = coords - center
+        r = np.sqrt((X @ e1)**2 + (X @ e2)**2)
+    
+        # periodic smoothing
+        for _ in range(n_iter):
+            r = np.convolve(
+                np.r_[r[-window:], r, r[:window]],
+                np.ones(2*window+1)/(2*window+1),
+                mode="valid"
+            )
+    
+        # reconstruct in plane
+        x = r * np.cos(angles)
+        y = r * np.sin(angles)
+    
+        smoothed = center + np.outer(x, e1) + np.outer(y, e2)
+        return smoothed
+    
+    @staticmethod
+    def _resample_closed_curve(coords, n_points=None):
+        if n_points is None:
+            n_points = len(coords)
+    
+        pts = np.vstack([coords, coords[0]])
+        d = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        s = np.r_[0, np.cumsum(d)]
+        s /= s[-1]
+    
+        t = np.linspace(0, 1, n_points + 1)[:-1]
+    
+        out = np.empty((n_points, 3))
+        for i in range(3):
+            out[:, i] = np.interp(t, s, pts[:, i])
+        return out
     
     def _create_ring_polyline(self, coords, n_sides=12):
-        """
-        Create a tubular ring mesh from sorted coords.
-        """
-        
-        n = len(coords)
+        coords = self._smooth_ring_polar(
+            coords,
+            window=4,
+            n_iter=2
+        )
     
-        # close loop
+        coords = self._resample_closed_curve(coords, len(coords))
+    
+        n = len(coords)
         points = np.vstack([coords, coords[0]])
     
-        # polyline connectivity
         lines = np.column_stack((
             np.full(n, 2),
             np.arange(n),
@@ -498,9 +528,12 @@ class CriticalPointsPlotter(GridPlotter):
     
         poly = pv.PolyData(points)
         poly.lines = lines
-        breakpoint()
     
-        return poly.tube(radius=self.critical_radii*0.05, n_sides=n_sides)
+        return poly.tube(
+            radius=self.critical_radii * 0.05,
+            n_sides=n_sides,
+            capping=False
+        )
     
     def _create_crit_meshes_by_type(self, crit_type):
         point_coords = []
@@ -527,8 +560,10 @@ class CriticalPointsPlotter(GridPlotter):
                 wrapped_coords, shifts = self._wrap_near_edge(frac_coords)
                 point_coords.extend(wrapped_coords @ self.structure.lattice.matrix)
             elif group_type == 1:
-                # sort coords
-                group_frac = self._sort_ring_points(group_frac)
+                # sort and coords
+                group_frac = self._smooth_ring_polar(group_frac)
+                # resample
+                group_frac = self._resample_closed_curve(group_frac)
                 # get all shifts with part of the polyhedra in the cell
                 shifts = self._wrap_group_near_edge_shifts(group_frac)
                 for shift in shifts:

@@ -291,8 +291,11 @@ class VtkPlotter:
         for i in (-1, 0, 1):
             for j in (-1, 0, 1):
                 for k in (-1, 0, 1):
-                    shift = np.array((i, j, k), float)
-                    coords = frac_coords + shift
+                    shift = np.array((i, j, k), dtype=float)
+                    try:
+                        coords = frac_coords + shift
+                    except:
+                        breakpoint()
     
                     # point-wise interior test
                     interior = np.all(

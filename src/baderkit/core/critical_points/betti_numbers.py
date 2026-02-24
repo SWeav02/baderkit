@@ -64,7 +64,7 @@ def get_betty0(vol):
                     union(labels, label, labels[neigh_flat])
 
     if no_vol:
-        return 0
+        return 0, labels
 
     # Compress roots only for occupied voxels
     roots = np.empty_like(labels, dtype=np.uint32)
@@ -76,7 +76,7 @@ def get_betty0(vol):
             roots[idx] = find_root(labels, labels[idx])
 
     # Count unique connected components, excluding empty space
-    return len(np.unique(roots)) - 1
+    return len(np.unique(roots)) - 1, roots
 
 FACE_TRANSFORMS = np.array([
     [1,0,0],
@@ -295,15 +295,38 @@ def get_euler_characteristic(vol):
 
     return N0 - N1 + N2 - N3
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_betti_numbers(vol):
-    b0 = get_betty0(vol)
+    b0, flat_labels = get_betty0(vol)
+    if b0 > 1:
+        nx, ny, nz = vol.shape
+        num_vox = nx * ny * nz
+        # take the largest portion and run again
+        a = np.sort(flat_labels)
+        n = len(a)
+        
+        unique = [a[0]]
+        counts = [1]
+        
+        for i in range(1, n):
+            # skip background
+            if a[i] == num_vox:
+                continue
+            if a[i] == a[i - 1]:
+                counts[-1] += 1
+            else:
+                unique.append(a[i])
+                counts.append(1)
+        max_label = unique[np.argmax(counts)]
+        vol = (flat_labels==max_label).reshape(vol.shape)
+        b0 = 1
+        
     b2 = get_betty2(vol)
     chi = get_euler_characteristic(vol)
     b1 = b0 + b2 - chi
     return b0, b1, b2
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_all_betti_numbers(groups, shape):
     
     betti_nums = np.empty((len(groups),3), dtype=np.uint16)

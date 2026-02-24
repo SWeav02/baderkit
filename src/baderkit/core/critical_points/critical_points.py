@@ -490,34 +490,56 @@ class CriticalPoints(BaseAnalysis):
     
     def _get_saddle_extrema_connections(self, use_minima: bool = False):
         # neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
-        neighbor_transforms, _, _, _ = self.reference_grid.point_neighbor_voronoi_transforms
-        neighbor_transforms = np.row_stack((np.zeros(3, dtype=int), neighbor_transforms))
+        # get transformations within 1, 2, and 3 voxels
+        radial_transforms = []
+        for i in range(1,4):
+            dist = self.reference_grid.max_point_dist * i
+            transforms,neighbor_dists = self.reference_grid.get_radial_neighbor_transforms(dist)
+            radial_transforms.append((transforms, neighbor_dists))
         if use_minima:
-            connections, problem_indices = get_saddle_extrema_connections(
-                labels=self.bader.minima_basin_labels, 
-                images=self.bader.minima_basin_images, 
-                saddle_coords=self.saddle1_vox, 
-                neighbor_transforms=neighbor_transforms, 
-                vacuum_mask=self.vacuum_mask,
-                )
+            saddle_indices = np.arange(len(self.saddle1_vox))
+            connections = np.empty((0,3), dtype=np.uint16)
+            for transforms, dists in radial_transforms:
+                new_connections, problem_indices = get_saddle_extrema_connections(
+                    labels=self.bader.minima_basin_labels, 
+                    images=self.bader.minima_basin_images, 
+                    saddle_coords=self.saddle1_vox,
+                    saddle_indices=saddle_indices,
+                    neighbor_transforms=transforms,
+                    neighbor_dists=dists,
+                    vacuum_mask=self.vacuum_mask,
+                    )
 
-            connections = np.array(connections, dtype=np.uint16)
-            problem_indices = np.array(problem_indices)
+                if new_connections:
+                    connections = np.row_stack((connections, np.array(new_connections, dtype=np.uint16)))
+                problem_indices = np.array(problem_indices)
+                if len(problem_indices) == 0:
+                    break
+                saddle_indices = problem_indices
             if len(problem_indices) > 0:
                 breakpoint()
 
             self._saddle1_minima_connections = connections
         else:
-            connections, problem_indices = get_saddle_extrema_connections(
-                labels=self.bader.maxima_basin_labels, 
-                images=self.bader.maxima_basin_images, 
-                saddle_coords=self.saddle2_vox, 
-                neighbor_transforms=neighbor_transforms, 
-                vacuum_mask=self.vacuum_mask,
-                )
+            saddle_indices = np.arange(len(self.saddle2_vox))
+            connections = np.empty((0,3), dtype=np.uint16)
+            for transforms, dists in radial_transforms:
+                new_connections, problem_indices = get_saddle_extrema_connections(
+                    labels=self.bader.maxima_basin_labels, 
+                    images=self.bader.maxima_basin_images, 
+                    saddle_coords=self.saddle2_vox, 
+                    saddle_indices=saddle_indices,
+                    neighbor_transforms=transforms, 
+                    neighbor_dists=dists,
+                    vacuum_mask=self.vacuum_mask,
+                    )
+                if new_connections:
+                    connections = np.row_stack((connections, np.array(new_connections, dtype=np.uint16)))
+                problem_indices = np.array(problem_indices)
+                if len(problem_indices) == 0:
+                    break
+                saddle_indices = problem_indices
 
-            connections = np.array(connections, dtype=np.uint16)
-            problem_indices = np.array(problem_indices)
             if len(problem_indices) > 0:
                 breakpoint()
 

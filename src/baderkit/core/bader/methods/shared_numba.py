@@ -1286,8 +1286,8 @@ def get_persistence_cutoffs(
             for j in range(len(group)):
                 if i == j:
                     continue
-                ci1,cj1,ck1 = group[j]
-                dist = ci*ci1 + cj*cj1 + ck*ck1
+                ci1, cj1, ck1 = group[j]
+                dist = ((ci-ci1)**2 + ((cj-cj1)**2) + ((ck-ck1)**2))**(1/2)
                 if dist < best_dist:
                     best_dist = dist
                     best_neigh = j
@@ -1303,7 +1303,7 @@ def get_persistence_cutoffs(
             p2 = group[j]
             n = math.ceil(dist*3)
             # otherwise get values between
-            values=linear_slice(data=data, p1=p1, p2=p2, n=n, is_frac=False,method="nearest")
+            values=linear_slice(data=data, p1=p1, p2=p2, n=n, is_frac=False,method="linear")
             lowest = values.min()
             lowest_val = min(lowest, lowest_val)
         persistence_cutoffs[group_idx] = lowest_val
