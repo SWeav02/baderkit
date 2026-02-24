@@ -1263,6 +1263,8 @@ def group_by_persistence(
 def get_persistence_cutoffs(
     data,
     groups,
+    use_minima,
+    group_vals,
     max_dist=5
         ):
     persistence_cutoffs = np.full(len(groups), np.inf, dtype=np.float64)
@@ -1293,8 +1295,9 @@ def get_persistence_cutoffs(
                     best_neigh = j
             neighs[i] = best_neigh
             dists[i] = best_dist
-        # for each point, get the closest point
-        lowest_val = np.inf
+            
+        # get the lowest/highest connecting value between maxima/minima
+        best_val = group_vals[group_idx]
         for j, (i, dist) in enumerate(zip(neighs, dists)):
             # skip dists above our cutoff
             if dist > max_dist:
@@ -1304,9 +1307,14 @@ def get_persistence_cutoffs(
             n = math.ceil(dist*3)
             # otherwise get values between
             values=linear_slice(data=data, p1=p1, p2=p2, n=n, is_frac=False,method="linear")
-            lowest = values.min()
-            lowest_val = min(lowest, lowest_val)
-        persistence_cutoffs[group_idx] = lowest_val
+            
+            if use_minima:
+                val = values.max()
+                best_val = max(val, best_val)
+            else:
+                val = values.min()
+                best_val = min(val, best_val)
+        persistence_cutoffs[group_idx] = best_val
     return persistence_cutoffs
         
         

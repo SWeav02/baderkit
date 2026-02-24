@@ -295,7 +295,7 @@ def get_euler_characteristic(vol):
 
     return N0 - N1 + N2 - N3
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_betti_numbers(vol):
     b0, flat_labels = get_betty0(vol)
     if b0 > 1:
@@ -317,6 +317,7 @@ def get_betti_numbers(vol):
             else:
                 unique.append(a[i])
                 counts.append(1)
+        counts = np.array(counts, dtype=np.int64)
         max_label = unique[np.argmax(counts)]
         vol = (flat_labels==max_label).reshape(vol.shape)
         b0 = 1
@@ -326,7 +327,7 @@ def get_betti_numbers(vol):
     b1 = b0 + b2 - chi
     return b0, b1, b2
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_all_betti_numbers(groups, shape):
     
     betti_nums = np.empty((len(groups),3), dtype=np.uint16)
@@ -373,3 +374,10 @@ def get_all_betti_numbers(groups, shape):
 
         
     return betti_nums
+
+# TODO:
+    # 1. get actual values in each group
+    # 2. sort
+    # 3. add connections from high to low (or low to high for minima)
+    # tracking betti numbers along the way. Return a group with b0=1.
+    # Give preference to certain shapes: hole > ring > point.

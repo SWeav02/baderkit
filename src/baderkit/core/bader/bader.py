@@ -433,7 +433,9 @@ class Bader(BaseAnalysis):
             maxima_groups = self.maxima_voxel_groups
             persistence_values = get_persistence_cutoffs(
                 groups=maxima_groups,
-                data=self.reference_grid.total
+                group_vals=self.maxima_ref_values,
+                data=self.reference_grid.total,
+                use_minima=False,
                 )
             # maxima_values = self.maxima_ref_values
             # # get the lowest value that the maximum would connect to with the
@@ -762,7 +764,9 @@ class Bader(BaseAnalysis):
             minima_groups = self.minima_voxel_groups
             persistence_values = get_persistence_cutoffs(
                 groups=minima_groups,
-                data=self.reference_grid.total
+                group_vals=self.minima_ref_values,
+                data=self.reference_grid.total,
+                use_minima=True,
                 )
             # minima_values = self.minima_ref_values
             # # get the lowest value that the maximum would connect to with the

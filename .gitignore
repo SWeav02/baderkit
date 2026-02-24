@@ -5,3 +5,4 @@ src/baderkit/trame
 build
 ~/sync_files.py
 *CAR_test*
+.vscode*
