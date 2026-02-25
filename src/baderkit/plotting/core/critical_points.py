@@ -530,7 +530,7 @@ class CriticalPointsPlotter(GridPlotter):
         poly.lines = lines
     
         return poly.tube(
-            radius=self.critical_radii * 0.05,
+            radius=self.critical_radii * 0.1,
             n_sides=n_sides,
             capping=False
         )

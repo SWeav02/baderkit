@@ -1236,28 +1236,7 @@ def group_by_persistence(
         root_frac = critical_frac[root_idx]
         root_transforms[ext_idx] = compute_wrap_offset(crit_frac, root_frac)
 
-    # # update persistence cutoffs
-    # for active, (crit1, crit2, _, _), value in zip(active_connections, basin_connections, saddle_values):
-    #     # skip connections that didn't activate
-    #     if not active:
-    #         continue
-
-    #     # get the root
-    #     root = roots[crit1]
-        
-    #     # check that these extrema are reasonably close in value
-    #     val = critical_values[ext_idx]
-    #     root_val = critical_values[root_idx]
-        
-    #     if (root_val-val)/val > persistence_tol:
-    #         continue
-        
-    #     if use_minima:
-    #         persistence_cutoffs[root] = max(persistence_cutoffs[root], value)
-    #     else:
-    #         persistence_cutoffs[root] = min(persistence_cutoffs[root], value)
-
-    return roots, root_transforms#, persistence_cutoffs
+    return roots, root_transforms
 
 @njit(cache=True, parallel=True)
 def get_persistence_cutoffs(

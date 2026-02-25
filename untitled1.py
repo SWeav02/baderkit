@@ -17,13 +17,13 @@ bader = Bader.from_vasp(reference_filename="ELFCAR", maxima_persistence_tol=0.03
 
 critical_points = CriticalPoints(bader)
 
-maxima, minima = bader.get_persistence_groups()
-test_grid = bader.reference_grid.copy()
-mask = np.zeros(test_grid.shape, dtype=bool)
-for coords in maxima:
-    mask[coords[:,0],coords[:,1],coords[:,2]] = True
-test_grid.total=mask
-test_grid.write_vasp("ELFCAR_test")
+# maxima, minima = bader.get_persistence_groups()
+# test_grid = bader.reference_grid.copy()
+# mask = np.zeros(test_grid.shape, dtype=bool)
+# for coords in maxima:
+#     mask[coords[:,0],coords[:,1],coords[:,2]] = True
+# test_grid.total=mask
+# test_grid.write_vasp("ELFCAR_test")
 # TODO:
     # make sure ring labeling works.
     # fix ring to use limited subset
@@ -31,7 +31,7 @@ test_grid.write_vasp("ELFCAR_test")
     # range of transformations
 
 
-plotter = CriticalPointsPlotter(critical_points)
+# plotter = CriticalPointsPlotter(critical_points)
 
 manifold_labels = critical_points.manifold_labels
 

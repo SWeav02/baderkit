@@ -23,13 +23,13 @@ from baderkit.core.utilities.basic import wrap_point_w_shift, merge_frac_coords_
 from baderkit.core.utilities.interpolation import refine_critical_points
 from baderkit.core.bader.methods.shared_numba import compute_wrap_offset
 
-from .critical_points_numba import (
+from .hessian_based import (
+    find_saddle_points, 
+    refine_saddle_points,
     get_manifold_labels,
-    INT_TO_IMAGE,
-    IMAGE_TO_INT
-)
-from .betti_numbers import get_all_betti_numbers
-from .hessian_based import find_saddle_points, refine_saddle_points
+    IMAGE_TO_INT,
+    INT_TO_IMAGE
+    )
 from .saddle_connections import get_saddle_extrema_connections, get_saddle_saddle_connections
 
 # This allows for Self typing and is compatible with python 3.10
@@ -424,27 +424,23 @@ class CriticalPoints(BaseAnalysis):
     def _update_persistence_groups(
             self,
             groups,
+            betti_numbers,
             base_extrema,
             ):
-        # get betti numbers for each group
-        betti_numbers = get_all_betti_numbers(
-            groups,
-            self.reference_grid.shape
-            )
-        
+
         # classify each group's type
         new_groups = []
         group_types = []
         
-        for group, base_coord, betti in zip(groups, base_extrema, betti_numbers):
-            solids = betti[0]
+        for group, base_coord, betti in zip(
+                groups, 
+                base_extrema, 
+                betti_numbers):
+
             rings = betti[1]
             holes = betti[2]
-            if solids != 1:
-                logging.warning("Extrema group is not connected. Defaulting to point")
-                group_type = 0
             # check for points
-            elif rings == 0 and holes == 0:
+            if rings == 0 and holes == 0:
                 group_type = 0
             # check for rings
             elif rings == 1 and holes == 0:
@@ -454,8 +450,8 @@ class CriticalPoints(BaseAnalysis):
                 group_type = 2
             # other shapes (multiple rings, holes and rings) we will treat similar
             # to our standard cages, so we mark everything else this way
-            else:
-                group_type = 2
+            # else:
+            #     group_type = 2
                 
             # append our groups and types
             group_types.append(group_type)
@@ -469,18 +465,22 @@ class CriticalPoints(BaseAnalysis):
         
     def _get_extrema_persistence_groups(self):
         
-        maxima_groups, minima_groups = self.bader.get_persistence_groups()
-        
+        maxima_betti, minima_betti, maxima_groups, minima_groups = self.bader.get_betti_numbers(
+            return_groups=True
+            )
+
         maxima_vox = self.bader.maxima_vox
         minima_vox = self.bader.minima_vox
         
         new_maxima_groups, maxima_group_types = self._update_persistence_groups(
             maxima_groups,
-            maxima_vox,
+            maxima_betti,
+            maxima_vox
             )
         new_minima_groups, minima_group_types = self._update_persistence_groups(
             minima_groups,
-            minima_vox
+            minima_betti,
+            minima_vox,
             )
         self._maxima_persistence_groups = new_maxima_groups
         self._minima_persistence_groups = new_minima_groups
