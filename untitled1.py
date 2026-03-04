@@ -6,12 +6,29 @@ Created on Thu Feb 19 11:22:49 2026
 """
 import numpy as np
 
-from baderkit.core import Bader
+from baderkit.core import Bader, Grid
 from baderkit.core.critical_points.hessian_based import find_saddle_points
 from baderkit.core.critical_points import CriticalPoints
 from baderkit.plotting.core import CriticalPointsPlotter
 
-bader = Bader.from_vasp(reference_filename="ELFCAR", maxima_persistence_tol=0.03, minima_persistence_tol=0.001)
+grid = Grid.from_vasp("CHGCAR")
+elf = Grid.from_vasp("ELFCAR")
+
+grid.total += abs(np.max(grid.total))
+
+bader = Bader(
+    charge_grid=grid,
+    reference_grid=elf,
+    maxima_persistence_tol=0.03, 
+    minima_persistence_tol=0.001,
+    vacuum_tol=0.01,
+    nna_cutoff=1
+    )
+print(len(bader.maxima_frac))
+bader.write_species_volume(
+    "X",
+    write_grid="reference_grid",
+    filename="ELFCAR")
 
 # maxima_groups, minima_groups = bader.get_persistence_groups()
 

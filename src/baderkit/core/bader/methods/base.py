@@ -268,7 +268,7 @@ class MethodBase:
         )
         
         # get shifts
-        extrema_vox_rounded = np.round(extrema_vox).astype(np.uint16)
+        extrema_vox_rounded = np.round(extrema_vox)
         shifts = extrema_vox_rounded // self.reference_grid.shape
         
         extrema_frac = self.reference_grid.grid_to_frac(extrema_vox) - shifts
@@ -291,7 +291,7 @@ class MethodBase:
             {
                 "extrema_basin_labels": labels,
                 "extrema_basin_images": images,
-                "extrema_vox": self.extrema_vox.astype(np.uint16),
+                "extrema_vox": self.extrema_vox.astype(np.int16),
                 "basin_charges": final_charges,
                 "basin_volumes": final_volumes,
                 "extrema_voxel_groups": self.extrema_groups,

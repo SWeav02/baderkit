@@ -889,7 +889,7 @@ def refine_extrema(
     else:
         target_index = 3
     
-    new_voxel_coords = np.empty_like(extrema_coords, dtype=np.uint16)
+    new_voxel_coords = np.empty_like(extrema_coords, dtype=np.int16)
     
     for coord_idx in prange(len(extrema_coords)):
         ai, aj, ak = extrema_coords[coord_idx]
@@ -900,8 +900,10 @@ def refine_extrema(
             target_index,
             is_frac=False,
         )
-
-        new_voxel_coords[coord_idx] = (i, j, k)
+        if success:
+            new_voxel_coords[coord_idx] = (i, j, k)
+        else:
+            new_voxel_coords[coord_idx] = ai, aj, ak
 
     return new_voxel_coords
 

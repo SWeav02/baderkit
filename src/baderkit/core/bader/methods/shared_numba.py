@@ -532,11 +532,11 @@ def get_canonical_saddle_connections(
         # 2: the higher label index
         # 3: the connection image between basins
         # 4: whether or not the connection image is lower -> higher (0) or higher -> lower (1)
-    saddle_connections = np.empty((len(saddle_coords),4),dtype=np.uint16)
+    saddle_connections = np.empty((len(saddle_coords),4),dtype=np.int16)
     connection_vals = np.empty(len(saddle_coords), dtype=np.float64)
     # create a mask to track important connections
     important = np.ones(len(saddle_coords), dtype=np.bool)
-    max_val = np.iinfo(np.uint16).max
+    max_val = np.iinfo(np.int16).max
     for idx in prange(len(saddle_coords)):
         i,j,k = saddle_coords[idx]
         lower, higher, shift, is_reversed, connection_value = get_extrema_saddle_connections(
@@ -579,7 +579,7 @@ def get_single_point_saddles(
     use_minima = False,
 ):
     # create an array to store best points
-    saddles = np.empty(num_connections, dtype=np.uint16)
+    saddles = np.empty(num_connections, dtype=np.int16)
     if use_minima:
         best_vals = np.full(num_connections, np.inf, dtype=np.float64)
     else:
@@ -1003,7 +1003,7 @@ def initialize_labels_from_extrema(
                 group_labels.append(label)
                 # check if the value of this point is higher/lower
                 ii, jj, kk = flat_to_coords(label, ny_nz, nz)
-                group.append(np.array((ii,jj,kk), dtype=np.uint16))
+                group.append(np.array((ii,jj,kk), dtype=np.int16))
                 value = data[ii,jj,kk]
                 if (
                     not use_minima and value > best_value
@@ -1016,7 +1016,7 @@ def initialize_labels_from_extrema(
         for label in group_labels:
             labels[label] = best_point
         # add group
-        group_array = np.empty((len(group), 3), dtype=np.uint16)
+        group_array = np.empty((len(group), 3), dtype=np.int16)
         for idx, array in enumerate(group):
             group_array[idx] = array
         extrema_groups.append(group_array)
@@ -1307,11 +1307,14 @@ def update_labels_and_images(
     vacuum_mask,
         ):
     nx,ny,nz = labels.shape
+    vacuum_label = len(np.unique(label_map))
+    
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                # if this voxel is part of the vacuum, continue
+                # if this voxel is part of the vacuum, relable and continue
                 if vacuum_mask[i, j, k]:
+                    labels[i,j,k] = vacuum_label
                     continue
                 # get current label
                 label = labels[i,j,k]
@@ -1327,7 +1330,7 @@ def update_labels_and_images(
                 
     return labels, images
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def update_final_images(
     labels,
     images,
@@ -1352,7 +1355,9 @@ def update_final_images(
                 maxima_shift = image_map[label]
                 # update the image
                 si,sj,sk = shift+maxima_shift
-                images[i,j,k] = IMAGE_TO_INT[si,sj,sk]
+                try:
+                    images[i,j,k] = IMAGE_TO_INT[si,sj,sk]
+                except: breakpoint()
                 
     return images
 
@@ -1521,13 +1526,13 @@ def get_persistence_groups(
                     not use_minima and value >= cutoff
                     or use_minima and value <= cutoff
                     ):
-                    point = np.array((i,j,k), dtype=np.uint16)
+                    point = np.array((i,j,k), dtype=np.int16)
                     persistence_groups[label].append(point)
 
     # convert to arrays
     array_groups = []
     for i in persistence_groups:
-        new_group = np.empty((len(i), 3), dtype=np.uint16)
+        new_group = np.empty((len(i), 3), dtype=np.int16)
         for idx, val in enumerate(i):
             new_group[idx] = val
         array_groups.append(new_group)

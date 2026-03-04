@@ -208,13 +208,17 @@ class VtkPlotter:
         # pbr is set when adding a mesh, so we need to rebuild
         self.soft_rebuild()
 
-    def set_camera_to_hkl(self, h, k, l, rotation=0.0):
+    def set_camera_to_hkl(self, h, k, l, rotation=0.0, dist=None):
         normal = self.structure.get_cart_from_miller(h, k, l)
         origin = np.mean(self.structure.cart_coords, axis=0)
         
+        if dist is None:
+            reset=True
+            dist = 5
+        else:
+            reset=False
         # Define distance from object
-        distance = 5
-        camera_pos = origin + normal * distance
+        camera_pos = origin + normal * dist
         
         # get an appropriate view up
         z_axis = np.array([0, 0, 1])
@@ -226,17 +230,24 @@ class VtkPlotter:
             y_axis = np.array([0, 1, 0])
             view_up = y_axis - np.dot(y_axis, normal) * normal
 
-        self.plotter.camera_position = [camera_pos, origin, view_up] 
+        self.plotter.set_viewup(view_up)    
+        self.plotter.set_focus(origin)
+        self.plotter.set_position(camera_pos)
         # reset camera to fit well
-        self.plotter.reset_camera()
+        if reset:
+            self.plotter.reset_camera()
         
-    def set_camera_to_vector(self, normal, origin=None, rotation=0.0):
+    def set_camera_to_vector(self, normal, origin=None, rotation=0.0, dist=None):
         
         if origin is None:
             origin = np.mean(self.structure.cart_coords, axis=0)
         # Define distance from object
-        distance = 5
-        camera_pos = origin + normal * distance
+        if dist is None:
+            reset=True
+            dist = 5
+        else:
+            reset=False
+        camera_pos = origin + normal * dist
         
         # get an appropriate view up
         z_axis = np.array([0, 0, 1])
@@ -248,9 +259,13 @@ class VtkPlotter:
             y_axis = np.array([0, 1, 0])
             view_up = y_axis - np.dot(y_axis, normal) * normal
 
-        self.plotter.camera_position = [camera_pos, origin, view_up] 
+        self.plotter.set_viewup(view_up)    
+        self.plotter.set_focus(origin)
+        self.plotter.set_position(camera_pos)
+        
         # reset camera to fit well
-        self.plotter.reset_camera()
+        if reset:
+            self.plotter.reset_camera()
     
     ###########################################################################
     # Mesh Generation
@@ -558,7 +573,7 @@ class VtkPlotter:
         
         # if our plotter is not currently rendered, we want to temporarily set
         # it to be off screen to take the screenshot, then set it back
-
+        plotter.render()
         screenshot = plotter.screenshot(
             filename=filename,
             transparent_background=transparent_background,

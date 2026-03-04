@@ -1555,7 +1555,7 @@ class Bader(BaseAnalysis):
 
         # Get mask where the grid belongs to requested species
         mask = np.isin(self.atom_labels, indices)
-        kwargs["suffix"] = "_{species}"
+        kwargs["suffix"] = f"_{species}"
         self._write_volume(volume_mask=mask, **kwargs)
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:

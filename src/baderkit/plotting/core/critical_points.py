@@ -56,9 +56,9 @@ class CriticalPointsPlotter(GridPlotter):
         self._ring_cage_opacity = 0.5
 
         # edge settings
-        self._show_saddle1_minima = True
+        self._show_saddle1_minima = False
         self._show_saddle2_maxima = True
-        self._show_saddle1_saddle2 = True
+        self._show_saddle1_saddle2 = False
         
         self._saddle1_minima_color = pv.Color(CONNECTION_COLORS.get(0,  "#FFFFFF"))
         self._saddle2_maxima_color = pv.Color(CONNECTION_COLORS.get(1,  "#FFFFFF"))

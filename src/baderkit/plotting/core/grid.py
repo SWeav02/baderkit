@@ -24,6 +24,7 @@ class GridPlotter(StructurePlotter):
         use_solid_cap_color = False,
         surface_color = "#BA8E23",
         cap_color = "#BA8E23",
+        iso_value = None,
         **structure_kwargs,
     ):
         """
@@ -56,7 +57,10 @@ class GridPlotter(StructurePlotter):
 
         self._min_val = grid.total.min() + 0.0000001
         self._max_val = grid.total.max()
-        self._iso_value = (self._min_val  + self._max_val) / 4
+        if iso_value is None:
+            self._iso_value = (self._min_val  + self._max_val) / 4
+        else:
+            self._iso_value = max(self.min_val, min(iso_value, self.max_val))
         
         # meshes
         self._surface_mesh = None
@@ -332,15 +336,18 @@ class GridPlotter(StructurePlotter):
     def _update_surface_actor(self):
         surface_kwargs = {
             "opacity": self.surface_opacity,
-            "pbr": True,
+            "pbr": self.pbr,
             "name": "iso",
             "color": self.surface_color,
-            "show_scalar_bar": False,
-            "clim": [self.min_val, self.max_val],
-            "scalars": "values",
             }
+
         if not self.use_solid_surface_color:
-            surface_kwargs["colormap"] = self.colormap
+            surface_kwargs.update({
+                "scalars": "values",
+                "clim": [self.min_val, self.max_val],
+                "show_scalar_bar": False,
+                "colormap": self.colormap
+                })
         
         if self.show_surface and len(self._surface_mesh["values"]) > 0:
             self.plotter.add_mesh(self._surface_mesh, **surface_kwargs)
@@ -353,15 +360,17 @@ class GridPlotter(StructurePlotter):
     def _update_cap_actor(self):
         cap_kwargs = {
             "opacity": self.cap_opacity,
-            "pbr": True,
+            "pbr": self.pbr,
             "name": "cap",
             "color": self.cap_color,
-            "show_scalar_bar": False,
-            "clim": [self.min_val, self.max_val],
-            "scalars": "values",
             }
         if not self.use_solid_cap_color:
-            cap_kwargs["colormap"] = self.colormap
+            cap_kwargs.update({
+                "scalars": "values",
+                "clim": [self.min_val, self.max_val],
+                "show_scalar_bar": False,
+                "colormap": self.colormap
+                })
         
         if self.show_caps and len(self._cap_mesh["values"]) > 0:
                 self.plotter.add_mesh(self._cap_mesh, **cap_kwargs)

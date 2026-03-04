@@ -173,11 +173,13 @@ def get_weight_assignments(
                     break
                 best_label = label
 
-            # If the best label isn't unassigned, this is an interior point and we assign
+            # If the best label is assigned, this is an interior point and we assign
             if best_label != unlabeled_value:
-                labels[idx] = label
-                charges[label] += flat_charge[idx]
-                volumes[label] += 1.0
+
+                labels[idx] = best_label
+
+                charges[best_label] += flat_charge[idx]
+                volumes[best_label] += 1.0
                 # get the shift to the nearest neighbor
                 si, sj, sk = int_to_shift[highest_neighs[sorted_idx]]
 
@@ -189,6 +191,7 @@ def get_weight_assignments(
                 images[idx,0] += si + nsi
                 images[idx,1] += sj + nsj
                 images[idx,2] += sk + nsk
+            # if we have no labels and border a vacuum, we assign to vacuum
             elif is_vac:
                 labels[idx] = vacuum_label
                 # get the shift to the nearest neighbor
@@ -286,14 +289,20 @@ def get_weight_assignments(
                 continue
             # get this neighbors index
             neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
+            # get this neighbors label
+            neigh_label = labels[neigh_idx]
+            
+            if neigh_label == vacuum_label:
+                continue
+            
             # calculate the flux flowing to this voxel
             flux = abs(neigh_value - base_value) * alpha
             if flux > best_flux:
                 best_flux = flux
                 best_neigh = shift_to_int[si,sj,sk]
             total_flux += flux
-            # get this neighbors label
-            neigh_label = labels[neigh_idx]
+            
+            
             # if the neighbor hasn't been assigned, assign flux to this neighbor
             if neigh_label == unlabeled_value:
                 # at least one neighbor is also an exterior point
@@ -336,8 +345,9 @@ def get_weight_assignments(
             neigh_label = labels[neigh_idx]
             neigh_fluxes[0] = 1.0
             best_neigh = shift_to_int[si,sj,sk]
+
             # If the neighbor belongs to a basin, assign to the same one. Otherwise,
-            # it's an edge and we note the connections
+            # it's an edge and we note the connections.
             if neigh_label >= 0 and neigh_label != unlabeled_value:
                 neigh_labels[0] = neigh_label
             else:
@@ -382,6 +392,7 @@ def get_weight_assignments(
                 if not weight_mask[label]:
                     current_labels.append(label)
                     weight_mask[label] = True
+
                 scratch_weights[label] += flux
                 continue
 
