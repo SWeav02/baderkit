@@ -4,6 +4,7 @@
 import logging
 import math
 import mmap
+import warnings
 from enum import Enum
 from pathlib import Path
 
@@ -11,7 +12,7 @@ import numpy as np
 from numba import njit
 from numpy.typing import NDArray
 from pymatgen.core import Lattice, Structure
-from pymatgen.io.vasp import Poscar
+from pymatgen.io.vasp import Poscar, Potcar
 
 
 # We list all available import/export formats that we've worked on for consistency
@@ -133,10 +134,12 @@ def detect_format(filename: str | Path):
                 if sig == b"\x89HDF\r\n\x1a\n":
                     source_format = Format.hdf5
         except:
-            logging.warning("""
+            logging.warning(
+                """
             Tried to detect HDF5 format, but h5py is not installed.
             To read HDF5 files, install with `conda install h5py` or `pip install h5py`
-            """)
+            """
+            )
 
     if source_format is None:
         raise ValueError("File format not recognized.")
@@ -158,8 +161,47 @@ def read_vasp(filename, total_only: bool):
             * scale
         )
 
-        atom_types = f.readline().split()
-        atom_counts = list(map(int, f.readline().split()))
+        # Read the next line and check if we skipped species
+        line = f.readline().split()
+
+        def is_int(s):
+            try:
+                int(s)
+                return True
+            except ValueError:
+                return False
+
+        if all(is_int(x) for x in line):
+            logging.info("No species found in file. Trying to read from POTCAR")
+            # This is the atom-count line. We need to get our species  from
+            # the POTCAR
+            atom_counts = list(map(int, line))
+            potcar_path = path.parent / "POTCAR"
+            if not potcar_path.exists():
+                logging.warning(
+                    "No POTCAR found in directory. Atoms will be set as dummy atoms."
+                )
+                atom_types = [f"Z{i}" for i in range(len(atom_counts))]
+            else:
+                # try:
+                with warnings.catch_warnings(action="ignore"):
+                    potcar = Potcar.from_file(path.parent / "POTCAR")
+                atom_types = potcar.symbols
+                # except:
+                #     logging.warning("POTCAR could not be read, likely due to being malformed. Atoms will be set as dummy atoms.")
+                #     atom_types = [f"Z{i}" for i in range(len(atom_counts))]
+                #     breakpoint()
+
+        else:
+            # This is the species line
+            atom_types = line
+            atom_counts = list(map(int, f.readline().split()))
+
+        if len(atom_types) != len(atom_counts):
+            raise RuntimeError(
+                f"Mismatch: {len(atom_types)} species but {len(atom_counts)} atom counts"
+            )
+
         total_atoms = sum(atom_counts)
 
         # Skip the 'Direct' or 'Cartesian' line
