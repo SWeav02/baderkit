@@ -176,3 +176,9 @@ is much more accurate for partitioning. **We highly recommend doing this**.
     have found that a grid density of ~22 pts/Å along each lattice vector (~10000 pts / Å<sup>3</sup>) is
     fine enough in most cases, but we generally recommend testing an
     increasing set of grid densities until convergence is reached.
+
+## Example Files
+
+We have uploaded a set of example CHGCARs and .cube files to google drive which can be used for testing the code. They are available at this Google Drive link:
+
+https://drive.google.com/drive/folders/18tvBDm2mLuErKUc40pyWzusEJL1cZ8LX?usp=drive_link 
