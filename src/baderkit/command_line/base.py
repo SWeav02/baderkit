@@ -135,7 +135,7 @@ def run(
         basin_tol=basin_tolerance,
     )
     # write summary
-    bader.write_json()
+    bader.write_json("bader.json")
 
     # convert indices from string to list
     try:
@@ -496,7 +496,7 @@ def badelf(
         # format=format,
     )
     # write summary
-    badelf.write_json()
+    badelf.write_json("badelf.json")
 
     # convert indices from string to list
     try:
@@ -584,7 +584,7 @@ def label(
         # format=format,
     )
     # write summary
-    labeler.write_json()
+    labeler.write_json("badelf.json")
 
     labeler.labeled_structure.to("POSCAR_labeled", "POSCAR")
 

@@ -371,7 +371,7 @@ def get_differing_neighs(
 
     return unique
 
-# @njit(parallel=True,  cache=True)
+@njit(parallel=True,  cache=True)
 def get_basin_edges(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -414,7 +414,7 @@ def get_basin_edges(
     return edges
 
 
-# @njit(inline='always', cache=True)
+@njit(inline='always', cache=True)
 def get_extrema_saddle_connections(
     i, j, k,
     nx, ny, nz,
@@ -511,7 +511,7 @@ def get_extrema_saddle_connections(
         best_value)
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_canonical_saddle_connections(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -569,7 +569,7 @@ def get_canonical_saddle_connections(
                 
     return saddle_coords, saddle_connections, connection_vals
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_single_point_saddles(
     data,
     connection_values,
@@ -579,7 +579,7 @@ def get_single_point_saddles(
     use_minima = False,
 ):
     # create an array to store best points
-    saddles = np.empty(num_connections, dtype=np.int16)
+    saddles = np.empty(num_connections, dtype=np.int32)
     if use_minima:
         best_vals = np.full(num_connections, np.inf, dtype=np.float64)
     else:
