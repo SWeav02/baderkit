@@ -516,8 +516,8 @@ class CriticalPoints(BaseAnalysis):
                 if len(problem_indices) == 0:
                     break
                 saddle_indices = problem_indices
-            if len(problem_indices) > 0:
-                breakpoint()
+            # if len(problem_indices) > 0:
+            #     breakpoint()
 
             self._saddle1_minima_connections = connections
         else:

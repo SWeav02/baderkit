@@ -371,7 +371,7 @@ def get_differing_neighs(
 
     return unique
 
-@njit(parallel=True,  cache=True)
+# @njit(parallel=True,  cache=True)
 def get_basin_edges(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -414,7 +414,7 @@ def get_basin_edges(
     return edges
 
 
-@njit(inline='always', cache=True)
+# @njit(inline='always', cache=True)
 def get_extrema_saddle_connections(
     i, j, k,
     nx, ny, nz,
@@ -511,7 +511,7 @@ def get_extrema_saddle_connections(
         best_value)
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_canonical_saddle_connections(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -569,7 +569,7 @@ def get_canonical_saddle_connections(
                 
     return saddle_coords, saddle_connections, connection_vals
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_single_point_saddles(
     data,
     connection_values,
@@ -775,7 +775,7 @@ def compute_wrap_offset(point1, point2):
 
     return best_i, best_j, best_k
 
-@njit(cache=True)
+# @njit(cache=True)
 def initialize_labels_from_extrema(
     data,
     labels,
@@ -972,6 +972,13 @@ def initialize_labels_from_extrema(
             # points are not separated and we union.
             if persistence_score < persistence_tol:
                 union(labels, extrema_labels[ext_idx], extrema_labels[neigh_ext_idx])
+                # if value == 0.20217805145 or neigh_value == 0.20217805145:
+                #     breakpoint()
+                # Problem:
+                    # two points that are separate basins connect between
+                    # a smaller basin
+                    # how can we detect this situation?
+                    # 
                 # connections.append((ext_idx, conn_val))
     
     ###########################################################################
@@ -1121,7 +1128,7 @@ def get_persistence_scores(
 
     return persistence_scores
 
-@njit(cache=True)
+# @njit(cache=True)
 def group_by_persistence(
         data,
         critical_vox,

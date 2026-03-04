@@ -11,25 +11,16 @@ from baderkit.core.critical_points.hessian_based import find_saddle_points
 from baderkit.core.critical_points import CriticalPoints
 from baderkit.plotting.core import CriticalPointsPlotter
 
-grid = Grid.from_vasp("CHGCAR")
-elf = Grid.from_vasp("ELFCAR")
-
-grid.total += abs(np.max(grid.total))
-
-bader = Bader(
-    charge_grid=grid,
-    reference_grid=elf,
-    maxima_persistence_tol=0.03, 
-    minima_persistence_tol=0.001,
-    vacuum_tol=0.01,
-    nna_cutoff=1
+bader = Bader.from_vasp(
+    reference_filename="ELFCAR",
+    # method="ongrid",
+    maxima_persistence_tol=0.0, 
+    minima_persistence_tol=0.0005,
     )
 print(len(bader.maxima_frac))
-bader.write_species_volume(
-    "X",
-    write_grid="reference_grid",
-    filename="ELFCAR")
+bader.write_all_basin_volumes(write_grid="reference_grid")
 
+bader.minima_persistence_values
 # maxima_groups, minima_groups = bader.get_persistence_groups()
 
 critical_points = CriticalPoints(bader)
@@ -42,13 +33,13 @@ critical_points = CriticalPoints(bader)
 # test_grid.total=mask
 # test_grid.write_vasp("ELFCAR_test")
 # TODO:
-    # make sure ring labeling works.
-    # fix ring to use limited subset
-    # fix issues with bad critical point connections by adding increasing
-    # range of transformations
+#     make sure ring labeling works.
+#     fix ring to use limited subset
+#     fix issues with bad critical point connections by adding increasing
+#     range of transformations
 
 
-# plotter = CriticalPointsPlotter(critical_points)
+plotter = CriticalPointsPlotter(critical_points)
 
 manifold_labels = critical_points.manifold_labels
 

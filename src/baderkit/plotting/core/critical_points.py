@@ -512,7 +512,7 @@ class CriticalPointsPlotter(GridPlotter):
         coords = self._smooth_ring_polar(
             coords,
             window=4,
-            n_iter=2
+            n_iter=3
         )
     
         coords = self._resample_closed_curve(coords, len(coords))
@@ -532,7 +532,7 @@ class CriticalPointsPlotter(GridPlotter):
         return poly.tube(
             radius=self.critical_radii * 0.1,
             n_sides=n_sides,
-            capping=False
+            capping=True
         )
     
     def _create_crit_meshes_by_type(self, crit_type):
