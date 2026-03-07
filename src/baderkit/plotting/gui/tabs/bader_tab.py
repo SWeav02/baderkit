@@ -188,7 +188,7 @@ class BaderWorker(qc.QObject):
         )
 
         try:
-            _ = bader.results_summary  # force evaluation
+            _ = bader.to_dict()  # force evaluation
         except Exception as e:
             self.error.emit(f"Bader algorithm failed with the following error:\n {e}")
             return

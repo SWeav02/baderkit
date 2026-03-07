@@ -23,9 +23,6 @@ from .methods.shared_numba import get_edges, get_min_avg_surface_dists
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
 
-# TODO:
-# update basin reduction method
-
 
 class Bader:
     """
