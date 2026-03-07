@@ -4,6 +4,7 @@ import copy
 import logging
 from typing import TypeVar
 import itertools
+import time
 
 import numpy as np
 from numpy.typing import NDArray
@@ -139,13 +140,14 @@ class MethodBase:
             )
         
         # initialize our labels, combining false extrema
+        logging.info("Initializing Labels")
+        t0 = time.time()
         (
             labels, 
             images, 
             self._extrema_vox, 
             self._extrema_frac, 
             self._extrema_groups, 
-            # persistence_cutoffs
         ) = initialize_labels_from_extrema(
             labels=labels,
             data=self.reference_grid.total,
@@ -153,10 +155,15 @@ class MethodBase:
             extrema_mask=self.extrema_mask,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
-            # lattice=self.reference_grid.structure.lattice.matrix,
             persistence_tol=self.persistence_tol,
             use_minima=self.use_minima,
+            matrix=self.reference_grid.matrix,
+            method="linear",
         )
+
+        t1 = time.time()
+        logging.info("Initialization Complete")
+        logging.info(f"Time: {round(t1-t0,2)}")
 
         # now run bader
         results = self._run_bader(labels, images)
@@ -184,14 +191,12 @@ class MethodBase:
         (
             extrema_roots, 
             root_transforms, 
-            # persistence_cutoffs
             )= group_by_persistence(
             data=self.reference_grid.total,
             critical_vox=self.extrema_vox, 
             basin_connections=saddle_connections, 
             saddle_values=saddle_values, 
             persistence_tol=self.persistence_tol,
-            # persistence_cutoffs=persistence_cutoffs,
             use_minima=self.use_minima,
             )
 

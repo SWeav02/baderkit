@@ -543,17 +543,17 @@ def find_saddle_points(
     # Metric tensors
     G = matrix @ matrix.T
     inv_G = np.linalg.inv(G)
-    lam = np.linalg.eigvalsh(G)
+    # lam = np.linalg.eigvalsh(G)
 
-    lam_min = lam[0]
-    lam_max = lam[2]
+    # lam_min = lam[0]
+    # lam_max = lam[2]
 
-    frac_to_cart = np.sqrt(lam_max)
-    H_frac_to_cart = 1.0 / lam_min
+    # frac_to_cart = np.sqrt(lam_max)
+    # H_frac_to_cart = 1.0 / lam_min
 
     # Voxel radius in Cartesian
-    r_voxel_cart = 0.5 * frac_to_cart
-    r_voxel_cart2 = r_voxel_cart * r_voxel_cart
+    # r_voxel_cart = 0.5 * frac_to_cart
+    # r_voxel_cart2 = r_voxel_cart * r_voxel_cart
     
     # get range of values
     allowed_coords = np.argwhere(saddle_mask == np.iinfo(saddle_mask.dtype).max)
@@ -561,17 +561,17 @@ def find_saddle_points(
     for coord_idx in prange(len(allowed_coords)):
         coord = allowed_coords[coord_idx]
 
-        morse_index =  check_valid_newton_step(
-            coord,
-            data,
-            r_voxel_cart2,
-            inv_G,
-            H_frac_to_cart,
-        )
+        # morse_index =  check_valid_newton_step(
+        #     coord,
+        #     data,
+        #     r_voxel_cart2,
+        #     inv_G,
+        #     H_frac_to_cart,
+        # )
         
         # skip maxima, minima and invalid points
-        if morse_index in (-1, 0, 3):
-            continue
+        # if morse_index in (-1, 0, 3):
+        #     continue
                         
         new_coord, success, morse_index = newton_refine_in_voxel(
             coord,

@@ -377,24 +377,27 @@ class CriticalPoints(BaseAnalysis):
         # create saddle mask and add maxima/minima
         maxima_groups = self.maxima_persistence_groups
         minima_groups = self.minima_persistence_groups
+        max_val = np.iinfo(np.uint8).max
         saddle_mask = np.full(
             self.reference_grid.shape,
-            np.iinfo(np.uint8).max,
+            max_val,
             dtype=np.uint8
         )
+        # add extrema
         for group in maxima_groups:
             saddle_mask[group[:,0],group[:,1],group[:,2]] = 3
         for group in minima_groups:
             saddle_mask[group[:,0],group[:,1],group[:,2]] = 0
-            # get saddle coords
-
+        
+        # note possible saddle points
+        saddle_mask[self.manifold_labels==255] -= 1
         # get saddle coords
         saddle_mask = find_saddle_points(
             data=self.reference_grid.total,
             matrix=self.reference_grid.matrix,
             saddle_mask=saddle_mask
             )
-        # breakpoint()
+
         # refine and get exact coords
         saddle1_coords, saddle2_coords = refine_saddle_points(
             saddle_mask=saddle_mask,
@@ -516,8 +519,8 @@ class CriticalPoints(BaseAnalysis):
                 if len(problem_indices) == 0:
                     break
                 saddle_indices = problem_indices
-            # if len(problem_indices) > 0:
-            #     breakpoint()
+            if len(problem_indices) > 0:
+                breakpoint()
 
             self._saddle1_minima_connections = connections
         else:

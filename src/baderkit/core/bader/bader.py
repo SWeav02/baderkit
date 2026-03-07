@@ -366,7 +366,7 @@ class Bader(BaseAnalysis):
             # we get these values during each bader method anyways, so
             # we run this here.
             self._run_bader()
-        return self._maxima_ref_values.round(10)
+        return self._maxima_ref_values
 
     @property
     def maxima_vox(self) -> NDArray[int]:
@@ -431,6 +431,7 @@ class Bader(BaseAnalysis):
         """
         if self._maxima_persistence_values is None:
             # get groups
+            tol = max(self.maxima_persistence_tol, 0)
             maxima_groups = self.maxima_voxel_groups
             maxima_values = self.maxima_ref_values
             # get the lowest value that the maximum would connect to with the
@@ -442,8 +443,10 @@ class Bader(BaseAnalysis):
                     group[:,1],
                     group[:,2],
                     ]
-                valid_mask = ((max_val - group_vals) / group_vals) < self.maxima_persistence_tol
+                valid_mask = ((max_val - group_vals) / group_vals)-1e-12 <= tol
                 best_val = group_vals[valid_mask].min()
+
+
                 # get lowest possible persistence below this value
                 # (max_val - val) / val < persistence_tol
                 # --> val = max_val / (1+persistence_tol)
@@ -754,6 +757,7 @@ class Bader(BaseAnalysis):
             connected if one takes the all voxels at or below that value
         """
         if self._minima_persistence_values is None:
+            tol = max(self.minima_persistence_tol,0)
             # self._run_minima_bader()
             # get groups
             minima_groups = self.minima_voxel_groups
@@ -767,7 +771,7 @@ class Bader(BaseAnalysis):
                     group[:,1],
                     group[:,2],
                     ]
-                valid_mask = ((group_vals - min_val) / group_vals) < self.minima_persistence_tol
+                valid_mask = ((group_vals - min_val) / group_vals)-1e-12 <= tol
                 best_val = group_vals[valid_mask].max()
                 # get lowest possible persistence below this value
                 # (val - max_val) / val < persistence_tol

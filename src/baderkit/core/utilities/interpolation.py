@@ -46,13 +46,13 @@ def interp_linear(i, j, k, data, is_frac=True):
         j = j * ny
         k = k * nz
 
-    # wrap coord
-    i, j, k = wrap_point(i, j, k, nx, ny, nz)
-
     # get rounded down voxel coords
     ri = int(i // 1.0)
     rj = int(j // 1.0)
     rk = int(k // 1.0)
+    
+    # wrap coord
+    ri, rj, rk = wrap_point(ri, rj, rk, nx, ny, nz)
 
     # get offset from rounded voxel coord
     di = i - ri
