@@ -276,17 +276,22 @@ def find_site_in_tol(
     site_coords,
     tol,
 ):
-    chunked = np.round(site_coords / tol).astype(np.int64)
+    # get distance to each chunked coord
+    diffs = chunked_coords - site_coords
     # Match wrapped coord to site
     index = -1
-    for j, chunked_coord in enumerate(chunked_coords):
+    best_dist = np.inf
+    in_tol = False
+    for j, diff in enumerate(diffs):
 
-        d = chunked - chunked_coord
-        if np.sum(np.abs(d)) == 0:
+        dist = np.linalg.norm(diff)
+        if dist < best_dist:
+            best_dist = dist
             index = j
-            break
+        if dist < tol:
+            in_tol = True
 
-    return index
+    return index, in_tol
 
 
 @njit(cache=True)
@@ -384,10 +389,11 @@ def get_canonical_bonds(
     rotation_matrices,
     translation_vectors,
     pair_dists,
-    tol=0.02,
+    shape,
+    tol, # in voxel coords
 ):
-
-    chunked_coords = np.round(all_frac_coords / tol).astype(np.int64)
+    # get voxel coords
+    chunked_coords = np.round(all_frac_coords * shape).astype(np.int64)
 
     # first, we narrow down the symmetry operations by including only those that
     # map to the lowest index equivalent atom
@@ -398,7 +404,7 @@ def get_canonical_bonds(
     symm_op_mask = np.zeros(
         (len(unique_sites), len(translation_vectors)), dtype=np.bool_
     )
-
+    all_in_tol = True
     for unique_idx in prange(len(unique_sites)):
         site_idx = unique_sites[unique_idx]
         equiv_idx = equivalent_atoms[site_idx]
@@ -409,18 +415,24 @@ def get_canonical_bonds(
             trans_site_coords = matrix @ site_coords + vector
             # wrap into cell
             trans_site_coords %= 1
+            
+            # convert to voxels
+            trans_site_coords *= shape
 
             # get index after operation
-            new_idx = find_site_in_tol(
+            new_idx, in_tol = find_site_in_tol(
                 chunked_coords,
                 trans_site_coords,
                 tol,
             )
-
+            if not in_tol:
+                all_in_tol = False
             # if this is the lowest equivalent atom, we will include this operation
             if new_idx == equiv_idx:
                 symm_op_mask[unique_idx, op_idx] = True
 
+    if not all_in_tol:
+        print("WARNING: Bond symmetry is unstable. Check results with care.")
     # create an array to store canonical bonds
     canonical_bonds = np.empty((len(site_indices), 7), dtype=np.int64)
 
@@ -473,8 +485,9 @@ def generate_symmetric_bonds(
     n_transforms = len(translation_vectors)
     all_bonds = np.empty((n_transforms * len(site_indices), 14), dtype=np.float64)
 
-    chunked_coords = np.round(all_frac_coords / tol).astype(np.int64)
+    chunked_coords = np.round(all_frac_coords * shape).astype(np.int64)
 
+    all_in_tol = True
     for pair_idx in prange(len(site_indices)):
         site_idx = site_indices[pair_idx]
         neigh_idx = neigh_indices[pair_idx]
@@ -494,22 +507,20 @@ def generate_symmetric_bonds(
 
             # get image of new site
             site_image = np.floor(trans_site_coord).astype(np.int64)
+            
             # move site and get index
             test_trans_site_coord = trans_site_coord - site_image
-            site_idx = find_site_in_tol(
+            
+            test_trans_site_coord *= shape
+            
+            site_idx, in_tol = find_site_in_tol(
                 chunked_coords=chunked_coords,
                 site_coords=test_trans_site_coord,
                 tol=tol,
             )
-            # if that didn't work, try again with tolerance before wrap
-            if site_idx == -1:
-                site_image = np.floor(trans_site_coord + tol).astype(np.int64)
-                test_trans_site_coord = trans_site_coord - site_image
-                site_idx = find_site_in_tol(
-                    chunked_coords=chunked_coords,
-                    site_coords=test_trans_site_coord,
-                    tol=tol,
-                )
+            if not in_tol:
+                all_in_tol = False
+
             # do the same for the neighbor after shifting it
             trans_neigh_coord = trans_neigh_coord - site_image
 
@@ -517,19 +528,15 @@ def generate_symmetric_bonds(
             neigh_image = np.floor(trans_neigh_coord).astype(np.int64)
             # wrap neigh
             test_trans_neigh_coord = trans_neigh_coord - neigh_image
-            neigh_idx = find_site_in_tol(
+            test_trans_neigh_coord *= shape
+            
+            neigh_idx, in_tol = find_site_in_tol(
                 chunked_coords=chunked_coords,
                 site_coords=test_trans_neigh_coord,
                 tol=tol,
             )
-            if neigh_idx == -1:
-                neigh_image = np.floor(trans_neigh_coord + tol).astype(np.int64)
-                test_trans_neigh_coord = trans_neigh_coord - neigh_image
-                neigh_idx = find_site_in_tol(
-                    chunked_coords=chunked_coords,
-                    site_coords=test_trans_neigh_coord,
-                    tol=tol,
-                )
+            if not in_tol:
+                all_in_tol = False
 
             # get the exact site/neigh coords
             trans_site_coord = all_frac_coords[site_idx]
@@ -559,5 +566,7 @@ def generate_symmetric_bonds(
             all_bonds[bond_idx, 8:11] = plane_vector
             all_bonds[bond_idx, 11:] = trans_neigh_coord
             bond_idx += 1
+        if not all_in_tol:
+            print("WARNING: Bond symmetry is unstable. Check results with care.")
 
     return np.round(all_bonds, 12)
