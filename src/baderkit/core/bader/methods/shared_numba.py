@@ -591,5 +591,6 @@ def get_min_avg_surface_dists(
                 if dist < dists[label]:
                     dists[label] = dist
     # get average dists
+    edge_totals[np.where(edge_totals==0)[0]] = 1.0
     average_dists = dist_sums / edge_totals
     return dists, average_dists

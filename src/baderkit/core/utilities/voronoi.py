@@ -566,7 +566,7 @@ def generate_symmetric_bonds(
             all_bonds[bond_idx, 8:11] = plane_vector
             all_bonds[bond_idx, 11:] = trans_neigh_coord
             bond_idx += 1
-        if not all_in_tol:
-            print("WARNING: Bond symmetry is unstable. Check results with care.")
+    if not all_in_tol:
+        print("WARNING: Bond symmetry is unstable. Check results with care.")
 
     return np.round(all_bonds, 12)

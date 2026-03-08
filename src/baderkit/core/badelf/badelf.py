@@ -653,7 +653,7 @@ class Badelf:
         feature_indices = self.electride_structure.frac_coords[len(self.structure) :]
         feature_indices = np.round(
             self.charge_grid.frac_to_grid(feature_indices)
-        ).astype(int)
+        ).astype(int) % self.reference_grid.shape
         # only use indices that are not 0
         feature_indices = [i for i in feature_indices if mask[i[0], i[1], i[2]]]
 
@@ -776,6 +776,7 @@ class Badelf:
         highest_dimension = self._get_ELF_dimensionality(electride_mask, 0)
         dimensions = [i for i in range(0, highest_dimension)]
         dimensions.reverse()
+        logging.info(f"Max electride dimensionality: {highest_dimension}")
         # Create lists for the refined dimensions
         final_dimensions = [highest_dimension]
         final_connections = [0]
@@ -859,8 +860,9 @@ class Badelf:
         edges = get_edges(
             labeled_array=self.atom_labels,
             neighbor_transforms=neigh_transforms,
-            vacuum_mask=self.vacuum_mask,
+            vacuum_mask=self.atom_labels < len(self.electride_structure),
         )
+
         self._min_surface_distances, self._avg_surface_distances = (
             get_min_avg_surface_dists(
                 labels=self.atom_labels,
