@@ -11,9 +11,10 @@ import pandas as pd
 from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
 
-from baderkit.core import Grid, SpinElfLabeler, Structure
-from baderkit.core.badelf.badelf import Badelf
-from baderkit.core.labelers.bifurcation_graph.enum_and_styling import FeatureType
+from baderkit.core.toolkit import Grid, Structure
+from baderkit.core.elf_analysis.elf_labeler import SpinElfLabeler
+from baderkit.core.elf_analysis.badelf.badelf import Badelf
+from baderkit.core.elf_analysis.bifurcation_graph.enum_and_styling import FeatureType
 from baderkit.core.utilities.file_parsers import Format
 
 

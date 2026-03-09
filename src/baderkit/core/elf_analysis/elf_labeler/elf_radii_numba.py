@@ -92,6 +92,7 @@ def get_elf_radius_frac(
         labels[point_idx] = label
     # get the unique labels
     unique_labels = np.unique(labels)
+    # TODO: If passes through vacuum, set to last point?
 
     # SITUATION 1:
     # The atom's nearest neighbor is a translation of itself. The radius
