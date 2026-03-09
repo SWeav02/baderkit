@@ -1,30 +1,39 @@
 # -*- coding: utf-8 -*-
 
-import copy
 import importlib
-import json
 import logging
 import time
 import warnings
 from pathlib import Path
-from typing import Literal, TypeVar
+from typing import TypeVar
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
 
-from baderkit.core.toolkit import Grid, Structure
-from baderkit.core.utilities.file_parsers import Format
+from baderkit.core.base.base_analysis import BaseAnalysis
+from baderkit.core.toolkit import Structure
 
 from .methods import Method
-from .methods.shared_numba import get_edges, get_min_avg_surface_dists
+from .methods.shared_numba import (
+    get_edges,
+    get_min_avg_surface_dists,
+    get_neighboring_basin_surface_area,
+    get_persistence_groups,
+    get_persistence_cutoffs
+)
+from baderkit.core.utilities.betti_numbers import get_all_betti_numbers_scanning
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
 
+# TODO:
+# - Add periodicity options (i.e. on vs. off etc.)
+# - Improve docstrings, especially for write methods, so that they show kwargs
 
-class Bader:
+
+class Bader(BaseAnalysis):
     """
     Class for running Bader analysis on a regular grid. For information on each
     method, see our [docs](https://sweav02.github.io/baderkit/)
@@ -32,38 +41,102 @@ class Bader:
     Parameters
     ----------
     charge_grid : Grid
-        A Grid object with the charge density that will be integrated.
-    reference_grid : Grid | None
-        A Grid object whose values will be used to construct the basins. If
-        None, defaults to the charge_grid.
+        The Grid object with the charge density that will be integrated.
+    total_charge_grid : Grid | None, optional
+        The Grid object used for determining vacuum regions in the system. For
+        pseudopotential codes this represents the total electron density and should
+        be provided whenever possible. If None, defaults to the charge_grid.
+    reference_grid : Grid | None, optional
+        The Grid object whose values will be used to construct the basins. This
+        should typically only be set when partitioning functions other than the
+        charge density (e.g. ELI-D, ELF, etc.).If None, defaults to the
+        total_charge_grid.
     method : str | Method, optional
         The algorithm to use for generating bader basins.
     vacuum_tol : float | bool, optional
         If a float is provided, this is the value below which a point will
         be considered part of the vacuum. If a bool is provided, no vacuum
-        will be used on False, and the default tolerance will be used on True.
-    basin_tol : float, optional
-        The value below which a basin will not be considered significant. This
-        is used only used to avoid writing out data that is likely not valuable.
-    use_reference_vacuum : bool, optional
-        Whether or not to use the reference file to determine regions of vacuum
-        (low charge density). This should generally be set to True unless the
-        ELF is being used as the reference. The default is True.
+        will be used on False, and the default tolerance (0.001) will be used on True.
+    nna_cutoff : float | bool, optional
+        If a float is provided, any basins found at a distance in Angstroms greater
+        than this cutoff will be considered non-nuclear attractors. If any are
+        found, dummy atoms will be appended to the structure and regarded as
+        separate species. If a bool is provided, NNAs will be assigned to the
+        nearest atom on False or a default value (1 Ang) will be used on True.
+    maxima_persistence_tol : float, optional
+        It is common for false maxima to be found using only nearest neighbor
+        points. To deal with this we combine pairs of basins that have low
+        topological persistence.
+        
+        The persistence score is calculated as:
+            
+            score = (lower_max - connection_value) / connection_value
+    maxima_persistence_tol : float, optional
+        It is common for false minima to be found using only nearest neighbor
+        points. To deal with this we combine pairs of basins that have low
+        topological persistence. We use a separate tolerance as minima typically
+        have lower persistence values.
+        
+        The persistence score is calculated as:
+            
+            score = (connection_value - higher_min) / connection_value
+
 
     """
 
+    _reset_props = [
+        # assigned by _run_bader
+        "maxima_basin_labels",
+        "maxima_basin_images",
+        "maxima_frac",
+        "maxima_vox",
+        "maxima_cart",
+        "maxima_voxel_groups",
+        "maxima_charge_values",
+        "maxima_ref_values",
+        "maxima_persistence_values",
+        "basin_charges",
+        "basin_volumes",
+        # assigned by _run_minima_bader
+        "minima_basin_labels",
+        "minima_basin_images",
+        "minima_frac",
+        "minima_vox",
+        "minima_cart",
+        "minima_voxel_groups",
+        "minima_charge_values",
+        "minima_ref_values",
+        "minima_persistence_values",
+        # Assigned by calling the property
+        "basin_min_surface_distances",
+        "basin_avg_surface_distances",
+        "basin_edges",
+        "atom_edges",
+        "basin_surface_areas",
+        "basin_contact_surface_areas",
+        "atom_surface_areas",
+        "atom_contact_surface_areas",
+        # Assigned by run_atom_assignment
+        "basin_atoms",
+        "basin_atom_dists",
+        "atom_labels",
+        "atom_charges",
+        "atom_volumes",
+        "atom_min_surface_distances",
+        "atom_avg_surface_distances",
+    ]
+
     def __init__(
         self,
-        charge_grid: Grid,
-        reference_grid: Grid | None = None,
         method: str | Method = Method.weight,
-        vacuum_tol: float | bool = 1.0e-3,
-        basin_tol: float = 1.0e-3,
-        use_reference_vacuum: bool = True,
+        nna_cutoff: float | bool = False,
+        maxima_persistence_tol: float = 0.03,
+        minima_persistence_tol: float = 0.001,
         **kwargs,
     ):
+        super().__init__(**kwargs)
 
-        # ensure th method is valid
+        # ensure the method is valid
         valid_methods = [m.value for m in Method]
         if isinstance(method, Method):
             self._method = method
@@ -73,27 +146,12 @@ class Bader:
             raise ValueError(
                 f"Invalid method '{method}'. Available options are: {valid_methods}"
             )
-
-        self._charge_grid = charge_grid
-
-        # if no reference is provided, use the base charge grid
-        if reference_grid is None:
-            reference_grid = charge_grid.copy()
-        self._reference_grid = reference_grid
-
-        self._use_reference_vacuum = use_reference_vacuum
-
-        # if vacuum tolerance is True, set it to the same default as above
-        if vacuum_tol is True:
-            self._vacuum_tol = 1.0e-3
-        else:
-            self._vacuum_tol = vacuum_tol
-        self._basin_tol = basin_tol
-
-        # set hidden class variables. This allows us to cache properties and
-        # still be able to recalculate them if needed, though that should only
-        # be done by advanced users
-        self._reset_properties()
+        
+        if nna_cutoff is True:
+            nna_cutoff = 1.0
+        self._nna_cutoff = nna_cutoff
+        self._maxima_persistence_tol = maxima_persistence_tol
+        self._minima_persistence_tol = minima_persistence_tol
 
         # whether or not to use overdetermined gradients in neargrid methods.
         self._use_overdetermined = False
@@ -101,111 +159,6 @@ class Bader:
     ###########################################################################
     # Set Properties
     ###########################################################################
-    def _reset_properties(
-        self,
-        include_properties: list[str] = None,
-        exclude_properties: list[str] = [],
-    ):
-        # if include properties is not provided, we wnat to reset everything
-        if include_properties is None:
-            include_properties = [
-                # assigned by run_bader
-                "basin_labels",
-                "basin_maxima_frac",
-                "basin_maxima_charge_values",
-                "basin_maxima_ref_values",
-                "basin_maxima_vox",
-                "basin_charges",
-                "basin_volumes",
-                "vacuum_charge",
-                "vacuum_volume",
-                "significant_basins",
-                "vacuum_mask",
-                "num_vacuum",
-                # Assigned by calling the property
-                "basin_min_surface_distances",
-                "basin_avg_surface_distances",
-                "basin_edges",
-                "atom_edges",
-                "structure",
-                # Assigned by run_atom_assignment
-                "basin_atoms",
-                "basin_atom_dists",
-                "atom_labels",
-                "atom_charges",
-                "atom_volumes",
-                "atom_min_surface_distances",
-                "atom_avg_surface_distances",
-            ]
-        # get our final list of properties
-        reset_properties = [
-            i for i in include_properties if i not in exclude_properties
-        ]
-        # set corresponding hidden variable to None
-        for prop in reset_properties:
-            setattr(self, f"_{prop}", None)
-
-    @property
-    def structure(self) -> Structure:
-        """
-
-        Returns
-        -------
-        Structure
-            The pymatgen structure basins are assigned to.
-
-        """
-        if self._structure is None:
-            self._structure = self.reference_grid.structure.copy()
-            self._structure.relabel_sites(ignore_uniq=True)
-        return self._structure
-
-    @property
-    def species(self) -> list[str]:
-        """
-
-        Returns
-        -------
-        list[str]
-            The species of each atom/dummy atom in the electride structure. Covalent
-            and metallic features are not included.
-
-        """
-        return [i.specie.symbol for i in self.structure]
-
-    @property
-    def charge_grid(self) -> Grid:
-        """
-
-        Returns
-        -------
-        Grid
-            A Grid object with the charge density that will be integrated.
-
-        """
-        return self._charge_grid
-
-    @charge_grid.setter
-    def charge_grid(self, value: Grid):
-        self._charge_grid = value
-        self._reset_properties()
-
-    @property
-    def reference_grid(self) -> Grid:
-        """
-
-        Returns
-        -------
-        Grid
-            A grid object whose values will be used to construct the basins.
-
-        """
-        return self._reference_grid
-
-    @reference_grid.setter
-    def reference_grid(self, value: Grid):
-        self._reference_grid = value
-        self._reset_properties()
 
     @property
     def method(self) -> str:
@@ -232,89 +185,142 @@ class Bader:
             raise ValueError(
                 f"Invalid method '{value}'. Available options are: {valid_values}"
             )
-        self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum"])
-
+        self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum", "vacuum_charge", "vacuum_volume",])
+        
     @property
-    def vacuum_tol(self) -> float | bool:
+    def nna_cutoff(self) -> float:
         """
 
         Returns
         -------
         float
-            The value below which a point will be considered part of the vacuum.
-            The default is 0.001.
+            The distance cutoff in angstroms above which a basin will be considered
+            a non-nuclear attractor.
+            
+            If a float is provided, any basins found at a distance in Angstroms greater
+            than this cutoff will be considered non-nuclear attractors. If any are
+            found, dummy atoms will be appended to the structure and regarded as
+            separate species. If a bool is provided, NNAs will be assigned to the
+            nearest atom on False or a default value (1 Ang) will be used on True.
 
         """
-        return self._vacuum_tol
-
-    @vacuum_tol.setter
-    def vacuum_tol(self, value: float | bool):
-        self._vacuum_tol = value
-        self._reset_properties()
-        # TODO: only reset everything if the vacuum actually changes
-
+        return self._nna_cutoff
+        
+    @nna_cutoff.setter
+    def nna_cutoff(self, value: str | Method):
+        self._nna_cutoff = value
+        # reset atom properties
+        self._reset_properties(include_properties=[
+            "structure",
+            "atom_edges",
+            "atom_surface_areas",
+            "atom_contact_surface_areas",
+            "basin_atoms",
+            "basin_atom_dists",
+            "atom_labels",
+            "atom_charges",
+            "atom_volumes",
+            "atom_min_surface_distances",
+            "atom_avg_surface_distances",
+            ])
+        
     @property
-    def use_reference_vacuum(self) -> bool:
-        """
-
-        Returns
-        -------
-        bool
-            Whether or not to use the reference file to determine regions of vacuum
-            (low charge density). This should generally be set to True unless the
-            ELF is being used as the reference. The default is True.
-
-        """
-        return self._use_reference_vacuum
-
-    @use_reference_vacuum.setter
-    def use_reference_vacuum(self, value: bool) -> bool:
-        self._use_reference_vacuum = value
-        self._reset_properties()
-        # TODO: only reset everything if the vacuum actually changes
-
-    @property
-    def basin_tol(self) -> float:
+    def maxima_persistence_tol(self) -> float:
         """
 
         Returns
         -------
         float
-            The value below which a basin will not be considered significant. This
-            is used to avoid writing out data that is likely not valuable.
-            The default is 0.001.
+            It is common for false maxima to be found using only nearest neighbor
+            points. To deal with this we combine pairs of basins that have low
+            topological persistence.
+            
+            The persistence score is calculated as:
+                
+                score = (lower_maximum - connection_value) / connection_value
+
 
         """
-        return self._basin_tol
-
-    @basin_tol.setter
-    def basin_tol(self, value: float):
-        self._basin_tol = value
-        self._reset_properties(include_properties=["significant_basins"])
+        return self._maxima_persistence_tol
+        
+    @maxima_persistence_tol.setter
+    def maxima_persistence_tol(self, value: str | Method):
+        self._maxima_persistence_tol = value
+        # reset atom properties
+        self._reset_properties(exclude_properties=[
+            "vacuum_mask",
+            "num_vacuum",
+            "vacuum_charge",
+            "vacuum_volume",
+            "structure",
+            ])
 
     ###########################################################################
-    # Calculated Properties
+    # Maxima Basin Properties
     ###########################################################################
 
     @property
-    def basin_labels(self) -> NDArray[float]:
+    def maxima_basin_labels(self) -> NDArray[float]:
         """
 
         Returns
         -------
         NDArray[float]
             A 3D array of the same shape as the reference grid with entries
-            representing the basin the voxel belongs to. Note that for some
-            methods (e.g. weight) the voxels have weights for each basin.
-            These will be stored in the basin_weights property.
+            representing the basin the voxel belongs to.
 
         """
-        if self._basin_labels is None:
-            self.run_bader()
-        return self._basin_labels
-
+        if self._maxima_basin_labels is None:
+            self._run_bader()
+        return self._maxima_basin_labels
+    
     @property
-    def basin_maxima_frac(self) -> NDArray[float]:
+    def maxima_basin_images(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            a 3D array of the same shape as the reference grid with entries
+            representing which periodic neighbor each point is assigned to. For
+            example, a point may be assigned to atom 0, but following the gradient
+            leads to atom zero in the unit cell at (1, 0, 0). Images are represented
+            by integers to save memory and follow the values created by itertools:
+                0: [-1, -1, -1]
+                 1: [-1, -1,  0]
+                 2: [-1, -1,  1]
+                 3: [-1,  0, -1]
+                 4: [-1,  0,  0]
+                 5: [-1,  0,  1]
+                 6: [-1,  1, -1]
+                 7: [-1,  1,  0]
+                 8: [-1,  1,  1]
+                 9: [ 0, -1, -1]
+                10: [ 0, -1,  0]
+                11: [ 0, -1,  1]
+                12: [ 0,  0, -1]
+                13: [ 0,  0,  0]
+                14: [ 0,  0,  1]
+                15: [ 0,  1, -1]
+                16: [ 0,  1,  0]
+                17: [ 0,  1,  1]
+                18: [ 1, -1, -1]
+                19: [ 1, -1,  0]
+                20: [ 1, -1,  1]
+                21: [ 1,  0, -1]
+                22: [ 1,  0,  0]
+                23: [ 1,  0,  1]
+                24: [ 1,  1, -1]
+                25: [ 1,  1,  0]
+                26: [ 1,  1,  1]
+
+        """
+        if self._maxima_basin_images is None:
+            self._run_bader()
+        return self._maxima_basin_images
+    
+    @property
+    def maxima_frac(self) -> NDArray[float]:
         """
 
         Returns
@@ -323,12 +329,12 @@ class Bader:
             The fractional coordinates of each attractor.
 
         """
-        if self._basin_maxima_frac is None:
-            self.run_bader()
-        return self._basin_maxima_frac
+        if self._maxima_frac is None:
+            self._run_bader()
+        return self._maxima_frac
 
     @property
-    def basin_maxima_charge_values(self) -> NDArray[float]:
+    def maxima_charge_values(self) -> NDArray[float]:
         """
 
         Returns
@@ -338,14 +344,15 @@ class Bader:
             off grid, this value will be interpolated.
 
         """
-        if self._basin_maxima_charge_values is None:
-            self._basin_maxima_charge_values = self.charge_grid.values_at(
-                self.basin_maxima_frac
+        # TODO: change this to quadratic fit to match reference value method
+        if self._maxima_charge_values is None:
+            self._maxima_charge_values = self.charge_grid.values_at(
+                self.maxima_frac
             )
-        return self._basin_maxima_charge_values.round(10)
+        return self._maxima_charge_values.round(10)
 
     @property
-    def basin_maxima_ref_values(self) -> NDArray[float]:
+    def maxima_ref_values(self) -> NDArray[float]:
         """
 
         Returns
@@ -355,27 +362,100 @@ class Bader:
             off grid, this value will be interpolated.
 
         """
-        if self._basin_maxima_ref_values is None:
+        if self._maxima_ref_values is None:
             # we get these values during each bader method anyways, so
             # we run this here.
-            self.run_bader()
-        return self._basin_maxima_ref_values.round(10)
+            self._run_bader()
+        return self._maxima_ref_values
 
     @property
-    def basin_maxima_vox(self) -> NDArray[int]:
+    def maxima_vox(self) -> NDArray[int]:
         """
 
         Returns
         -------
         NDArray[int]
-            The voxel coordinates of each attractor. There may be more of these
-            than the fractional coordinates, as some maxima sit exactly between
-            several voxels.
+            The voxel coordinates of each attractor.
 
         """
-        if self._basin_maxima_vox is None:
-            self.run_bader()
-        return self._basin_maxima_vox
+        if self._maxima_vox is None:
+            self._run_bader()
+        return self._maxima_vox
+
+    @property
+    def maxima_cart(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The cartesian coordinates of each attractor.
+
+        """
+        if self._maxima_cart is None:
+            self._maxima_cart = self.reference_grid.frac_to_cart(self._maxima_frac)
+        return self._maxima_vox
+    
+    @property
+    def maxima_voxel_groups(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            In many systems multiple nearby points will be found to be maxima
+            usually due to voxelation. We combine these maxima into one with a
+            persistence metric. This property provides all of the "false" maxima
+            that are associated with the final maxima list.
+            
+            For scalar fields like the ELF, LOL, or ELI-D, there may also be
+            ring and cage-like maxima that are not well described by a single
+            point. This also provides some indication of these maxima.
+
+        """
+        if self._maxima_voxel_groups is None:
+            self._run_bader()
+        return self._maxima_voxel_groups
+    
+    @property
+    def maxima_persistence_values(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Each maxima may have been combined with several voxelated maxima
+            (see maxima_voxel_groups). For each maxima group, this  is the 
+            lowest value at which all of the maxima in the group are topologically 
+            connected if one takes the all voxels at or above that value
+        """
+        if self._maxima_persistence_values is None:
+            # get groups
+            tol = max(self.maxima_persistence_tol, 0)
+            maxima_groups = self.maxima_voxel_groups
+            maxima_values = self.maxima_ref_values
+            # get the lowest value that the maximum would connect to with the
+            # current persistence tol
+            persistence_values = []
+            for group, max_val in zip(maxima_groups, maxima_values):
+                group_vals = self.reference_grid.total[
+                    group[:,0],
+                    group[:,1],
+                    group[:,2],
+                    ]
+                valid_mask = ((max_val - group_vals) / group_vals)-1e-12 <= tol
+                best_val = group_vals[valid_mask].min()
+
+
+                # get lowest possible persistence below this value
+                # (max_val - val) / val < persistence_tol
+                # --> val = max_val / (1+persistence_tol)
+                persistence_values.append(
+                    best_val / (1+self.maxima_persistence_tol)
+                    )
+
+            self._maxima_persistence_values = np.array(persistence_values)
+        return self._maxima_persistence_values
 
     @property
     def basin_charges(self) -> NDArray[float]:
@@ -388,7 +468,7 @@ class Bader:
 
         """
         if self._basin_charges is None:
-            self.run_bader()
+            self._run_bader()
         return self._basin_charges.round(10)
 
     @property
@@ -402,7 +482,7 @@ class Bader:
 
         """
         if self._basin_volumes is None:
-            self.run_bader()
+            self._run_bader()
         return self._basin_volumes.round(10)
 
     @property
@@ -461,22 +541,282 @@ class Bader:
         if self._basin_atom_dists is None:
             self.run_atom_assignment()
         return self._basin_atom_dists.round(10)
-
+    
     @property
-    def significant_basins(self) -> NDArray[bool]:
+    def basin_edges(self) -> NDArray[np.bool_]:
         """
 
         Returns
         -------
-        NDArray[bool]
-            A 1D mask with an entry for each basin that is True where basins
-            are significant.
+        NDArray[np.bool_]
+            A mask with the same shape as the input grids that is True at points
+            on basin edges.
 
         """
-        if self._significant_basins is None:
-            self._significant_basins = self.basin_charges > self.basin_tol
-        return self._significant_basins
+        if self._basin_edges is None:
+            self._basin_edges = get_edges(
+                labeled_array=self.maxima_basin_labels,
+                vacuum_mask=np.zeros(self.maxima_basin_labels.shape, dtype=np.bool_),
+                neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
+            )
+        return self._basin_edges
+    
+    @property
+    def basin_contact_surface_areas(self) -> NDArray[np.float64]:
+        """
 
+        Returns
+        -------
+        NDArray[np.float64]
+            A 2D array with indices i, j where i is the basin index, j is the neighboring
+            basin index, and the entry at i, j is the total area in contact between
+            these labels. One extra index is added that stores the number of connections
+            to the vacuum.
+
+            This value is calculated using voronoi cells of the voxels to
+            approximate the shared area between a voxel point and a neighbor in
+            another basin.
+
+        """
+        if self._basin_contact_surface_areas is None:
+            neighbor_transforms, _, neighbor_areas, _ = (
+                self.reference_grid.point_neighbor_voronoi_transforms
+            )
+            self._basin_contact_surface_areas = get_neighboring_basin_surface_area(
+                labeled_array=self.maxima_basin_labels,
+                neighbor_transforms=neighbor_transforms,
+                neighbor_areas=neighbor_areas,
+                vacuum_mask=self.vacuum_mask,
+                label_num=len(self.maxima_frac),
+            )
+        return self._basin_contact_surface_areas
+    
+    @property
+    def basin_surface_areas(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The approximate surface area of each basin.
+
+            This value is calculated using voronoi cells of the voxels to
+            approximate the shared area between a voxel point and a neighbor in
+            another basin.
+
+        """
+        if self._basin_surface_areas is None:
+            # get the contact surface area of each basin
+            contact_surfaces = self.basin_contact_surface_areas
+            # sum across axis 0 to get the total
+            self._basin_surface_areas = np.sum(contact_surfaces, axis=1)
+        return self._basin_surface_areas
+    
+    ###########################################################################
+    # Minima Basin Properties
+    ###########################################################################
+    @property
+    def minima_basin_labels(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The equivalent of bader basins for the desending gradient to local
+            minima. This is each minima's ascending manifold and can be used
+            in combination with the bader basins to locate important topological
+            features.
+
+        """
+        if self._minima_basin_labels is None:
+            self._run_minima_bader()
+        return self._minima_basin_labels
+    
+    @property
+    def minima_basin_images(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The equivalent of the basin_images property for minima basins.
+
+        """
+        if self._minima_basin_images is None:
+            self._run_minima_bader()
+        return self._minima_basin_images
+
+    @property
+    def minima_frac(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The fractional coordinates of each local minimum.
+
+        """
+        if self._minima_frac is None:
+            self._run_minima_bader()
+        return self._minima_frac
+    
+    @property
+    def minima_vox(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The voxel coordinates of each minima.
+
+        """
+        if self._minima_vox is None:
+            self._run_minima_bader()
+        return self._minima_vox
+
+    @property
+    def minima_cart(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The cartesian coordinates of each attractor.
+
+        """
+        if self._minima_cart is None:
+            self._minima_cart = self.reference_grid.frac_to_cart(self._minima_frac)
+        return self._minima_vox
+    
+    @property
+    def minima_charge_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The charge data value at each maximum. If the maximum is
+            off grid, this value will be interpolated.
+
+        """
+        # TODO: change this to quadratic fit to match reference value method
+        if self._minima_charge_values is None:
+            self._minima_charge_values = self.charge_grid.values_at(
+                self.minima_frac
+            )
+        return self._minima_charge_values.round(10)
+    
+    @property
+    def minima_ref_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The reference data value at each maximum. If the maximum is
+            off grid, this value will be interpolated.
+
+        """
+        if self._minima_ref_values is None:
+            # we get these values during each bader method anyways, so
+            # we run this here.
+            self._run_minima_bader()
+        return self._minima_ref_values.round(10)
+    
+    @property
+    def minima_voxel_groups(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            In many systems multiple nearby points will be found to be minima
+            usually due to voxelation. We combine these minima into one with a
+            persistence metric. This property provides all of the "false" minima
+            that are associated with the final minima list.
+            
+            For scalar fields like the ELF, LOL, or ELI-D, there may also be
+            ring and cage-like minima that are not well described by a single
+            point. This also provides some indication of these minima.
+
+        """
+        if self._minima_voxel_groups is None:
+            self._run_minima_bader()
+        return self._minima_voxel_groups
+    
+    @property
+    def minima_persistence_values(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Each minima may have been combined with several voxelated minima
+            (see minima_voxel_groups). For each minima group, this  is the 
+            highest value at which all of the minima in the group are topologically 
+            connected if one takes the all voxels at or below that value
+        """
+        if self._minima_persistence_values is None:
+            tol = max(self.minima_persistence_tol,0)
+            # self._run_minima_bader()
+            # get groups
+            minima_groups = self.minima_voxel_groups
+            minima_values = self.minima_ref_values
+            # get the lowest value that the maximum would connect to with the
+            # current persistence tol
+            persistence_values = []
+            for group, min_val in zip(minima_groups, minima_values):
+                group_vals = self.reference_grid.total[
+                    group[:,0],
+                    group[:,1],
+                    group[:,2],
+                    ]
+                valid_mask = ((group_vals - min_val) / group_vals)-1e-12 <= tol
+                best_val = group_vals[valid_mask].max()
+                # get lowest possible persistence below this value
+                # (val - max_val) / val < persistence_tol
+                # --> val = max_val / (1+persistence_tol)
+                persistence_values.append(
+                    best_val / (1-self.minima_persistence_tol)
+                    )
+
+            self._minima_persistence_values = np.array(persistence_values)
+        return self._minima_persistence_values
+    
+    @property
+    def minima_persistence_tol(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            It is common for false maxima to be found using only nearest neighbor
+            points. To deal with this we combine pairs of basins that have low
+            topological persistence.
+            
+            The persistence score is calculated as:
+                
+                score = (connection_value - higher_minimum) / connection_value
+
+
+        """
+        return self._minima_persistence_tol
+    
+    @minima_persistence_tol.setter
+    def minima_persistence_tol(self, value: str | Method):
+        self._minima_persistence_tol = value
+        # reset atom properties
+        self._reset_properties(exclude_properties=[
+            "vacuum_mask",
+            "num_vacuum",
+            "vacuum_charge",
+            "vacuum_volume",
+            "structure",
+            ])
+
+    ###########################################################################
+    # Atom Properties
+    ###########################################################################
     @property
     def atom_labels(self) -> NDArray[float]:
         """
@@ -553,25 +893,6 @@ class Bader:
         return self._atom_avg_surface_distances.round(10)
 
     @property
-    def basin_edges(self) -> NDArray[np.bool_]:
-        """
-
-        Returns
-        -------
-        NDArray[np.bool_]
-            A mask with the same shape as the input grids that is True at points
-            on basin edges.
-
-        """
-        if self._basin_edges is None:
-            self._basin_edges = get_edges(
-                labeled_array=self.basin_labels,
-                vacuum_mask=np.zeros(self.basin_labels.shape, dtype=np.bool_),
-                neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
-            )
-        return self._basin_edges
-
-    @property
     def atom_edges(self) -> NDArray[np.bool_]:
         """
 
@@ -591,73 +912,60 @@ class Bader:
         return self._atom_edges
 
     @property
-    def vacuum_charge(self) -> float:
+    def atom_contact_surface_areas(self) -> NDArray[np.float64]:
         """
 
         Returns
         -------
-        float
-            The charge assigned to the vacuum.
+        NDArray[np.float64]
+            A 2D array with indices i, j where i is the atom index, j is the neighboring
+            atom index, and the entry at i, j is the total area in contact between
+            these labels. One extra index is added that stores the number of connections
+            to the vacuum.
+
+            This value is calculated using voronoi cells of the voxels to
+            approximate the shared area between a voxel point and a neighbor in
+            another atom.
 
         """
-        if self._vacuum_charge is None:
-            self.run_bader()
-        return round(self._vacuum_charge, 10)
+        if self._atom_contact_surface_areas is None:
+            neighbor_transforms, _, neighbor_areas, _ = (
+                self.reference_grid.point_neighbor_voronoi_transforms
+            )
+            self._atom_contact_surface_areas = get_neighboring_basin_surface_area(
+                labeled_array=self.atom_labels,
+                neighbor_transforms=neighbor_transforms,
+                neighbor_areas=neighbor_areas,
+                vacuum_mask=self.vacuum_mask,
+                label_num=len(self.structure),
+            )
+        return self._atom_contact_surface_areas
 
     @property
-    def vacuum_volume(self) -> float:
+    def atom_surface_areas(self) -> NDArray[np.float64]:
         """
 
         Returns
         -------
-        float
-            The total volume assigned to the vacuum.
+        NDArray[np.float64]
+            The approximate surface area of each atom.
+
+            This value is calculated using voronoi cells of the voxels to
+            approximate the shared area between a voxel point and a neighbor in
+            another atom.
 
         """
-        if self._vacuum_volume is None:
-            self.run_bader()
-        return round(self._vacuum_volume, 10)
-
-    @property
-    def vacuum_mask(self) -> NDArray[bool]:
-        """
-
-        Returns
-        -------
-        NDArray[bool]
-            A mask representing the voxels that belong to the vacuum.
-
-        """
-        if self._vacuum_mask is None:
-            # get appropriate grid
-            if self._use_reference_vacuum:
-                grid = self.reference_grid.total
-            else:
-                grid = self.charge_grid.total
-            # if vacuum tolerance is set to False, ignore vacuum
-            if self.vacuum_tol is False:
-                self._vacuum_mask = np.zeros_like(grid, dtype=np.bool_)
-            else:
-                # get vacuum mask
-                self._vacuum_mask = grid < (
-                    self.vacuum_tol * self.structure.volume  # normalize
-                )
-        return self._vacuum_mask
-
-    @property
-    def num_vacuum(self) -> int:
-        """
-
-        Returns
-        -------
-        int
-            The number of vacuum points in the array
-
-        """
-        if self._num_vacuum is None:
-            self._num_vacuum = np.count_nonzero(self.vacuum_mask)
-        return self._num_vacuum
-
+        if self._atom_surface_areas is None:
+            # get the contact surface area of each atom
+            contact_surfaces = self.atom_contact_surface_areas
+            # sum across axis 0 to get the total
+            self._atom_surface_areas = np.sum(contact_surfaces, axis=1)
+        return self._atom_surface_areas
+    
+    ###########################################################################
+    # Other Properties
+    ###########################################################################
+    
     @property
     def total_electron_number(self) -> float:
         """
@@ -687,6 +995,10 @@ class Bader:
         """
 
         return round(self.atom_volumes.sum() + self.vacuum_volume, 10)
+    
+    ###########################################################################
+    # Methods
+    ###########################################################################
 
     @staticmethod
     def all_methods() -> list[str]:
@@ -701,7 +1013,7 @@ class Bader:
 
         return [i.value for i in Method]
 
-    def run_bader(self) -> None:
+    def _run_bader(self) -> None:
         """
         Runs the entire Bader process and saves results to class variables.
 
@@ -726,45 +1038,136 @@ class Bader:
             reference_grid=self.reference_grid,
             vacuum_mask=self.vacuum_mask,
             num_vacuum=self.num_vacuum,
+            persistence_tol=self.maxima_persistence_tol,
         )
         if self._use_overdetermined:
             method._use_overdetermined = True
         results = method.run()
 
         for key, value in results.items():
-            setattr(self, f"_{key}", value)
+            if "extrema" in key:
+                new_key = key.replace("extrema", "maxima")
+                setattr(self, f"_{new_key}", value)
+            else:
+                setattr(self, f"_{key}", value)
+
+        t1 = time.time()
+        logging.info("Bader Algorithm Complete")
+        logging.info(f"Time: {round(t1-t0,2)}")
+        
+    def _run_minima_bader(self) -> None:
+        """
+        Runs the entire Bader process and saves results to class variables.
+
+        """
+        t0 = time.time()
+        logging.info(f"Beginning Minima Bader Algorithm Using '{self.method.name}' Method")
+        # Normalize the method name to a module and class name
+        module_name = self.method.replace(
+            "-", "_"
+        )  # 'pseudo-neargrid' -> 'pseudo_neargrid'
+        class_name = (
+            "".join(part.capitalize() for part in module_name.split("_")) + "Method"
+        )
+
+        # import method
+        mod = importlib.import_module(f"baderkit.core.bader.methods.{module_name}")
+        Method = getattr(mod, class_name)
+
+        # Instantiate and run the selected method
+        method = Method(
+            charge_grid=self.charge_grid,
+            reference_grid=self.reference_grid,
+            vacuum_mask=self.vacuum_mask,
+            num_vacuum=self.num_vacuum,
+            use_minima=True,
+            persistence_tol=self.minima_persistence_tol,
+        )
+        if self._use_overdetermined:
+            method._use_overdetermined = True
+        results = method.run()
+        # set related properties
+        for key, value in results.items():
+            if "extrema" in key:
+                new_key = key.replace("extrema", "minima")
+                setattr(self, f"_{new_key}", value)
+        
         t1 = time.time()
         logging.info("Bader Algorithm Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
 
-    def assign_basins_to_structure(self, structure: Structure):
+    def assign_basins_to_structure(self, structure: Structure, nna_cutoff: bool | float = False):
+        """
+        Gets atom assignments for the provided structure.
+
+        Parameters
+        ----------
+        structure : Structure
+            The structure to assign basins to.
+        nna_cutoff : bool | float, optional
+            A distance cutoff. Any basins with maxima further from an atom than
+            this value (in Angstroms) will be counted as its own species. Dummy
+            atoms will be added to the structure. The default is False.
+
+        Returns
+        -------
+        atom_labels : NDArray
+            A 3D array with the same shape as the grid where each entry represents
+            the atom that point belongs to.
+        atom_charges : NDArray
+            The charge assigned to each atom.
+        atom_volumes : NDArray
+            The volume assigned to each atom.
+        basin_atoms : NDArray
+            The atom each basin was assigned to.
+        basin_atom_dists : NDArray
+            The distance from each basin to the nearest atom.
+
+        """
+        if nna_cutoff is True:
+            nna_cutoff = 1.0
 
         # Get basin and atom frac coords
-        basins = self.basin_maxima_frac  # (N_basins, 3)
+        basins = self.maxima_frac  # (N_basins, 3)
         atoms = structure.frac_coords  # (N_atoms, 3)
 
         # get lattice matrix and number of atoms/basins
         L = structure.lattice.matrix  # (3, 3)
         N_basins = len(basins)
-
-        # Vectorized deltas, minimum‑image wrapping
-        diffs = atoms[None, :, :] - basins[:, None, :]
-        diffs += np.where(diffs <= -0.5, 1, 0)
-        diffs -= np.where(diffs >= 0.5, 1, 0)
-
-        # Cartesian diffs & distances
-        cart = np.einsum("bij,jk->bik", diffs, L)
-        dists = np.linalg.norm(cart, axis=2)
-
-        # Basin→atom assignment & distances
-        basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
-        basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
+        def get_atom_basins(atoms, basins):
+            # Vectorized deltas, minimum‑image wrapping
+            diffs = atoms[None, :, :] - basins[:, None, :]
+            diffs += np.where(diffs <= -0.5, 1, 0)
+            diffs -= np.where(diffs >= 0.5, 1, 0)
+    
+            # Cartesian diffs & distances
+            cart = np.einsum("bij,jk->bik", diffs, L)
+            dists = np.linalg.norm(cart, axis=2)
+            
+            # Basin→atom assignment & distances
+            basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
+            basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
+            return basin_atoms, basin_atom_dists
+        basin_atoms, basin_atom_dists = get_atom_basins(atoms, basins)
+        
+        if nna_cutoff:
+            # add dummy atoms at basin maxima far from atoms
+            for coords, dist in zip(basins, basin_atom_dists):
+                if dist > nna_cutoff:
+                    # add a dummy atom to the structure
+                    structure.append("X", coords)
+            # recalculate distances
+            atoms = structure.frac_coords
+            basin_atoms, basin_atom_dists = get_atom_basins(atoms, basins)
+        
+        # vacuum is represented by an index one above the highest label. we add
+        # that to our basin atoms temporarily
+        basin_atoms = np.insert(basin_atoms, len(basin_atoms), len(structure))
 
         # Atom labels per grid point
-        # NOTE: append -1 so that vacuum gets assigned to -1 in the atom_labels
-        # array
-        basin_atoms = np.insert(basin_atoms, len(basin_atoms), -1)
-        atom_labels = basin_atoms[self.basin_labels]
+        atom_labels = basin_atoms[self.maxima_basin_labels]
+        
+        # remove vacuum pointer in basin atoms
         basin_atoms = basin_atoms[:-1]
 
         atom_charges = np.bincount(
@@ -782,7 +1185,7 @@ class Bader:
 
         """
         # ensure bader has run (otherwise our time will include the bader time)
-        self.basin_maxima_frac
+        self.maxima_frac
 
         # Default structure
         structure = self.structure
@@ -791,7 +1194,7 @@ class Bader:
         logging.info("Assigning Atom Properties")
         # get basin assignments for this bader objects structure
         atom_labels, atom_charges, atom_volumes, basin_atoms, basin_atom_dists = (
-            self.assign_basins_to_structure(structure)
+            self.assign_basins_to_structure(structure, self.nna_cutoff)
         )
 
         # Store everything
@@ -843,6 +1246,130 @@ class Bader:
             oxi_state_data.append(oxi_state)
 
         return np.array(oxi_state_data)
+    
+    def get_persistence_groups(self):
+        """
+        Gets the groups of voxels for each maximum and minimum that are within
+        the extrema's basin and above/below the persistence value for that basin.
+        The persistence value is defined as the value at which all voxelated
+        maxima/minima (see maxima_voxel_groups/minima_voxel_groups) are connected
+
+        Returns
+        -------
+        maxima_groups : list[NDArray[int64]]
+            A list of Nx3 arrays where each array represents the grid indices of voxels 
+            that are within each maximas persistence threshold.
+        minima_groups : list[NDArray[int64]]
+            A list of Nx3 arrays where each array represents the grid indices of voxels 
+            that are within each minimas persistence threshold.
+
+        """
+
+        maxima_groups = get_persistence_groups(
+            labels=self.maxima_basin_labels,
+            data=self.reference_grid.total,
+            persistence_cutoffs=self.maxima_persistence_values,
+            extrema_vox=self.maxima_vox,
+            use_minima=False,
+            )
+
+        minima_groups = get_persistence_groups(
+            labels=self.minima_basin_labels,
+            data=self.reference_grid.total,
+            persistence_cutoffs=self.minima_persistence_values,
+            extrema_vox=self.minima_vox,
+            use_minima=True,
+            )
+
+        return maxima_groups, minima_groups
+        
+    def get_betti_numbers(
+            self,
+            return_values: bool = False,
+            return_groups: bool = False,
+            ) -> tuple:
+        """
+        The approximate betti numbers for an maxima and minima persistence
+        groups. This is obtained by scanning through a persistence group's
+        values from high to low and recording the betti numbers throughout.
+        If a cage (1,0,1) or ring (1,1,0) is found at any point, the extremum
+        is marked with this set. Otherwise, it is returned as a point (1,0,0).
+        While other betti numbers are possible, we believe these are the
+        only reasonable ones that should show up for very flat extrema in the
+        ELF, ELI-D, LOL or other localization functions.
+
+        Parameters
+        ----------
+        return_values : bool, optional
+            Whether or not to return the values at which the resulting betti
+            numbers exist. The default is False.
+        return_groups : bool, optional
+            Whether or not to return the voxel coordinates that result in the
+            returned betti numbers. The default is False.
+
+        Returns
+        -------
+        tuple
+            The betti numbers for maxima and minima. If return_values
+            is selected, the values at which the extrema form these betti numbers
+            will be appended. If return_gorups is selected, the voxels making up
+            these betti shapes are appended.
+
+        """
+
+        maxima_groups, minima_groups = self.get_persistence_groups()
+        base_maxima = self.maxima_vox
+        maxima_base_vals = self.reference_grid.total[
+            base_maxima[:,0],
+            base_maxima[:,1],
+            base_maxima[:,2]
+            ]
+        maxima_betti_numbers, maxima_betti_vals = get_all_betti_numbers_scanning(
+            maxima_groups,
+            maxima_base_vals,
+            self.reference_grid.total,
+            use_minima=False
+            )
+        
+        base_minima = self.minima_vox
+        minima_base_vals = self.reference_grid.total[
+            base_minima[:,0],
+            base_minima[:,1],
+            base_minima[:,2]
+            ]
+        minima_betti_numbers, minima_betti_vals = get_all_betti_numbers_scanning(
+            minima_groups,
+            minima_base_vals,
+            self.reference_grid.total,
+            use_minima=False
+            )
+        
+        results = [maxima_betti_numbers, minima_betti_numbers]
+        
+        if return_values:
+            results.append(maxima_betti_vals)
+            results.append(minima_betti_vals)
+        
+        if return_groups:
+            maxima_groups = get_persistence_groups(
+                labels=self.maxima_basin_labels,
+                data=self.reference_grid.total,
+                persistence_cutoffs=maxima_betti_vals,
+                extrema_vox=self.maxima_vox,
+                use_minima=False,
+                )
+
+            minima_groups = get_persistence_groups(
+                labels=self.minima_basin_labels,
+                data=self.reference_grid.total,
+                persistence_cutoffs=minima_betti_vals,
+                extrema_vox=self.minima_vox,
+                use_minima=True,
+                )
+            results.append(maxima_groups)
+            results.append(minima_groups)
+
+        return tuple(results)
 
     def _get_atom_surface_distances(self):
         """
@@ -871,159 +1398,22 @@ class Bader:
         # get the minimum distances
         self._basin_min_surface_distances, self._basin_avg_surface_distances = (
             get_min_avg_surface_dists(
-                labels=self.basin_labels,
-                frac_coords=self.basin_maxima_frac,
+                labels=self.maxima_basin_labels,
+                frac_coords=self.maxima_frac,
                 edge_mask=self.basin_edges,
                 matrix=self.reference_grid.matrix,
                 max_value=np.max(self.structure.lattice.abc) * 2,
             )
         )
 
-    @classmethod
-    def from_vasp(
-        cls,
-        charge_filename: Path | str = "CHGCAR",
-        reference_filename: Path | None | str = None,
-        total_only: bool = True,
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a Bader class object from VASP files.
-
-        Parameters
-        ----------
-        charge_filename : Path | str, optional
-            The path to the CHGCAR like file that will be used for summing charge.
-            The default is "CHGCAR".
-        reference_filename : Path | None | str, optional
-            The path to CHGCAR like file that will be used for partitioning.
-            If None, the charge file will be used for partitioning.
-        total_only: bool
-            If true, only the first set of data in the file will be read. This
-            increases speed and reduced memory usage as the other data is typically
-            not used.
-            Defaults to True.
-        **kwargs : dict
-            Keyword arguments to pass to the Bader class.
-
-        Returns
-        -------
-        Self
-            A Bader class object.
-
-        """
-        charge_grid = Grid.from_vasp(charge_filename, total_only=total_only)
-        if reference_filename is None:
-            reference_grid = None
-        else:
-            reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
-
-        return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
-
-    @classmethod
-    def from_cube(
-        cls,
-        charge_filename: Path | str,
-        reference_filename: Path | None | str = None,
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a Bader class object from .cube files.
-
-        Parameters
-        ----------
-        charge_filename : Path | str, optional
-            The path to the .cube file that will be used for summing charge.
-        reference_filename : Path | None | str, optional
-            The path to .cube file that will be used for partitioning.
-            If None, the charge file will be used for partitioning.
-        **kwargs : dict
-            Keyword arguments to pass to the Bader class.
-
-        Returns
-        -------
-        Self
-            A Bader class object.
-
-        """
-        charge_grid = Grid.from_cube(charge_filename)
-        if reference_filename is None:
-            reference_grid = None
-        else:
-            reference_grid = Grid.from_cube(reference_filename)
-        return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
-
-    @classmethod
-    def from_dynamic(
-        cls,
-        charge_filename: Path | str,
-        reference_filename: Path | None | str = None,
-        format: Literal["vasp", "cube", None] = None,
-        total_only: bool = True,
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a Bader class object from VASP or .cube files. If no format is
-        provided the method will automatically try and determine the file type
-        from the name
-
-        Parameters
-        ----------
-        charge_filename : Path | str
-            The path to the file containing the charge density that will be
-            integrated.
-        reference_filename : Path | None | str, optional
-            The path to the file that will be used for partitioning.
-            If None, the charge file will be used for partitioning.
-        format : Literal["vasp", "cube", None], optional
-            The format of the grids to read in. If None, the formats will be
-            guessed from the file names.
-        total_only: bool
-            If true, only the first set of data in the file will be read. This
-            increases speed and reduced memory usage as the other data is typically
-            not used. This is only used if the file format is determined to be
-            VASP, as cube files are assumed to contain only one set of data.
-            Defaults to True.
-        **kwargs : dict
-            Keyword arguments to pass to the Bader class.
-
-        Returns
-        -------
-        Self
-            A Bader class object.
-
-        """
-
-        charge_grid = Grid.from_dynamic(
-            charge_filename, format=format, total_only=total_only
-        )
-        if reference_filename is None:
-            reference_grid = None
-        else:
-            reference_grid = Grid.from_dynamic(
-                reference_filename, format=format, total_only=total_only
-            )
-        return cls(charge_grid=charge_grid, reference_grid=reference_grid, **kwargs)
-
-    def copy(self) -> Self:
-        """
-
-        Returns
-        -------
-        Self
-            A deep copy of this Bader object.
-
-        """
-        return copy.deepcopy(self)
+    ###########################################################################
+    # Write Methods
+    ###########################################################################
 
     def write_basin_volumes(
         self,
-        basin_indices: NDArray,
-        directory: str | Path = None,
-        write_reference: bool = False,
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        basin_indices: NDArray[int],
+        **kwargs,
     ):
         """
         Writes bader basins to vasp-like files. Points belonging to the basin
@@ -1034,58 +1424,19 @@ class Bader:
         ----------
         basin_indices : NDArray
             The list of basin indices to write
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
-            Default is False.
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        # get the data to use
-        if write_reference:
-            data_array = self.reference_grid.total
-            data_type = self.reference_grid.data_type
-        else:
-            data_array = self.charge_grid.total
-            data_type = self.charge_grid.data_type
-
-        if directory is None:
-            directory = Path(".")
         for basin in basin_indices:
             # get a mask everywhere but the requested basin
-            mask = self.basin_labels != basin
-            # copy data to avoid overwriting. Set data off of basin to 0
-            data_array_copy = data_array.copy()
-            data_array_copy[mask] = 0.0
-            grid = Grid(
-                structure=self.structure,
-                data={"total": data_array_copy},
-                data_type=data_type,
-            )
-            # get prefix
-            if prefix_override is None:
-                prefix_override = grid.data_type.prefix
+            mask = self.maxima_basin_labels == basin
+            kwargs["suffix"] = f"_b{basin}"
 
-            file_path = directory / f"{prefix_override}_b{basin}"
-            # write file
-            grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+            self._write_volume(volume_mask=mask, **kwargs)
 
     def write_all_basin_volumes(
         self,
-        directory: str | Path = None,
-        write_reference: bool = False,
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        basin_tol: float = 1e-03,
+        **kwargs,
     ):
         """
         Writes all bader basins to vasp-like files. Points belonging to the basin
@@ -1094,40 +1445,20 @@ class Bader:
 
         Parameters
         ----------
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
-            Default is False.
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
+        basin_tol : float, optional
+            The total charge value below which a basin will not be considered written
 
         """
-        basin_indices = np.where(self.significant_basins)[0]
+        basin_indices = np.where(self.basin_charges > basin_tol)[0]
         self.write_basin_volumes(
             basin_indices=basin_indices,
-            directory=directory,
-            write_reference=write_reference,
-            prefix_override=prefix_override,
-            output_format=output_format,
-            **writer_kwargs,
+            **kwargs,
         )
 
     def write_basin_volumes_sum(
         self,
-        basin_indices: NDArray,
-        directory: str | Path = None,
-        write_reference: bool = False,
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        basin_indices: NDArray[int],
+        **kwargs,
     ):
         """
         Writes the union of the provided bader basins to vasp-like files.
@@ -1138,59 +1469,18 @@ class Bader:
         ----------
         basin_indices : NDArray
             The list of basin indices to sum and write
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
-            Default is False.
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        # get the data to use
-        if write_reference:
-            data_array = self.reference_grid.total
-            data_type = self.reference_grid.data_type
-        else:
-            data_array = self.charge_grid.total
-            data_type = self.charge_grid.data_type
-
-        if directory is None:
-            directory = Path(".")
         # create a mask including each of the requested basins
-        mask = np.isin(self.basin_labels, basin_indices)
-        # copy data to avoid overwriting. Set data off of basin to 0
-        data_array_copy = data_array.copy()
-        data_array_copy[~mask] = 0.0
-        grid = Grid(
-            structure=self.structure,
-            data={"total": data_array_copy},
-            data_type=data_type,
-        )
-        # get prefix
-        if prefix_override is None:
-            prefix_override = grid.data_type.prefix
-
-        file_path = directory / f"{prefix_override}_bsum"
-
-        # write file
-        grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+        mask = np.isin(self.maxima_basin_labels, basin_indices)
+        # write
+        kwargs["suffix"] = "_bsum"
+        self._write_volume(volume_mask=mask, **kwargs)
 
     def write_atom_volumes(
         self,
         atom_indices: NDArray,
-        directory: str | Path = None,
-        write_reference: bool = False,
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        **kwargs,
     ):
         """
         Writes atomic basins to vasp-like files. Points belonging to the atom
@@ -1201,104 +1491,35 @@ class Bader:
         ----------
         atom_indices : NDArray
             The list of atom indices to write
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
-            Default is False.
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        # get the data to use
-        if write_reference:
-            data_array = self.reference_grid.total
-            data_type = self.reference_grid.data_type
-        else:
-            data_array = self.charge_grid.total
-            data_type = self.charge_grid.data_type
 
-        if directory is None:
-            directory = Path(".")
         for atom_index in atom_indices:
-            # get a mask everywhere but the requested basin
-            mask = self.atom_labels != atom_index
-            # copy data to avoid overwriting. Set data off of basin to 0
-            data_array_copy = data_array.copy()
-            data_array_copy[mask] = 0.0
-            grid = Grid(
-                structure=self.structure,
-                data={"total": data_array_copy},
-                data_type=data_type,
-            )
-
-            # get prefix
-            if prefix_override is None:
-                prefix_override = grid.data_type.prefix
-
-            file_path = directory / f"{prefix_override}_a{atom_index}"
-            # write file
-            grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+            # get a mask at the requested atoms
+            mask = self.atom_labels == atom_index
+            kwargs["suffix"] = "_a{atom_index}"
+            self._write_volume(volume_mask=mask, **kwargs)
 
     def write_all_atom_volumes(
         self,
-        directory: str | Path = None,
-        write_reference: bool = False,
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        **kwargs,
     ):
         """
         Writes all atomic basins to vasp-like files. Points belonging to the atom
         will have values from the charge or reference grid, and all other points
         will be 0.
 
-        Parameters
-        ----------
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
-            Default is False.
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
-
         """
         atom_indices = np.array(range(len(self.structure)))
         self.write_atom_volumes(
             atom_indices=atom_indices,
-            directory=directory,
-            write_reference=write_reference,
-            prefix_override=prefix_override,
-            output_format=output_format,
-            **writer_kwargs,
+            **kwargs,
         )
 
     def write_atom_volumes_sum(
         self,
         atom_indices: NDArray,
-        directory: str | Path = None,
-        write_reference: bool = False,
-        prefix_override: str = None,
-        output_format: str | Format = None,
-        **writer_kwargs,
+        **kwargs,
     ):
         """
         Writes the union of the provided atom basins to vasp-like files.
@@ -1309,56 +1530,18 @@ class Bader:
         ----------
         atom_indices : NDArray
             The list of atom indices to sum and write
-        directory : str | Path
-            The directory to write the files in. If None, the active directory
-            is used.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
-            Default is False.
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        # get the data to use
-        if write_reference:
-            data_array = self.reference_grid.total
-            data_type = self.reference_grid.data_type
-        else:
-            data_array = self.charge_grid.total
-            data_type = self.charge_grid.data_type
 
-        if directory is None:
-            directory = Path(".")
         mask = np.isin(self.atom_labels, atom_indices)
-        data_array_copy = data_array.copy()
-        data_array_copy[~mask] = 0.0
-        grid = Grid(
-            structure=self.structure,
-            data={"total": data_array_copy},
-            data_type=data_type,
-        )
-
-        # get prefix
-        if prefix_override is None:
-            prefix_override = grid.data_type.prefix
-
-        file_path = directory / f"{prefix_override}_asum"
-        # write file
-        grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+        # write
+        kwargs["suffix"] = "_asum"
+        self._write_volume(volume_mask=mask, **kwargs)
 
     def write_species_volume(
         self,
         species: str,
-        directory: str | Path = None,
-        write_reference: bool = True,
-        prefix_override: str = None,
-        output_format: str | Format = None,
+        **kwargs,
     ):
         """
         Writes the charge density or reference file for all atoms of the given
@@ -1368,47 +1551,16 @@ class Bader:
         ----------
         species : str, optional
             The species to write.
-        directory : str | Path, optional
-            The directory to write the result to. The default is None.
-        write_reference : bool, optional
-            Whether or not to write the reference data rather than the charge data.
-            The default is True.
-        prefix_override : str, optional
-            The string to add at the front of the output path. If None, defaults
-            to the VASP file name equivalent to the data type stored in the
-            grid.
-        output_format : str | Format, optional
-            The format to write with. If None, writes to source format stored in
-            the Grid objects metadata.
-            Defaults to None.
 
         """
-        if directory is None:
-            directory = Path(".")
-
-        # Get voxel assignments and data
-        voxel_assignment_array = self.atom_labels
-        if write_reference:
-            grid = self.reference_grid.copy()
-        else:
-            grid = self.charge_grid.copy()
 
         # add dummy atoms if desired
         indices = self.structure.indices_from_symbol(species)
 
         # Get mask where the grid belongs to requested species
-        mask = np.isin(voxel_assignment_array, indices, invert=True)
-        grid.total[mask] = 0
-        if grid.diff is not None:
-            grid.diff[mask] = 0
-
-        # get prefix
-        if prefix_override is None:
-            prefix_override = grid.data_type.prefix
-
-        file_path = directory / f"{prefix_override}_{species}"
-        # write file
-        grid.write(filename=file_path, output_format=output_format)
+        mask = np.isin(self.atom_labels, indices)
+        kwargs["suffix"] = f"_{species}"
+        self._write_volume(volume_mask=mask, **kwargs)
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """
@@ -1435,7 +1587,7 @@ class Bader:
         )
         return atoms_df
 
-    def get_basin_results_dataframe(self):
+    def get_basin_results_dataframe(self, basin_tol: float):
         """
         Collects a summary of results for the basins in a pandas DataFrame.
 
@@ -1443,10 +1595,12 @@ class Bader:
         -------
         basin_df : pd.DataFrame
             A table summarizing the basins.
+        basin_tol : float, optional
+            The total charge value below which a basin will not be considered significant.
 
         """
-        subset = self.significant_basins
-        basin_frac_coords = self.basin_maxima_frac[subset]
+        subset = self.basin_charges > basin_tol
+        basin_frac_coords = self.maxima_frac[subset]
         basin_df = pd.DataFrame(
             {
                 "atoms": np.array(self.structure.labels)[self.basin_atoms[subset]],
@@ -1587,7 +1741,6 @@ class Bader:
         method_kwargs = {
             "method": self.method,
             "vacuum_tol": self.vacuum_tol,
-            "basin_tol": self.basin_tol,
         }
         results["method_kwargs"] = method_kwargs
         results["oxidation_states"] = self.get_oxidation_from_potcar(potcar_path)
@@ -1609,11 +1762,16 @@ class Bader:
             "basin_atom_dists",
             "basin_charges",
             "basin_volumes",
-            "basin_maxima_frac",
-            "basin_maxima_charge_values",
-            "basin_maxima_ref_values",
-            "basin_maxima_vox",
-            "significant_basins",
+            "maxima_frac",
+            "maxima_charge_values",
+            "maxima_ref_values",
+            "maxima_vox",
+            "maxima_voxel_groups",
+            "minima_frac",
+            "minima_charge_values",
+            "minima_ref_values",
+            "minima_vox",
+            "minima_voxel_groups",
             "basin_min_surface_distances",
             "basin_avg_surface_distances",
         ]:
@@ -1635,13 +1793,16 @@ class Bader:
 
             # get serializable versions of each basin attribute
             for key in [
-                "basin_maxima_frac",
-                "basin_maxima_charge_values",
-                "basin_maxima_ref_values",
-                "basin_maxima_vox",
+                "maxima_frac",
+                "maxima_charge_values",
+                "maxima_ref_values",
+                "maxima_vox",
+                "minima_frac",
+                "minima_charge_values",
+                "minima_ref_values",
+                "minima_vox",
                 "basin_charges",
                 "basin_volumes",
-                "significant_basins",
                 "basin_min_surface_distances",
                 "basin_avg_surface_distances",
                 "basin_atoms",
@@ -1650,6 +1811,12 @@ class Bader:
                 if basin_results[key] is None:
                     continue  # skip oxidation states if they fail
                 basin_results[key] = basin_results[key].tolist()
+            
+            for key in [
+                "maxima_voxel_groups",
+                "minima_voxel_groups",
+                    ]:
+                basin_results[key] = [i.tolist() for i in basin_results[key]]
 
             # get serializable versions of each atom attribute
             for key in [
@@ -1662,7 +1829,7 @@ class Bader:
                     continue  # skip oxidation states if they fail
                 atom_results[key] = atom_results[key].tolist()
 
-                # get serializable oxidation states
+            # get serializable oxidation states
             if results["oxidation_states"] is not None:
                 results["oxidation_states"] = results["oxidation_states"].tolist()
 
@@ -1670,37 +1837,3 @@ class Bader:
         results["basin_results"] = basin_results
 
         return results
-
-    def to_json(self, **kwargs) -> str:
-        """
-        Creates a JSON string representation of the results, typically for writing
-        results to file.
-
-        Parameters
-        ----------
-        **kwargs : dict
-            Keyword arguments for the to_dict method.
-
-        Returns
-        -------
-        str
-            A JSON string representation of the BadELF results.
-
-        """
-        return json.dumps(self.to_dict(use_json=True, **kwargs))
-
-    def write_json(self, filepath: Path | str = "bader.json", **kwargs) -> None:
-        """
-        Writes results of the analysis to file in a JSON format.
-
-        Parameters
-        ----------
-        filepath : Path | str, optional
-            The Path to write the results to. The default is "bader.json".
-        **kwargs : dict
-            keyword arguments for the to_dict method.
-
-        """
-        filepath = Path(filepath)
-        with open(filepath, "w") as json_file:
-            json.dump(self.to_dict(use_json=True, **kwargs), json_file, indent=4)

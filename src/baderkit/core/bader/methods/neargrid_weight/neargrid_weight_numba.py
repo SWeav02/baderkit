@@ -4,7 +4,6 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.bader.methods.shared_numba import get_best_neighbor
 from baderkit.core.utilities.basic import coords_to_flat, flat_to_coords, wrap_point
 
 
@@ -13,15 +12,16 @@ def get_interior_basin_charges_and_volumes(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
     cell_volume: np.float64,
-    maxima_num: np.int64,
+    extrema_num: np.int64,
     edge_mask: NDArray[np.bool_],
 ):
     nx, ny, nz = data.shape
     # create variables to store charges/volumes
-    charges = np.zeros(maxima_num, dtype=np.float64)
-    volumes = np.zeros(maxima_num, dtype=np.float64)
+    charges = np.zeros(extrema_num, dtype=np.float64)
+    volumes = np.zeros(extrema_num, dtype=np.float64)
     vacuum_charge = 0.0
     vacuum_volume = 0.0
+
     # iterate in parallel over each voxel
     for i in range(nx):
         for j in range(ny):
@@ -30,7 +30,8 @@ def get_interior_basin_charges_and_volumes(
                     continue
                 charge = data[i, j, k]
                 label = labels[i, j, k]
-                if label < 0:
+                # add vacuum charge if relavent
+                if label == extrema_num:
                     vacuum_charge += charge
                     vacuum_volume += 1
                 else:
@@ -50,10 +51,12 @@ def get_edge_charges_volumes(
     labels,
     charges,
     volumes,
+    vacuum_mask,
     neighbor_transforms,
     neighbor_alpha,
     all_neighbor_transforms,
     all_neighbor_dists,
+    use_minima: bool = False,
 ):
     nx, ny, nz = reference_data.shape
     ny_nz = ny * nz
@@ -87,16 +90,22 @@ def get_edge_charges_volumes(
         for (si, sj, sk), alpha in zip(neighbor_transforms, neighbor_alpha):
             # get neighbor and wrap around periodic boundary
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+            # if this point is part of the vacuum, continue
+            if vacuum_mask[ii,jj,kk]:
+                continue
             # get the neighbors value
             neigh_value = reference_data[ii, jj, kk]
             # if this value is below the current points value, continue
-            if neigh_value <= base_value:
+            if (
+                not use_minima and neigh_value <= base_value
+                or use_minima and neigh_value >= base_value
+                ):
                 continue
             # get this neighbors index
             neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
 
             # calculate the flux flowing to this voxel
-            flux = (neigh_value - base_value) * alpha
+            flux = abs(neigh_value - base_value) * alpha
             # assign flux
             flux_array[sorted_idx, neigh_num] = flux
             total_flux += flux
@@ -106,20 +115,10 @@ def get_edge_charges_volumes(
             neigh_num += 1
 
         # check that there is flux. If not, we have a fake local maximum and
-        # revert to an ongrid step
+        # simply assign charge to the points label. Here we note there are no
+        # neighbors
         if total_flux == 0.0:
-            shift, (ni, nj, nk) = get_best_neighbor(
-                data=reference_data,
-                i=i,
-                j=j,
-                k=k,
-                neighbor_transforms=all_neighbor_transforms,
-                neighbor_dists=all_neighbor_dists,
-            )
-            neigh_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
-            neigh_nums[sorted_idx] = 1
-            neigh_array[sorted_idx, 0] = neigh_idx
-            flux_array[sorted_idx, 0] = 1.0
+            neigh_nums[sorted_idx] = 0
             continue
 
         # otherwise we assign as normal.
@@ -138,7 +137,15 @@ def get_edge_charges_volumes(
         # get charge/volume at this point
         charge = flat_charge[voxel_idx]
         volume = flat_volume[voxel_idx]
-        # loop over our each neighbor
+
+        # if this point has no neighbors, assign its charge to its label
+        if neigh_num == 0:
+            label = labels[i,j,k]
+            charges[label] += charge
+            volumes[label] += volume
+            continue
+        
+        # otherwise loop over each neighbor and consolidate charge
         for neigh_idx in range(neigh_num):
             neigh = neighs[neigh_idx]
             flux = fluxes[neigh_idx]

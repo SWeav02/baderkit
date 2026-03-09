@@ -3,22 +3,40 @@
 import copy
 import logging
 from typing import TypeVar
+import itertools
+import time
 
 import numpy as np
 from numpy.typing import NDArray
 
 from baderkit.core.toolkit import Grid
-from baderkit.core.utilities.interpolation import refine_maxima
+from baderkit.core.utilities.interpolation import refine_extrema
 
-from .shared_numba import (  # combine_neigh_maxima,
+from baderkit.core.utilities.basic import get_lowest_uint
+from .shared_numba import (  # combine_neigh_extrema,
     get_basin_charges_and_volumes,
-    get_maxima,
-    initialize_labels_from_maxima,
+    get_extrema,
+    initialize_labels_from_extrema,
+    # get_neighboring_basin_connections_w_images,
+    # get_edges_w_images,
+    group_by_persistence,
+    get_basin_edges,
+    get_canonical_saddle_connections,
+    get_single_point_saddles,
+    update_labels_and_images,
+    get_basin_min_and_max,
+    update_final_images,
 )
+from baderkit.core.utilities.interpolation import refine_critical_points
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="MethodBase")
 
+# TODO:
+    # 2. allow for setting periodic boundaries
+    # 3. get basins counting crossing boundaries as separate
+    # 3. continue with critical point finder
+    # 4. update bifurcation method
 
 class MethodBase:
     """
@@ -33,6 +51,28 @@ class MethodBase:
     For example, a method with the name example-name
         class name:  ExampleNameMethod
         module name: example_name
+        
+    Parameters
+    ----------
+    charge_grid : Grid
+        A Grid object with the charge density that will be integrated.
+    reference_grid : Grid
+        A grid object whose values will be used to construct the basins.
+    vacuum_mask : NDArray[bool]
+        A 3D Numpy array with the same shape as the grids that is True where
+        points belong to the vacuum
+    num_vacuum : int,
+        The number of vacuum points in the system.
+    persistence_tol: float, optional
+        The persistence score tolerance. Pairs of extrema with scores below
+        this tolerance will be combined. The score is calculated as:
+            dist * (lower_max - saddle_value) / higher_max
+        where 'dist' is the cartesian distance between the extrema, lower_max
+        is the value at the maximum with a lower value, saddle_value is the
+        highest value at which there is a connection between the two extremas
+        descending manifold (basin), and higher_max is the value at the maximum
+        with a higher value.
+
 
     """
 
@@ -42,118 +82,241 @@ class MethodBase:
         reference_grid: Grid,
         vacuum_mask: NDArray[bool],
         num_vacuum: int,
+        persistence_tol: float = 0.01,
+        use_minima: bool = False,
     ):
-        """
-
-        Parameters
-        ----------
-        charge_grid : Grid
-            A Grid object with the charge density that will be integrated.
-        reference_grid : Grid
-            A grid object whose values will be used to construct the basins.
-        vacuum_tol: float, optional
-            The value below which a point will be considered part of the vacuum.
-            The default is 0.001.
-        normalize_vacuum: bool, optional
-            Whether or not the reference data needs to be converted to real space
-            units for vacuum tolerance comparison. This should be set to True if
-            the data follows VASP's CHGCAR standards, but False if the data should
-            be compared as is (e.g. in ELFCARs)
-
-        Returns
-        -------
-        None.
-
-        """
         # define variables needed by all methods
         self.charge_grid = charge_grid
         self.reference_grid = reference_grid
         self.vacuum_mask = vacuum_mask
         self.num_vacuum = num_vacuum
+        self.persistence_tol = persistence_tol
+        self.use_minima = use_minima
 
         # These variables are also often needed but are calculated during the run
-        self._maxima_mask = None
-        self._maxima_vox = None
-        self._maxima_frac = None
+        self._extrema_mask = None
+        self._extrema_vox = None
+        self._extrema_groups = None
+        self._extrema_frac = None
         self._car2lat = None
         self._dir2lat = None
 
     def run(self) -> dict:
         """
         Runs the main bader method and returns a dictionary with values for:
-            - basin_maxima_frac
-            - basin_maxima_vox
-            - basin_maxima_ref_values
+            - extrema_frac
+            - extrema_vox
+            - extrema_groups
+            - extrema_basin_labels
+            - extrema_basin_images
+            - extrema_ref_values
             - basin_charges
             - basin_volumes
             - vacuum_charges
             - vacuum_volumes
-            - significant_basins
         """
-        # all methods require finding maxima. For consistency and to combine
-        # adjacent maxima, I do this the same way for all methods. Because this
-        # step is generally ~400x faster than the rest of the method, I think it's
-        # ok to not try and do it during the actual method
-
-        # get our initial maxima
-        maxima_vox = self.maxima_vox
+        # first we initialize our label array with all values set to placeholders
+        dtype = get_lowest_uint(self.reference_grid.ngridpts)
+        vacuum_label = np.iinfo(dtype).max
+        labels = np.full(self.reference_grid.ngridpts, vacuum_label, dtype=dtype)
         # get neighbor transforms
         neighbor_transforms, neighbor_dists = (
             self.reference_grid.point_neighbor_transforms
         )
-        # now merge our maxima and initialize our labels
-        labels, self._maxima_frac, self._maxima_vox = initialize_labels_from_maxima(
+        
+        # get ongrid extrema
+        extrema_vox = self.extrema_vox
+        # refine to closest nearby extrema. This helps with ensuring proper
+        # initialization
+        extrema_frac = extrema_vox / self.reference_grid.shape
+        if self.use_minima:
+            target_index = 0
+        else:
+            target_index = 3
+        extrema_frac, _ = refine_critical_points(
+            points=extrema_frac,
             data=self.reference_grid.total,
-            spline_coeffs=self.reference_grid.cubic_spline_coeffs,
-            maxima_mask=self.maxima_mask,
-            maxima_vox=maxima_vox,
+            target_index=target_index,
+            )
+        
+        # initialize our labels, combining false extrema
+        logging.info("Initializing Labels")
+        t0 = time.time()
+        (
+            labels, 
+            images, 
+            self._extrema_vox, 
+            self._extrema_frac, 
+            self._extrema_groups, 
+        ) = initialize_labels_from_extrema(
+            labels=labels,
+            data=self.reference_grid.total,
+            extrema_frac=extrema_frac,
+            extrema_mask=self.extrema_mask,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
-            lattice=self.reference_grid.structure.lattice.matrix,
-            rel_minima_tol=1e-5,
+            persistence_tol=self.persistence_tol,
+            use_minima=self.use_minima,
+            matrix=self.reference_grid.matrix,
+            method="linear",
         )
+
+        t1 = time.time()
+        logging.info("Initialization Complete")
+        logging.info(f"Time: {round(t1-t0,2)}")
 
         # now run bader
-        results = self._run_bader(labels)
+        results = self._run_bader(labels, images)
+        labels = results["extrema_basin_labels"]
+        images = results["extrema_basin_images"]
+        
+        # sort extrema coordinates ensuring they go from lowest to highest label
+        extrema_labels = labels[
+            self.extrema_vox[:,0],
+            self.extrema_vox[:,1],
+            self.extrema_vox[:,2],
+            ]
+        extrema_sorted = np.argsort(extrema_labels)
+        self._extrema_vox = self.extrema_vox[extrema_sorted]
+        self._extrema_groups = [self.extrema_groups[i] for i in extrema_sorted]
 
-        # refine maxima using a quadratic fit
-        refined_maxima_frac, maxima_values = refine_maxima(
-            maxima_coords=self.maxima_frac,
+        # Now we want to combine any remaining noisy extrema based on their
+        # persistence.
+        logging.info("Combining Low-Persistence Basins")
+        
+        saddle_connections, saddle_coords, saddle_values = self.get_saddle_connections(labels, images)
+
+        # get extrema unions based on persistence and update lowest persistence
+        # values for extrema
+        (
+            extrema_roots, 
+            root_transforms, 
+            )= group_by_persistence(
             data=self.reference_grid.total,
-            lattice=self.reference_grid.matrix,
-        )
+            critical_vox=self.extrema_vox, 
+            basin_connections=saddle_connections, 
+            saddle_values=saddle_values, 
+            persistence_tol=self.persistence_tol,
+            use_minima=self.use_minima,
+            )
 
-        self._maxima_frac = refined_maxima_frac
+        # update extrema children, labels, charges, and volumes
+        charges = results["basin_charges"]
+        volumes = results["basin_volumes"]
+        # get unique roots. The indices that result are the labels we want to
+        # assign our points to
+        final_extrema, inverse, indices = np.unique(extrema_roots, return_inverse=True, return_index=True)
+                
+        # next we want to sort the final indices from low to high
+        extrema_vox = self.extrema_vox[final_extrema]
+        extrema_vals = self.reference_grid.total[extrema_vox[:,0], extrema_vox[:,1], extrema_vox[:,2]]
+        ordered_indices = np.argsort(extrema_vals)[::-1]  # descending
+        # reorder final_extrema, persistence_cutoffs
+        final_extrema = final_extrema[ordered_indices]
+        # get the final extrema groups and voxels
+        extrema_groups = [self.extrema_groups[i] for i in final_extrema]
+        extrema_vox = self.extrema_vox[final_extrema]
+
+        # persistence_cutoffs = persistence_cutoffs[final_extrema]
+        final_charges = charges[final_extrema]
+        final_volumes = volumes[final_extrema]
+
+        # For each old maximum, get the new index we want to map them onto.
+        new_roots = np.empty_like(inverse, dtype=int)
+        for new_idx, old_idx in enumerate(ordered_indices):
+            new_roots[old_idx] = new_idx
+        
+        final_roots = np.empty_like(indices, dtype=int)
+        for idx, old_idx in enumerate(indices):
+            final_roots[idx] = new_roots[old_idx]
+        
+
+        
+        # combine children, charges, volumes
+        for max_idx, (root, old_root) in enumerate(zip(final_roots, extrema_roots)):
+            if max_idx != old_root:
+                extrema_groups[root] = np.append(extrema_groups[root], self.extrema_groups[max_idx], axis=0)
+                final_charges[root] += charges[max_idx]
+                final_volumes[root] += volumes[max_idx]
+
+        # relabel grid
+        labels, images = update_labels_and_images(
+            labels=labels,
+            images=images,
+            label_map=final_roots,
+            image_map=root_transforms,
+            vacuum_mask=self.vacuum_mask
+            )
+        # save final results
+        self._extrema_vox = extrema_vox
+        self._extrema_groups = extrema_groups
+        # persistence_cutoffs = persistence_cutoffs[final_extrema]
+
+        if self.use_minima:
+            logging.info("Refining Minima")  
+        else:
+            logging.info("Refining Maxima")
+            
+        # todo: interpolate this instead?
+        extrema_values = self.reference_grid.total[
+            self.extrema_vox[:,0],
+            self.extrema_vox[:,1],
+            self.extrema_vox[:,2],
+            ]
+        # refine extrema using a newton refinement
+        extrema_vox = refine_extrema(
+            extrema_coords=self.extrema_vox,
+            data=self.reference_grid.total,
+            labels=labels,
+            lattice=self.reference_grid.matrix,
+            use_minima=self.use_minima
+        )
+        
+        # get shifts
+        extrema_vox_rounded = np.round(extrema_vox)
+        shifts = extrema_vox_rounded // self.reference_grid.shape
+        
+        extrema_frac = self.reference_grid.grid_to_frac(extrema_vox) - shifts
+        
+        self._extrema_vox = extrema_vox_rounded % self.reference_grid.shape
+        self._extrema_frac = extrema_frac
+
+        # update images one last time for any shifts
+        nonzero_shifts = np.max(np.abs(shifts), axis=1) > 0
+        if np.any(nonzero_shifts):
+            images = update_final_images(
+                labels=labels,
+                images=images,
+                image_map=-shifts,
+                important_mask=nonzero_shifts,
+                vacuum_mask=self.vacuum_mask,
+                    )
 
         results.update(
             {
-                "basin_maxima_vox": self.maxima_vox,
-                "basin_maxima_frac": self.maxima_frac,
-                "basin_maxima_ref_values": maxima_values,
+                "extrema_basin_labels": labels,
+                "extrema_basin_images": images,
+                "extrema_vox": self.extrema_vox.astype(np.int16),
+                "basin_charges": final_charges,
+                "basin_volumes": final_volumes,
+                "extrema_voxel_groups": self.extrema_groups,
+                "extrema_frac": self.extrema_frac,
+                "extrema_ref_values": extrema_values,
+                # "extrema_persistence_values": persistence_cutoffs,
             }
         )
         return results
 
-    def _run_bader(self, labels) -> dict:
+    def _run_bader(self, labels, images) -> dict:
         """
         This is the main function that each method must have. It must return a
         dictionary with values for:
-            - basin_maxima_frac
+            - extrema_frac
+            - extrema_basin_images
             - basin_charges
             - basin_volumes
             - vacuum_charges
             - vacuum_volumes
-            - significant_basins
-
-        Raises
-        ------
-        NotImplementedError
-            DESCRIPTION.
-
-        Returns
-        -------
-        dict
-            DESCRIPTION.
 
         """
         raise NotImplementedError(
@@ -165,29 +328,29 @@ class MethodBase:
     ###########################################################################
 
     @property
-    def maxima_mask(self) -> NDArray[bool]:
+    def extrema_mask(self) -> NDArray[bool]:
         """
 
         Returns
         -------
         NDArray[bool]
-            A mask representing the voxels that are local maxima.
+            A mask representing the voxels that are local extrema.
 
         """
-        if self._maxima_mask is None:
+        if self._extrema_mask is None:
             data = self.reference_grid.total
             neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
             vacuum_mask = self.vacuum_mask
-            self._maxima_mask = get_maxima(
+            self._extrema_mask = get_extrema(
                 data=data,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=vacuum_mask,
-                use_minima=False,
+                use_minima=self.use_minima,
             )
-        return self._maxima_mask
+        return self._extrema_mask
 
     @property
-    def maxima_vox(self) -> NDArray[int]:
+    def extrema_vox(self) -> NDArray[int]:
         """
 
         Returns
@@ -196,24 +359,37 @@ class MethodBase:
             An Nx3 array representing the voxel indices of each local maximum.
 
         """
-        if self._maxima_vox is None:
-            self._maxima_vox = np.argwhere(self.maxima_mask)
-        return self._maxima_vox
+        if self._extrema_vox is None:
+            self._extrema_vox = np.argwhere(self.extrema_mask)
+        return self._extrema_vox
+    
+    @property
+    def extrema_groups(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            An Nx3 array representing the voxel indices of each local maximum.
+
+        """
+        assert self._extrema_groups is not None, "Maxima children must be set by run method"
+        return self._extrema_groups
 
     @property
-    def maxima_frac(self) -> NDArray[float]:
+    def extrema_frac(self) -> NDArray[float]:
         """
 
         Returns
         -------
         NDArray[float]
             An Nx3 array representing the fractional coordinates of each local
-            maximum. These are set after maxima/basin reduction so there may be
-            fewer than the number of maxima_vox.
+            maximum. These are set after extrema/basin reduction so there may be
+            fewer than the number of extrema_vox.
 
         """
-        assert self._maxima_frac is not None, "Maxima frac must be set by run method"
-        return self._maxima_frac
+        assert self._extrema_frac is not None, "Maxima frac must be set by run method"
+        return self._extrema_frac
 
     @property
     def car2lat(self) -> NDArray[float]:
@@ -267,7 +443,7 @@ class MethodBase:
             data=grid.total,
             labels=labels,
             cell_volume=grid.structure.volume,
-            maxima_num=len(self.maxima_frac),
+            extrema_num=len(self.extrema_vox),
         )
         return {
             "basin_charges": charges,
@@ -276,57 +452,128 @@ class MethodBase:
             "vacuum_volume": vacuum_volume,
         }
 
-    def get_roots(self, pointers: NDArray[int]) -> NDArray[int]:
+    def get_roots(self, pointers: NDArray[int], images: NDArray[int]) -> NDArray[int]:
         """
         Finds the roots of a 1D array of pointers where each index points to its
-        parent.
+        parent and sums images across periodic boundaries
 
         Parameters
         ----------
         pointers : NDArray[int]
             A 1D array where each entry points to that entries parent.
-
+        images : NDArray[int]
+            A Nx3 array where each entry indicates a shift across a periodic
+            boundary
         Returns
         -------
         pointers : NDArray[int]
             A 1D array where each entry points to that entries root parent.
 
         """
-        # mask for non-vacuum indices (not -1)
-        if self.num_vacuum:
-            valid = pointers != -1
-        else:
-            valid = None
-        if valid is not None:
-            while True:
-                # create a copy to avoid modifying in-place before comparison
-                new_parents = pointers.copy()
+        # temporarily set all vacuum points to point to the first vacuum
+        # index. This way, when looking for minima, points assigned to the
+        # vacuum will be updated properly
+        max_val = np.iinfo(pointers.dtype).max
+        vacuum_mask = pointers == max_val
+        vacuum_points = np.where(vacuum_mask)[0]
+        if len(vacuum_points) > 0:
+            vacuum_point = np.where(vacuum_mask)[0][0]
+            pointers[vacuum_mask] = vacuum_point
+        n=0
+        while n<100:
+            n+=1
+            # create a copy to avoid modifying in-place before comparison
+            new_parents = pointers.copy()
 
-                # for non-vacuum entries, reassign each index to the value at the
-                # index it is pointing to
-                new_parents[valid] = pointers[pointers[valid]]
+            images += images[pointers]
+            # for non-vacuum entries, reassign each index to the value at the
+            # index it is pointing to
+            new_parents = pointers[pointers]
 
-                # check if we have the same value as before
-                if np.all(new_parents == pointers):
-                    break
+            # check if we have the same value as before
+            if np.all(new_parents == pointers):
+                break
 
-                # update only non-vacuum entries
-                pointers[valid] = new_parents[valid]
-        else:
-            while True:
-                # create a copy to avoid modifying in-place before comparison
-                new_parents = pointers.copy()
+            pointers = new_parents
+            
+        # relabel our vacuum back to the max
+        if len(vacuum_points) > 0:
+            vacuum_mask = pointers == vacuum_point
+            pointers[vacuum_mask] = max_val
+        
+        # We now have our roots. Relabel so that they go from 0 to the length of our
+        # roots with the highest value being the vacuum
+        unique_roots = np.unique(pointers)
+        dtype = get_lowest_uint(len(unique_roots))
+        pointers = np.searchsorted(unique_roots, pointers).astype(dtype, copy=False)
 
-                # for non-vacuum entries, reassign each index to the value at the
-                # index it is pointing to
-                new_parents = pointers[pointers]
+        return pointers, images
+    
+    def condense_images(self, images: NDArray[int]):
+        """
+        Converts Nx3 images into N images where each possible shift is represented
+        as a single uint8
 
-                # check if we have the same value as before
-                if np.all(new_parents == pointers):
-                    break
+        Parameters
+        ----------
+        images : NDArray[int]
+            A Nx3 array where each entry indicates a shift across a periodic
+            boundary
 
-                pointers = new_parents
-        return pointers
+        Returns
+        -------
+        A 1D array of length N representing each cells shift
+
+        """
+        shift_map = np.zeros((3,3,3), dtype=np.uint8)
+        shift_trans = np.array(list(itertools.product((-1, 0, 1), repeat=3)))
+        for shift_idx, (i,j,k) in enumerate(shift_trans):
+            shift_map[i,j,k] = shift_idx
+        images = shift_map[images[:,0],images[:,1],images[:,2]]
+        return images
+    
+    def get_saddle_connections(
+            self, 
+            labels, 
+            images,
+            ):
+        
+        neighbor_transforms, neighbor_dists, _, _ = (
+            self.reference_grid.point_neighbor_voronoi_transforms
+        )
+        # get edges
+        edge_mask = get_basin_edges(
+            labels=labels,
+            images=images,
+            neighbor_transforms=neighbor_transforms,
+            vacuum_mask=self.vacuum_mask,
+            )
+        
+        saddle_coords, saddle_connections, connection_vals = get_canonical_saddle_connections(
+            labels=labels,
+            images=images,
+            data=self.reference_grid.total,
+            neighbor_transforms=neighbor_transforms,
+            edge_mask=edge_mask,
+            use_minima=self.use_minima,
+        )
+        
+        unique_connections, inverse = np.unique(saddle_connections[:,:3],axis=0, return_inverse=True)
+
+        # get the best saddle points
+        saddle_indices, saddle_values = get_single_point_saddles(
+            data=self.reference_grid.total,
+            connection_values=connection_vals,
+            saddle_coords=saddle_coords,
+            connection_indices=inverse,
+            num_connections=len(unique_connections),
+            use_minima=self.use_minima,
+        )
+        saddle_coords = saddle_coords[saddle_indices]
+        saddle_connections = saddle_connections[saddle_indices]
+        
+        return saddle_connections, saddle_coords, saddle_values
+        
 
     def copy(self) -> Self:
         """

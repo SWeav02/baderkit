@@ -12,7 +12,7 @@ from baderkit.core.critical_points import CriticalPoints
 from baderkit.plotting.core import CriticalPointsPlotter
 
 bader = Bader.from_vasp(
-    reference_filename="CHGCAR_sum",
+    reference_filename="CHGCAR",
     # method="ongrid",
     maxima_persistence_tol=0.03, 
     minima_persistence_tol=0.0005,
