@@ -5,8 +5,8 @@ import logging
 import numpy as np
 
 from baderkit.core.bader.methods.base import MethodBase
-
 from baderkit.core.utilities.basic import coords_to_flat
+
 from .weight_numba import (  # reduce_charge_volume,; get_labels,
     get_weight_assignments,
     sort_extrema_frac,
@@ -33,13 +33,13 @@ class WeightMethod(MethodBase):
         reference_data = reference_grid.total
         charge_data = charge_grid.total
         shape = reference_grid.shape
-        nx,ny,nz = shape
-        ny_nz = ny*nz
+        nx, ny, nz = shape
+        ny_nz = ny * nz
 
         # get flat indices of extrema
         extrema_indices = np.empty(len(self.extrema_vox), dtype=np.uint32)
-        for idx, (i,j,k) in enumerate(self.extrema_vox):
-            extrema_indices[idx] = coords_to_flat(i,j,k, ny_nz, nz)
+        for idx, (i, j, k) in enumerate(self.extrema_vox):
+            extrema_indices[idx] = coords_to_flat(i, j, k, ny_nz, nz)
         # sort low to high so that searchsorted works
         extrema_indices = np.sort(extrema_indices)
 
@@ -86,7 +86,7 @@ class WeightMethod(MethodBase):
             all_neighbor_dists,
             self.extrema_mask,
             extrema_indices,
-            use_minima=self.use_minima
+            use_minima=self.use_minima,
         )
 
         # reconstruct a 3D array with our labels

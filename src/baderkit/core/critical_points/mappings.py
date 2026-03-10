@@ -6,8 +6,8 @@ Created on Mon Jan 26 19:28:25 2026
 """
 
 import numpy as np
-from numpy.typing import NDArray
 from numba import njit, prange
+from numpy.typing import NDArray
 
 # Needed:
 # 1. consistent ordering of cell vertices such that proper tie mechanisms can

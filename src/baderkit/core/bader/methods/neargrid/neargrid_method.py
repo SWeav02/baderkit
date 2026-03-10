@@ -14,6 +14,7 @@ from .neargrid_numba import (
     refine_fast_neargrid,
 )
 
+
 class NeargridMethod(MethodBase):
 
     _use_overdetermined = False
@@ -62,17 +63,19 @@ class NeargridMethod(MethodBase):
             # get the pseudo inverse
             inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms[:13])
             # calculate gradients and pointers to best neighbors
-            labels, images, gradients, self._extrema_mask = get_gradient_pointers_overdetermined(
-                data=reference_data,
-                labels=labels,
-                images=images,
-                car2lat=self.car2lat,
-                inv_norm_cart_trans=inv_norm_cart_trans,
-                neighbor_dists=neighbor_dists,
-                neighbor_transforms=neighbor_transforms,
-                vacuum_mask=self.vacuum_mask,
-                extrema_mask=self.extrema_mask,
-                use_minima=self.use_minima,
+            labels, images, gradients, self._extrema_mask = (
+                get_gradient_pointers_overdetermined(
+                    data=reference_data,
+                    labels=labels,
+                    images=images,
+                    car2lat=self.car2lat,
+                    inv_norm_cart_trans=inv_norm_cart_trans,
+                    neighbor_dists=neighbor_dists,
+                    neighbor_transforms=neighbor_transforms,
+                    vacuum_mask=self.vacuum_mask,
+                    extrema_mask=self.extrema_mask,
+                    use_minima=self.use_minima,
+                )
             )
         # Find roots
         # breakpoint()
@@ -81,11 +84,11 @@ class NeargridMethod(MethodBase):
 
         # reconstruct a 3D array with our labels. make sure our data type can
         # include negative values so that we can mark points needing refinement
-        dtype = get_lowest_int(len(self.extrema_vox)+1)
+        dtype = get_lowest_int(len(self.extrema_vox) + 1)
         labels = labels.reshape(shape).astype(dtype)
 
         logging.info("Starting Edge Refinement")
-        
+
         # shift indices to start at 1
         labels += 1
 
@@ -99,7 +102,9 @@ class NeargridMethod(MethodBase):
         # remove extrema from refinement
         refinement_mask[self.extrema_mask] = False
         # note these labels and the vacuum should not be reassigned again in future cycles
-        labels[refinement_mask&self.vacuum_mask] = -labels[refinement_mask&self.vacuum_mask]
+        labels[refinement_mask & self.vacuum_mask] = -labels[
+            refinement_mask & self.vacuum_mask
+        ]
         labels, images = refine_fast_neargrid(
             data=reference_data,
             labels=labels,
@@ -109,15 +114,15 @@ class NeargridMethod(MethodBase):
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
-            vacuum_label=-(len(self.extrema_vox)+1),
+            vacuum_label=-(len(self.extrema_vox) + 1),
             use_minima=self.use_minima,
         )
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1
-        dtype = get_lowest_uint(len(self.extrema_vox)+1)
+        dtype = get_lowest_uint(len(self.extrema_vox) + 1)
         labels = labels.reshape(shape).astype(dtype)
-        
+
         # condense images
         images = self.condense_images(images)
         images = images.reshape(shape)

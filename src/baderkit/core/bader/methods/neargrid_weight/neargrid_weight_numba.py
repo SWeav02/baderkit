@@ -91,15 +91,17 @@ def get_edge_charges_volumes(
             # get neighbor and wrap around periodic boundary
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             # if this point is part of the vacuum, continue
-            if vacuum_mask[ii,jj,kk]:
+            if vacuum_mask[ii, jj, kk]:
                 continue
             # get the neighbors value
             neigh_value = reference_data[ii, jj, kk]
             # if this value is below the current points value, continue
             if (
-                not use_minima and neigh_value <= base_value
-                or use_minima and neigh_value >= base_value
-                ):
+                not use_minima
+                and neigh_value <= base_value
+                or use_minima
+                and neigh_value >= base_value
+            ):
                 continue
             # get this neighbors index
             neigh_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
@@ -140,11 +142,11 @@ def get_edge_charges_volumes(
 
         # if this point has no neighbors, assign its charge to its label
         if neigh_num == 0:
-            label = labels[i,j,k]
+            label = labels[i, j, k]
             charges[label] += charge
             volumes[label] += volume
             continue
-        
+
         # otherwise loop over each neighbor and consolidate charge
         for neigh_idx in range(neigh_num):
             neigh = neighs[neigh_idx]

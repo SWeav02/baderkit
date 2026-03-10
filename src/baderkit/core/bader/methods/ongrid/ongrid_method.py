@@ -5,7 +5,6 @@ import logging
 import numpy as np
 
 from baderkit.core.bader.methods.base import MethodBase
-
 from baderkit.core.utilities.basic import get_lowest_uint
 
 from .ongrid_numba import get_steepest_pointers
@@ -42,9 +41,9 @@ class OngridMethod(MethodBase):
             neighbor_dists=neighbor_dists,
             vacuum_mask=self.vacuum_mask,
             extrema_mask=self.extrema_mask,
-            use_minima=self.use_minima
+            use_minima=self.use_minima,
         )
-        
+
         # Our pointers object is a 1D array pointing each voxel to its parent voxel. We
         # essentially have a classic forest of trees problem where each extrema is
         # a root and we want to point all of our voxels to their respective root.
@@ -55,7 +54,7 @@ class OngridMethod(MethodBase):
         logging.info("Finding Roots")
         labels, images = self.get_roots(labels, images)
         images = self.condense_images(images)
-            
+
         # reconstruct a 3D array with our labels and images
         labels = labels.reshape(shape)
         images = images.reshape(shape)

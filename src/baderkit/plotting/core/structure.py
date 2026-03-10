@@ -1,15 +1,17 @@
 # -*- coding: utf-8 -*-
 
+import logging
+
 import numpy as np
 import pandas as pd
 import pyvista as pv
 from numpy.typing import NDArray
-import logging
 
 from baderkit.core import Structure
 from baderkit.plotting.core.defaults import ATOM_COLORS
 
 from .base import VtkPlotter
+
 
 class StructurePlotter(VtkPlotter):
 
@@ -46,13 +48,17 @@ class StructurePlotter(VtkPlotter):
         self._atom_metallicness = atom_metallicness
         self._radii_scale = radii_scale
         self._atom_radii = np.array([s.specie.atomic_radius for s in structure])
-        self._atom_colors = np.array([ATOM_COLORS.get(s.specie.symbol, (1.00,1.00,1.00)) for s in structure])
+        self._atom_colors = np.array(
+            [ATOM_COLORS.get(s.specie.symbol, (1.00, 1.00, 1.00)) for s in structure]
+        )
 
         # atom poly data
         self._map_wrapped_to_atoms = None
         self._atom_poly = None
         self._wrapped_atom_poly = None
-        self._sphere_mesh = pv.Sphere(radius=1.0, theta_resolution=15, phi_resolution=15)
+        self._sphere_mesh = pv.Sphere(
+            radius=1.0, theta_resolution=15, phi_resolution=15
+        )
         # generate initial plotter
         super().__init__(structure=structure, **kwargs)
         if atom_radii is not None:
@@ -65,7 +71,6 @@ class StructurePlotter(VtkPlotter):
                 self.atom_colors = atom_colors
             except:
                 logging.info("Improper atom colors provided. Defaults will be used")
-
 
     ###########################################################################
     # Properties and Setters
@@ -85,18 +90,20 @@ class StructurePlotter(VtkPlotter):
 
     @visible_atoms.setter
     def visible_atoms(self, visible_atoms: NDArray[float]):
-        
+
         # convert to array
         visible_atoms = np.array(visible_atoms, dtype=np.float64)
-        
+
         # make sure we have the write shape
-        assert self.visible_atoms.shape == visible_atoms.shape, "Length match the number of atoms"
+        assert (
+            self.visible_atoms.shape == visible_atoms.shape
+        ), "Length match the number of atoms"
 
         # set visible atoms
         self._visible_atoms = visible_atoms
         # update
         self._update_site_meshes()
-        
+
     @property
     def wrap_atoms(self):
         return self._wrap_atoms
@@ -104,7 +111,7 @@ class StructurePlotter(VtkPlotter):
     @wrap_atoms.setter
     def wrap_atoms(self, wrap_atoms: bool):
         assert type(wrap_atoms) == bool, "wrap_atoms must be a bool"
-        
+
         # update
         self._wrap_atoms = wrap_atoms
         self._update_site_meshes()
@@ -126,12 +133,14 @@ class StructurePlotter(VtkPlotter):
     def atom_radii(self, atom_radii: NDArray[float]):
         # fix atom_radii to be a list and make any negative values == 0.01
         atom_radii = np.array(atom_radii, dtype=np.float64)
-        assert self.atom_radii.shape == atom_radii.shape, "Length match the number of atoms"
-        
-        atom_radii[atom_radii<=0.01] = 0.01
+        assert (
+            self.atom_radii.shape == atom_radii.shape
+        ), "Length match the number of atoms"
+
+        atom_radii[atom_radii <= 0.01] = 0.01
         self._atom_radii = atom_radii
         self._update_site_meshes()
-        
+
     @property
     def radii_scale(self) -> float:
         """
@@ -166,16 +175,19 @@ class StructurePlotter(VtkPlotter):
         return self._atom_colors
 
     @atom_colors.setter
-    def atom_colors(self, atom_colors: NDArray[float|str]):
+    def atom_colors(self, atom_colors: NDArray[float | str]):
         # for each site, check if the radius has changed and if it has remove it
         # then remake
-        assert len(self.atom_colors) == len(atom_colors), "Length match the number of atoms"
-        
+        assert len(self.atom_colors) == len(
+            atom_colors
+        ), "Length match the number of atoms"
+
         # convert provided colors to rgb
-        atom_colors = np.array([pv.Color(i).float_rgb for i in atom_colors], dtype=np.float64)
+        atom_colors = np.array(
+            [pv.Color(i).float_rgb for i in atom_colors], dtype=np.float64
+        )
         self._atom_colors = atom_colors
         self._update_site_meshes()
-        
 
     @property
     def atom_metallicness(self) -> float:
@@ -228,7 +240,7 @@ class StructurePlotter(VtkPlotter):
     def _create_atom_polydata(self):
         wrapped_atom_coords = []
         corresponding_sites = []
-        
+
         for i in range(len(self.structure)):
             frac_coords = self.structure.frac_coords[i]
             # get wrapped atoms as well
@@ -248,7 +260,7 @@ class StructurePlotter(VtkPlotter):
     def _update_site_meshes(self):
         if self._wrapped_atom_poly is None or self._atom_poly is None:
             self._create_atom_polydata()
-            
+
         # get appropriate poly data
         if self.wrap_atoms:
             # get poly data including wrapped atoms
@@ -272,11 +284,11 @@ class StructurePlotter(VtkPlotter):
         sphere = self._sphere_mesh
         # add alpha to colors
         colors = np.column_stack((atom_colors, alpha))
-        
+
         # update poly data scalars
         atoms["atom_colors"] = colors
         atoms["atom_radii"] = radii
-        
+
         # generate glyphs
         glyphs = atoms.glyph(geom=sphere, scale="atom_radii", orient=False)
 
@@ -289,7 +301,6 @@ class StructurePlotter(VtkPlotter):
             name="atom_glyphs",
             pbr=self.pbr,
         )
-
 
     def _create_plot(self) -> pv.Plotter:
         """
@@ -304,7 +315,7 @@ class StructurePlotter(VtkPlotter):
 
         """
         plotter = super()._create_plot()
-        
+
         # add site meshes
         self._update_site_meshes()
 

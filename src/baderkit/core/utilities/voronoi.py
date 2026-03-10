@@ -390,7 +390,7 @@ def get_canonical_bonds(
     translation_vectors,
     pair_dists,
     shape,
-    tol, # in voxel coords
+    tol,  # in voxel coords
 ):
     # get voxel coords
     chunked_coords = np.round(all_frac_coords * shape).astype(np.int64)
@@ -415,7 +415,7 @@ def get_canonical_bonds(
             trans_site_coords = matrix @ site_coords + vector
             # wrap into cell
             trans_site_coords %= 1
-            
+
             # convert to voxels
             trans_site_coords *= shape
 
@@ -507,12 +507,12 @@ def generate_symmetric_bonds(
 
             # get image of new site
             site_image = np.floor(trans_site_coord).astype(np.int64)
-            
+
             # move site and get index
             test_trans_site_coord = trans_site_coord - site_image
-            
+
             test_trans_site_coord *= shape
-            
+
             site_idx, in_tol = find_site_in_tol(
                 chunked_coords=chunked_coords,
                 site_coords=test_trans_site_coord,
@@ -529,7 +529,7 @@ def generate_symmetric_bonds(
             # wrap neigh
             test_trans_neigh_coord = trans_neigh_coord - neigh_image
             test_trans_neigh_coord *= shape
-            
+
             neigh_idx, in_tol = find_site_in_tol(
                 chunked_coords=chunked_coords,
                 site_coords=test_trans_neigh_coord,

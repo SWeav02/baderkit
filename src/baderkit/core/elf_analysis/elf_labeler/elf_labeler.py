@@ -23,7 +23,10 @@ from baderkit.core.elf_analysis.bifurcation_graph import (
 from baderkit.core.utilities.coord_env import check_all_covalent
 from baderkit.core.utilities.file_parsers import Format
 
-from .elf_labeler_numba import get_feature_edges, get_min_avg_feat_surface_dists
+from .elf_labeler_numba import (
+    get_feature_edges,
+    get_min_avg_feat_surface_dists,
+)
 from .elf_radii import ElfRadiiTools
 
 Self = TypeVar("Self", bound="ElfLabeler")
@@ -781,6 +784,8 @@ class ElfLabeler:
         features = []
         for node in self.bifurcation_graph.irreducible_nodes:
             features.append(getattr(node, property_name, None))
+            if getattr(node, property_name, None) is None:
+                breakpoint()
         return features
 
     @property
@@ -1012,7 +1017,10 @@ class ElfLabeler:
         )
 
     def get_oxidation_and_volumes_from_potcar(
-        self, potcar_path: Path = "POTCAR", use_electrides: bool = True, **kwargs
+        self,
+        potcar_path: Path = "POTCAR",
+        use_electrides: bool = True,
+        **kwargs,
     ) -> tuple[NDArray]:
         """
         Calculates the oxidation states, charges, and volumes associated with each
@@ -1060,7 +1068,11 @@ class ElfLabeler:
             oxi_state = val_electrons - site_charge
             oxi_state_data.append(oxi_state)
 
-        return np.array(oxi_state_data).round(10), charges.round(10), volumes.round(10)
+        return (
+            np.array(oxi_state_data).round(10),
+            charges.round(10),
+            volumes.round(10),
+        )
 
     def get_charges_and_volumes(
         self,
@@ -1148,6 +1160,10 @@ class ElfLabeler:
             unique_atoms, unique_indices, atom_counts = np.unique(
                 coord_atoms, return_index=True, return_counts=True
             )
+            try:
+                len(coord_atoms)
+            except:
+                breakpoint()
 
             if len(coord_atoms) == 0:
                 # This shouldn't happen, but could if CrystalNN failed
@@ -1574,6 +1590,7 @@ class ElfLabeler:
         cls,
         charge_filename: Path | str = "CHGCAR",
         elf_filename: Path | str = "ELFCAR",
+        total_charge_filename: Path | str | None = None,
         total_only: bool = True,
         **kwargs,
     ) -> Self:
@@ -1588,6 +1605,9 @@ class ElfLabeler:
         elf_filename : Path | str
             The path to ELFCAR like file that will be used for partitioning.
             If None, the charge file will be used for partitioning.
+        total_charge_filename : str | Path | None
+            The path to the file used for masking out vacuum. If not, defaults
+            to the charge file.
         total_only: bool
             If true, only the first set of data in the file will be read. This
             increases speed and reduced memory usage as the other data is typically
@@ -1707,7 +1727,11 @@ class ElfLabeler:
             )
             file_path = directory / f"{prefix_override}_f{feat_idx}"
             # write file
-            grid.write(filename=file_path, output_format=output_format, **writer_kwargs)
+            grid.write(
+                filename=file_path,
+                output_format=output_format,
+                **writer_kwargs,
+            )
 
     def write_feature_basins_sum(
         self,
@@ -1795,7 +1819,8 @@ class ElfLabeler:
 
         """
         self.write_feature_basins(
-            feature_indices=np.arange(len(self.feature_charges), dtype=int), **kwargs
+            feature_indices=np.arange(len(self.feature_charges), dtype=int),
+            **kwargs,
         )
 
     def write_features_by_type(
@@ -2094,7 +2119,12 @@ class ElfLabeler:
         ) = self._get_nn_atom_elf_radii(use_electrides=False)
         self._atom_nn_elf_radii = radii
         self._atom_nn_elf_radii_types = bond_types
-        self._nearest_neighbor_data = (site_indices, neigh_indices, neigh_coords, dists)
+        self._nearest_neighbor_data = (
+            site_indices,
+            neigh_indices,
+            neigh_coords,
+            dists,
+        )
         self._atom_nn_planes = (plane_points, plane_vectors)
 
         # Next we mark our metallic/bare electrons. These currently have a set
@@ -2218,7 +2248,6 @@ class ElfLabeler:
             ratio = shared_shell_depth / total_depth
             if ratio > self.shared_shell_ratio:
                 shell_nodes.append(node)
-                print(ratio)
 
         # mark nodes as shells
         for node in shell_nodes:

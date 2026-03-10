@@ -7,13 +7,13 @@ import time
 import numpy as np
 import plotly.graph_objects as go
 from numpy.typing import NDArray
+from pymatgen.analysis.local_env import CrystalNN
 
-from baderkit.core import Bader, Structure, Grid
+from baderkit.core import Bader, Grid, Structure
 from baderkit.core.bader.methods.shared_numba import get_edges
+from baderkit.core.base.base_analysis import BaseAnalysis
 
 from .enum_and_styling import LINE_COLOR, DomainSubtype, FeatureType
-
-from baderkit.core.base.base_analysis import BaseAnalysis
 
 # from elf_analyzer.core.utilities import IonicRadiiTools
 from .graph_numba import (
@@ -45,13 +45,19 @@ class BifurcationGraph(BaseAnalysis):
         remove_cutoff: float = 0.05,
         reduce_cutoff: float = 0.10,
         calculate_surrounded_atoms: bool = True,
+        crystalnn_kwargs: dict = {
+            "distance_cutoffs": None,
+            "x_diff_weight": 0.0,
+            "porous_adjustment": False,
+        },
         **kwargs,
     ):
         super().__init__(
             charge_grid=charge_grid,
             total_charge_grid=total_charge_grid,
-            reference_grid=reference_grid,            
-            **kwargs)
+            reference_grid=reference_grid,
+            **kwargs,
+        )
 
         # create bader object with ELF reference
         self.bader = Bader(
@@ -60,6 +66,8 @@ class BifurcationGraph(BaseAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
+
+        self.cnn = CrystalNN(**crystalnn_kwargs)
 
         self._calculate_surrounded_atoms = calculate_surrounded_atoms
 
@@ -453,7 +461,7 @@ class BifurcationGraph(BaseAnalysis):
     # To Methods
     ###############################################################################
 
-    def to_dict(self) -> dict:
+    def to_dict(self, use_json=True) -> dict:
         """
         Gets a dictionary representation of the BifurcationGraph
 
@@ -560,11 +568,12 @@ class BifurcationGraph(BaseAnalysis):
 
     @classmethod
     def from_bader(
-            cls, 
-            bader: Bader, 
-            remove_cutoff: float = 0.05,
-            reduce_cutoff: float = 0.10,
-            **kwargs):
+        cls,
+        bader: Bader,
+        remove_cutoff: float = 0.05,
+        reduce_cutoff: float = 0.10,
+        **kwargs,
+    ):
         """
         Creates a BifurcationGraph from the Bader method results of the charge
         density and ELF (or ELI-D, LOL, etc.)
@@ -809,7 +818,9 @@ class BifurcationGraph(BaseAnalysis):
 
         # It is common for there to be quite a few shallow reducible domains
         # seemingly due to voxelation. We remove those below a relative cutoff.
-        cls._reduce_shallow_nodes(graph, remove_cutoff=remove_cutoff, reduce_cutoff=reduce_cutoff)
+        cls._reduce_shallow_nodes(
+            graph, remove_cutoff=remove_cutoff, reduce_cutoff=reduce_cutoff
+        )
         # Next we calculate the overlap of each basin with the atomic regions
         # of the charge denisty
 

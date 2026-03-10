@@ -62,13 +62,13 @@ def get_gradient(
     r0 = dir2lat[0, 0] * gi + dir2lat[0, 1] * gj + dir2lat[0, 2] * gk
     r1 = dir2lat[1, 0] * gi + dir2lat[1, 1] * gj + dir2lat[1, 2] * gk
     r2 = dir2lat[2, 0] * gi + dir2lat[2, 1] * gj + dir2lat[2, 2] * gk
-    
+
     # if finding minima, flip the sign
     if use_minima:
         r0 = -r0
         r1 = -r1
         r2 = -r2
-    
+
     return r0, r1, r2
 
 
@@ -130,12 +130,12 @@ def get_gradient_overdetermined(
     tk_new = car2lat[2, 0] * ti + car2lat[2, 1] * tj + car2lat[2, 2] * tk
 
     ti, tj, tk = ti_new, tj_new, tk_new
-    
+
     if use_minima:
         ti = -ti
         tj = -tj
         tk = -tk
-    
+
     return ti, tj, tk
 
 
@@ -248,7 +248,9 @@ def get_gradient_pointers_simple(
                 # get pointer
                 pi, pj, pk = round(gi), round(gj), round(gk)
                 # get neighbor and wrap
-                ni, nj, nk, si, sj, sk = wrap_point_w_shift(i + pi, j + pj, k + pk, nx, ny, nz)
+                ni, nj, nk, si, sj, sk = wrap_point_w_shift(
+                    i + pi, j + pj, k + pk, nx, ny, nz
+                )
                 shift = np.array((si, sj, sk), dtype=np.int8)
                 # Ensure neighbor is higher than the current point, or backup to
                 # ongrid.
@@ -256,7 +258,7 @@ def get_gradient_pointers_simple(
                     mult = -1
                 else:
                     mult = 1
-                if mult*data[i, j, k] >= mult*data[ni, nj, nk]:
+                if mult * data[i, j, k] >= mult * data[ni, nj, nk]:
                     _, (ni, nj, nk), shift = get_best_neighbor_with_shift(
                         data=data,
                         i=i,
@@ -264,7 +266,7 @@ def get_gradient_pointers_simple(
                         k=k,
                         neighbor_transforms=neighbor_transforms,
                         neighbor_dists=neighbor_dists,
-                        use_minima=use_minima
+                        use_minima=use_minima,
                     )
 
                 # save neighbor, dr, and pointer
@@ -395,7 +397,9 @@ def get_gradient_pointers_overdetermined(
                 # get pointer
                 pi, pj, pk = round(gi), round(gj), round(gk)
                 # get neighbor and wrap
-                ni, nj, nk, si, sj, sk = wrap_point_w_shift(i + pi, j + pj, k + pk, nx, ny, nz)
+                ni, nj, nk, si, sj, sk = wrap_point_w_shift(
+                    i + pi, j + pj, k + pk, nx, ny, nz
+                )
                 shift = np.array((si, sj, sk), dtype=np.int8)
                 # Ensure neighbor is higher than the current point, or backup to
                 # ongrid.
@@ -403,7 +407,7 @@ def get_gradient_pointers_overdetermined(
                     mult = -1
                 else:
                     mult = 1
-                if mult*data[i, j, k] >= mult*data[ni, nj, nk]:
+                if mult * data[i, j, k] >= mult * data[ni, nj, nk]:
                     _, (ni, nj, nk), shift = get_best_neighbor_with_shift(
                         data=data,
                         i=i,
@@ -417,7 +421,7 @@ def get_gradient_pointers_overdetermined(
                 gradients[i, j, k] = (gi, gj, gk)
                 labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
                 images[flat_idx] = shift
-                
+
     return labels, gradients
 
 
@@ -488,7 +492,7 @@ def refine_fast_neargrid(
             # because refined labels are marked as negative
             label = abs(labels[i, j, k])
             # initialize shift tracking for wrapping around periodic boundaries
-            wi, wj, wk = (0,0,0)
+            wi, wj, wk = (0, 0, 0)
             # create delta r
             tdi, tdj, tdk = (0.0, 0.0, 0.0)
             # set the initial coord
@@ -498,7 +502,7 @@ def refine_fast_neargrid(
             # start climbing
             while True:
                 # check if we've hit an extrema or a vacuum in minima mode
-                if extrema_mask[ii, jj, kk] or labels[ii,jj,kk] == vacuum_label:
+                if extrema_mask[ii, jj, kk] or labels[ii, jj, kk] == vacuum_label:
                     # remove the point from the refinement list
                     refinement_mask[i, j, k] = False
                     # We've hit a maximum.
@@ -520,10 +524,10 @@ def refine_fast_neargrid(
                                 labels[ni, nj, nk] = -abs(labels[ni, nj, nk])
                     # relabel just this voxel then stop the loop
                     labels[i, j, k] = -current_label
-                    flat_idx=coords_to_flat(i,j,k,ny_nz,nz)
-                    images[flat_idx,0] = wi
-                    images[flat_idx,1] = wj
-                    images[flat_idx,2] = wk
+                    flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
+                    images[flat_idx, 0] = wi
+                    images[flat_idx, 1] = wj
+                    images[flat_idx, 2] = wk
                     break
 
                 # Otherwise, we have not reached a maximum and want to continue
@@ -558,7 +562,7 @@ def refine_fast_neargrid(
                 # 6. Get flat index
                 new_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
                 # check if we've hit a point in the path or a vacuum point
-                if new_idx in path or abs(labels[ni, nj, nk])==vacuum_label:
+                if new_idx in path or abs(labels[ni, nj, nk]) == vacuum_label:
                     _, (ni, nj, nk), shift = get_best_neighbor_with_shift(
                         data=data,
                         i=ii,
@@ -571,7 +575,7 @@ def refine_fast_neargrid(
                     si, sj, sk = shift
                     # reset delta r because we used an ongrid step
                     tdi, tdj, tdk = (0.0, 0.0, 0.0)
-                
+
                 # update the current coord
                 ii, jj, kk = ni, nj, nk
                 # add any wrapping to our total

@@ -42,10 +42,10 @@ class SurfaceTab(qw.QWidget):
         shared_layout.addRow("Value Range: ", self.iso_range)
 
         # Add iso value widget
-        self.iso_val = DoubleSpinBox(
-            decimals=4, step_size=0.01, main=main, plot_prop="iso_val"
+        self.iso_value = DoubleSpinBox(
+            decimals=4, step_size=0.01, main=main, plot_prop="iso_value"
         )
-        shared_layout.addRow("Isosurface Value", self.iso_val)
+        shared_layout.addRow("Isosurface Value", self.iso_value)
 
         # Add widget to indicate range (updated later)
         self.iso_range = qw.QLabel("")
@@ -170,9 +170,9 @@ class SurfaceTab(qw.QWidget):
         self.iso_range.setText(
             f"({round(bader_plotter.min_val, 4)} - {round(bader_plotter.max_val, 4)})"
         )
-        self.iso_val.setMinimum(bader_plotter.min_val)
-        self.iso_val.setMaximum(bader_plotter.max_val)
-        self.iso_val.setValue(bader_plotter._iso_val)
+        self.iso_value.setMinimum(bader_plotter.min_val)
+        self.iso_value.setMaximum(bader_plotter.max_val)
+        self.iso_value.setValue(bader_plotter._iso_value)
 
         # update opacity value
         self.surface_opacity.setValue(bader_plotter.surface_opacity)

@@ -13,17 +13,19 @@ from pymatgen.io.vasp import Potcar
 from scipy.ndimage import label
 from tqdm import tqdm
 
-from baderkit.core.toolkit import Grid, Structure
-from baderkit.core.elf_analysis.elf_labeler import ElfLabeler
-from baderkit.core.elf_analysis.badelf.badelf_numba import get_badelf_assignments
 from baderkit.core.bader.methods.shared_numba import (
     get_edges,
     get_min_avg_surface_dists,
+)
+from baderkit.core.elf_analysis.badelf.badelf_numba import (
+    get_badelf_assignments,
 )
 from baderkit.core.elf_analysis.bifurcation_graph.enum_and_styling import (
     FEATURE_DUMMY_ATOMS,
     FeatureType,
 )
+from baderkit.core.elf_analysis.elf_labeler import ElfLabeler
+from baderkit.core.toolkit import Grid, Structure
 from baderkit.core.utilities.file_parsers import Format
 from baderkit.core.utilities.voronoi import get_cell_wrapped_voronoi
 
@@ -47,11 +49,14 @@ class Badelf:
     Parameters
     ----------
     reference_grid : Grid
-        A badelf app Grid like object used for partitioning the unit cell
-        volume. Usually contains ELF.
+        A Grid like object used for partitioning the unit cell volume. Should
+        contain the ELF, ELI-D, LOL, or something similar.
     charge_grid : Grid
-        A badelf app Grid like object used for summing charge. Usually
-        contains charge density.
+        A Grid like object used for summing charge. Should contain the charge
+        density.
+    total_charge_grid : Grid
+        A Grid like object used for locating the vacuum. Should be set when using
+        pseudopotential codes such as VASP.
     method : Literal["badelf", "voronelf", "zero-flux"], optional
         The method to use for partitioning electrides from the nearby
         atoms.
@@ -107,6 +112,7 @@ class Badelf:
         self,
         reference_grid: Grid,
         charge_grid: Grid,
+        total_charge_grid: Grid = None,
         method: Literal["badelf", "voronelf", "zero-flux"] = "zero-flux",
         shared_feature_splitting_method: Literal[
             "weighted_dist", "pauling", "equal", "dist", "nearest"
@@ -127,6 +133,7 @@ class Badelf:
 
         self.reference_grid = reference_grid
         self.charge_grid = charge_grid
+        self.total_charge_grid = total_charge_grid
         self.method = method
         self.shared_feature_splitting_method = shared_feature_splitting_method
 
@@ -136,7 +143,10 @@ class Badelf:
         if type(elf_labeler) == dict:
             self.elf_labeler_kwargs = elf_labeler
             self.elf_labeler = ElfLabeler(
-                charge_grid=charge_grid, reference_grid=reference_grid, **elf_labeler
+                charge_grid=charge_grid,
+                total_charge_grid=total_charge_grid,
+                reference_grid=reference_grid,
+                **elf_labeler,
             )
         else:
             # use provided elf labeler
@@ -279,7 +289,8 @@ class Badelf:
             for site in self.labeled_structure:
                 if site.specie.symbol in FeatureType.bare_species:
                     electride_structure.append(
-                        FeatureType.bare_electron.dummy_species, site.frac_coords
+                        FeatureType.bare_electron.dummy_species,
+                        site.frac_coords,
                     )
 
             electride_structure.relabel_sites(ignore_uniq=True)
@@ -414,12 +425,16 @@ class Badelf:
             # such that planes that are likely to reject a grid point come first
 
             # first we get wrapped planes
-            site_indices, transforms, plane_points, plane_vectors, plane_volumes = (
-                get_cell_wrapped_voronoi(
-                    site_indices=site_indices,
-                    plane_points=plane_points,
-                    plane_vectors=plane_vectors,
-                )
+            (
+                site_indices,
+                transforms,
+                plane_points,
+                plane_vectors,
+                plane_volumes,
+            ) = get_cell_wrapped_voronoi(
+                site_indices=site_indices,
+                plane_points=plane_points,
+                plane_vectors=plane_vectors,
             )
 
             # sort planes by site, transform, and volume.
@@ -442,7 +457,11 @@ class Badelf:
 
             plane_equations = np.column_stack((plane_vectors, b))
 
-            self._partitioning_planes = (site_indices, transforms, plane_equations)
+            self._partitioning_planes = (
+                site_indices,
+                transforms,
+                plane_equations,
+            )
         return self._partitioning_planes
 
     @property
@@ -652,9 +671,10 @@ class Badelf:
 
         # get the features that sit in the mask at this value
         feature_indices = self.electride_structure.frac_coords[len(self.structure) :]
-        feature_indices = np.round(
-            self.charge_grid.frac_to_grid(feature_indices)
-        ).astype(int) % self.reference_grid.shape
+        feature_indices = (
+            np.round(self.charge_grid.frac_to_grid(feature_indices)).astype(int)
+            % self.reference_grid.shape
+        )
         # only use indices that are not 0
         feature_indices = [i for i in feature_indices if mask[i[0], i[1], i[2]]]
 
@@ -1100,7 +1120,11 @@ class Badelf:
             results[result] = getattr(self, result, None)
         if use_json:
             # get serializable versions of each attribute
-            for key in ["structure", "labeled_structure", "electride_structure"]:
+            for key in [
+                "structure",
+                "labeled_structure",
+                "electride_structure",
+            ]:
                 results[key] = results[key].to(fmt="POSCAR")
             for key in [
                 "charges",
@@ -1152,8 +1176,9 @@ class Badelf:
     @classmethod
     def from_vasp(
         cls,
-        reference_file: str | Path = "ELFCAR",
-        charge_file: str | Path = "CHGCAR",
+        reference_filename: str | Path = "ELFCAR",
+        charge_filename: str | Path = "CHGCAR",
+        total_charge_filename: str | Path | None = None,
         **kwargs,
     ):
         """
@@ -1162,12 +1187,15 @@ class Badelf:
 
         Parameters
         ----------
-        reference_file : str | Path, optional
+        reference_filename : str | Path, optional
             The path to the file to use for partitioning. Must be a VASP
             CHGCAR or ELFCAR type file. The default is "ELFCAR".
-        charge_file : str | Path, optional
+        charge_filename : str | Path, optional
             The path to the file containing the charge density. Must be a VASP
             CHGCAR or ELFCAR type file. The default is "CHGCAR".
+        total_charge_filename : str | Path | None
+            The path to the file used for masking out vacuum. If not, defaults
+            to the charge file.
         **kwargs : any
             Additional keyword arguments for the BadElfToolkit class.
 
@@ -1177,9 +1205,18 @@ class Badelf:
             A BadElfToolkit instance.
         """
 
-        reference_grid = Grid.from_vasp(reference_file, **kwargs)
-        charge_grid = Grid.from_vasp(charge_file, **kwargs)
-        return cls(reference_grid=reference_grid, charge_grid=charge_grid, **kwargs)
+        reference_grid = Grid.from_vasp(reference_filename, **kwargs)
+        charge_grid = Grid.from_vasp(charge_filename, **kwargs)
+        if total_charge_filename is not None:
+            total_charge = Grid.from_vasp(total_charge_filename, **kwargs)
+        else:
+            total_charge = None
+        return cls(
+            reference_grid=reference_grid,
+            charge_grid=charge_grid,
+            total_charge_grid=total_charge,
+            **kwargs,
+        )
 
     def write_atom_volumes(
         self,

@@ -5,11 +5,13 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
+
 def get_lowest_uint(max_value):
     for dtype in (np.uint8, np.uint16, np.uint32, np.uint64):
         if np.iinfo(dtype).max > max_value:
             break
     return dtype
+
 
 def get_lowest_int(max_value):
     for dtype in (np.int8, np.int16, np.int32, np.int64):
@@ -17,28 +19,31 @@ def get_lowest_int(max_value):
             break
     return dtype
 
+
 @njit(cache=True)
-def get_norm(i,j,k):
-    return (i**2 + j**2 + k**2)**(1/2)
+def get_norm(i, j, k):
+    return (i**2 + j**2 + k**2) ** (1 / 2)
+
 
 @njit(cache=True, inline="always")
 def dist(p1, p2):
     x, y, z = p1
     x1, y1, z1 = p2
-    return get_norm(x1-x, y1-y, z1-z)
+    return get_norm(x1 - x, y1 - y, z1 - z)
+
 
 @njit(cache=True)
 def get_gradient_cart(i, j, k, data, dir2car):
     # dir2car = np.linalg.inv(row_matrix).T
     nx, ny, nz = data.shape
-    
-    c000 = data[i,j,k]
-    c100 = data[(i + 1) % nx,j,k]
-    c_100 = data[(i - 1) % nx,j,k]
-    c010 = data[i,(j + 1) % ny,k]
-    c0_10 = data[i,(j - 1) % ny,k]
-    c001 = data[i,j,(k + 1) % nz]
-    c00_1 = data[i,j,(k - 1) % nz]
+
+    c000 = data[i, j, k]
+    c100 = data[(i + 1) % nx, j, k]
+    c_100 = data[(i - 1) % nx, j, k]
+    c010 = data[i, (j + 1) % ny, k]
+    c0_10 = data[i, (j - 1) % ny, k]
+    c001 = data[i, j, (k + 1) % nz]
+    c00_1 = data[i, j, (k - 1) % nz]
 
     # central differences in voxel coordinates
     gi = (c100 - c_100) / (2.0)
@@ -72,6 +77,7 @@ def mutiple_dists(p1s, p2s):
     for idx in prange(len(p1s)):
         dists[idx] = dist(p1s[idx], p2s[idx])
     return dists
+
 
 @njit(cache=True, inline="always")
 def wrap_point(
@@ -210,8 +216,8 @@ def merge_frac_coords(
 def merge_frac_coords_weighted(
     frac_coords,
     values,
-    ref_coord = None,
-    wrap = True,
+    ref_coord=None,
+    wrap=True,
 ):
     # normalize values
     values /= values.sum()
@@ -335,17 +341,18 @@ def get_transforms_in_radius(
     dists = dists[sorted_indices]
     return offsets, dists
 
+
 @njit(cache=True)
 def get_ongrid_gradient_cart(i, j, k, data, dir2car):
     nx, ny, nz = data.shape
-    
-    c000 = data[i,j,k]
-    c100 = data[(i + 1) % nx,j,k]
-    c_100 = data[(i - 1) % nx,j,k]
-    c010 = data[i,(j + 1) % ny,k]
-    c0_10 = data[i,(j - 1) % ny,k]
-    c001 = data[i,j,(k + 1) % nz]
-    c00_1 = data[i,j,(k - 1) % nz]
+
+    c000 = data[i, j, k]
+    c100 = data[(i + 1) % nx, j, k]
+    c_100 = data[(i - 1) % nx, j, k]
+    c010 = data[i, (j + 1) % ny, k]
+    c0_10 = data[i, (j - 1) % ny, k]
+    c001 = data[i, j, (k + 1) % nz]
+    c00_1 = data[i, j, (k - 1) % nz]
 
     # central differences in voxel coordinates
     gi = (c100 - c_100) / (2.0)

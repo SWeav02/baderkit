@@ -6,25 +6,25 @@ import numpy as np
 import pyvista as pv
 from numpy.typing import NDArray
 
-
 from baderkit.core import Grid
+
 from .structure import StructurePlotter
 
-    
+
 class GridPlotter(StructurePlotter):
     def __init__(
         self,
         grid: Grid,
-        show_surface = True,
-        show_caps = True,
-        surface_opacity = 0.8,
-        cap_opacity = 0.8,
-        colormap = "viridis",
-        use_solid_surface_color = False,
-        use_solid_cap_color = False,
-        surface_color = "#BA8E23",
-        cap_color = "#BA8E23",
-        iso_value = None,
+        show_surface=True,
+        show_caps=True,
+        surface_opacity=0.8,
+        cap_opacity=0.8,
+        colormap="viridis",
+        use_solid_surface_color=False,
+        use_solid_cap_color=False,
+        surface_color="#BA8E23",
+        cap_color="#BA8E23",
+        iso_value=None,
         **structure_kwargs,
     ):
         """
@@ -53,25 +53,24 @@ class GridPlotter(StructurePlotter):
         self._use_solid_cap_color = use_solid_cap_color
         self._surface_color = pv.Color(surface_color)
         self._cap_color = pv.Color(cap_color)
-
+        self._hidden_mask = None  # for Bader class
 
         self._min_val = grid.total.min() + 0.0000001
         self._max_val = grid.total.max()
         if iso_value is None:
-            self._iso_value = (self._min_val  + self._max_val) / 4
+            self._iso_value = (self._min_val + self._max_val) / 4
         else:
             self._iso_value = max(self.min_val, min(iso_value, self.max_val))
-        
+
         # meshes
         self._surface_mesh = None
         self._cap_mesh = None
         self._slice_meshes = {}
         self._slice_planes = {}
         self._slice_hkls = {}
-        
+
         # apply StructurePlotter kwargs
         super().__init__(structure=grid.structure, **structure_kwargs)
-        
 
     @property
     def show_surface(self) -> bool:
@@ -169,7 +168,7 @@ class GridPlotter(StructurePlotter):
     def colormap(self, colormap: str):
         if colormap == self.colormap:
             return
-        
+
         # update settings
         self._colormap = colormap
         self._update_clims_cmaps()
@@ -214,7 +213,7 @@ class GridPlotter(StructurePlotter):
     # TODO: Figure out a way to set the cmap without remaking the surface?
     @use_solid_surface_color.setter
     def use_solid_surface_color(self, use_solid_surface_color: bool):
-        if use_solid_surface_color != self.use_solid_surface_color:   
+        if use_solid_surface_color != self.use_solid_surface_color:
             # update property
             self._use_solid_surface_color = use_solid_surface_color
             self._update_surface_actor()
@@ -232,7 +231,7 @@ class GridPlotter(StructurePlotter):
 
     @use_solid_cap_color.setter
     def use_solid_cap_color(self, use_solid_cap_color: bool):
-        if use_solid_cap_color != self.use_solid_cap_color:   
+        if use_solid_cap_color != self.use_solid_cap_color:
             # update property
             self._use_solid_cap_color = use_solid_cap_color
             self._update_cap_actor()
@@ -307,7 +306,6 @@ class GridPlotter(StructurePlotter):
         self._update_surface_actor()
         self._update_cap_actor()
 
-    
     def _create_plot(self) -> pv.Plotter():
         """
         Generates a pyvista.Plotter object from the current class variables.
@@ -331,54 +329,55 @@ class GridPlotter(StructurePlotter):
             self.add_slice(hkl, d, key)
         return plotter
 
-    
-    
     def _update_surface_actor(self):
         surface_kwargs = {
             "opacity": self.surface_opacity,
             "pbr": self.pbr,
             "name": "iso",
             "color": self.surface_color,
-            }
+        }
 
         if not self.use_solid_surface_color:
-            surface_kwargs.update({
-                "scalars": "values",
-                "clim": [self.min_val, self.max_val],
-                "show_scalar_bar": False,
-                "colormap": self.colormap
-                })
-        
+            surface_kwargs.update(
+                {
+                    "scalars": "values",
+                    "clim": [self.min_val, self.max_val],
+                    "show_scalar_bar": False,
+                    "colormap": self.colormap,
+                }
+            )
+
         if self.show_surface and len(self._surface_mesh["values"]) > 0:
             self.plotter.add_mesh(self._surface_mesh, **surface_kwargs)
         else:
             actor = self.plotter.actors.get("iso", None)
             if actor is not None:
                 self.plotter.remove_actor(actor)
-        
-            
+
     def _update_cap_actor(self):
         cap_kwargs = {
             "opacity": self.cap_opacity,
             "pbr": self.pbr,
             "name": "cap",
             "color": self.cap_color,
-            }
+        }
         if not self.use_solid_cap_color:
-            cap_kwargs.update({
-                "scalars": "values",
-                "clim": [self.min_val, self.max_val],
-                "show_scalar_bar": False,
-                "colormap": self.colormap
-                })
-        
+            cap_kwargs.update(
+                {
+                    "scalars": "values",
+                    "clim": [self.min_val, self.max_val],
+                    "show_scalar_bar": False,
+                    "colormap": self.colormap,
+                }
+            )
+
         if self.show_caps and len(self._cap_mesh["values"]) > 0:
-                self.plotter.add_mesh(self._cap_mesh, **cap_kwargs)
+            self.plotter.add_mesh(self._cap_mesh, **cap_kwargs)
         else:
             actor = self.plotter.actors.get("cap", None)
             if actor is not None:
                 self.plotter.remove_actor(actor)
-            
+
     def _update_grid_meshes(self):
         """
         Updates the surface meshes to the provided iso_value
@@ -389,8 +388,10 @@ class GridPlotter(StructurePlotter):
         None.
 
         """
-        
-        self._surface_mesh = self._structured_grid.contour([self.iso_value]).triangulate()
+
+        self._surface_mesh = self._structured_grid.contour(
+            [self.iso_value]
+        ).triangulate()
         self._cap_mesh = self._surface.contour_banded(
             2, rng=[self.iso_value, self.max_val], generate_contour_edges=False
         ).triangulate()
@@ -408,7 +409,7 @@ class GridPlotter(StructurePlotter):
         """
         Creates a pyvista StructuredGrid object for making isosurfaces. This
         should generally only be called once
-        
+
         Returns
         -------
         structured_grid : pv.StructuredGrid
@@ -426,19 +427,24 @@ class GridPlotter(StructurePlotter):
         structured_grid = pv.StructuredGrid()
         structured_grid.points = points
         structured_grid.dimensions = shape
-        structured_grid["values"] = values.ravel(order="F")
-        
+
+        flat_values = values.ravel(order="F")
+        # mask if any hidden mask exists
+        if self._hidden_mask is not None:
+            flat_values[self._hidden_mask] = -1
+
+        structured_grid["values"] = flat_values
+
         # save and extract surface
         self._structured_grid = structured_grid
         self._surface = structured_grid.extract_surface()
-        
 
     def add_slice(
         self,
         hkl: NDArray,
-        d: float=1.0,
+        d: float = 1.0,
         key=None,
-            ):
+    ):
         """
         Adds a slice of the grid to the plot. If a key is provided, this updates
         the corresponding slice rather than adding a new one.
@@ -453,24 +459,26 @@ class GridPlotter(StructurePlotter):
             A integer key for an existing plane to update. The default is None.
 
         """
-        
+
         if key is not None:
             name = f"slice_{key}"
-            assert name in self._slice_meshes.keys(), "Key must correspond to an existing slice"
+            assert (
+                name in self._slice_meshes.keys()
+            ), "Key must correspond to an existing slice"
         else:
             if len(self._slice_meshes.keys()) > 0:
                 idx = max(list(self._slice_meshes.keys())) + 1
             else:
                 idx = 0
             name = f"slice_{idx}"
-            
+
         h, k, l = hkl
         # get normal vector in cart coords
         normal = self.structure.get_cart_from_miller(h, k, l)
         n = self.structure.lattice.d_hkl(hkl)
         origin = normal * n * d
         slice_plane = self._structured_grid.slice(normal=normal, origin=origin)
-            
+
         self._slice_meshes[name] = slice_plane
         self._slice_planes[name] = (origin, normal)
         self._slice_hkls[name] = (hkl, d)
@@ -482,15 +490,15 @@ class GridPlotter(StructurePlotter):
             cmap=self.colormap,
             clim=(self.min_val, self.max_val),
             show_scalar_bar=False,
-            name=name
+            name=name,
         )
-        
+
     def remove_slice(self, key):
         name = f"slice_{key}"
         if name in self._slice_meshes.keys():
-            del(self._slice_meshes[name])
-            del(self._slice_planes[name])
-            del(self._slice_hkls[name])
+            del self._slice_meshes[name]
+            del self._slice_planes[name]
+            del self._slice_hkls[name]
         actor = self.plotter.actors.get(name, None)
         if actor is not None:
             self.plotter.remove_actor(actor)
@@ -505,7 +513,7 @@ class GridPlotter(StructurePlotter):
         """
         Generates a pyvista plot of a slice at the requested miller plane. If
         a filename is provided, the plot is written and no plot object is returned.
-    
+
         Parameters
         ----------
         key : int
@@ -517,25 +525,27 @@ class GridPlotter(StructurePlotter):
             The filename to write the plot to if desired. The default is None.
         **write_kwargs
             any additional keyword arguments to provide to the plot writer.
-    
+
         Returns
         -------
         p : pv.plotter | None
             the pyvista plot of the slice or None if a filename was provided.
-    
+
         """
         if key is not None:
             name = f"slice_{key}"
-            assert name in self._slice_meshes.keys(), "Key must correspond to an existing slice"
+            assert (
+                name in self._slice_meshes.keys()
+            ), "Key must correspond to an existing slice"
         # create plotter
         mesh = self._slice_meshes[name]
-        
+
         p = StructurePlotter(
             structure=self.structure,
             off_screen=True,
             show_axes=False,
             show_lattice=False,
-            )
+        )
         p.plotter.add_mesh(
             mesh,
             scalars="values",
@@ -551,13 +561,15 @@ class GridPlotter(StructurePlotter):
             atom_poly = p._wrapped_atom_poly
             points = atom_poly.points
             include_coords = np.zeros(len(points), dtype=np.bool_)
-            for wrap_idx, (atom_idx, center) in enumerate(zip(self._map_wrapped_to_atoms, points)):
+            for wrap_idx, (atom_idx, center) in enumerate(
+                zip(self._map_wrapped_to_atoms, points)
+            ):
 
-                radius = self.atom_radii[atom_idx]*self.radii_scale
+                radius = self.atom_radii[atom_idx] * self.radii_scale
                 dist = np.dot(center - origin, normal)
                 if abs(dist) >= radius:
                     continue
-                # otherwise add 
+                # otherwise add
                 include_coords[wrap_idx] = True
 
             # get atom colors
@@ -568,10 +580,14 @@ class GridPlotter(StructurePlotter):
             alpha[~include_coords] = 0.0
             # update poly data scalars
             atom_poly["atom_colors"] = np.column_stack((atom_colors, alpha))
-            atom_poly["atom_radii"] = self.atom_radii[self._map_wrapped_to_atoms] * self.radii_scale
-            
+            atom_poly["atom_radii"] = (
+                self.atom_radii[self._map_wrapped_to_atoms] * self.radii_scale
+            )
+
             # generate glyphs
-            glyphs = atom_poly.glyph(geom=self._sphere_mesh, scale="atom_radii", orient=False)
+            glyphs = atom_poly.glyph(
+                geom=self._sphere_mesh, scale="atom_radii", orient=False
+            )
 
             # add the atom glyphs to our plotter. This automatically overwrites any
             # previous meshes
@@ -586,14 +602,14 @@ class GridPlotter(StructurePlotter):
             # otherwise, remove all atoms from the plot
             visible = p.visible_atoms
             visible[:] = 0.0
-            p.visible_atoms=visible
-        
+            p.visible_atoms = visible
+
         # set camera to be perpendicular
         p.set_camera_to_vector(origin=origin, normal=normal)
         p._set_camera_tight()
-    
+
         if filename is not None:
             p.get_plot_screenshot(filename=filename, **write_kwargs)
         else:
-            image= p.get_plot_screenshot(return_image=True, **write_kwargs)
+            image = p.get_plot_screenshot(return_image=True, **write_kwargs)
             return image

@@ -1,12 +1,14 @@
 ## Introduction
 
-The `Badelf` class uses principles from Bader's Quantum Theory of Atoms in Molecules combined with the Electron Localization Function (ELF) to calculate atomic charges. It is primarily designed for calculating oxidation states in electride systems, which was the motivation for the original [work](https://pubs.acs.org/doi/10.1021/jacs.3c10876). For more in-depth analysis of the ELF, particularly in systems with non-nuclear chemical features (e.g. covalent bonds, lone-pairs), the [ElfLabeler](../../elf_labeler/usage) class is likely more appropriate.
+The `Badelf` class uses principles from Bader's Quantum Theory of Atoms in Molecules combined with the Electron Localization Function (ELF) to calculate atomic charges. It is primarily designed for calculating oxidation states in electride systems, which was the motivation for the original [work](https://pubs.acs.org/doi/10.1021/jacs.3c10876). For more in-depth analysis of the ELF, particularly in systems with non-nuclear chemical features (e.g. covalent bonds, lone-pairs), the [ElfLabeler](../../elf_labeler/usage) class is more appropriate.
 
 ## Basic Use
 
 BadELF can be run through the command line interface or through Python script. Currently only VASP's CHGCAR and ELFCAR files are supported.
 
 By default, BadELF uses the 'zero-flux' algorithm which separates all ELF basins at zero-flux surfaces, following traditional ELF charge analysis. The original [badelf](../methods/#__tabbed_1_3) algorithm also incorporates voronoi-like planes and may be more appropriate in some systems.
+
+Examples of `CHGCAR` and `ELFCAR` files for the electride used in this tutorial can be found in this [Google Drive folder](https://drive.google.com/drive/folders/1h2VWpDsAi5LqX_c0PJeRPOhhofDS9AWb?usp=drive_link).
 
 === "Command Line"
 
@@ -29,13 +31,62 @@ By default, BadELF uses the 'zero-flux' algorithm which separates all ELF basins
         baderkit badelf chargefile elffile
         ```
     
-    Output files for atoms will be written automatically to a `badelf_atom_summary.tsv` which includes rows for each atom with columns for:
+    You should see an output similar to this:
 
-    - atom labels/assignments
-    - coordinates (fractional) 
-    - charges (*e*) 
-    - volumes (Å<sup>3</sup>)
-    - minimum surface distances (Å)
+    ```bash
+    2026-03-10 13:38:33 INFO     Loading ELFCAR
+                        INFO     Time: 0.1
+                        INFO     Data type set as elf from data range
+                        INFO     Loading CHGCAR
+                        INFO     Time: 0.1
+                        INFO     Data type set as charge from data range
+                        WARNING  No POTCAR file found in the requested directory. Oxidation states cannot be calculated
+                        INFO     Beginning voxel assignment
+                        INFO     Beginning Bader Algorithm Using 'weight' Method
+    2026-03-10 13:38:34 INFO     Initializing Labels
+                        INFO     Initialization Complete
+                        INFO     Time: 0.4
+                        INFO     Sorting Reference Data
+                        INFO     Assigning Charges and Volumes
+                        INFO     Combining Low-Persistence Basins
+    2026-03-10 13:38:36 INFO     Refining Maxima
+                        INFO     Bader Algorithm Complete
+                        INFO     Time: 3.45
+                        INFO     Assigning Atom Properties
+                        INFO     Atom Assignment Finished
+                        INFO     Time: 0.01
+                        INFO     Beginning ELF Analysis
+                        INFO     Locating Bifurcations
+    2026-03-10 13:38:37 INFO     Time: 0.69
+                        INFO     Finding contained atoms
+    2026-03-10 13:38:38 INFO     Time: 0.68
+                        INFO     Beginning Bader Algorithm Using 'weight' Method
+                        INFO     Initializing Labels
+                        INFO     Initialization Complete
+                        INFO     Time: 0.08
+                        INFO     Sorting Reference Data
+                        INFO     Assigning Charges and Volumes
+                        INFO     Combining Low-Persistence Basins
+    2026-03-10 13:38:40 INFO     Refining Maxima
+                        INFO     Bader Algorithm Complete
+                        INFO     Time: 1.91
+                        INFO     Marking atomic shells
+                        INFO     Marking covalent features
+                        INFO     Marking lone-pair features
+                        INFO     Calculating atomic radii
+                        INFO     Marking multi-centered and bare electron features
+                        INFO     Finished labeling ELF
+                        INFO     Finished voxel assignment
+                        INFO     Finding electride dimensionality cutoffs
+                        INFO     Calculating dimensionality at 0 ELF
+    2026-03-10 13:38:41 INFO     Max electride dimensionality: 2
+                        INFO     Refining cutoff for dimension 1
+    100%|███████████████████████████████████████████████████████████████████████████████████████████████| 15/15 [00:00<00:00, 53.60it/s]
+                        INFO     Refining cutoff for dimension 0
+    100%|███████████████████████████████████████████████████████████████████████████████████████████████| 15/15 [00:00<00:00, 54.06it/s]
+    ```
+    
+    A summary of all properties will be written to `badelf.json`. See [here](https://drive.google.com/drive/folders/1h2VWpDsAi5LqX_c0PJeRPOhhofDS9AWb?usp=drive_link) for an example.
     
     Additional arguments and options such as those for printing output files or using different 
     algorithms can be viewed by running the help command.
@@ -58,10 +109,56 @@ By default, BadELF uses the 'zero-flux' algorithm which separates all ELF basins
         badelf = Badelf.from_vasp("path/to/chargefile", "path/to/elffile")
         ```
     
-    3. To run the analysis, we can call any class property. Try getting a complete
-    summary in dictionary format.
+    3. To run the analysis, we can call any class property. Try getting a complete summary in dictionary format.
         ```python
-        results = badelf.to_json()
+        results = badelf.to_dict()
+        ```
+    You should see an output similar to this:
+        ```bash   
+                            INFO     Beginning voxel assignment                        
+                            INFO     Beginning Bader Algorithm Using 'weight' Method   
+        2026-03-10 13:42:36 INFO     Initializing Labels                               
+                            INFO     Initialization Complete                           
+                            INFO     Time: 0.38                                        
+                            INFO     Sorting Reference Data                            
+                            INFO     Assigning Charges and Volumes                     
+                            INFO     Combining Low-Persistence Basins                  
+        2026-03-10 13:42:38 INFO     Refining Maxima                                   
+                            INFO     Bader Algorithm Complete                          
+                            INFO     Time: 3.08                                        
+                            INFO     Assigning Atom Properties                         
+                            INFO     Atom Assignment Finished                          
+                            INFO     Time: 0.0                                         
+                            INFO     Beginning ELF Analysis                            
+                            INFO     Locating Bifurcations                             
+        2026-03-10 13:42:39 INFO     Time: 0.68                                        
+                            INFO     Finding contained atoms                           
+                            INFO     Time: 0.7                                         
+                            INFO     Beginning Bader Algorithm Using 'weight' Method   
+        2026-03-10 13:42:40 INFO     Initializing Labels                               
+                            INFO     Initialization Complete                           
+                            INFO     Time: 0.08                                        
+                            INFO     Sorting Reference Data                            
+                            INFO     Assigning Charges and Volumes                     
+                            INFO     Combining Low-Persistence Basins                  
+        2026-03-10 13:42:41 INFO     Refining Maxima                                   
+                            INFO     Bader Algorithm Complete                          
+                            INFO     Time: 1.97                                        
+        2026-03-10 13:42:42 INFO     Marking atomic shells                             
+                            INFO     Marking covalent features                         
+                            INFO     Marking lone-pair features                        
+                            INFO     Calculating atomic radii                          
+                            INFO     Marking multi-centered and bare electron features 
+                            INFO     Finished labeling ELF                             
+                            INFO     Finished voxel assignment                         
+                            INFO     Finding electride dimensionality cutoffs          
+                            INFO     Calculating dimensionality at 0 ELF               
+                            INFO     Max electride dimensionality: 2                   
+                            INFO     Refining cutoff for dimension 1                   
+        100%|██████████| 15/15 [00:00<00:00, 55.09it/s]
+        2026-03-10 13:42:43 INFO     Refining cutoff for dimension 0                   
+        100%|██████████| 15/15 [00:00<00:00, 48.17it/s]
+        ```
     
     4. Now try getting individual properties. For more details on each property,
     see the [API reference](../api_reference/core/badelf).

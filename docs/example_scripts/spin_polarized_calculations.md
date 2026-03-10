@@ -29,16 +29,14 @@ Bader analysis on the separate spin-up and spin-down systems by creating two
     
         ```bash
         baderkit run chargefile_up
-        mv bader_atom_summary.tsv bader_atom_summary_up.tsv
-        mv bader_basin_summary.tsv bader_basin_summary_up.tsv
+        mv bader.json bader_up.json
         ```
     
     3. Run the bader analysis on the spin down system.
     
         ```bash
         baderkit run chargefile_down
-        mv bader_atom_summary.tsv bader_atom_summary_down.tsv
-        mv bader_basin_summary.tsv bader_basin_summary_down.tsv
+        mv bader.json bader_down.json
         ```
 
 === "Python"
@@ -58,8 +56,8 @@ Bader analysis on the separate spin-up and spin-down systems by creating two
     bader_down = Bader(grid_down)
     
     # get results
-    results_up = bader_up.results_summary
-    results_down = bader_down.results_summary
+    results_up = bader_up.to_dict()
+    results_down = bader_down.to_dict()
     ```
     
 

@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
+
 from baderkit.core import Bader
+
 from .grid import GridPlotter
-    
+
+
 class BaderPlotter(GridPlotter):
     def __init__(
         self,
@@ -33,11 +36,14 @@ class BaderPlotter(GridPlotter):
         # apply StructurePlotter kwargs
         grid = getattr(bader, grid_name)
         super().__init__(grid=grid, **grid_kwargs)
+        self._grid_name = grid_name
         self.bader = bader
 
         # pad the label arrays then flatten them
         padded_basins = np.pad(
-            bader.maxima_basin_labels, pad_width=((0, 1), (0, 1), (0, 1)), mode="wrap"
+            bader.maxima_basin_labels,
+            pad_width=((0, 1), (0, 1), (0, 1)),
+            mode="wrap",
         )
         padded_atoms = np.pad(
             bader.atom_labels, pad_width=((0, 1), (0, 1), (0, 1)), mode="wrap"
@@ -57,6 +63,31 @@ class BaderPlotter(GridPlotter):
         ]
         self.visible_atom_basins = []
         self._hidden_mask = np.zeros(len(self.flat_bader_basins), dtype=bool)
+
+    @property
+    def grid_name(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            The name of the grid to plot
+
+        """
+        return self._grid_name
+
+    @grid_name.setter
+    def grid_name(self, grid_name: str):
+        assert grid_name in [
+            "reference_grid",
+            "charge_grid",
+            "total_charge_grid",
+        ]
+        # set visible basins
+        self._grid_name = grid_name
+        self.grid = getattr(self.bader, grid_name)
+        # update plotter
+        self._update_plotter_mask()
 
     @property
     def visible_bader_basins(self) -> list[int]:
@@ -120,10 +151,8 @@ class BaderPlotter(GridPlotter):
         # for visual quality
         # self.structured_grid.hide_cells(self.hidden_mask, inplace=True)
         # update structured_grid
-        temp_values = self.values.copy()
-        temp_values[hidden_mask] = -1
-        self.structured_grid = self._make_structured_grid(temp_values)
-        # update the surface
-        self.surface = self.structured_grid.extract_surface()
+        self.structured_grid = self._make_structured_grid()
         # update plotter
-        self.iso_val = self._iso_val
+        self._update_grid_meshes()
+        self._update_surface_actor()
+        self._update_cap_actor()

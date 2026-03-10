@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 from numpy.typing import NDArray
-from pyvistaqt import QtInteractor, BackgroundPlotter
+from pyvistaqt import BackgroundPlotter, QtInteractor
 
 from baderkit.core import Structure
 
@@ -37,9 +37,10 @@ class VtkPlotter:
         lattice_thickness: bool = 0.1,
         background_color: str = "#FFFFFF",
         view_hkl: list[int] = [1, 0, 0],
-        show_axes = True,
-        parallel_projection = True,
-        pbr = False,
+        show_axes=True,
+        parallel_projection=True,
+        pbr=False,
+        camera_dist: float = None,
         **kwargs,
     ):
         """
@@ -74,27 +75,26 @@ class VtkPlotter:
         self._suppressing = False
         self.plotter = None
         self.soft_rebuild()
-        h,k,l=view_hkl
-        self.set_camera_to_hkl(h, k, l)
-
+        h, k, l = view_hkl
+        self.set_camera_to_hkl(h, k, l, dist=camera_dist)
 
     def __setattr__(self, name, value):
-        
+
         # get plotter object if it exists and suppress rendering
         plotter = getattr(self, "plotter", None)
         suppressing = getattr(self, "_suppressing", False)
         if plotter is not None and not suppressing:
             plotter.suppress_rendering = True
-            
+
         super().__setattr__(name, value)
-        
+
         if plotter is not None and not suppressing:
             plotter.suppress_rendering = False
 
     ###########################################################################
     # Properties and Setters
     ###########################################################################
-    
+
     @property
     def show_lattice(self) -> bool:
         """
@@ -189,7 +189,7 @@ class VtkPlotter:
         else:
             self.plotter.renderer.disable_parallel_projection()
         self._parallel_projection = parallel_projection
-        
+
     @property
     def pbr(self) -> bool:
         """
@@ -210,16 +210,17 @@ class VtkPlotter:
 
     def set_camera_to_hkl(self, h, k, l, rotation=0.0, dist=None):
         normal = self.structure.get_cart_from_miller(h, k, l)
-        origin = np.mean(self.structure.cart_coords, axis=0)
-        
+
+        _, origin, _ = self.plotter.get_default_cam_pos()
+
         if dist is None:
-            reset=True
+            reset = True
             dist = 5
         else:
-            reset=False
+            reset = False
         # Define distance from object
         camera_pos = origin + normal * dist
-        
+
         # get an appropriate view up
         z_axis = np.array([0, 0, 1])
         view_up = z_axis - np.dot(z_axis, normal) * normal
@@ -230,25 +231,29 @@ class VtkPlotter:
             y_axis = np.array([0, 1, 0])
             view_up = y_axis - np.dot(y_axis, normal) * normal
 
-        self.plotter.set_viewup(view_up)    
+        self.plotter.set_viewup(view_up)
         self.plotter.set_focus(origin)
         self.plotter.set_position(camera_pos)
         # reset camera to fit well
         if reset:
             self.plotter.reset_camera()
-        
+
+        self._camera_hkl = (h, k, l)
+        self._camera_rotation = rotation
+        self._camera_distance = self.plotter.camera.distance
+
     def set_camera_to_vector(self, normal, origin=None, rotation=0.0, dist=None):
-        
+
         if origin is None:
-            origin = np.mean(self.structure.cart_coords, axis=0)
+            _, origin, _ = self.plotter.get_default_cam_pos()
         # Define distance from object
         if dist is None:
-            reset=True
+            reset = True
             dist = 5
         else:
-            reset=False
+            reset = False
         camera_pos = origin + normal * dist
-        
+
         # get an appropriate view up
         z_axis = np.array([0, 0, 1])
         view_up = z_axis - np.dot(z_axis, normal) * normal
@@ -259,18 +264,18 @@ class VtkPlotter:
             y_axis = np.array([0, 1, 0])
             view_up = y_axis - np.dot(y_axis, normal) * normal
 
-        self.plotter.set_viewup(view_up)    
+        self.plotter.set_viewup(view_up)
         self.plotter.set_focus(origin)
         self.plotter.set_position(camera_pos)
-        
+
         # reset camera to fit well
         if reset:
             self.plotter.reset_camera()
-    
+
     ###########################################################################
     # Mesh Generation
     ###########################################################################
-        
+
     @staticmethod
     def _wrap_near_edge(frac_coord: NDArray, tol: float = 0.01) -> NDArray:
         """
@@ -302,7 +307,7 @@ class VtkPlotter:
     @staticmethod
     def _wrap_group_near_edge_shifts(frac_coords, tol=0.01):
         transforms = []
-    
+
         for i in (-1, 0, 1):
             for j in (-1, 0, 1):
                 for k in (-1, 0, 1):
@@ -311,16 +316,13 @@ class VtkPlotter:
                         coords = frac_coords + shift
                     except:
                         breakpoint()
-    
+
                     # point-wise interior test
-                    interior = np.all(
-                        (coords > tol) & (coords < 1 - tol),
-                        axis=1
-                    )
-    
+                    interior = np.all((coords > tol) & (coords < 1 - tol), axis=1)
+
                     if np.any(interior):
                         transforms.append(shift)
-    
+
         return np.array(transforms)
 
     def _add_lattice_mesh(self) -> pv.PolyData:
@@ -336,7 +338,16 @@ class VtkPlotter:
         # get the lattice matrix
         a, b, c = self.structure.lattice.matrix
         # get the corners of the matrix
-        corners = [np.array([0, 0, 0]), a, b, c, a + b, a + c, b + c, a + b + c]
+        corners = [
+            np.array([0, 0, 0]),
+            a,
+            b,
+            c,
+            a + b,
+            a + c,
+            b + c,
+            a + b + c,
+        ]
         # get the indices indicating edges of the lattice
         edges = [
             (0, 1),
@@ -365,19 +376,19 @@ class VtkPlotter:
             color="k",
             name="lattice",
         )
-        
+
     def _add_axes_widget(self, plotter, show_axes: bool):
         # lattice[0] = a-vector, lattice[1] = b-vector, lattice[2] = c-vector
-        lattice = self.structure.lattice.matrix 
-    
+        lattice = self.structure.lattice.matrix
+
         # 2. Construct the 4x4 transformation matrix
         # The columns of the upper-left 3x3 represent where the unit X, Y, Z go.
         # We transpose the lattice matrix to put vectors in columns.
         matrix = np.eye(4)
-        matrix[:3, :3] = lattice.T 
-        
-        scale = [1/np.linalg.norm(a) for a in lattice]
-    
+        matrix[:3, :3] = lattice.T
+
+        scale = [1 / np.linalg.norm(a) for a in lattice]
+
         # 3. Create the AxesAssembly
         # We pass our calculated matrix to 'user_matrix'
         axes = pv.AxesAssembly(
@@ -422,14 +433,14 @@ class VtkPlotter:
         """
         # if we already have a plotter, just return it
         plotter = self._create_plotter()
-        
+
         # set background
         plotter.set_background(self.background_color)
 
         # add lattice
         self._add_lattice_mesh()
         self.show_lattice = self.show_lattice
-        
+
         # create axes widget
         self._add_axes_widget(plotter, self.show_axes)
         self.show_axes = self.show_axes
@@ -455,7 +466,7 @@ class VtkPlotter:
         None.
 
         """
-        
+
         self.plotter.show()
 
     def rebuild(self) -> pv.Plotter:
@@ -472,12 +483,12 @@ class VtkPlotter:
         """
         self.plotter = None
         plotter = self._create_plotter()
-        plotter.suppress_rendering=True
+        plotter.suppress_rendering = True
         self._suppressing = True
         self._create_plot()
-        plotter.suppress_rendering=False
+        plotter.suppress_rendering = False
         self._suppressing = True
-        
+
     def soft_rebuild(self) -> pv.Plotter:
         """
         reuilds the current pyvista plotter object with current settings.
@@ -492,12 +503,11 @@ class VtkPlotter:
         plotter = self.plotter
         if plotter is None:
             plotter = self._create_plotter()
-        plotter.suppress_rendering=True
+        plotter.suppress_rendering = True
         self._suppressing = True
         self._create_plot()
-        plotter.suppress_rendering=False
+        plotter.suppress_rendering = False
         self._suppressing = True
-        
 
     def get_plot_html(self) -> str:
         """
@@ -568,9 +578,8 @@ class VtkPlotter:
 
         """
 
-
         plotter = self.plotter
-        
+
         # if our plotter is not currently rendered, we want to temporarily set
         # it to be off screen to take the screenshot, then set it back
         plotter.render()

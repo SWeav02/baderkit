@@ -14,16 +14,19 @@ from pymatgen.io.vasp import Potcar
 
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Structure
+from baderkit.core.utilities.betti_numbers import (
+    get_all_betti_numbers_scanning,
+)
+from baderkit.core.utilities.persistence import (
+    get_persistence_groups,
+)
 
 from .methods import Method
 from .methods.shared_numba import (
     get_edges,
     get_min_avg_surface_dists,
     get_neighboring_basin_surface_area,
-    get_persistence_groups,
-    get_persistence_cutoffs
 )
-from baderkit.core.utilities.betti_numbers import get_all_betti_numbers_scanning
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
@@ -67,18 +70,18 @@ class Bader(BaseAnalysis):
         It is common for false maxima to be found using only nearest neighbor
         points. To deal with this we combine pairs of basins that have low
         topological persistence.
-        
+
         The persistence score is calculated as:
-            
+
             score = (lower_max - connection_value) / connection_value
     maxima_persistence_tol : float, optional
         It is common for false minima to be found using only nearest neighbor
         points. To deal with this we combine pairs of basins that have low
         topological persistence. We use a separate tolerance as minima typically
         have lower persistence values.
-        
+
         The persistence score is calculated as:
-            
+
             score = (connection_value - higher_min) / connection_value
 
 
@@ -146,7 +149,7 @@ class Bader(BaseAnalysis):
             raise ValueError(
                 f"Invalid method '{method}'. Available options are: {valid_methods}"
             )
-        
+
         if nna_cutoff is True:
             nna_cutoff = 1.0
         self._nna_cutoff = nna_cutoff
@@ -185,8 +188,15 @@ class Bader(BaseAnalysis):
             raise ValueError(
                 f"Invalid method '{value}'. Available options are: {valid_values}"
             )
-        self._reset_properties(exclude_properties=["vacuum_mask", "num_vacuum", "vacuum_charge", "vacuum_volume",])
-        
+        self._reset_properties(
+            exclude_properties=[
+                "vacuum_mask",
+                "num_vacuum",
+                "vacuum_charge",
+                "vacuum_volume",
+            ]
+        )
+
     @property
     def nna_cutoff(self) -> float:
         """
@@ -196,7 +206,7 @@ class Bader(BaseAnalysis):
         float
             The distance cutoff in angstroms above which a basin will be considered
             a non-nuclear attractor.
-            
+
             If a float is provided, any basins found at a distance in Angstroms greater
             than this cutoff will be considered non-nuclear attractors. If any are
             found, dummy atoms will be appended to the structure and regarded as
@@ -205,25 +215,27 @@ class Bader(BaseAnalysis):
 
         """
         return self._nna_cutoff
-        
+
     @nna_cutoff.setter
     def nna_cutoff(self, value: str | Method):
         self._nna_cutoff = value
         # reset atom properties
-        self._reset_properties(include_properties=[
-            "structure",
-            "atom_edges",
-            "atom_surface_areas",
-            "atom_contact_surface_areas",
-            "basin_atoms",
-            "basin_atom_dists",
-            "atom_labels",
-            "atom_charges",
-            "atom_volumes",
-            "atom_min_surface_distances",
-            "atom_avg_surface_distances",
-            ])
-        
+        self._reset_properties(
+            include_properties=[
+                "structure",
+                "atom_edges",
+                "atom_surface_areas",
+                "atom_contact_surface_areas",
+                "basin_atoms",
+                "basin_atom_dists",
+                "atom_labels",
+                "atom_charges",
+                "atom_volumes",
+                "atom_min_surface_distances",
+                "atom_avg_surface_distances",
+            ]
+        )
+
     @property
     def maxima_persistence_tol(self) -> float:
         """
@@ -234,26 +246,28 @@ class Bader(BaseAnalysis):
             It is common for false maxima to be found using only nearest neighbor
             points. To deal with this we combine pairs of basins that have low
             topological persistence.
-            
+
             The persistence score is calculated as:
-                
+
                 score = (lower_maximum - connection_value) / connection_value
 
 
         """
         return self._maxima_persistence_tol
-        
+
     @maxima_persistence_tol.setter
     def maxima_persistence_tol(self, value: str | Method):
         self._maxima_persistence_tol = value
         # reset atom properties
-        self._reset_properties(exclude_properties=[
-            "vacuum_mask",
-            "num_vacuum",
-            "vacuum_charge",
-            "vacuum_volume",
-            "structure",
-            ])
+        self._reset_properties(
+            exclude_properties=[
+                "vacuum_mask",
+                "num_vacuum",
+                "vacuum_charge",
+                "vacuum_volume",
+                "structure",
+            ]
+        )
 
     ###########################################################################
     # Maxima Basin Properties
@@ -273,7 +287,7 @@ class Bader(BaseAnalysis):
         if self._maxima_basin_labels is None:
             self._run_bader()
         return self._maxima_basin_labels
-    
+
     @property
     def maxima_basin_images(self) -> NDArray[int]:
         """
@@ -318,7 +332,7 @@ class Bader(BaseAnalysis):
         if self._maxima_basin_images is None:
             self._run_bader()
         return self._maxima_basin_images
-    
+
     @property
     def maxima_frac(self) -> NDArray[float]:
         """
@@ -346,9 +360,7 @@ class Bader(BaseAnalysis):
         """
         # TODO: change this to quadratic fit to match reference value method
         if self._maxima_charge_values is None:
-            self._maxima_charge_values = self.charge_grid.values_at(
-                self.maxima_frac
-            )
+            self._maxima_charge_values = self.charge_grid.values_at(self.maxima_frac)
         return self._maxima_charge_values.round(10)
 
     @property
@@ -395,7 +407,7 @@ class Bader(BaseAnalysis):
         if self._maxima_cart is None:
             self._maxima_cart = self.reference_grid.frac_to_cart(self._maxima_frac)
         return self._maxima_vox
-    
+
     @property
     def maxima_voxel_groups(self) -> NDArray[int]:
         """
@@ -407,7 +419,7 @@ class Bader(BaseAnalysis):
             usually due to voxelation. We combine these maxima into one with a
             persistence metric. This property provides all of the "false" maxima
             that are associated with the final maxima list.
-            
+
             For scalar fields like the ELF, LOL, or ELI-D, there may also be
             ring and cage-like maxima that are not well described by a single
             point. This also provides some indication of these maxima.
@@ -416,7 +428,7 @@ class Bader(BaseAnalysis):
         if self._maxima_voxel_groups is None:
             self._run_bader()
         return self._maxima_voxel_groups
-    
+
     @property
     def maxima_persistence_values(self) -> NDArray[int]:
         """
@@ -425,8 +437,8 @@ class Bader(BaseAnalysis):
         -------
         NDArray[int]
             Each maxima may have been combined with several voxelated maxima
-            (see maxima_voxel_groups). For each maxima group, this  is the 
-            lowest value at which all of the maxima in the group are topologically 
+            (see maxima_voxel_groups). For each maxima group, this  is the
+            lowest value at which all of the maxima in the group are topologically
             connected if one takes the all voxels at or above that value
         """
         if self._maxima_persistence_values is None:
@@ -439,20 +451,17 @@ class Bader(BaseAnalysis):
             persistence_values = []
             for group, max_val in zip(maxima_groups, maxima_values):
                 group_vals = self.reference_grid.total[
-                    group[:,0],
-                    group[:,1],
-                    group[:,2],
-                    ]
-                valid_mask = ((max_val - group_vals) / group_vals)-1e-12 <= tol
+                    group[:, 0],
+                    group[:, 1],
+                    group[:, 2],
+                ]
+                valid_mask = ((max_val - group_vals) / group_vals) - 1e-12 <= tol
                 best_val = group_vals[valid_mask].min()
-
 
                 # get lowest possible persistence below this value
                 # (max_val - val) / val < persistence_tol
                 # --> val = max_val / (1+persistence_tol)
-                persistence_values.append(
-                    best_val / (1+self.maxima_persistence_tol)
-                    )
+                persistence_values.append(best_val / (1 + self.maxima_persistence_tol))
 
             self._maxima_persistence_values = np.array(persistence_values)
         return self._maxima_persistence_values
@@ -541,7 +550,7 @@ class Bader(BaseAnalysis):
         if self._basin_atom_dists is None:
             self.run_atom_assignment()
         return self._basin_atom_dists.round(10)
-    
+
     @property
     def basin_edges(self) -> NDArray[np.bool_]:
         """
@@ -560,7 +569,7 @@ class Bader(BaseAnalysis):
                 neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
         return self._basin_edges
-    
+
     @property
     def basin_contact_surface_areas(self) -> NDArray[np.float64]:
         """
@@ -590,7 +599,7 @@ class Bader(BaseAnalysis):
                 label_num=len(self.maxima_frac),
             )
         return self._basin_contact_surface_areas
-    
+
     @property
     def basin_surface_areas(self) -> NDArray[np.float64]:
         """
@@ -611,7 +620,7 @@ class Bader(BaseAnalysis):
             # sum across axis 0 to get the total
             self._basin_surface_areas = np.sum(contact_surfaces, axis=1)
         return self._basin_surface_areas
-    
+
     ###########################################################################
     # Minima Basin Properties
     ###########################################################################
@@ -631,7 +640,7 @@ class Bader(BaseAnalysis):
         if self._minima_basin_labels is None:
             self._run_minima_bader()
         return self._minima_basin_labels
-    
+
     @property
     def minima_basin_images(self) -> NDArray[float]:
         """
@@ -659,7 +668,7 @@ class Bader(BaseAnalysis):
         if self._minima_frac is None:
             self._run_minima_bader()
         return self._minima_frac
-    
+
     @property
     def minima_vox(self) -> NDArray[float]:
         """
@@ -687,7 +696,7 @@ class Bader(BaseAnalysis):
         if self._minima_cart is None:
             self._minima_cart = self.reference_grid.frac_to_cart(self._minima_frac)
         return self._minima_vox
-    
+
     @property
     def minima_charge_values(self) -> NDArray[float]:
         """
@@ -701,11 +710,9 @@ class Bader(BaseAnalysis):
         """
         # TODO: change this to quadratic fit to match reference value method
         if self._minima_charge_values is None:
-            self._minima_charge_values = self.charge_grid.values_at(
-                self.minima_frac
-            )
+            self._minima_charge_values = self.charge_grid.values_at(self.minima_frac)
         return self._minima_charge_values.round(10)
-    
+
     @property
     def minima_ref_values(self) -> NDArray[float]:
         """
@@ -722,7 +729,7 @@ class Bader(BaseAnalysis):
             # we run this here.
             self._run_minima_bader()
         return self._minima_ref_values.round(10)
-    
+
     @property
     def minima_voxel_groups(self) -> NDArray[int]:
         """
@@ -734,7 +741,7 @@ class Bader(BaseAnalysis):
             usually due to voxelation. We combine these minima into one with a
             persistence metric. This property provides all of the "false" minima
             that are associated with the final minima list.
-            
+
             For scalar fields like the ELF, LOL, or ELI-D, there may also be
             ring and cage-like minima that are not well described by a single
             point. This also provides some indication of these minima.
@@ -743,7 +750,7 @@ class Bader(BaseAnalysis):
         if self._minima_voxel_groups is None:
             self._run_minima_bader()
         return self._minima_voxel_groups
-    
+
     @property
     def minima_persistence_values(self) -> NDArray[int]:
         """
@@ -752,12 +759,12 @@ class Bader(BaseAnalysis):
         -------
         NDArray[int]
             Each minima may have been combined with several voxelated minima
-            (see minima_voxel_groups). For each minima group, this  is the 
-            highest value at which all of the minima in the group are topologically 
+            (see minima_voxel_groups). For each minima group, this  is the
+            highest value at which all of the minima in the group are topologically
             connected if one takes the all voxels at or below that value
         """
         if self._minima_persistence_values is None:
-            tol = max(self.minima_persistence_tol,0)
+            tol = max(self.minima_persistence_tol, 0)
             # self._run_minima_bader()
             # get groups
             minima_groups = self.minima_voxel_groups
@@ -767,22 +774,20 @@ class Bader(BaseAnalysis):
             persistence_values = []
             for group, min_val in zip(minima_groups, minima_values):
                 group_vals = self.reference_grid.total[
-                    group[:,0],
-                    group[:,1],
-                    group[:,2],
-                    ]
-                valid_mask = ((group_vals - min_val) / group_vals)-1e-12 <= tol
+                    group[:, 0],
+                    group[:, 1],
+                    group[:, 2],
+                ]
+                valid_mask = ((group_vals - min_val) / group_vals) - 1e-12 <= tol
                 best_val = group_vals[valid_mask].max()
                 # get lowest possible persistence below this value
                 # (val - max_val) / val < persistence_tol
                 # --> val = max_val / (1+persistence_tol)
-                persistence_values.append(
-                    best_val / (1-self.minima_persistence_tol)
-                    )
+                persistence_values.append(best_val / (1 - self.minima_persistence_tol))
 
             self._minima_persistence_values = np.array(persistence_values)
         return self._minima_persistence_values
-    
+
     @property
     def minima_persistence_tol(self) -> float:
         """
@@ -793,26 +798,28 @@ class Bader(BaseAnalysis):
             It is common for false maxima to be found using only nearest neighbor
             points. To deal with this we combine pairs of basins that have low
             topological persistence.
-            
+
             The persistence score is calculated as:
-                
+
                 score = (connection_value - higher_minimum) / connection_value
 
 
         """
         return self._minima_persistence_tol
-    
+
     @minima_persistence_tol.setter
     def minima_persistence_tol(self, value: str | Method):
         self._minima_persistence_tol = value
         # reset atom properties
-        self._reset_properties(exclude_properties=[
-            "vacuum_mask",
-            "num_vacuum",
-            "vacuum_charge",
-            "vacuum_volume",
-            "structure",
-            ])
+        self._reset_properties(
+            exclude_properties=[
+                "vacuum_mask",
+                "num_vacuum",
+                "vacuum_charge",
+                "vacuum_volume",
+                "structure",
+            ]
+        )
 
     ###########################################################################
     # Atom Properties
@@ -961,11 +968,11 @@ class Bader(BaseAnalysis):
             # sum across axis 0 to get the total
             self._atom_surface_areas = np.sum(contact_surfaces, axis=1)
         return self._atom_surface_areas
-    
+
     ###########################################################################
     # Other Properties
     ###########################################################################
-    
+
     @property
     def total_electron_number(self) -> float:
         """
@@ -995,7 +1002,7 @@ class Bader(BaseAnalysis):
         """
 
         return round(self.atom_volumes.sum() + self.vacuum_volume, 10)
-    
+
     ###########################################################################
     # Methods
     ###########################################################################
@@ -1054,14 +1061,16 @@ class Bader(BaseAnalysis):
         t1 = time.time()
         logging.info("Bader Algorithm Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
-        
+
     def _run_minima_bader(self) -> None:
         """
         Runs the entire Bader process and saves results to class variables.
 
         """
         t0 = time.time()
-        logging.info(f"Beginning Minima Bader Algorithm Using '{self.method.name}' Method")
+        logging.info(
+            f"Beginning Minima Bader Algorithm Using '{self.method.name}' Method"
+        )
         # Normalize the method name to a module and class name
         module_name = self.method.replace(
             "-", "_"
@@ -1091,12 +1100,14 @@ class Bader(BaseAnalysis):
             if "extrema" in key:
                 new_key = key.replace("extrema", "minima")
                 setattr(self, f"_{new_key}", value)
-        
+
         t1 = time.time()
         logging.info("Bader Algorithm Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
 
-    def assign_basins_to_structure(self, structure: Structure, nna_cutoff: bool | float = False):
+    def assign_basins_to_structure(
+        self, structure: Structure, nna_cutoff: bool | float = False
+    ):
         """
         Gets atom assignments for the provided structure.
 
@@ -1134,22 +1145,24 @@ class Bader(BaseAnalysis):
         # get lattice matrix and number of atoms/basins
         L = structure.lattice.matrix  # (3, 3)
         N_basins = len(basins)
+
         def get_atom_basins(atoms, basins):
             # Vectorized deltas, minimum‑image wrapping
             diffs = atoms[None, :, :] - basins[:, None, :]
             diffs += np.where(diffs <= -0.5, 1, 0)
             diffs -= np.where(diffs >= 0.5, 1, 0)
-    
+
             # Cartesian diffs & distances
             cart = np.einsum("bij,jk->bik", diffs, L)
             dists = np.linalg.norm(cart, axis=2)
-            
+
             # Basin→atom assignment & distances
             basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
             basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
             return basin_atoms, basin_atom_dists
+
         basin_atoms, basin_atom_dists = get_atom_basins(atoms, basins)
-        
+
         if nna_cutoff:
             # add dummy atoms at basin maxima far from atoms
             for coords, dist in zip(basins, basin_atom_dists):
@@ -1159,14 +1172,14 @@ class Bader(BaseAnalysis):
             # recalculate distances
             atoms = structure.frac_coords
             basin_atoms, basin_atom_dists = get_atom_basins(atoms, basins)
-        
+
         # vacuum is represented by an index one above the highest label. we add
         # that to our basin atoms temporarily
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), len(structure))
 
         # Atom labels per grid point
         atom_labels = basin_atoms[self.maxima_basin_labels]
-        
+
         # remove vacuum pointer in basin atoms
         basin_atoms = basin_atoms[:-1]
 
@@ -1177,7 +1190,13 @@ class Bader(BaseAnalysis):
             basin_atoms, weights=self.basin_volumes, minlength=len(structure)
         )
 
-        return atom_labels, atom_charges, atom_volumes, basin_atoms, basin_atom_dists
+        return (
+            atom_labels,
+            atom_charges,
+            atom_volumes,
+            basin_atoms,
+            basin_atom_dists,
+        )
 
     def run_atom_assignment(self):
         """
@@ -1193,9 +1212,13 @@ class Bader(BaseAnalysis):
         t0 = time.time()
         logging.info("Assigning Atom Properties")
         # get basin assignments for this bader objects structure
-        atom_labels, atom_charges, atom_volumes, basin_atoms, basin_atom_dists = (
-            self.assign_basins_to_structure(structure, self.nna_cutoff)
-        )
+        (
+            atom_labels,
+            atom_charges,
+            atom_volumes,
+            basin_atoms,
+            basin_atom_dists,
+        ) = self.assign_basins_to_structure(structure, self.nna_cutoff)
 
         # Store everything
         self._basin_atoms = basin_atoms
@@ -1246,7 +1269,7 @@ class Bader(BaseAnalysis):
             oxi_state_data.append(oxi_state)
 
         return np.array(oxi_state_data)
-    
+
     def get_persistence_groups(self):
         """
         Gets the groups of voxels for each maximum and minimum that are within
@@ -1257,10 +1280,10 @@ class Bader(BaseAnalysis):
         Returns
         -------
         maxima_groups : list[NDArray[int64]]
-            A list of Nx3 arrays where each array represents the grid indices of voxels 
+            A list of Nx3 arrays where each array represents the grid indices of voxels
             that are within each maximas persistence threshold.
         minima_groups : list[NDArray[int64]]
-            A list of Nx3 arrays where each array represents the grid indices of voxels 
+            A list of Nx3 arrays where each array represents the grid indices of voxels
             that are within each minimas persistence threshold.
 
         """
@@ -1271,7 +1294,7 @@ class Bader(BaseAnalysis):
             persistence_cutoffs=self.maxima_persistence_values,
             extrema_vox=self.maxima_vox,
             use_minima=False,
-            )
+        )
 
         minima_groups = get_persistence_groups(
             labels=self.minima_basin_labels,
@@ -1279,15 +1302,15 @@ class Bader(BaseAnalysis):
             persistence_cutoffs=self.minima_persistence_values,
             extrema_vox=self.minima_vox,
             use_minima=True,
-            )
+        )
 
         return maxima_groups, minima_groups
-        
+
     def get_betti_numbers(
-            self,
-            return_values: bool = False,
-            return_groups: bool = False,
-            ) -> tuple:
+        self,
+        return_values: bool = False,
+        return_groups: bool = False,
+    ) -> tuple:
         """
         The approximate betti numbers for an maxima and minima persistence
         groups. This is obtained by scanning through a persistence group's
@@ -1320,36 +1343,32 @@ class Bader(BaseAnalysis):
         maxima_groups, minima_groups = self.get_persistence_groups()
         base_maxima = self.maxima_vox
         maxima_base_vals = self.reference_grid.total[
-            base_maxima[:,0],
-            base_maxima[:,1],
-            base_maxima[:,2]
-            ]
+            base_maxima[:, 0], base_maxima[:, 1], base_maxima[:, 2]
+        ]
         maxima_betti_numbers, maxima_betti_vals = get_all_betti_numbers_scanning(
             maxima_groups,
             maxima_base_vals,
             self.reference_grid.total,
-            use_minima=False
-            )
-        
+            use_minima=False,
+        )
+
         base_minima = self.minima_vox
         minima_base_vals = self.reference_grid.total[
-            base_minima[:,0],
-            base_minima[:,1],
-            base_minima[:,2]
-            ]
+            base_minima[:, 0], base_minima[:, 1], base_minima[:, 2]
+        ]
         minima_betti_numbers, minima_betti_vals = get_all_betti_numbers_scanning(
             minima_groups,
             minima_base_vals,
             self.reference_grid.total,
-            use_minima=False
-            )
-        
+            use_minima=True,
+        )
+
         results = [maxima_betti_numbers, minima_betti_numbers]
-        
+
         if return_values:
             results.append(maxima_betti_vals)
             results.append(minima_betti_vals)
-        
+
         if return_groups:
             maxima_groups = get_persistence_groups(
                 labels=self.maxima_basin_labels,
@@ -1357,7 +1376,7 @@ class Bader(BaseAnalysis):
                 persistence_cutoffs=maxima_betti_vals,
                 extrema_vox=self.maxima_vox,
                 use_minima=False,
-                )
+            )
 
             minima_groups = get_persistence_groups(
                 labels=self.minima_basin_labels,
@@ -1365,7 +1384,7 @@ class Bader(BaseAnalysis):
                 persistence_cutoffs=minima_betti_vals,
                 extrema_vox=self.minima_vox,
                 use_minima=True,
-                )
+            )
             results.append(maxima_groups)
             results.append(minima_groups)
 
@@ -1396,14 +1415,15 @@ class Bader(BaseAnalysis):
 
         """
         # get the minimum distances
-        self._basin_min_surface_distances, self._basin_avg_surface_distances = (
-            get_min_avg_surface_dists(
-                labels=self.maxima_basin_labels,
-                frac_coords=self.maxima_frac,
-                edge_mask=self.basin_edges,
-                matrix=self.reference_grid.matrix,
-                max_value=np.max(self.structure.lattice.abc) * 2,
-            )
+        (
+            self._basin_min_surface_distances,
+            self._basin_avg_surface_distances,
+        ) = get_min_avg_surface_dists(
+            labels=self.maxima_basin_labels,
+            frac_coords=self.maxima_frac,
+            edge_mask=self.basin_edges,
+            matrix=self.reference_grid.matrix,
+            max_value=np.max(self.structure.lattice.abc) * 2,
         )
 
     ###########################################################################
@@ -1714,6 +1734,7 @@ class Bader(BaseAnalysis):
     def to_dict(
         self,
         potcar_path: Path | str = "POTCAR",
+        include_minima: bool = False,
         use_json: bool = True,
     ) -> dict:
         """
@@ -1725,6 +1746,8 @@ class Bader(BaseAnalysis):
         potcar_path : Path | str, optional
             The Path to a POTCAR file. This must be provided for oxidation states
             to be calculated, and they will be None otherwise. The default is "POTCAR".
+        include_minima : bool, optional
+            Whether or not to include minima properties in the output
         use_json : bool, optional
             Convert all entries to JSONable data types. The default is True.
 
@@ -1767,15 +1790,21 @@ class Bader(BaseAnalysis):
             "maxima_ref_values",
             "maxima_vox",
             "maxima_voxel_groups",
-            "minima_frac",
-            "minima_charge_values",
-            "minima_ref_values",
-            "minima_vox",
-            "minima_voxel_groups",
             "basin_min_surface_distances",
             "basin_avg_surface_distances",
         ]:
             basin_results[result] = getattr(self, result, None)
+
+        if include_minima:
+            minima_results = {}
+            for result in [
+                "minima_frac",
+                "minima_charge_values",
+                "minima_ref_values",
+                "minima_vox",
+                "minima_voxel_groups",
+            ]:
+                minima_results[result] = getattr(self, result, None)
 
         for result in [
             "structure",
@@ -1791,16 +1820,12 @@ class Bader(BaseAnalysis):
             # get serializable structure
             results["structure"] = results["structure"].to(fmt="POSCAR")
 
-            # get serializable versions of each basin attribute
+            # get serializable versions of each maxima attribute
             for key in [
                 "maxima_frac",
                 "maxima_charge_values",
                 "maxima_ref_values",
                 "maxima_vox",
-                "minima_frac",
-                "minima_charge_values",
-                "minima_ref_values",
-                "minima_vox",
                 "basin_charges",
                 "basin_volumes",
                 "basin_min_surface_distances",
@@ -1811,12 +1836,9 @@ class Bader(BaseAnalysis):
                 if basin_results[key] is None:
                     continue  # skip oxidation states if they fail
                 basin_results[key] = basin_results[key].tolist()
-            
-            for key in [
-                "maxima_voxel_groups",
-                "minima_voxel_groups",
-                    ]:
-                basin_results[key] = [i.tolist() for i in basin_results[key]]
+            basin_results["maxima_voxel_groups"] = [
+                i.tolist() for i in basin_results["maxima_voxel_groups"]
+            ]
 
             # get serializable versions of each atom attribute
             for key in [
@@ -1833,7 +1855,24 @@ class Bader(BaseAnalysis):
             if results["oxidation_states"] is not None:
                 results["oxidation_states"] = results["oxidation_states"].tolist()
 
+            # get serializable versions of each minima attribute
+            if include_minima:
+                for key in [
+                    "minima_frac",
+                    "minima_charge_values",
+                    "minima_ref_values",
+                    "minima_vox",
+                ]:
+                    if minima_results[key] is None:
+                        continue  # skip oxidation states if they fail
+                    minima_results[key] = minima_results[key].tolist()
+                minima_results["minima_voxel_groups"] = [
+                    i.tolist() for i in minima_results["minima_voxel_groups"]
+                ]
+
         results["atom_results"] = atom_results
         results["basin_results"] = basin_results
+        if include_minima:
+            results["minima_results"] = minima_results
 
         return results

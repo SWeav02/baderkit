@@ -4,18 +4,19 @@
 def rgb_to_hex(rgb):
     return "#{:02X}{:02X}{:02X}".format(*(int(255 * c) for c in rgb))
 
+
 CRIT_COLORS = {
     3: "#BD0020",
     2: "#BD9E00",
     1: "#00BD9D",
     0: "#0020BD",
-    }
+}
 
 CONNECTION_COLORS = {
     2: "#BD9E00",
     1: "#00BD9D",
     0: "#0020BD",
-    }
+}
 
 # ATOM_COLORS = {
 #     "H": "#FFFFFF",

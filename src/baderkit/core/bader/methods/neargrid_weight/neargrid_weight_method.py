@@ -10,8 +10,8 @@ from baderkit.core.bader.methods.neargrid.neargrid_numba import (
     get_gradient_pointers_simple,
     refine_fast_neargrid,
 )
-from baderkit.core.utilities.basic import get_lowest_int, get_lowest_uint
 from baderkit.core.bader.methods.shared_numba import get_edges
+from baderkit.core.utilities.basic import get_lowest_int, get_lowest_uint
 
 from .neargrid_weight_numba import (
     get_edge_charges_volumes,
@@ -69,17 +69,19 @@ class NeargridWeightMethod(MethodBase):
             # get the pseudo inverse
             inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms[:13])
             # calculate gradients and pointers to best neighbors
-            labels, images, gradients, self._extrema_mask = get_gradient_pointers_overdetermined(
-                data=reference_data,
-                labels=labels,
-                images=images,
-                car2lat=self.car2lat,
-                inv_norm_cart_trans=inv_norm_cart_trans,
-                neighbor_dists=neighbor_dists,
-                neighbor_transforms=neighbor_transforms,
-                vacuum_mask=self.vacuum_mask,
-                extrema_mask=self.extrema_mask,
-                use_minima=self.use_minima,
+            labels, images, gradients, self._extrema_mask = (
+                get_gradient_pointers_overdetermined(
+                    data=reference_data,
+                    labels=labels,
+                    images=images,
+                    car2lat=self.car2lat,
+                    inv_norm_cart_trans=inv_norm_cart_trans,
+                    neighbor_dists=neighbor_dists,
+                    neighbor_transforms=neighbor_transforms,
+                    vacuum_mask=self.vacuum_mask,
+                    extrema_mask=self.extrema_mask,
+                    use_minima=self.use_minima,
+                )
             )
 
         # Find roots
@@ -88,11 +90,11 @@ class NeargridWeightMethod(MethodBase):
 
         # reconstruct a 3D array with our labels. make sure our data type can
         # include negative values so that we can mark points needing refinement
-        dtype = get_lowest_int(len(self.extrema_vox)+1)
+        dtype = get_lowest_int(len(self.extrema_vox) + 1)
         labels = labels.reshape(shape).astype(dtype)
 
         logging.info("Starting Edge Refinement")
-        
+
         # shift indices to start at 1
         labels += 1
 
@@ -106,7 +108,9 @@ class NeargridWeightMethod(MethodBase):
         # remove extrema from refinement
         refinement_mask[self.extrema_mask] = False
         # note these labels and the vacuum should not be reassigned again in future cycles
-        labels[refinement_mask&self.vacuum_mask] = -labels[refinement_mask&self.vacuum_mask]
+        labels[refinement_mask & self.vacuum_mask] = -labels[
+            refinement_mask & self.vacuum_mask
+        ]
         labels, images = refine_fast_neargrid(
             data=reference_data,
             labels=labels,
@@ -116,21 +120,21 @@ class NeargridWeightMethod(MethodBase):
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
-            vacuum_label=-(len(self.extrema_vox)+1),
+            vacuum_label=-(len(self.extrema_vox) + 1),
             use_minima=self.use_minima,
         )
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1
-        dtype = get_lowest_uint(len(self.extrema_vox)+1)
+        dtype = get_lowest_uint(len(self.extrema_vox) + 1)
         labels = labels.reshape(shape).astype(dtype)
-        
+
         # condense images
         images = self.condense_images(images)
         images = images.reshape(shape)
-        
+
         # update vacuum labels in case new ones were found
-        self.vacuum_mask = labels == (len(self.extrema_vox)+1)
+        self.vacuum_mask = labels == (len(self.extrema_vox) + 1)
 
         # get final edges
         edge_mask = get_edges(
@@ -184,7 +188,7 @@ class NeargridWeightMethod(MethodBase):
 
         volumes = volumes * reference_grid.structure.volume / reference_grid.ngridpts
         charges = charges / reference_grid.ngridpts
-        
+
         # get all results
         results = {
             "extrema_basin_labels": labels,

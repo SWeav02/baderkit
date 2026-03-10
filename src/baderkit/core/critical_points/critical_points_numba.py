@@ -1,14 +1,12 @@
 # -*- coding: utf-8 -*-
-from baderkit.core.utilities.basic import (
-    wrap_point,
-    wrap_point_w_shift, 
-    flat_to_coords
-    )
-
 import itertools
+
 import numpy as np
-from numpy.typing import NDArray
 from numba import njit, prange
+from numpy.typing import NDArray
+
+from baderkit.core.utilities.basic import flat_to_coords, wrap_point, wrap_point_w_shift
+
 
 def get_trans_maps() -> tuple:
     """
@@ -38,19 +36,22 @@ def get_trans_maps() -> tuple:
 
 TRANS_TO_INT, INT_TO_TRANS = get_trans_maps()
 
-IMAGE_TO_INT = np.empty([3,3,3], dtype=np.int64)
-INT_TO_IMAGE = np.array(list(itertools.product((-1,0,1), repeat=3)))
-for shift_idx, (i,j,k) in enumerate(INT_TO_IMAGE):
-    IMAGE_TO_INT[i,j,k] = shift_idx
+IMAGE_TO_INT = np.empty([3, 3, 3], dtype=np.int64)
+INT_TO_IMAGE = np.array(list(itertools.product((-1, 0, 1), repeat=3)))
+for shift_idx, (i, j, k) in enumerate(INT_TO_IMAGE):
+    IMAGE_TO_INT[i, j, k] = shift_idx
 
-FACE_TRANSFORMS = np.array([
-    [1,0,0],
-    [-1,0,0],
-    [0,1,0],
-    [0,-1,0],
-    [0,0,1],
-    [0,0,-1],
-    ], dtype=np.int64)
+FACE_TRANSFORMS = np.array(
+    [
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+    ],
+    dtype=np.int64,
+)
 
 # PARITIES = np.array(
 #     [
@@ -85,7 +86,7 @@ PARITY_DIMS = np.array([0, 1, 1, 2, 1, 2, 2, 3], dtype=np.uint8)
 PARITY_TO_INT = np.zeros((2, 2, 2), dtype=np.int8)
 for idx, (i, j, k) in enumerate(PARITIES):
     PARITY_TO_INT[i, j, k] = idx
-    
+
 # Generate transformations to vertices for each parity type.
 CUBE_VERTICES = [
     [-1, -1, -1],
@@ -226,37 +227,49 @@ PARITY_FACETS_INT = tuple(
 )
 
 
-
 ###############################################################################
 # marching cubes
 ###############################################################################
 
 # corner offsets
-CORNERS = np.array([
-    (0,0,0), (1,0,0), (0,1,0), (1,1,0),
-    (0,0,1), (1,0,1), (0,1,1), (1,1,1)
-], dtype=np.int8)
+CORNERS = np.array(
+    [
+        (0, 0, 0),
+        (1, 0, 0),
+        (0, 1, 0),
+        (1, 1, 0),
+        (0, 0, 1),
+        (1, 0, 1),
+        (0, 1, 1),
+        (1, 1, 1),
+    ],
+    dtype=np.int8,
+)
 
-TETS = np.array([
-    (0, 1, 3, 7),
-    (0, 3, 2, 7),
-    (0, 2, 6, 7),
-    (0, 6, 4, 7),
-    (0, 4, 5, 7),
-    (0, 5, 1, 7),
-], dtype=np.int8)
+TETS = np.array(
+    [
+        (0, 1, 3, 7),
+        (0, 3, 2, 7),
+        (0, 2, 6, 7),
+        (0, 6, 4, 7),
+        (0, 4, 5, 7),
+        (0, 5, 1, 7),
+    ],
+    dtype=np.int8,
+)
+
 
 # #@njit(cache=True)
 def get_ongrid_gradient_cart(i, j, k, data, dir2car):
     nx, ny, nz = data.shape
-    
-    c000 = data[i,j,k]
-    c100 = data[(i + 1) % nx,j,k]
-    c_100 = data[(i - 1) % nx,j,k]
-    c010 = data[i,(j + 1) % ny,k]
-    c0_10 = data[i,(j - 1) % ny,k]
-    c001 = data[i,j,(k + 1) % nz]
-    c00_1 = data[i,j,(k - 1) % nz]
+
+    c000 = data[i, j, k]
+    c100 = data[(i + 1) % nx, j, k]
+    c_100 = data[(i - 1) % nx, j, k]
+    c010 = data[i, (j + 1) % ny, k]
+    c0_10 = data[i, (j - 1) % ny, k]
+    c001 = data[i, j, (k + 1) % nz]
+    c00_1 = data[i, j, (k - 1) % nz]
 
     # central differences in voxel coordinates
     gi = (c100 - c_100) / (2.0)
@@ -283,45 +296,50 @@ def get_ongrid_gradient_cart(i, j, k, data, dir2car):
 
     return gx, gy, gz
 
-def get_cart_gradients(
-    data,
-    dir2car
-        ):
-    nx,ny,nz = data.shape
-    gradients = np.empty((nx,ny,nz,3), dtype=np.float32)
+
+def get_cart_gradients(data, dir2car):
+    nx, ny, nz = data.shape
+    gradients = np.empty((nx, ny, nz, 3), dtype=np.float32)
     for i in prange(nx):
         for j in prange(ny):
             for k in prange(nz):
-                gradients[i,j,k] = get_ongrid_gradient_cart(i, j, k, data, dir2car)
+                gradients[i, j, k] = get_ongrid_gradient_cart(i, j, k, data, dir2car)
     return gradients
 
 
 # Plan:
-    # 1. Get vertices
-    # 2. check where edges meet, depending on parity
-    # 3. Count unique differing neighbor pairs at meeting point
-        # 1: meeting of 2 basins
-        # 2: meeting of 3 basins
-        # 3. meeting of 4 basins
+# 1. Get vertices
+# 2. check where edges meet, depending on parity
+# 3. Count unique differing neighbor pairs at meeting point
+# 1: meeting of 2 basins
+# 2: meeting of 3 basins
+# 3. meeting of 4 basins
+
 
 def get_differing_neighs_doublegrid(
-    i, j, k,
-    nx, ny, nz,
+    i,
+    j,
+    k,
+    nx,
+    ny,
+    nz,
     labels,
     images,
     vacuum_mask,
 ):
-    
+
     # initialize stored labels
-    label0 = -1; image0 = -1
-    label1 = -1; image1 = -1
+    label0 = -1
+    image0 = -1
+    label1 = -1
+    image1 = -1
     unique = -1
-    
+
     # get parity
-    pi = i&1
-    pj = j&1
-    pk = k&1
-    parity = PARITY_TO_INT[pi,pj,pk]
+    pi = i & 1
+    pj = j & 1
+    pk = k & 1
+    parity = PARITY_TO_INT[pi, pj, pk]
     # get transforms
     neighbor_transforms = PARITY_VERTICES[parity]
 
@@ -330,7 +348,7 @@ def get_differing_neighs_doublegrid(
         # if we've found more than two neighbors, immediately break
         if unique == 2:
             break
-        
+
         # get shifts
         si = neighbor_transforms[trans, 0]
         sj = neighbor_transforms[trans, 1]
@@ -338,13 +356,13 @@ def get_differing_neighs_doublegrid(
 
         # wrap around periodic edges and store shift
         ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
-            int((i+si)/2), int((j+sj)/2), int((k+sk)/2), nx, ny, nz
+            int((i + si) / 2), int((j + sj) / 2), int((k + sk) / 2), nx, ny, nz
         )
-        
+
         # skip points in the vacuum
         if vacuum_mask[ii, jj, kk]:
             continue
-        
+
         # get the label and image of this neighbor
         neigh_label = labels[ii, jj, kk]
         neigh_image = images[ii, jj, kk]
@@ -366,12 +384,14 @@ def get_differing_neighs_doublegrid(
                 image1 = neigh_image
                 unique = 1
         elif unique == 1:
-            if ((neigh_label != label0 or neigh_image != image0) and
-                (neigh_label != label1 or neigh_image != image1)):
+            if (neigh_label != label0 or neigh_image != image0) and (
+                neigh_label != label1 or neigh_image != image1
+            ):
                 unique = 2
                 break
 
     return unique
+
 
 # #@njit(parallel=True,  cache=True)
 def get_manifold_labels_doublegrid(
@@ -387,7 +407,7 @@ def get_manifold_labels_doublegrid(
     """
     Takes the 3-manifolds of maxima and minima and determines the rough locations
     of the following manifolds:
-        
+
         0: minima
         1: 1-saddle
         2: 2-saddle
@@ -401,63 +421,70 @@ def get_manifold_labels_doublegrid(
         255: overlapping maxima/minima basin
     """
     nx, ny, nz = maxima_labels.shape
-    nx2 = nx*2
-    ny2 = ny*2
-    nz2 = nz*2
+    nx2 = nx * 2
+    ny2 = ny * 2
+    nz2 = nz * 2
     # create 3D array to store edges
-    edges = np.full((nx*2,ny*2,nz*2), np.iinfo(np.uint8).max, dtype=np.uint8)
-    
+    edges = np.full((nx * 2, ny * 2, nz * 2), np.iinfo(np.uint8).max, dtype=np.uint8)
+
     # add maxima/minima
     for group in minima_groups:
-        for i,j,k in group:
+        for i, j, k in group:
             # shift to double grid
-            i*=2
-            j*=2
-            k*=2
-            edges[i,j,k] = 0
-            
-    for group in maxima_groups:
-        for i,j,k in group:
-            # shift to double grid
-            i*=2
-            j*=2
-            k*=2
-            edges[i,j,k] = 3
+            i *= 2
+            j *= 2
+            k *= 2
+            edges[i, j, k] = 0
 
-    
+    for group in maxima_groups:
+        for i, j, k in group:
+            # shift to double grid
+            i *= 2
+            j *= 2
+            k *= 2
+            edges[i, j, k] = 3
+
     # loop over each voxel in parallel
     for i in prange(nx2):
         for j in range(ny2):
             for k in range(nz2):
-                
+
                 # if this voxel is part of a minimum or maximum, continue
-                if edges[i,j,k] == 0 or edges[i,j,k] == 3:
+                if edges[i, j, k] == 0 or edges[i, j, k] == 3:
                     continue
-                
-                pi = i&1
-                pj = j&1
-                pk = k&1
-                parity = PARITY_TO_INT[pi,pj,pk]
+
+                pi = i & 1
+                pj = j & 1
+                pk = k & 1
+                parity = PARITY_TO_INT[pi, pj, pk]
                 dim = PARITY_DIMS[parity]
                 if dim != 1:
                     continue
-                
+
                 # check if this point has 0, 1, or 2 neighbors with different
                 # labels
                 num_neighs = get_differing_neighs_doublegrid(
-                    i, j, k, 
-                    nx, ny, nz, 
-                    maxima_labels, 
-                    maxima_images, 
+                    i,
+                    j,
+                    k,
+                    nx,
+                    ny,
+                    nz,
+                    maxima_labels,
+                    maxima_images,
                     vacuum_mask,
-                    )
+                )
                 opp_num_neighs = get_differing_neighs_doublegrid(
-                    i, j, k, 
-                    nx, ny, nz, 
-                    minima_labels, 
-                    minima_images, 
+                    i,
+                    j,
+                    k,
+                    nx,
+                    ny,
+                    nz,
+                    minima_labels,
+                    minima_images,
                     vacuum_mask,
-                    )
+                )
                 label = 10
                 if num_neighs == 1:
                     label = 1
@@ -472,7 +499,7 @@ def get_manifold_labels_doublegrid(
                 elif num_neighs < 1 and opp_num_neighs == 1:
                     # edge of minima manifold
                     label = 4
-                elif num_neighs == 1 and opp_num_neighs <1:
+                elif num_neighs == 1 and opp_num_neighs < 1:
                     # edge of maxima manifold
                     label = 5
                 elif num_neighs == 1 and opp_num_neighs == 1:
@@ -484,33 +511,41 @@ def get_manifold_labels_doublegrid(
                 elif num_neighs > 1 and opp_num_neighs < 1:
                     # meeting of at least three maxima manifolds
                     label = 8
-                edges[i,j,k] = label
+                edges[i, j, k] = label
 
     return edges
+
 
 ###############################################################################
 # double grid test
 ###############################################################################
 
+
 # #@njit(inline='always', cache=True)
 def get_differing_neighs_doublegrid(
-    i, j, k,
-    nx, ny, nz,
+    i,
+    j,
+    k,
+    nx,
+    ny,
+    nz,
     labels,
     images,
     vacuum_mask,
 ):
-    
+
     # initialize stored labels
-    label0 = -1; image0 = -1
-    label1 = -1; image1 = -1
+    label0 = -1
+    image0 = -1
+    label1 = -1
+    image1 = -1
     unique = -1
-    
+
     # get parity
-    pi = i&1
-    pj = j&1
-    pk = k&1
-    parity = PARITY_TO_INT[pi,pj,pk]
+    pi = i & 1
+    pj = j & 1
+    pk = k & 1
+    parity = PARITY_TO_INT[pi, pj, pk]
     # get transforms
     neighbor_transforms = PARITY_VERTICES[parity]
 
@@ -519,7 +554,7 @@ def get_differing_neighs_doublegrid(
         # if we've found more than two neighbors, immediately break
         if unique == 2:
             break
-        
+
         # get shifts
         si = neighbor_transforms[trans, 0]
         sj = neighbor_transforms[trans, 1]
@@ -527,13 +562,13 @@ def get_differing_neighs_doublegrid(
 
         # wrap around periodic edges and store shift
         ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
-            int((i+si)/2), int((j+sj)/2), int((k+sk)/2), nx, ny, nz
+            int((i + si) / 2), int((j + sj) / 2), int((k + sk) / 2), nx, ny, nz
         )
-        
+
         # skip points in the vacuum
         if vacuum_mask[ii, jj, kk]:
             continue
-        
+
         # get the label and image of this neighbor
         neigh_label = labels[ii, jj, kk]
         neigh_image = images[ii, jj, kk]
@@ -555,12 +590,14 @@ def get_differing_neighs_doublegrid(
                 image1 = neigh_image
                 unique = 1
         elif unique == 1:
-            if ((neigh_label != label0 or neigh_image != image0) and
-                (neigh_label != label1 or neigh_image != image1)):
+            if (neigh_label != label0 or neigh_image != image0) and (
+                neigh_label != label1 or neigh_image != image1
+            ):
                 unique = 2
                 break
 
     return unique
+
 
 # #@njit(parallel=True,  cache=True)
 def get_manifold_labels_doublegrid(
@@ -576,7 +613,7 @@ def get_manifold_labels_doublegrid(
     """
     Takes the 3-manifolds of maxima and minima and determines the rough locations
     of the following manifolds:
-        
+
         0: minima
         1: 1-saddle
         2: 2-saddle
@@ -590,63 +627,70 @@ def get_manifold_labels_doublegrid(
         255: overlapping maxima/minima basin
     """
     nx, ny, nz = maxima_labels.shape
-    nx2 = nx*2
-    ny2 = ny*2
-    nz2 = nz*2
+    nx2 = nx * 2
+    ny2 = ny * 2
+    nz2 = nz * 2
     # create 3D array to store edges
-    edges = np.full((nx*2,ny*2,nz*2), np.iinfo(np.uint8).max, dtype=np.uint8)
-    
+    edges = np.full((nx * 2, ny * 2, nz * 2), np.iinfo(np.uint8).max, dtype=np.uint8)
+
     # add maxima/minima
     for group in minima_groups:
-        for i,j,k in group:
+        for i, j, k in group:
             # shift to double grid
-            i*=2
-            j*=2
-            k*=2
-            edges[i,j,k] = 0
-            
-    for group in maxima_groups:
-        for i,j,k in group:
-            # shift to double grid
-            i*=2
-            j*=2
-            k*=2
-            edges[i,j,k] = 3
+            i *= 2
+            j *= 2
+            k *= 2
+            edges[i, j, k] = 0
 
-    
+    for group in maxima_groups:
+        for i, j, k in group:
+            # shift to double grid
+            i *= 2
+            j *= 2
+            k *= 2
+            edges[i, j, k] = 3
+
     # loop over each voxel in parallel
     for i in prange(nx2):
         for j in range(ny2):
             for k in range(nz2):
-                
+
                 # if this voxel is part of a minimum or maximum, continue
-                if edges[i,j,k] == 0 or edges[i,j,k] == 3:
+                if edges[i, j, k] == 0 or edges[i, j, k] == 3:
                     continue
-                
-                pi = i&1
-                pj = j&1
-                pk = k&1
-                parity = PARITY_TO_INT[pi,pj,pk]
+
+                pi = i & 1
+                pj = j & 1
+                pk = k & 1
+                parity = PARITY_TO_INT[pi, pj, pk]
                 dim = PARITY_DIMS[parity]
                 if dim != 1:
                     continue
-                
+
                 # check if this point has 0, 1, or 2 neighbors with different
                 # labels
                 num_neighs = get_differing_neighs_doublegrid(
-                    i, j, k, 
-                    nx, ny, nz, 
-                    maxima_labels, 
-                    maxima_images, 
+                    i,
+                    j,
+                    k,
+                    nx,
+                    ny,
+                    nz,
+                    maxima_labels,
+                    maxima_images,
                     vacuum_mask,
-                    )
+                )
                 opp_num_neighs = get_differing_neighs_doublegrid(
-                    i, j, k, 
-                    nx, ny, nz, 
-                    minima_labels, 
-                    minima_images, 
+                    i,
+                    j,
+                    k,
+                    nx,
+                    ny,
+                    nz,
+                    minima_labels,
+                    minima_images,
                     vacuum_mask,
-                    )
+                )
                 label = 10
                 if num_neighs == 1:
                     label = 1
@@ -661,7 +705,7 @@ def get_manifold_labels_doublegrid(
                 elif num_neighs < 1 and opp_num_neighs == 1:
                     # edge of minima manifold
                     label = 4
-                elif num_neighs == 1 and opp_num_neighs <1:
+                elif num_neighs == 1 and opp_num_neighs < 1:
                     # edge of maxima manifold
                     label = 5
                 elif num_neighs == 1 and opp_num_neighs == 1:
@@ -673,22 +717,26 @@ def get_manifold_labels_doublegrid(
                 elif num_neighs > 1 and opp_num_neighs < 1:
                     # meeting of at least three maxima manifolds
                     label = 8
-                edges[i,j,k] = label
+                edges[i, j, k] = label
 
     return edges
 
 
 # #@njit(inline='always', cache=True)
 def get_extrema_saddle_connections_doublegrid(
-    i, j, k,
-    nx, ny, nz,
+    i,
+    j,
+    k,
+    nx,
+    ny,
+    nz,
     ny_nz,
     labels,
     images,
     data,
     vacuum_mask,
     max_val,
-    use_minima = False,
+    use_minima=False,
 ):
     if use_minima:
         best_value0 = np.inf
@@ -698,17 +746,18 @@ def get_extrema_saddle_connections_doublegrid(
         best_value0 = -np.inf
         best_value1 = -np.inf
 
-        
     # initialize stored labels
-    label0 = -1; image0 = -1
-    label1 = -1; image1 = -1
+    label0 = -1
+    image0 = -1
+    label1 = -1
+    image1 = -1
     unique = -1
-    
+
     # get parity
-    pi = i&1
-    pj = j&1
-    pk = k&1
-    parity = PARITY_TO_INT[pi,pj,pk]
+    pi = i & 1
+    pj = j & 1
+    pk = k & 1
+    parity = PARITY_TO_INT[pi, pj, pk]
     # get transforms
     neighbor_transforms = PARITY_VERTICES[parity]
 
@@ -717,7 +766,7 @@ def get_extrema_saddle_connections_doublegrid(
         # if we've found more than two neighbors, immediately break
         if unique == 2:
             break
-        
+
         # get shifts
         si = neighbor_transforms[trans, 0]
         sj = neighbor_transforms[trans, 1]
@@ -725,24 +774,24 @@ def get_extrema_saddle_connections_doublegrid(
 
         # wrap around periodic edges and store shift
         ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
-            int((i+si)/2), int((j+sj)/2), int((k+sk)/2), nx, ny, nz
+            int((i + si) / 2), int((j + sj) / 2), int((k + sk) / 2), nx, ny, nz
         )
-        
+
         # skip points in the vacuum
         if vacuum_mask[ii, jj, kk]:
             continue
-        
+
         # get the label, image, and value of this neighbor
         neigh_label = labels[ii, jj, kk]
         neigh_image = images[ii, jj, kk]
-        neigh_value = data[ii,jj,kk]
+        neigh_value = data[ii, jj, kk]
 
         # update image to be relative to the current points transformation
         si1 = INT_TO_IMAGE[neigh_image, 0] + ssi
         sj1 = INT_TO_IMAGE[neigh_image, 1] + ssj
         sk1 = INT_TO_IMAGE[neigh_image, 2] + ssk
         neigh_image = IMAGE_TO_INT[si1, sj1, sk1]
-        
+
         # compare to any previous labels and update our unique number
         if unique == -1:
             label0 = neigh_label
@@ -759,28 +808,27 @@ def get_extrema_saddle_connections_doublegrid(
             if neigh_label == label0 and neigh_image == image0:
                 if neigh_value > best_value0:
                     best_value0 = neigh_value
-                
+
             elif neigh_label == label1 and neigh_image == image1:
                 if neigh_value > best_value1:
                     best_value1 = neigh_value
-        
 
     # if no neighbor was found, we just return a fake value
     if label0 == -1 or label1 == -1:
         return max_val, max_val, max_val, False, max_val, max_val, max_val, max_val
 
     best_value = min(best_value0, best_value1)
-    
+
     # get image from label0 to label1
     i0, j0, k0 = INT_TO_IMAGE[image0]
     i1, j1, k1 = INT_TO_IMAGE[image1]
-    crit_vec0 = IMAGE_TO_INT[i1-i0, j1-j0, k1-k0]
-    crit_vec1 = IMAGE_TO_INT[i0-i1, j0-j1, k0-k1]
+    crit_vec0 = IMAGE_TO_INT[i1 - i0, j1 - j0, k1 - k0]
+    crit_vec1 = IMAGE_TO_INT[i0 - i1, j0 - j1, k0 - k1]
 
     return (
-        min(label0, label1), 
-        max(label0, label1), 
-        min(crit_vec0, crit_vec1), 
+        min(label0, label1),
+        max(label0, label1),
+        min(crit_vec0, crit_vec1),
         best_value,
         # also return the actual label and image of the atoms this critical point
         # connects
@@ -788,7 +836,8 @@ def get_extrema_saddle_connections_doublegrid(
         label1,
         image0,
         image1,
-        )
+    )
+
 
 # #@njit(parallel=True, cache=True)
 def get_canonical_saddle_connections_doublegrid(
@@ -801,41 +850,47 @@ def get_canonical_saddle_connections_doublegrid(
     use_minima: bool = False,
 ):
     nx, ny, nz = labels.shape
-    ny_nz = ny*nz
-    
+    ny_nz = ny * nz
+
     # get the points that may be saddles
     if use_minima:
-        saddle_coords = np.argwhere(np.isin(edge_mask,(2, 5, 6)))
+        saddle_coords = np.argwhere(np.isin(edge_mask, (2, 5, 6)))
     else:
         # saddle_coords = np.argwhere(np.isin(edge_mask,(1, 4, 6)))
-        saddle_coords = np.argwhere(np.isin(edge_mask,(1)))
-    
+        saddle_coords = np.argwhere(np.isin(edge_mask, (1)))
+
     # create an array to track connections between these points.
     # For each entry we will have:
-        # 1: the lower label index
-        # 2: the higher label index
-        # 3: the connection image between basins
-        # 4: whether or not the connection image is lower -> higher (0) or higher -> lower (1)
-    canonical_saddle_connections = np.empty((len(saddle_coords),3),dtype=np.uint32)
-    extrema_connections = np.empty((len(saddle_coords),4),dtype=np.uint32)
+    # 1: the lower label index
+    # 2: the higher label index
+    # 3: the connection image between basins
+    # 4: whether or not the connection image is lower -> higher (0) or higher -> lower (1)
+    canonical_saddle_connections = np.empty((len(saddle_coords), 3), dtype=np.uint32)
+    extrema_connections = np.empty((len(saddle_coords), 4), dtype=np.uint32)
     connection_vals = np.empty(len(saddle_coords), dtype=np.float64)
 
     # create a mask to track important connections
     important = np.ones(len(saddle_coords), dtype=np.bool)
     max_val = np.iinfo(np.uint32).max
     for idx in prange(len(saddle_coords)):
-        i,j,k = saddle_coords[idx]
-        
-        lower, higher, shift, connection_value, label0, label1, image0, image1 = get_extrema_saddle_connections_doublegrid(
-            i, j, k,
-            nx, ny, nz,
-            ny_nz,
-            labels,
-            images,
-            data,
-            vacuum_mask,
-            max_val,
-            use_minima,
+        i, j, k = saddle_coords[idx]
+
+        lower, higher, shift, connection_value, label0, label1, image0, image1 = (
+            get_extrema_saddle_connections_doublegrid(
+                i,
+                j,
+                k,
+                nx,
+                ny,
+                nz,
+                ny_nz,
+                labels,
+                images,
+                data,
+                vacuum_mask,
+                max_val,
+                use_minima,
+            )
         )
         if lower == max_val:
             # note this wasn't a true saddle
@@ -860,8 +915,13 @@ def get_canonical_saddle_connections_doublegrid(
     canonical_saddle_connections = canonical_saddle_connections[important]
     connection_vals = connection_vals[important]
     extrema_connections = extrema_connections[important]
-                
-    return saddle_coords, canonical_saddle_connections, extrema_connections, connection_vals
+
+    return (
+        saddle_coords,
+        canonical_saddle_connections,
+        extrema_connections,
+        connection_vals,
+    )
 
 
 # #@njit(cache=True)
@@ -870,7 +930,7 @@ def get_single_point_saddles_doublegrid(
     saddle_coords,
     connection_indices,
     num_connections,
-    use_minima = False,
+    use_minima=False,
 ):
     # create an array to store best points
     saddles = np.empty(num_connections, dtype=np.uint32)
@@ -879,15 +939,18 @@ def get_single_point_saddles_doublegrid(
     else:
         best_vals = np.full(num_connections, -np.inf, dtype=np.float64)
 
-    for saddle_idx, (idx, connection_value) in enumerate(zip(connection_indices, connection_values)):
-        if not use_minima and  connection_value > best_vals[idx]:
+    for saddle_idx, (idx, connection_value) in enumerate(
+        zip(connection_indices, connection_values)
+    ):
+        if not use_minima and connection_value > best_vals[idx]:
             best_vals[idx] = connection_value
             saddles[idx] = saddle_idx
         elif use_minima and connection_value < best_vals[idx]:
             best_vals[idx] = connection_value
             saddles[idx] = saddle_idx
-    
+
     return saddles, best_vals
+
 
 # #@njit(cache=True)
 def get_saddle_connections_doublegrid(
@@ -897,103 +960,104 @@ def get_saddle_connections_doublegrid(
     edge_mask: NDArray[np.uint8],
 ):
     nx, ny, nz = edge_mask.shape
-    
+
     # get the number of possible edges
-    num_edges = len(np.where(np.isin(edge_mask, (1,2,6)))[0])
+    num_edges = len(np.where(np.isin(edge_mask, (1, 2, 6)))[0])
     num_edges += len(saddle1_coords) + len(saddle2_coords)
-    
+
     # create an empty queue for storing which points are next
     queue = np.empty((num_edges, 3), dtype=np.uint32)
-    
+
     # create arrays to store flood filled labels
     max_val = np.iinfo(np.uint32).max
     flood_labels = np.full_like(edge_mask, max_val, dtype=np.uint32)
     flood_images = np.full_like(edge_mask, 13, dtype=np.uint8)
-    
+
     # seed saddles
     saddle_idx = 0
-    for i,j,k in saddle2_coords:
-        flood_labels[i,j,k] = saddle_idx
-        queue[saddle_idx] = (i,j,k)
+    for i, j, k in saddle2_coords:
+        flood_labels[i, j, k] = saddle_idx
+        queue[saddle_idx] = (i, j, k)
         saddle_idx += 1
-    for i,j,k in saddle1_coords:
-        flood_labels[i,j,k] = saddle_idx
-        queue[saddle_idx] = (i,j,k)
+    for i, j, k in saddle1_coords:
+        flood_labels[i, j, k] = saddle_idx
+        queue[saddle_idx] = (i, j, k)
         saddle_idx += 1
-    
+
     # create lists to store connections
     connections = []
     connection_coords = []
     queue_start = 0
     queue_end = saddle_idx
-    
+
     while queue_start != queue_end:
         next_end = queue_end
         for edge_idx in range(queue_start, queue_end):
-            i,j,k = queue[edge_idx]
+            i, j, k = queue[edge_idx]
             # get label and image
-            label = flood_labels[i,j,k]
-            image = flood_images[i,j,k]
+            label = flood_labels[i, j, k]
+            image = flood_images[i, j, k]
             mi, mj, mk = INT_TO_IMAGE[image]
-            
+
             # iterate over each neighbor. if unlabeled, assign it the same label
             # if labeled, note a new connection
-            for trans, (si, sj, sk) in  enumerate(neighbor_transforms):
+            for trans, (si, sj, sk) in enumerate(neighbor_transforms):
                 # get the neighbor
                 ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
-                    i+si, j+sj, k+sk, nx, ny, nz
+                    i + si, j + sj, k + sk, nx, ny, nz
                 )
                 # skip points that can't be part of our connections
-                if not edge_mask[ii,jj,kk] in (1,2,6):
+                if not edge_mask[ii, jj, kk] in (1, 2, 6):
                     continue
-                
-                neigh_label = flood_labels[ii,jj,kk]
-                shift = IMAGE_TO_INT[ssi+mi, ssj+mj, ssk+mk]
-                
+
+                neigh_label = flood_labels[ii, jj, kk]
+                shift = IMAGE_TO_INT[ssi + mi, ssj + mj, ssk + mk]
+
                 # skip points that haven't been labeled
                 if neigh_label == max_val:
-                    flood_labels[ii,jj,kk] = label
-                    flood_images[ii,jj,kk] = shift
-                    queue[next_end] = (ii,jj,kk)
+                    flood_labels[ii, jj, kk] = label
+                    flood_images[ii, jj, kk] = shift
+                    queue[next_end] = (ii, jj, kk)
                     next_end += 1
 
                 else:
                     # get where this image has wrapped around periodic edges
-                    neigh_image = flood_images[ii,jj,kk]
-    
+                    neigh_image = flood_images[ii, jj, kk]
+
                     # if this belongs to a different saddle, we note a connection
                     if neigh_label != label or neigh_image != shift:
                         # get shift difference
                         ni, nj, nk = INT_TO_IMAGE[neigh_image]
                         si, sj, sk = INT_TO_IMAGE[shift]
-                        
+
                         bi = ni - si
                         bj = nj - sj
                         bk = nk - sk
-                        best_image = IMAGE_TO_INT[bi,bj,bk]
+                        best_image = IMAGE_TO_INT[bi, bj, bk]
                         inv_image = IMAGE_TO_INT[-bi, -bj, -bk]
-                        
-                        connections.append((
-                            min(label, neigh_label),
-                            max(label, neigh_label),
-                            min(best_image, inv_image),
-                            (label<neigh_label) == (best_image < inv_image) # whether the connection is reversed or not
-                            ))
+
+                        connections.append(
+                            (
+                                min(label, neigh_label),
+                                max(label, neigh_label),
+                                min(best_image, inv_image),
+                                (label < neigh_label)
+                                == (
+                                    best_image < inv_image
+                                ),  # whether the connection is reversed or not
+                            )
+                        )
                         # add coord
                         connection_coords.append(queue[edge_idx])
         queue_start = queue_end
         queue_end = next_end
-    
-    
+
     return connections, connection_coords
+
 
 ###############################################################################
 # Single Grid
 ###############################################################################
-
-
-
-
 
 
 # #@njit(inline='always', cache=True)
@@ -1040,7 +1104,7 @@ def get_saddle_connections_doublegrid(
 #         if not edge_mask[ii, jj, kk] in edge_indices:
 #             continue
 
-        
+
 #         # get the label and image of this neighbor
 #         neigh_label = labels[ii, jj, kk]
 #         neigh_image = images[ii, jj, kk]
@@ -1054,17 +1118,17 @@ def get_saddle_connections_doublegrid(
 #         # skip neighbors in the same basin
 #         if label == neigh_label and image == neigh_image:
 #             continue
-        
+
 #         # get the value of the neighbor
 #         neigh_value = data[ii,jj,kk]
-        
+
 #         if use_minima:
 #             best_val = max(value, neigh_value)
 #             improved = best_val <= best_value
 #         else:
 #             best_val = min(value, neigh_value)
 #             improved = best_val >= best_value
-        
+
 #         if improved:
 #             best_value = best_val
 #             best_neigh_label = neigh_label
@@ -1074,7 +1138,7 @@ def get_saddle_connections_doublegrid(
 #             sk1 -= mk
 #             best_neigh_image = IMAGE_TO_INT[si1, sj1, sk1]
 #             inv_image_idx = IMAGE_TO_INT[-si1, -sj1, -sk1]
-            
+
 #             # we can't improve beyond this points value so we can break
 #             if best_value == value:
 #                 break
@@ -1082,20 +1146,20 @@ def get_saddle_connections_doublegrid(
 #     # if no neighbor was found, we just return a fake value
 #     if best_neigh_label == -1:
 #         return max_val, max_val, max_val, False, 0.0
-    
+
 #     is_reversed = (best_neigh_image > inv_image_idx) != (best_neigh_image > inv_image_idx)
-    
+
 #     return (
-#         min(label, best_neigh_label), 
-#         max(label, best_neigh_label), 
-#         min(best_neigh_image, inv_image_idx), 
+#         min(label, best_neigh_label),
+#         max(label, best_neigh_label),
+#         min(best_neigh_image, inv_image_idx),
 #         is_reversed,
 #         best_value)
 
 # # #@njit(cache=True)
 # def get_ongrid_gradient_cart(i, j, k, data, dir2car):
 #     nx, ny, nz = data.shape
-    
+
 #     c000 = data[i,j,k]
 #     c100 = data[(i + 1) % nx,j,k]
 #     c_100 = data[(i - 1) % nx,j,k]
@@ -1140,13 +1204,13 @@ def get_saddle_connections_doublegrid(
 # ):
 #     nx, ny, nz = labels.shape
 #     ny_nz = ny*nz
-    
+
 #     # get the points that may be saddles
 #     if use_minima:
 #         saddle_coords = np.argwhere(np.isin(edge_mask,(2)))
 #     else:
 #         saddle_coords = np.argwhere(np.isin(edge_mask,(1)))
-    
+
 #     # create an array to track connections between these points.
 #     # For each entry we will have:
 #         # 1: the lower label index
@@ -1161,7 +1225,7 @@ def get_saddle_connections_doublegrid(
 #     max_val = np.iinfo(np.uint32).max
 #     for idx in prange(len(saddle_coords)):
 #         i,j,k = saddle_coords[idx]
-        
+
 #         lower, higher, shift, is_reversed, connection_value = get_extrema_saddle_connections(
 #             i, j, k,
 #             nx, ny, nz,
@@ -1183,13 +1247,13 @@ def get_saddle_connections_doublegrid(
 #         saddle_connections[idx, 2] = shift
 #         saddle_connections[idx, 3] = is_reversed
 #         connection_vals[idx] = connection_value
-        
+
 #     # get only the connections that are important
 #     important = np.where(important)[0]
 #     saddle_coords = saddle_coords[important]
 #     saddle_connections = saddle_connections[important]
 #     connection_vals = connection_vals[important]
-                
+
 #     return saddle_coords, saddle_connections, connection_vals
 
 
@@ -1224,7 +1288,7 @@ def get_saddle_connections_doublegrid(
 #             if value == connection_value:
 #                 best_vals[idx] = connection_value
 #                 saddles[idx] = saddle_idx
-    
+
 #     return saddles, best_vals
 
 # # #@njit(cache=True)
@@ -1235,19 +1299,19 @@ def get_saddle_connections_doublegrid(
 #     edge_mask: NDArray[np.uint8],
 # ):
 #     nx, ny, nz = edge_mask.shape
-    
+
 #     # get the number of possible edges
 #     num_edges = len(np.where(np.isin(edge_mask, (1,2,6)))[0])
 #     num_edges += len(saddle1_coords) + len(saddle2_coords)
-    
+
 #     # create an empty queue for storing which points are next
 #     queue = np.empty((num_edges, 3), dtype=np.uint32)
-    
+
 #     # create arrays to store flood filled labels
 #     max_val = np.iinfo(np.uint32).max
 #     flood_labels = np.full_like(edge_mask, max_val, dtype=np.uint32)
 #     flood_images = np.full_like(edge_mask, 13, dtype=np.uint8)
-    
+
 #     # seed saddles
 #     saddle_idx = 0
 #     for i,j,k in saddle2_coords:
@@ -1258,13 +1322,13 @@ def get_saddle_connections_doublegrid(
 #         flood_labels[i,j,k] = saddle_idx
 #         queue[saddle_idx] = (i,j,k)
 #         saddle_idx += 1
-    
+
 #     # create lists to store connections
 #     connections = []
 #     connection_coords = []
 #     queue_start = 0
 #     queue_end = saddle_idx
-    
+
 #     while queue_start != queue_end:
 #         next_end = queue_end
 #         for edge_idx in range(queue_start, queue_end):
@@ -1273,7 +1337,7 @@ def get_saddle_connections_doublegrid(
 #             label = flood_labels[i,j,k]
 #             image = flood_images[i,j,k]
 #             mi, mj, mk = INT_TO_IMAGE[image]
-            
+
 #             # iterate over each neighbor. if unlabeled, assign it the same label
 #             # if labeled, note a new connection
 #             for trans, (si, sj, sk) in  enumerate(neighbor_transforms):
@@ -1284,10 +1348,10 @@ def get_saddle_connections_doublegrid(
 #                 # skip points that can't be part of our connections
 #                 if not edge_mask[ii,jj,kk] in (1,2,6):
 #                     continue
-                
+
 #                 neigh_label = flood_labels[ii,jj,kk]
 #                 shift = IMAGE_TO_INT[ssi+mi, ssj+mj, ssk+mk]
-                
+
 #                 # skip points that haven't been labeled
 #                 if neigh_label == max_val:
 #                     flood_labels[ii,jj,kk] = label
@@ -1298,19 +1362,19 @@ def get_saddle_connections_doublegrid(
 #                 else:
 #                     # get where this image has wrapped around periodic edges
 #                     neigh_image = flood_images[ii,jj,kk]
-    
+
 #                     # if this belongs to a different saddle, we note a connection
 #                     if neigh_label != label or neigh_image != shift:
 #                         # get shift difference
 #                         ni, nj, nk = INT_TO_IMAGE[neigh_image]
 #                         si, sj, sk = INT_TO_IMAGE[shift]
-                        
+
 #                         bi = ni - si
 #                         bj = nj - sj
 #                         bk = nk - sk
 #                         best_image = IMAGE_TO_INT[bi,bj,bk]
 #                         inv_image = IMAGE_TO_INT[-bi, -bj, -bk]
-                        
+
 #                         connections.append((
 #                             min(label, neigh_label),
 #                             max(label, neigh_label),
@@ -1321,7 +1385,6 @@ def get_saddle_connections_doublegrid(
 #                         connection_coords.append(queue[edge_idx])
 #         queue_start = queue_end
 #         queue_end = next_end
-    
-    
-#     return connections, connection_coords
 
+
+#     return connections, connection_coords
