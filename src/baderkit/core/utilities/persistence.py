@@ -19,41 +19,6 @@ INT_TO_IMAGE = np.array(list(itertools.product((-1, 0, 1), repeat=3)))
 for shift_idx, (i, j, k) in enumerate(INT_TO_IMAGE):
     IMAGE_TO_INT[i, j, k] = shift_idx
 
-# # @njit(cache=True, parallel=True)
-# def get_persistence_scores(
-#         critical_values,
-#         connections,
-#         connection_values,
-#         use_minima=False,
-#         ):
-
-#     # create array to store persistence scores
-#     persistence_scores = np.empty(len(connections), dtype=np.float64)
-
-#     # persistence criteria:
-#         # 1. persistence = abs(extremum_val - saddle_val)
-#         # 2. divide by saddle value
-
-#     for pair_idx in prange(len(connection_values)):
-#         crit1, crit2, _, _ = connections[pair_idx]
-
-#         # get the value at the saddle connecting them
-#         saddle_val = connection_values[pair_idx]
-
-#         # get each critical points value
-#         val1 = critical_values[crit1]
-#         val2 = critical_values[crit2]
-
-#         if use_minima:
-#             val = max(val1, val2)
-#         else:
-#             val = min(val1, val2)
-
-#         persistence_score = abs(saddle_val - val) / (saddle_val + 1e-12)
-#         persistence_scores[pair_idx] = persistence_score
-
-#     return persistence_scores
-
 
 # @njit(cache=True)
 def compute_wrap_offset(point1, point2):
@@ -186,7 +151,9 @@ def reduce_by_conn(
     use_minima,
     persistence_tol,
 ):
-    all_conn_nums = np.full(len(extrema_values), len(extrema_values), dtype=np.int64)
+    all_conn_nums = np.full(
+        len(extrema_values), len(extrema_values), dtype=np.int64
+    )
 
     new_union = True
 
@@ -211,18 +178,22 @@ def reduce_by_conn(
             neighs = all_conn_neighs[ext_idx]
             # union immediately if we only have one
             if num == 1:
-                union(labels, extrema_labels[ext_idx], extrema_labels[neighs[0]])
+                union(
+                    labels, extrema_labels[ext_idx], extrema_labels[neighs[0]]
+                )
                 new_union = True
                 continue
 
             conn_vals = all_conn_vals[ext_idx]
             conn_coords = all_conn_coords[ext_idx]
-            ext_coords = extrema_cart_coords[ext_idx]
+            # ext_coords = extrema_cart_coords[ext_idx]
             neigh_coords = neigh_cart_coords[ext_idx]
             # otherwise, we union each neighbor and add a new connection between
             # each of them as well
             for i, neigh_idx in enumerate(neighs):
-                union(labels, extrema_labels[ext_idx], extrema_labels[neigh_idx])
+                union(
+                    labels, extrema_labels[ext_idx], extrema_labels[neigh_idx]
+                )
                 new_union = True
                 conn_val = conn_vals[i]
                 conn_coord = conn_coords[i]
@@ -404,7 +375,11 @@ def group_by_persistence(
     unions = np.arange(num_critical)
 
     # condense to lists
-    for pair_idx, ((crit1, crit2, image1, image2), conn_val, conn_cart) in enumerate(
+    for pair_idx, (
+        (crit1, crit2, image1, image2),
+        conn_val,
+        conn_cart,
+    ) in enumerate(
         zip(
             basin_connections,
             saddle_values,
@@ -498,9 +473,9 @@ def get_persistence_cutoffs(data, groups, use_minima, group_vals, max_dist=5):
                 if i == j:
                     continue
                 ci1, cj1, ck1 = group[j]
-                dist = ((ci - ci1) ** 2 + ((cj - cj1) ** 2) + ((ck - ck1) ** 2)) ** (
-                    1 / 2
-                )
+                dist = (
+                    (ci - ci1) ** 2 + ((cj - cj1) ** 2) + ((ck - ck1) ** 2)
+                ) ** (1 / 2)
                 if dist < best_dist:
                     best_dist = dist
                     best_neigh = j
@@ -560,7 +535,12 @@ def get_persistence_groups(
                 value = data[i, j, k]
                 cutoff = persistence_cutoffs[label]
                 # if value is above the cutoff, add to the group
-                if not use_minima and value >= cutoff or use_minima and value <= cutoff:
+                if (
+                    not use_minima
+                    and value >= cutoff
+                    or use_minima
+                    and value <= cutoff
+                ):
                     point = np.array((i, j, k), dtype=np.int16)
                     persistence_groups[label].append(point)
 

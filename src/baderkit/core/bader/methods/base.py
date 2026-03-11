@@ -11,7 +11,10 @@ from numpy.typing import NDArray
 
 from baderkit.core.toolkit import Grid
 from baderkit.core.utilities.basic import get_lowest_uint
-from baderkit.core.utilities.interpolation import refine_critical_points, refine_extrema
+from baderkit.core.utilities.interpolation import (
+    refine_critical_points,
+    refine_extrema,
+)
 from baderkit.core.utilities.persistence import (
     get_canonical_saddle_connections,
     get_single_point_saddles,
@@ -120,7 +123,9 @@ class MethodBase:
         # first we initialize our label array with all values set to placeholders
         dtype = get_lowest_uint(self.reference_grid.ngridpts)
         vacuum_label = np.iinfo(dtype).max
-        labels = np.full(self.reference_grid.ngridpts, vacuum_label, dtype=dtype)
+        labels = np.full(
+            self.reference_grid.ngridpts, vacuum_label, dtype=dtype
+        )
         # get neighbor transforms
         neighbor_transforms, neighbor_dists = (
             self.reference_grid.point_neighbor_transforms
@@ -163,6 +168,14 @@ class MethodBase:
             method="linear",
         )
 
+        # New plan:
+        # 1. get maxima
+        # 2. reduce with basic persistence tol and interp
+        # 3. Get basins
+        # 4. Get saddle points within cutoff.
+        # 5. refine saddle points
+        # 6. reduce by persistence
+
         t1 = time.time()
         logging.info("Initialization Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -186,8 +199,8 @@ class MethodBase:
         # persistence.
         logging.info("Combining Low-Persistence Basins")
 
-        saddle_connections, saddle_coords, saddle_values = self.get_saddle_connections(
-            labels, images
+        saddle_connections, saddle_coords, saddle_values = (
+            self.get_saddle_connections(labels, images)
         )
 
         # get saddle coords in cartesian coordinates
@@ -243,7 +256,9 @@ class MethodBase:
             final_roots[idx] = new_roots[old_idx]
 
         # combine children, charges, volumes
-        for max_idx, (root, old_root) in enumerate(zip(final_roots, extrema_roots)):
+        for max_idx, (root, old_root) in enumerate(
+            zip(final_roots, extrema_roots)
+        ):
             if max_idx != old_root:
                 extrema_groups[root] = np.append(
                     extrema_groups[root], self.extrema_groups[max_idx], axis=0
@@ -351,7 +366,9 @@ class MethodBase:
         """
         if self._extrema_mask is None:
             data = self.reference_grid.total
-            neighbor_transforms, _ = self.reference_grid.point_neighbor_transforms
+            neighbor_transforms, _ = (
+                self.reference_grid.point_neighbor_transforms
+            )
             vacuum_mask = self.vacuum_mask
             self._extrema_mask = get_extrema(
                 data=data,
@@ -402,7 +419,9 @@ class MethodBase:
             fewer than the number of extrema_vox.
 
         """
-        assert self._extrema_frac is not None, "Maxima frac must be set by run method"
+        assert (
+            self._extrema_frac is not None
+        ), "Maxima frac must be set by run method"
         return self._extrema_frac
 
     @property
@@ -453,11 +472,13 @@ class MethodBase:
         grid = self.charge_grid
         # NOTE: I used to use numpy directly, but for systems with many basins
         # it was much slower than doing a loop with numba.
-        charges, volumes, vacuum_charge, vacuum_volume = get_basin_charges_and_volumes(
-            data=grid.total,
-            labels=labels,
-            cell_volume=grid.structure.volume,
-            extrema_num=len(self.extrema_vox),
+        charges, volumes, vacuum_charge, vacuum_volume = (
+            get_basin_charges_and_volumes(
+                data=grid.total,
+                labels=labels,
+                cell_volume=grid.structure.volume,
+                extrema_num=len(self.extrema_vox),
+            )
         )
         return {
             "basin_charges": charges,
@@ -466,7 +487,9 @@ class MethodBase:
             "vacuum_volume": vacuum_volume,
         }
 
-    def get_roots(self, pointers: NDArray[int], images: NDArray[int]) -> NDArray[int]:
+    def get_roots(
+        self, pointers: NDArray[int], images: NDArray[int]
+    ) -> NDArray[int]:
         """
         Finds the roots of a 1D array of pointers where each index points to its
         parent and sums images across periodic boundaries
@@ -519,7 +542,9 @@ class MethodBase:
         # roots with the highest value being the vacuum
         unique_roots = np.unique(pointers)
         dtype = get_lowest_uint(len(unique_roots))
-        pointers = np.searchsorted(unique_roots, pointers).astype(dtype, copy=False)
+        pointers = np.searchsorted(unique_roots, pointers).astype(
+            dtype, copy=False
+        )
 
         return pointers, images
 
