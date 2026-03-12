@@ -436,6 +436,131 @@ def get_basin_edges(
 
     return edges
 
+@njit(inline="always", cache=True)
+def get_differing_neighs_thin(
+    i,
+    j,
+    k,
+    nx,
+    ny,
+    nz,
+    data,
+    labels,
+    images,
+    neighbor_transforms,
+    vacuum_mask,
+    use_minima=False,
+):
+    # get the label at this point
+    label0 = labels[i, j, k]
+    image0 = images[i, j, k]
+    value0 = data[i, j, k]
+
+    # initialize potential alternative labels
+    label1 = -1
+    image1 = -1
+    unique = 0
+
+    # iterate over transforms
+    for trans in range(neighbor_transforms.shape[0]):
+        # if we've found more than two neighbors, immediately break
+        if unique == 2:
+            break
+
+        # get shifts
+        si = neighbor_transforms[trans, 0]
+        sj = neighbor_transforms[trans, 1]
+        sk = neighbor_transforms[trans, 2]
+
+        # wrap around periodic edges and store shift
+        ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
+            i + si, j + sj, k + sk, nx, ny, nz
+        )
+
+        # skip points in the vacuum
+        if vacuum_mask[ii, jj, kk]:
+            continue
+        
+        # skip points with a higher value
+        if (
+            use_minima and data[ii,jj,kk]>value0
+            or not use_minima and data[ii,jj,kk]<value0
+            ):
+            continue
+
+        # get the label and image of this neighbor
+        neigh_label = labels[ii, jj, kk]
+        neigh_image = images[ii, jj, kk]
+
+        # update image to be relative to the current points transformation
+        si1 = INT_TO_IMAGE[neigh_image, 0] + ssi
+        sj1 = INT_TO_IMAGE[neigh_image, 1] + ssj
+        sk1 = INT_TO_IMAGE[neigh_image, 2] + ssk
+        neigh_image = IMAGE_TO_INT[si1, sj1, sk1]
+
+        # compare to any previous labels and update our unique number
+        if unique == 0:
+            if neigh_label != label0 or neigh_image != image0:
+                label1 = neigh_label
+                image1 = neigh_image
+                unique = 1
+        elif unique == 1:
+            if (neigh_label != label0 or neigh_image != image0) and (
+                neigh_label != label1 or neigh_image != image1
+            ):
+                unique = 2
+
+    return unique
+
+@njit(parallel=True, cache=True)
+def get_thin_basin_edges(
+    data: NDArray[np.float64],
+    labels: NDArray[np.int64],
+    images: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
+    use_minima: bool,
+    vacuum_mask: NDArray[np.bool_],
+):
+    nx, ny, nz = labels.shape
+    # create 3D array to store edges
+    edges = np.zeros_like(labels, dtype=np.uint8)
+
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
+
+                # check if this point has 0, 1, or 2 neighbors with different
+                # labels
+                num_neighs = get_differing_neighs_thin(
+                    i,
+                    j,
+                    k,
+                    nx,
+                    ny,
+                    nz,
+                    data,
+                    labels,
+                    images,
+                    neighbor_transforms,
+                    vacuum_mask,
+                    use_minima,
+                )
+
+                if num_neighs == 0:
+                    # not an edge
+                    continue
+                elif num_neighs == 1:
+                    # meeting of two basins
+                    edges[i, j, k] = 1
+                else:
+                    # meeting of multiple basins
+                    edges[i, j, k] = 2
+
+    return edges
 
 @njit(cache=True)
 def get_neighboring_basin_surface_area(
@@ -592,7 +717,7 @@ def get_extrema(
     return extrema
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def initialize_labels_from_extrema(
     data,
     labels,

@@ -34,7 +34,7 @@ for method in methods:
         for i in range(test_num):
             t0 = time.time()
             subprocess.run(
-                ["baderkit", "run", "CHGCAR", "-ref", "CHGCAR_sum", "-m", method],
+                ["baderkit", "run", "CHGCAR", "-tot", "CHGCAR_sum", "-m", method],
                 cwd=folder,
                 stdout=None,
                 stderr=None,

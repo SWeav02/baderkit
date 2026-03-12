@@ -23,7 +23,7 @@ from baderkit.core.utilities.persistence import (
 
 from .shared_numba import (  # combine_neigh_extrema,; get_neighboring_basin_connections_w_images,; get_edges_w_images,
     get_basin_charges_and_volumes,
-    get_basin_edges,
+    get_thin_basin_edges,
     get_basin_min_and_max,
     get_extrema,
     initialize_labels_from_extrema,
@@ -96,7 +96,7 @@ class MethodBase:
         self.use_minima = use_minima
 
         # scale persistence tolerance to voxel size
-        self.persistence_tol = persistence_tol * reference_grid.max_point_dist
+        self.persistence_tol = persistence_tol
 
         # These variables are also often needed but are calculated during the run
         self._extrema_mask = None
@@ -168,14 +168,6 @@ class MethodBase:
             method="linear",
         )
 
-        # New plan:
-        # 1. get maxima
-        # 2. reduce with basic persistence tol and interp
-        # 3. Get basins
-        # 4. Get saddle points within cutoff.
-        # 5. refine saddle points
-        # 6. reduce by persistence
-
         t1 = time.time()
         logging.info("Initialization Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -198,10 +190,12 @@ class MethodBase:
         # Now we want to combine any remaining noisy extrema based on their
         # persistence.
         logging.info("Combining Low-Persistence Basins")
-
+        
+        # get saddle locations and values
         saddle_connections, saddle_coords, saddle_values = (
             self.get_saddle_connections(labels, images)
         )
+        breakpoint()
 
         # get saddle coords in cartesian coordinates
         saddle_cart = self.reference_grid.grid_to_cart(saddle_coords)
@@ -581,41 +575,32 @@ class MethodBase:
             self.reference_grid.point_neighbor_voronoi_transforms
         )
         # get edges
-        edge_mask = get_basin_edges(
+        edge_mask = get_thin_basin_edges(
+            data=self.reference_grid.total,
             labels=labels,
             images=images,
             neighbor_transforms=neighbor_transforms,
             vacuum_mask=self.vacuum_mask,
+            use_minima=self.use_minima,
         )
 
-        saddle_coords, saddle_connections, connection_vals = (
+        saddle_coords, saddle_connections = (
             get_canonical_saddle_connections(
                 labels=labels,
                 images=images,
                 data=self.reference_grid.total,
                 neighbor_transforms=neighbor_transforms,
                 edge_mask=edge_mask,
+                matrix=self.reference_grid.matrix,
                 use_minima=self.use_minima,
             )
         )
+        breakpoint()
+        # next:
+            # refine saddle points and values
+            # get persistence
 
-        unique_connections, inverse = np.unique(
-            saddle_connections[:, :3], axis=0, return_inverse=True
-        )
-
-        # get the best saddle points
-        saddle_indices, saddle_values = get_single_point_saddles(
-            data=self.reference_grid.total,
-            connection_values=connection_vals,
-            saddle_coords=saddle_coords,
-            connection_indices=inverse,
-            num_connections=len(unique_connections),
-            use_minima=self.use_minima,
-        )
-        saddle_coords = saddle_coords[saddle_indices]
-        saddle_connections = saddle_connections[saddle_indices]
-
-        return saddle_connections, saddle_coords, saddle_values
+        return saddle_connections, saddle_coords
 
     def copy(self) -> Self:
         """

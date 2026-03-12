@@ -6,21 +6,36 @@ import math
 import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
+from numba.typed import Dict, List
+from numba.types import UniTuple, int16, int64
 
 from baderkit.core.utilities.basic import (
     dist,
+    wrap_point,
     wrap_point_w_shift,
 )
-from baderkit.core.utilities.interpolation import linear_slice
+from baderkit.core.utilities.interpolation import linear_slice, spline_hess
 from baderkit.core.utilities.union_find import find_root, union
 
 IMAGE_TO_INT = np.empty([3, 3, 3], dtype=np.int64)
 INT_TO_IMAGE = np.array(list(itertools.product((-1, 0, 1), repeat=3)))
 for shift_idx, (i, j, k) in enumerate(INT_TO_IMAGE):
     IMAGE_TO_INT[i, j, k] = shift_idx
+    
+FACE_TRANSFORMS = np.array(
+    [
+        [1, 0, 0],
+        [-1, 0, 0],
+        [0, 1, 0],
+        [0, -1, 0],
+        [0, 0, 1],
+        [0, 0, -1],
+    ],
+    dtype=np.int64,
+)
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def compute_wrap_offset(point1, point2):
     """
     Computes wrap from point1 to point2
@@ -47,8 +62,67 @@ def compute_wrap_offset(point1, point2):
 
     return best_i, best_j, best_k
 
+# Predefine types
+key_type = UniTuple(int64, 3)
+value_type = int64
 
-# @njit(cache=True)
+@njit(cache=True)
+def unique_and_inverse_axis0(arr):
+    n = arr.shape[0]
+    arr64 = arr.astype(np.int64)
+
+    # Use the predeclared Numba types
+    d = Dict.empty(key_type=key_type, value_type=value_type)
+
+    inverse = np.empty(n, dtype=np.int64)
+    unique = List.empty_list(key_type)
+
+    next_idx = 0
+
+    for i in range(n):
+        key = (arr64[i,0], arr64[i,1], arr64[i,2])
+
+        if key in d:
+            inverse[i] = d[key]
+        else:
+            d[key] = next_idx
+            inverse[i] = next_idx
+            unique.append(key)
+            next_idx += 1
+
+    unique_arr = np.empty((next_idx, 3), dtype=arr.dtype)
+
+    for i in range(next_idx):
+        row = unique[i]
+        unique_arr[i,0] = row[0]
+        unique_arr[i,1] = row[1]
+        unique_arr[i,2] = row[2]
+
+    return unique_arr, inverse
+
+@njit(cache=True)
+def get_voxel_min_max(data, i, j, k, nx, ny, nz):
+    """
+    Estimate min/max value inside the voxel centered at (i,j,k)
+    using the center + 6 face centers (7 samples total).
+    """
+
+    c = data[i, j, k]
+
+    # set initial min/max
+    vmin = c
+    vmax = c
+    
+    for si, sj, sk in FACE_TRANSFORMS:
+        ni, nj, nk = wrap_point(i+si, j+sj, k+sk, nx, ny, nz)
+        v = 0.5 * (c + data[ni, nj, nk])
+        if v < vmin: vmin = v
+        if v > vmax: vmax = v
+
+    return vmin, vmax
+
+
+@njit(cache=True)
 def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     eps = 1e-12
     # get larger and smaller diffs
@@ -56,17 +130,21 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     diff2 = abs(value2 - conn_value)
 
     # get distance between the points
-    distance = dist(p1, p_conn) + dist(p2, p_conn)
+    p1_dist = dist(p1, p_conn)
+    p2_dist = dist(p2, p_conn)
+    distance = p1_dist + p2_dist
+    
+    # get approximate average value between extrema
+    avg = (p1_dist*(value1+conn_value)/2 + p2_dist*(value2+conn_value)/2) / distance
 
     # get persistence score:
-    # p = smaller_diff*dist / (larger_diff * dist)
-    persistence_score = min(diff1, diff2) * distance / (conn_value + eps)
-    # persistence_score = min(diff1, diff2) / (max(diff1, diff2) + eps)
-
+    #   p = smaller_diff*dist / (average_value)
+    persistence_score = min(diff1, diff2) * distance / (abs(avg)+eps)
+    # print(persistence_score)
     return persistence_score
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_conn_val_from_slice(
     p0,
     p1,
@@ -138,7 +216,7 @@ def get_conn_val_from_slice(
     return conn_val, c0, c1, c_conn
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def reduce_by_conn(
     all_conn_neighs,
     all_conn_vals,
@@ -243,7 +321,7 @@ def reduce_by_conn(
     return labels
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_conn_vals(
     data,
     labels,
@@ -336,7 +414,7 @@ def get_conn_vals(
     )
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def group_by_persistence(
     data,
     critical_vox,
@@ -449,7 +527,7 @@ def group_by_persistence(
     return roots, root_transforms
 
 
-# @njit(cache=True, parallel=True)
+@njit(cache=True, parallel=True)
 def get_persistence_cutoffs(data, groups, use_minima, group_vals, max_dist=5):
     persistence_cutoffs = np.full(len(groups), np.inf, dtype=np.float64)
     shape = np.array(data.shape)
@@ -506,7 +584,7 @@ def get_persistence_cutoffs(data, groups, use_minima, group_vals, max_dist=5):
     return persistence_cutoffs
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_persistence_groups(
     labels,
     data,
@@ -554,7 +632,7 @@ def get_persistence_groups(
     return array_groups
 
 
-# @njit(inline='always', cache=True)
+@njit(inline='always', cache=True)
 def get_extrema_saddle_connections(
     i,
     j,
@@ -562,25 +640,17 @@ def get_extrema_saddle_connections(
     nx,
     ny,
     nz,
-    ny_nz,
     labels,
     images,
-    data,
     neighbor_transforms,
-    edge_mask,
     max_val,
-    use_minima=False,
 ):
 
     # iterate over transforms
-    label0 = labels[i, j, k]
-    image0 = images[i, j, k]
-    value0 = data[i, j, k]
+    label = labels[i, j, k]
+    image = images[i, j, k]
+    im, jm, km = INT_TO_IMAGE[image]
 
-    label1 = -1
-    image1 = -1
-    value1 = -1.0
-    n = 0
 
     for trans in range(neighbor_transforms.shape[0]):
         # get shifts
@@ -592,14 +662,10 @@ def get_extrema_saddle_connections(
         ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
             i + si, j + sj, k + sk, nx, ny, nz
         )
-        # skip neighbors that aren't part of the edge
-        if edge_mask[ii, jj, kk] == 0:
-            continue
 
         # get the label and image of this neighbor
         neigh_label = labels[ii, jj, kk]
         neigh_image = images[ii, jj, kk]
-        neigh_value = data[ii, jj, kk]
 
         # update image to be relative to the current points transformation
         si1 = INT_TO_IMAGE[neigh_image, 0] + ssi
@@ -607,133 +673,30 @@ def get_extrema_saddle_connections(
         sk1 = INT_TO_IMAGE[neigh_image, 2] + ssk
         neigh_image = IMAGE_TO_INT[si1, sj1, sk1]
 
-        # skip neighbors in the same basin
-        if label0 == neigh_label and image0 == neigh_image:
-            continue
+        # note if this point belongs to a different basin
+        if label != neigh_label or image != neigh_image:
+            image_for = IMAGE_TO_INT[si1 - im, sj1 - jm, sk1 - km]
+            image_rev = IMAGE_TO_INT[im - si1, jm - sj1, km - sk1]
+            is_reversed = (label > neigh_label) != (image_for > image_rev)
 
-        # if we haven't already, note the correct neighboring basin
-        if n == 0:
-            label1 = neigh_label
-            image1 = neigh_image
-            value1 = neigh_value
-            n = 1
-            continue
-
-        # check if this point improves the connection value
-        if use_minima and neigh_value < value1:
-            value1 = neigh_value
-            if value1 <= value0:
-                break
-        elif not use_minima and neigh_value > value1:
-            value1 = neigh_value
-            if value1 >= value0:
-                break
+            return (
+                min(label, neigh_label),
+                max(label, neigh_label),
+                min(image_for, image_rev),
+                is_reversed,
+            )
 
     # if no neighbor was found, we just return a fake value
-    if label1 == -1:
-        return max_val, max_val, max_val, False, 0.0
-
-    # otherwise we get the unit cell transform across which these extrema connect
-    i, j, k = INT_TO_IMAGE[image0]
-    ii, jj, kk = INT_TO_IMAGE[image1]
-    image = IMAGE_TO_INT[ii - i, jj - j, kk - k]
-    inv_image = IMAGE_TO_INT[i - ii, j - jj, k - kk]
-
-    # get best value
-    if use_minima:
-        best_value = max(value0, value1)
-    else:
-        best_value = min(value0, value1)
-
-    # determine if the canonical image is reversed. We flip it if the neighboring
-    # label is lower and if the neighboring image is lower.
-    is_reversed = (label0 > label1) != (image > inv_image)
-
-    return (
-        min(label0, label1),
-        max(label0, label1),
-        min(image, inv_image),
-        is_reversed,
-        best_value,
-    )
+    return max_val, max_val, max_val, False
 
 
-# @njit(parallel=True, cache=True)
-def get_canonical_saddle_connections(
-    labels: NDArray[np.int64],
-    images: NDArray[np.int64],
-    data: NDArray[np.float64],
-    neighbor_transforms: NDArray[np.int64],
-    edge_mask: NDArray[np.uint8],
-    use_minima: bool = False,
-):
-    nx, ny, nz = labels.shape
-    ny_nz = ny * nz
-
-    # get the points that may be saddles
-    saddle_coords = np.argwhere(edge_mask == 1)
-
-    # create an array to track connections between these points.
-    # For each entry we will have:
-    # 1: the lower label index
-    # 2: the higher label index
-    # 3: the connection image between basins
-    # 4: whether or not the connection image is lower -> higher (0) or higher -> lower (1)
-    saddle_connections = np.empty((len(saddle_coords), 4), dtype=np.int16)
-    connection_vals = np.empty(len(saddle_coords), dtype=np.float64)
-    # create a mask to track important connections
-    important = np.ones(len(saddle_coords), dtype=np.bool)
-    max_val = np.iinfo(np.int16).max
-    for idx in prange(len(saddle_coords)):
-        i, j, k = saddle_coords[idx]
-        lower, higher, shift, is_reversed, connection_value = (
-            get_extrema_saddle_connections(
-                i,
-                j,
-                k,
-                nx,
-                ny,
-                nz,
-                ny_nz,
-                labels,
-                images,
-                data,
-                neighbor_transforms,
-                edge_mask,
-                max_val,
-                use_minima,
-            )
-        )
-        if lower == max_val:
-            # note this wasn't a true saddle
-            important[idx] = False
-            continue
-        saddle_connections[idx, 0] = lower
-        saddle_connections[idx, 1] = higher
-        saddle_connections[idx, 2] = shift
-        saddle_connections[idx, 3] = is_reversed
-        connection_vals[idx] = connection_value
-
-    # get only the connections that are important
-    important = np.where(important)[0]
-    saddle_coords = saddle_coords[important]
-    saddle_connections = saddle_connections[important]
-    connection_vals = connection_vals[important]
-
-    return saddle_coords, saddle_connections, connection_vals
-
-
-# @njit(cache=True)
+@njit(cache=True)
 def get_single_point_saddles(
-    data,
     connection_values,
-    saddle_coords,
     connection_indices,
     num_connections,
     use_minima=False,
 ):
-    # create an array to store best points
-    saddles = np.empty(num_connections, dtype=np.int32)
     if use_minima:
         best_vals = np.full(num_connections, np.inf, dtype=np.float64)
     else:
@@ -744,9 +707,249 @@ def get_single_point_saddles(
     ):
         if not use_minima and connection_value > best_vals[idx]:
             best_vals[idx] = connection_value
-            saddles[idx] = saddle_idx
         elif use_minima and connection_value < best_vals[idx]:
             best_vals[idx] = connection_value
-            saddles[idx] = saddle_idx
 
-    return saddles, best_vals
+    return best_vals
+
+@njit(cache=True)
+def is_ongrid_saddle(
+    data,
+    i,j,k,
+    nx,ny,nz,
+    neighbor_transforms,
+    edge_mask,
+    use_minima,
+        ):
+    # get initial value
+    value = data[i,j,k]
+    
+    for si, sj, sk in neighbor_transforms:
+        # wrap around periodic edges
+        ii, jj, kk = wrap_point(
+            i + si, j + sj, k + sk, nx, ny, nz
+        )
+        
+        # skip points that aren't also on the edge
+        if not edge_mask[ii, jj, kk]:
+            continue
+        
+        neigh_value = data[ii,jj,kk]
+        # check if a neighbor is a better saddle candidate
+        if (
+            use_minima and neigh_value < value
+            or not use_minima and neigh_value > value
+            ):
+            return False
+    
+    # if we're still here this is a potential saddle
+    return True
+
+# @njit(cache=True)
+# def classify_critical_point(H):
+#     eigvals = np.linalg.eigvalsh(H)
+
+#     n_pos = np.sum(eigvals > 0.0)
+#     n_neg = np.sum(eigvals < 0.0)
+
+#     if n_pos == 3:
+#         return 0  # minimum
+#     if n_neg == 3:
+#         return 3  # maximum
+#     if n_pos == 2 and n_neg == 1:
+#         return 1  # index-1 saddle
+#     if n_pos == 1 and n_neg == 2:
+#         return 2  # index-2 saddle
+
+#     return -1
+
+# @njit(cache=True)
+# def is_ongrid_saddle_interp(
+#     data,
+#     i,j,k,
+#     nx,ny,nz,
+#     neighbor_transforms,
+#     edge_mask,
+#     use_minima,
+#         ):
+#     # get the hessian at this point
+#     H = spline_hess(i, j, k, data, h=0.5, is_frac=False)
+    
+#     # check if saddle
+#     crit = classify_critical_point(H)
+    
+#     if (
+#         use_minima and crit == 1
+#         or not use_minima and crit == 2
+#         ):
+#         return True
+#     return False
+    
+
+@njit(fastmath=True, cache=True)
+def check_valid_newton_step(
+    coord,
+    data,
+    r_voxel_cart2,
+    inv_G,
+    H_frac_to_cart,
+):
+    """
+    Newton-step rejection using *full local neighborhood information*.
+    Uses full 3x3x3 Hessian and a conservative spectral bound.
+    """
+    nx, ny, nz = data.shape
+    eps = 1e-12
+    i, j, k = coord
+    i = int(i)
+    j = int(j)
+    k = int(k)
+
+    # -----------------------------
+    # Pull 3x3x3 neighborhood
+    # -----------------------------
+    n = np.empty((3, 3, 3), dtype=data.dtype)
+    for di in range(-1, 2):
+        ii = (i + di) % nx
+        for dj in range(-1, 2):
+            jj = (j + dj) % ny
+            for dk in range(-1, 2):
+                kk = (k + dk) % nz
+                n[di + 1, dj + 1, dk + 1] = data[ii, jj, kk]
+
+    f0 = n[1, 1, 1]
+
+    # -----------------------------
+    # Gradient (fractional)
+    # -----------------------------
+    gi = 0.5 * (n[2, 1, 1] - n[0, 1, 1])
+    gj = 0.5 * (n[1, 2, 1] - n[1, 0, 1])
+    gk = 0.5 * (n[1, 1, 2] - n[1, 1, 0])
+
+    # Cartesian gradient norm²
+    g_cart2 = (
+        gi * (inv_G[0, 0] * gi + inv_G[0, 1] * gj + inv_G[0, 2] * gk)
+        + gj * (inv_G[1, 0] * gi + inv_G[1, 1] * gj + inv_G[1, 2] * gk)
+        + gk * (inv_G[2, 0] * gi + inv_G[2, 1] * gj + inv_G[2, 2] * gk)
+    )
+
+    # -----------------------------
+    # Full Hessian (fractional)
+    # -----------------------------
+    Hxx = n[2, 1, 1] - 2.0 * f0 + n[0, 1, 1]
+    Hyy = n[1, 2, 1] - 2.0 * f0 + n[1, 0, 1]
+    Hzz = n[1, 1, 2] - 2.0 * f0 + n[1, 1, 0]
+
+    Hxy = 0.25 * (n[2, 2, 1] - n[2, 0, 1] - n[0, 2, 1] + n[0, 0, 1])
+    Hxz = 0.25 * (n[2, 1, 2] - n[2, 1, 0] - n[0, 1, 2] + n[0, 1, 0])
+    Hyz = 0.25 * (n[1, 2, 2] - n[1, 2, 0] - n[1, 0, 2] + n[1, 0, 0])
+
+    # -----------------------------
+    # Local curvature scale (∞-norm)
+    # -----------------------------
+    H_frac_max = max(abs(Hxx), abs(Hyy), abs(Hzz), abs(Hxy), abs(Hxz), abs(Hyz)) + eps
+
+    H_cart_max = H_frac_max * H_frac_to_cart
+    H_cart_max2 = H_cart_max * H_cart_max
+
+    # -----------------------------
+    # Stage 1: gradient rejection
+    # -----------------------------
+    if g_cart2 > H_cart_max2:
+        return False
+    return True
+
+@njit(parallel=True, cache=True)
+def get_canonical_saddle_connections(
+    labels: NDArray[np.int64],
+    images: NDArray[np.int64],
+    data: NDArray[np.float64],
+    neighbor_transforms: NDArray[np.int64],
+    edge_mask: NDArray[np.uint8],
+    matrix,
+    use_minima: bool = False,
+):
+    nx, ny, nz = labels.shape
+    
+    # Metric tensors
+    G = matrix @ matrix.T
+    inv_G = np.linalg.inv(G)
+    lam = np.linalg.eigvalsh(G)
+
+    lam_min = lam[0]
+    lam_max = lam[2]
+
+    frac_to_cart = np.sqrt(lam_max)
+    H_frac_to_cart = 1.0 / lam_min
+
+    # Voxel radius in Cartesian
+    r_voxel_cart = 0.5 * frac_to_cart
+    r_voxel_cart2 = r_voxel_cart * r_voxel_cart
+    
+    # get the points that may be saddles
+    saddle_coords = np.argwhere(edge_mask == 1)
+    
+    # first we check each point on the edge mask and determine if they are
+    # potential saddles
+    saddle_mask = np.zeros(len(saddle_coords), dtype=np.bool)
+    for saddle_idx in prange(len(saddle_coords)):
+        i, j, k = saddle_coords[saddle_idx]
+        # check if this might be a saddle point
+        if not is_ongrid_saddle(
+                data, 
+                i, j, k, 
+                nx, ny, nz, 
+                neighbor_transforms, 
+                edge_mask, 
+                use_minima,
+                ):
+            continue
+        # repeat with cubic spline
+        if not check_valid_newton_step(
+            (i,j,k),
+            data,
+            r_voxel_cart2,
+            inv_G,
+            H_frac_to_cart,
+            ):
+            continue
+        saddle_mask[saddle_idx] = True
+
+    # Now we reduce to the possible saddle points
+    saddle_indices = np.where(saddle_mask)[0]
+    saddle_coords = saddle_coords[saddle_indices]
+
+    # create an array to track connections between these points.
+    # For each entry we will have:
+    # 1: the lower label index
+    # 2: the higher label index
+    # 3: the connection image between basins
+    # 4: whether or not the connection image is lower -> higher (0) or higher -> lower (1)
+    saddle_connections = np.empty((len(saddle_coords), 4), dtype=np.int16)
+
+    max_val = np.iinfo(np.int16).max
+    for idx in prange(len(saddle_coords)):
+        i, j, k = saddle_coords[idx]
+        lower, higher, shift, is_reversed = (
+            get_extrema_saddle_connections(
+                i,
+                j,
+                k,
+                nx,
+                ny,
+                nz,
+                labels,
+                images,
+                neighbor_transforms,
+                max_val,
+            )
+        )
+        saddle_connections[idx, 0] = lower
+        saddle_connections[idx, 1] = higher
+        saddle_connections[idx, 2] = shift
+        saddle_connections[idx, 3] = is_reversed
+
+    return saddle_coords, saddle_connections
+
+
+

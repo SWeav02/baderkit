@@ -31,7 +31,6 @@ def dist(p1, p2):
     x1, y1, z1 = p2
     return get_norm(x1 - x, y1 - y, z1 - z)
 
-
 @njit(cache=True)
 def get_gradient_cart(i, j, k, data, dir2car):
     # dir2car = np.linalg.inv(row_matrix).T
