@@ -7,12 +7,12 @@ Created on Thu Feb 19 11:22:49 2026
 import numpy as np
 
 from baderkit.core import Bader, Grid
-from baderkit.core.critical_points import CriticalPoints
+from baderkit.core.critical_points.critical_points import CriticalPoints
 from baderkit.core.critical_points.hessian_based import find_saddle_points
 from baderkit.plotting.core import CriticalPointsPlotter
 
 bader = Bader.from_vasp(
-    reference_filename="ELFCAR",
+    reference_filename="CHGCAR",
     # method="ongrid",
     maxima_persistence_tol=0.01,
     minima_persistence_tol=0.005,

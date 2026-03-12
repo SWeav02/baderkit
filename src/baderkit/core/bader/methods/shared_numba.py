@@ -13,7 +13,7 @@ from baderkit.core.utilities.basic import (
     wrap_point,
     wrap_point_w_shift,
 )
-from baderkit.core.utilities.interpolation import linear_slice
+from baderkit.core.utilities.interpolation import linear_slice, refine_extrema
 from baderkit.core.utilities.persistence import (
     compute_wrap_offset,
     get_conn_vals,
@@ -436,6 +436,7 @@ def get_basin_edges(
 
     return edges
 
+
 @njit(inline="always", cache=True)
 def get_differing_neighs_thin(
     i,
@@ -480,12 +481,14 @@ def get_differing_neighs_thin(
         # skip points in the vacuum
         if vacuum_mask[ii, jj, kk]:
             continue
-        
+
         # skip points with a higher value
         if (
-            use_minima and data[ii,jj,kk]>value0
-            or not use_minima and data[ii,jj,kk]<value0
-            ):
+            use_minima
+            and data[ii, jj, kk] > value0
+            or not use_minima
+            and data[ii, jj, kk] < value0
+        ):
             continue
 
         # get the label and image of this neighbor
@@ -511,6 +514,7 @@ def get_differing_neighs_thin(
                 unique = 2
 
     return unique
+
 
 @njit(parallel=True, cache=True)
 def get_thin_basin_edges(
@@ -562,6 +566,7 @@ def get_thin_basin_edges(
 
     return edges
 
+
 @njit(cache=True)
 def get_neighboring_basin_surface_area(
     labeled_array: NDArray[np.int64],
@@ -611,7 +616,9 @@ def get_neighboring_basin_surface_area(
                 # get this voxels label
                 label = labeled_array[i, j, k]
                 # iterate over the neighboring voxels
-                for (si, sj, sk), area in zip(neighbor_transforms, neighbor_areas):
+                for (si, sj, sk), area in zip(
+                    neighbor_transforms, neighbor_areas
+                ):
                     # wrap points
                     ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
                     # get neighbors label
@@ -716,31 +723,77 @@ def get_extrema(
                     extrema[i, j, k] = True
     return extrema
 
-
 @njit(cache=True)
+def reorder_labels(
+    labels,
+    data,
+    extrema_vox,
+    extrema_labels,
+    extrema_values,
+    use_minima,
+        ):
+    nx, ny, nz = data.shape
+    ny_nz = ny*nz
+
+    roots = np.empty(len(extrema_vox), dtype=labels.dtype)
+    for ext_idx in range(len(extrema_vox)):
+        label = extrema_labels[ext_idx]
+        root = find_root(labels, label)
+        roots[ext_idx] = root
+
+    unique_roots = np.unique(roots)
+    groups = []
+    for root_label in unique_roots:
+        i, j, k = flat_to_coords(root_label, ny_nz, nz)
+        group = []
+        best_point = root_label
+        best_value = data[i, j, k]
+        for ext_idx, (label, ext_root) in enumerate(zip(extrema_labels, roots)):
+            if ext_root != root_label:
+                continue
+            group.append(label)
+            value = extrema_values[ext_idx]
+            label = extrema_labels[ext_idx]
+            if (
+                not use_minima
+                and value > best_value
+                or use_minima
+                and value < best_value
+                or value == best_value
+                and label < root_label
+            ):
+                best_point = label
+                best_value = value
+        for label in group:
+            labels[label] = best_point
+        groups.append(group)
+    return labels, groups
+
+# @njit(cache=True)
 def initialize_labels_from_extrema(
     data,
     labels,
-    extrema_frac,
     extrema_mask,
     neighbor_transforms,
     neighbor_dists,
     persistence_tol,
     method,
     matrix,
-    max_cart_offset=1,
+    max_cart_offset,
     use_minima=False,
 ):
-    nx, ny, nz = data.shape
+    shape = np.array(data.shape, dtype=np.int64)
+    nx, ny, nz = shape
     ny_nz = ny * nz
 
     extrema_vox = np.argwhere(extrema_mask)
+    extrema_frac = extrema_vox / shape
 
     # create an array to store values at each maximum
     extrema_values = np.empty(len(extrema_vox), dtype=np.float64)
     extrema_labels = np.empty(len(extrema_vox), dtype=np.int64)
 
-    # create a flat array of shifs for tracking wrapping around edges. These
+    # create a flat array of shifts for tracking wrapping around edges. These
     # will initially all be (0,0,0)
     images = np.zeros((nx * ny * nz, 3), dtype=np.int8)
 
@@ -754,7 +807,7 @@ def initialize_labels_from_extrema(
         labels[flat_ext_idx] = flat_ext_idx
 
     ###########################################################################
-    # 1. Combine low-persistence extrema
+    # 2. Combine low-persistence extrema
     ###########################################################################
     # With the right shape (e.g. highly anisotropic) a maximum/minimum may lay offgrid
     # and cause two ongrid points to appear to be higher than the region around
@@ -765,8 +818,8 @@ def initialize_labels_from_extrema(
         all_conn_neighs,
         all_conn_vals,
         all_conn_coords,
-        extrema_cart_coords,
         neigh_cart_coords,
+        cursor,
     ) = get_conn_vals(
         data,
         labels,
@@ -784,8 +837,8 @@ def initialize_labels_from_extrema(
         all_conn_neighs,
         all_conn_vals,
         all_conn_coords,
-        extrema_cart_coords,
         neigh_cart_coords,
+        cursor,
         labels,
         extrema_values,
         extrema_labels,
@@ -794,7 +847,7 @@ def initialize_labels_from_extrema(
     )
 
     ###########################################################################
-    # 2. Remove Flat False Maxima
+    # 3. Remove Flat False Maxima
     ###########################################################################
     # If there is a particularly flat region, a point might have neighbors that
     # are the same value. This point may be mislabeled as a maximum if these
@@ -845,58 +898,17 @@ def initialize_labels_from_extrema(
     ###########################################################################
     # Root finding
     ###########################################################################
+    # update labels to the highest valued point
+    labels, extrema_groups = reorder_labels(
+        labels,
+        data,
+        extrema_vox,
+        extrema_labels,
+        extrema_values,
+        use_minima,
+            )
 
-    # get each extremas root
-    extrema_roots = np.empty(len(extrema_labels), dtype=np.int64)
-    for ext_idx, ext_label in enumerate(extrema_labels):
-        root = find_root(labels, ext_label)
-        labels[ext_label] = root
-        extrema_roots[ext_idx] = root
-    unique_roots = np.unique(extrema_roots)
-
-    # group the maxima and set them to the highest member in their group
-    extrema_groups = []
-    root_extrema = []
-
-    for root_label in unique_roots:
-        i, j, k = flat_to_coords(root_label, ny_nz, nz)
-        group = []
-        group_labels = []
-        best_point = root_label
-        best_value = data[i, j, k]
-        for ext_idx, ext_root in enumerate(extrema_roots):
-            if ext_root == root_label:
-                # add to group
-                label = extrema_labels[ext_idx]
-                group_labels.append(label)
-                # check if the value of this point is higher/lower
-                ii, jj, kk = flat_to_coords(label, ny_nz, nz)
-                group.append(np.array((ii, jj, kk), dtype=np.int16))
-                value = data[ii, jj, kk]
-                if (
-                    not use_minima
-                    and value > best_value
-                    or use_minima
-                    and value < best_value
-                    or value == best_value
-                    and label < root_label
-                ):
-                    best_point = label
-                    best_value = value
-        # relabel each point in the group
-        for label in group_labels:
-            labels[label] = best_point
-        # add group
-        group_array = np.empty((len(group), 3), dtype=np.int16)
-        for idx, array in enumerate(group):
-            group_array[idx] = array
-        extrema_groups.append(group_array)
-        # find the ext_idx of the best point
-        root_idx = np.searchsorted(extrema_labels, best_point)
-        root_extrema.append(root_idx)
-    root_extrema = np.array(root_extrema, np.uint32)
-
-    # Update roots again, and note the images each grouped maximum must cross
+    # Find the images each grouped maximum must cross to reach its parent
     for ext_idx, ext_label in enumerate(extrema_labels):
         root = labels[ext_label]
         # get fractional coordinates
@@ -904,8 +916,11 @@ def initialize_labels_from_extrema(
         root_idx = np.searchsorted(extrema_labels, root)
         root_frac = extrema_frac[root_idx]
         # get best image to wrap the maxima to its root
-        images[extrema_labels[ext_idx]] = compute_wrap_offset(ext_frac, root_frac)
+        images[extrema_labels[ext_idx]] = compute_wrap_offset(
+            ext_frac, root_frac
+        )
 
+    root_extrema = np.where(labels[extrema_labels]==extrema_labels)[0]
     extrema_coords = extrema_vox[root_extrema]
     extrema_frac = extrema_frac[root_extrema]
 
@@ -915,7 +930,7 @@ def initialize_labels_from_extrema(
         extrema_coords,
         extrema_frac,
         extrema_groups,
-    )  # , persistence_cutoffs
+    )
 
 
 @njit(cache=True)

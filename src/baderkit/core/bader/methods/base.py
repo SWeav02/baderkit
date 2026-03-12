@@ -16,9 +16,11 @@ from baderkit.core.utilities.interpolation import (
     refine_extrema,
 )
 from baderkit.core.utilities.persistence import (
-    get_canonical_saddle_connections,
+    get_saddles_from_basins,
+    remove_false_saddles,
     get_single_point_saddles,
     group_by_persistence,
+    check_valid_newton_step,
 )
 
 from .shared_numba import (  # combine_neigh_extrema,; get_neighboring_basin_connections_w_images,; get_edges_w_images,
@@ -132,20 +134,9 @@ class MethodBase:
         )
 
         # get ongrid extrema
-        extrema_vox = self.extrema_vox
-        # refine to closest nearby extrema. This helps with ensuring proper
-        # initialization
-        extrema_frac = extrema_vox / self.reference_grid.shape
-        if self.use_minima:
-            target_index = 0
-        else:
-            target_index = 3
-        extrema_frac, _ = refine_critical_points(
-            points=extrema_frac,
-            data=self.reference_grid.total,
-            target_index=target_index,
-        )
+        # extrema_vox = self.extrema_vox
 
+        # extrema_frac = extrema_vox / self.reference_grid.shape
         # initialize our labels, combining false extrema
         logging.info("Initializing Labels")
         t0 = time.time()
@@ -158,16 +149,16 @@ class MethodBase:
         ) = initialize_labels_from_extrema(
             labels=labels,
             data=self.reference_grid.total,
-            extrema_frac=extrema_frac,
             extrema_mask=self.extrema_mask,
             neighbor_transforms=neighbor_transforms,
             neighbor_dists=neighbor_dists,
             persistence_tol=self.persistence_tol,
             use_minima=self.use_minima,
             matrix=self.reference_grid.matrix,
-            method="linear",
+            method="nearest",
+            max_cart_offset=0.25,
         )
-
+        print(len(self.extrema_vox))
         t1 = time.time()
         logging.info("Initialization Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -190,15 +181,33 @@ class MethodBase:
         # Now we want to combine any remaining noisy extrema based on their
         # persistence.
         logging.info("Combining Low-Persistence Basins")
-        
+
         # get saddle locations and values
         saddle_connections, saddle_coords, saddle_values = (
             self.get_saddle_connections(labels, images)
         )
-        breakpoint()
+
+        # get unique connections
+        temp_connections = np.sort(saddle_connections[:,:2], axis=1)
+        _, indices, inverse = np.unique(
+            temp_connections,
+            axis=0,
+            return_inverse=True,
+            return_index=True,
+            )
+        unique_connections = saddle_connections[indices]
+
+        best_vals, best_indices = get_single_point_saddles(
+            connection_values=saddle_values,
+            connection_indices=inverse,
+            initial_indices=indices,
+            num_connections=len(unique_connections),
+            )
+        best_connections = saddle_connections[best_indices]
+        best_coords = saddle_coords[best_indices]
 
         # get saddle coords in cartesian coordinates
-        saddle_cart = self.reference_grid.grid_to_cart(saddle_coords)
+        saddle_cart = self.reference_grid.grid_to_cart(best_coords)
         # get extrema unions based on persistence and update lowest persistence
         # values for extrema
         (
@@ -207,9 +216,9 @@ class MethodBase:
         ) = group_by_persistence(
             data=self.reference_grid.total,
             critical_vox=self.extrema_vox,
-            basin_connections=saddle_connections,
-            saddle_values=saddle_values,
-            saddle_cart=saddle_cart,
+            basin_connections=best_connections,
+            saddle_values=best_vals,
+            saddle_carts=saddle_cart,
             persistence_tol=self.persistence_tol,
             use_minima=self.use_minima,
             matrix=self.reference_grid.matrix,
@@ -236,7 +245,6 @@ class MethodBase:
         extrema_groups = [self.extrema_groups[i] for i in final_extrema]
         extrema_vox = self.extrema_vox[final_extrema]
 
-        # persistence_cutoffs = persistence_cutoffs[final_extrema]
         final_charges = charges[final_extrema]
         final_volumes = volumes[final_extrema]
 
@@ -268,15 +276,16 @@ class MethodBase:
             image_map=root_transforms,
             vacuum_mask=self.vacuum_mask,
         )
+
         # save final results
         self._extrema_vox = extrema_vox
         self._extrema_groups = extrema_groups
         # persistence_cutoffs = persistence_cutoffs[final_extrema]
 
-        if self.use_minima:
-            logging.info("Refining Minima")
-        else:
-            logging.info("Refining Maxima")
+        # if self.use_minima:
+        #     logging.info("Refining Minima")
+        # else:
+        #     logging.info("Refining Maxima")
 
         # todo: interpolate this instead?
         extrema_values = self.reference_grid.total[
@@ -285,33 +294,42 @@ class MethodBase:
             self.extrema_vox[:, 2],
         ]
         # refine extrema using a newton refinement
-        extrema_vox = refine_extrema(
-            extrema_coords=self.extrema_vox,
-            data=self.reference_grid.total,
+        # extrema_vox = refine_extrema(
+        #     extrema_coords=self.extrema_vox,
+        #     data=self.reference_grid.total,
+        #     use_minima=self.use_minima,
+        # )
+
+        # # get shifts
+        # extrema_vox_rounded = np.round(extrema_vox)
+        # shifts = extrema_vox_rounded // self.reference_grid.shape
+
+        # extrema_frac = self.reference_grid.grid_to_frac(extrema_vox) - shifts
+
+        # self._extrema_vox = extrema_vox_rounded % self.reference_grid.shape
+        # self._extrema_frac = extrema_frac
+
+        # # update images one last time for any shifts
+        # nonzero_shifts = np.max(np.abs(shifts), axis=1) > 0
+        # if np.any(nonzero_shifts):
+        #     images = update_final_images(
+        #         labels=labels,
+        #         images=images,
+        #         image_map=-shifts,
+        #         important_mask=nonzero_shifts,
+        #         vacuum_mask=self.vacuum_mask,
+        #     )
+
+        # update saddles
+        saddle_coords, saddle_connections = remove_false_saddles(
+            saddle_coords,
             labels=labels,
-            lattice=self.reference_grid.matrix,
-            use_minima=self.use_minima,
-        )
-
-        # get shifts
-        extrema_vox_rounded = np.round(extrema_vox)
-        shifts = extrema_vox_rounded // self.reference_grid.shape
-
-        extrema_frac = self.reference_grid.grid_to_frac(extrema_vox) - shifts
-
-        self._extrema_vox = extrema_vox_rounded % self.reference_grid.shape
-        self._extrema_frac = extrema_frac
-
-        # update images one last time for any shifts
-        nonzero_shifts = np.max(np.abs(shifts), axis=1) > 0
-        if np.any(nonzero_shifts):
-            images = update_final_images(
-                labels=labels,
-                images=images,
-                image_map=-shifts,
-                important_mask=nonzero_shifts,
-                vacuum_mask=self.vacuum_mask,
+            images=images,
+            data=self.reference_grid.total,
+            neighbor_transforms=neighbor_transforms,
+            matrix=self.reference_grid.matrix,
             )
+        saddle_type = 1 if self.use_minima else 2
 
         results.update(
             {
@@ -323,7 +341,8 @@ class MethodBase:
                 "extrema_voxel_groups": self.extrema_groups,
                 "extrema_frac": self.extrema_frac,
                 "extrema_ref_values": extrema_values,
-                # "extrema_persistence_values": persistence_cutoffs,
+                f"saddle{saddle_type}_coords": saddle_coords,
+                f"saddle{saddle_type}_connections": saddle_connections,
             }
         )
         return results
@@ -584,23 +603,23 @@ class MethodBase:
             use_minima=self.use_minima,
         )
 
-        saddle_coords, saddle_connections = (
-            get_canonical_saddle_connections(
-                labels=labels,
-                images=images,
-                data=self.reference_grid.total,
-                neighbor_transforms=neighbor_transforms,
-                edge_mask=edge_mask,
-                matrix=self.reference_grid.matrix,
-                use_minima=self.use_minima,
-            )
+        # get saddles
+        saddle_coords, saddle_connections = get_saddles_from_basins(
+            labels=labels,
+            images=images,
+            data=self.reference_grid.total,
+            neighbor_transforms=neighbor_transforms,
+            edge_mask=edge_mask,
+            use_minima=self.use_minima,
         )
-        breakpoint()
-        # next:
-            # refine saddle points and values
-            # get persistence
 
-        return saddle_connections, saddle_coords
+        saddle_values = self.reference_grid.total[
+            saddle_coords[:,0],
+            saddle_coords[:,1],
+            saddle_coords[:,2],
+            ]
+
+        return saddle_connections, saddle_coords, saddle_values
 
     def copy(self) -> Self:
         """
