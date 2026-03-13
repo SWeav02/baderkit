@@ -113,6 +113,8 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     p1_dist = dist(p1, p_conn)
     p2_dist = dist(p2, p_conn)
     distance = p1_dist + p2_dist
+    if distance == 0:
+        return 0.0
 
     # get approximate average value between extrema
     avg = (
@@ -245,8 +247,8 @@ def reduce_by_conn(
 
                         neighbors[neigh_idx, idx] = neigh_idx1
                         values[neigh_idx, idx] = val
-                        conn_coords[neigh_idx, idx] = neigh_coord
-                        neigh_coords[neigh_idx, idx] = coord
+                        conn_coords[neigh_idx, idx] = coord
+                        neigh_coords[neigh_idx, idx] = neigh_coord1
 
                         cursor[neigh_idx] += 1
 
@@ -321,6 +323,7 @@ def get_conn_vals(
 ):
     nx, ny, nz = data.shape
     extrema_cart = extrema_frac @ matrix
+
     # get the number of neighbors for each point
     counts = np.zeros(len(extrema_frac), dtype=np.int64)
     num_extrema = len(extrema_values)
@@ -336,6 +339,7 @@ def get_conn_vals(
             if (
                 use_minima and neigh_ext_value > ext_value
                 or not use_minima and neigh_ext_value < ext_value
+                or neigh_ext_value == ext_value and neigh_ext_idx < ext_idx
                     ):
                 continue
 
@@ -373,6 +377,7 @@ def get_conn_vals(
             if (
                 use_minima and neigh_ext_value > ext_value
                 or not use_minima and neigh_ext_value < ext_value
+                or neigh_ext_value == ext_value and neigh_ext_idx < ext_idx
                     ):
                 continue
             # get neighbor frac coord
@@ -382,7 +387,7 @@ def get_conn_vals(
             neigh_cart = wrapped_neigh_frac @ matrix
             offset = neigh_cart - ext_cart
 
-            dist = np.linalg.norm(neigh_cart-ext_cart)
+            dist = np.linalg.norm(offset)
             if dist > max_cart_offset:
                 continue
 
@@ -403,7 +408,6 @@ def get_conn_vals(
             if conn_val == np.inf:
                 continue
 
-            neigh_ext_value = extrema_values[neigh_ext_idx]
             conn_cart = ext_cart + offset/2
 
             # get persistence
@@ -415,6 +419,7 @@ def get_conn_vals(
                 neigh_cart,
                 conn_cart
             )
+
             # add low persistence to our list
             if persistence_score < persistence_tol:
                 neigh_count = cursor[ext_idx]

@@ -158,7 +158,6 @@ class MethodBase:
             method="nearest",
             max_cart_offset=0.25,
         )
-        print(len(self.extrema_vox))
         t1 = time.time()
         logging.info("Initialization Complete")
         logging.info(f"Time: {round(t1-t0,2)}")

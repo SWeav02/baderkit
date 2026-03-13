@@ -769,7 +769,7 @@ def reorder_labels(
         groups.append(group)
     return labels, groups
 
-# @njit(cache=True)
+@njit(cache=True)
 def initialize_labels_from_extrema(
     data,
     labels,
