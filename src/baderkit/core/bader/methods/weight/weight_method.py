@@ -15,7 +15,7 @@ from .weight_numba import (  # reduce_charge_volume,; get_labels,
 
 class WeightMethod(MethodBase):
 
-    def _run_bader(self, labels, images):
+    def _run_bader(self):
         """
         Assigns basin weights to each voxel and assigns charge using
         the weight method:
@@ -30,6 +30,8 @@ class WeightMethod(MethodBase):
         """
         reference_grid = self.reference_grid
         charge_grid = self.charge_grid
+        labels = self.labels
+        images = self.images
         reference_data = reference_grid.total
         charge_data = charge_grid.total
         shape = reference_grid.shape
@@ -101,15 +103,11 @@ class WeightMethod(MethodBase):
         # condense images
         images = self.condense_images(images)
         images = images.reshape(shape)
-        # assign all values
-        results = {
-            "extrema_basin_labels": labels,
-            "extrema_basin_images": images,
-            "basin_charges": charges,
-            "basin_volumes": volumes,
-            "vacuum_charge": self.charge_grid.total[self.vacuum_mask].sum()
-            / shape.prod(),
-            "vacuum_volume": (self.num_vacuum / reference_grid.ngridpts)
-            * reference_grid.structure.volume,
-        }
-        return results
+
+        # set results
+        self._labels = labels
+        self._images = images
+        self._charges = charges
+        self._volumes = volumes
+        self._vacuum_charge = self.charge_grid.total[self.vacuum_mask].sum() / shape.prod()
+        self._vacuum_volume = (self.num_vacuum / reference_grid.ngridpts) * reference_grid.structure.volume,

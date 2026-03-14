@@ -5,7 +5,7 @@ import logging
 import numpy as np
 
 from baderkit.core.bader.methods.base import MethodBase
-from baderkit.core.bader.methods.shared_numba import get_edges
+from baderkit.core.utilities.basins import get_edges
 from baderkit.core.utilities.basic import get_lowest_int, get_lowest_uint
 
 from .neargrid_numba import (
@@ -19,7 +19,7 @@ class NeargridMethod(MethodBase):
 
     _use_overdetermined = False
 
-    def _run_bader(self, labels, images):
+    def _run_bader(self):
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
@@ -34,6 +34,8 @@ class NeargridMethod(MethodBase):
         """
         reference_grid = self.reference_grid
         reference_data = reference_grid.total
+        labels = self.labels
+        images = self.images
         shape = reference_grid.shape
         # get neigbhor transforms
         neighbor_transforms, neighbor_dists = reference_grid.point_neighbor_transforms
@@ -126,12 +128,10 @@ class NeargridMethod(MethodBase):
         # condense images
         images = self.condense_images(images)
         images = images.reshape(shape)
-        # get all results
-        results = {
-            "extrema_basin_labels": labels,
-            "extrema_basin_images": images,
-        }
+        # set all results
+        self._labels = labels
+        self._images = images
+
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")
-        results.update(self.get_basin_charges_and_volumes(labels))
-        return results
+        self.get_basin_charges_and_volumes(labels)

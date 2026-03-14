@@ -10,7 +10,7 @@ from numpy.typing import NDArray
 from pymatgen.analysis.local_env import CrystalNN
 
 from baderkit.core import Bader, Grid, Structure
-from baderkit.core.bader.methods.shared_numba import get_edges
+from baderkit.core.utilities.basins import get_edges
 from baderkit.core.base.base_analysis import BaseAnalysis
 
 from .enum_and_styling import LINE_COLOR, DomainSubtype, FeatureType

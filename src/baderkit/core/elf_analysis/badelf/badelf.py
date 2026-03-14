@@ -13,7 +13,7 @@ from pymatgen.io.vasp import Potcar
 from scipy.ndimage import label
 from tqdm import tqdm
 
-from baderkit.core.bader.methods.shared_numba import (
+from baderkit.core.utilities.basins import (
     get_edges,
     get_min_avg_surface_dists,
 )

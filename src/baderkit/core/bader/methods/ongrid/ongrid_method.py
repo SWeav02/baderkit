@@ -12,7 +12,7 @@ from .ongrid_numba import get_steepest_pointers
 
 class OngridMethod(MethodBase):
 
-    def _run_bader(self, labels, images):
+    def _run_bader(self):
         """
         Assigns voxels to basins and calculates charge using the on-grid
         method:
@@ -27,6 +27,8 @@ class OngridMethod(MethodBase):
         """
         grid = self.reference_grid
         data = grid.total
+        labels = self.labels
+        images = self.images
         shape = data.shape
         # get images to move from a voxel to the 26 surrounding voxels
         neighbor_transforms, neighbor_dists = grid.point_neighbor_transforms
@@ -59,12 +61,10 @@ class OngridMethod(MethodBase):
         labels = labels.reshape(shape)
         images = images.reshape(shape)
 
-        # assign all results
-        results = {
-            "extrema_basin_labels": labels,
-            "extrema_basin_images": images,
-        }
+        # set all results
+        self._labels = labels
+        self._images = images
+
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")
-        results.update(self.get_basin_charges_and_volumes(labels))
-        return results
+        self.get_basin_charges_and_volumes(labels)

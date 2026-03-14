@@ -7,10 +7,7 @@ from numpy.typing import NDArray
 
 from baderkit.core.utilities.basic import coords_to_flat, get_norm, wrap_point_w_shift
 from baderkit.core.utilities.interpolation import (
-    newton_refine_critical,
     spline_grad_and_hess,
-    spline_grad_cart,
-    spline_hess_cart,
 )
 
 IMAGE_TO_INT = np.empty([3, 3, 3], dtype=np.int64)
@@ -396,21 +393,7 @@ def cartesian_grad_norm2(g, inv_G):
     )
 
 
-@njit(fastmath=True)
-def compute_signature(H, eig_rel_tol):
-    evals, _ = np.linalg.eigh(H)
 
-    tol = eig_rel_tol * np.max(np.abs(evals))
-
-    n_neg = 0
-    n_flat = 0
-    for i in evals:
-        if i < -tol:
-            n_neg += 1
-        elif abs(i) < tol:
-            n_flat += 1
-
-    return n_neg, n_flat
 
 
 @njit(fastmath=True)
@@ -460,20 +443,10 @@ def modified_hessian(H, g_norm, Q, g, lambda0, grad_tol):
     return H_mod, evals, Q, g_proj
 
 
-@njit(fastmath=True)
-def clamp_step(dx, max_step):
-    step_norm = get_norm(dx[0], dx[1], dx[2])
-    if step_norm < 1e-8:
-        return dx, False
-
-    scale = min(1.0, max_step / (step_norm + 1e-12))
-    scale = scale**0.5
-    return dx * scale, True
 
 
-@njit(fastmath=True)
-def outside_voxel(coord, vmin, vmax):
-    return np.any(coord < vmin) or np.any(coord > vmax)
+
+
 
 
 @njit(cache=True)
@@ -495,56 +468,6 @@ def flat_aware_newton_step(
     return dx
 
 
-@njit(fastmath=True)
-def newton_refine_in_voxel(
-    coord,
-    data,
-    inv_G,
-    max_change,
-    max_iter,
-    grad_tol,
-    h,
-    eig_rel_tol,
-):
-    nx, ny, nz = data.shape
-    max_step = 0.25 * min(nx, ny, nz)
-
-    # make sure our coord is a float
-    coord = coord.astype(np.float64)
-
-    voxel_min = coord - max_change
-    voxel_max = coord + max_change
-
-    converged = False
-
-    for _ in range(max_iter):
-        # get gradient and hessian at this point
-        g, H = spline_grad_and_hess(coord, data, h)
-
-        # get step
-        dx = flat_aware_newton_step(g, H, eig_rel_tol)
-
-        # check for convergence
-        if np.linalg.norm(dx) < grad_tol:
-            converged = True
-            break
-
-        # enforce small step size
-        dx, ok = clamp_step(dx, max_step)
-        if not ok:
-            break
-
-        # update coord
-        coord = coord + dx
-
-        # check if we exit the allowed distance
-        if outside_voxel(coord, voxel_min, voxel_max):
-            break
-
-    # final classification
-    morse_index, n_flat = compute_signature(H, eig_rel_tol)
-
-    return coord, converged, morse_index
 
 
 ###############################################################################

@@ -47,7 +47,12 @@ class StructurePlotter(VtkPlotter):
         self._wrap_atoms = wrap_atoms
         self._atom_metallicness = atom_metallicness
         self._radii_scale = radii_scale
-        self._atom_radii = np.array([s.specie.atomic_radius for s in structure])
+        radii = []
+        for s in structure:
+            try: radius = s.specie.atomic_radius
+            except: radius = 1.0
+            radii.append(radius)
+        self._atom_radii = np.array(radii)
         self._atom_colors = np.array(
             [ATOM_COLORS.get(s.specie.symbol, (1.00, 1.00, 1.00)) for s in structure]
         )

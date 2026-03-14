@@ -77,74 +77,54 @@ def mutiple_dists(p1s, p2s):
         dists[idx] = dist(p1s[idx], p2s[idx])
     return dists
 
+@njit(inline="always", cache=True)
+def wrap_point(i, j, k, nx, ny, nz):
 
-@njit(cache=True, inline="always")
-def wrap_point(
-    i: np.int64, j: np.int64, k: np.int64, nx: np.int64, ny: np.int64, nz: np.int64
-) -> tuple[np.int64, np.int64, np.int64]:
-    """
-    Wraps a 3D point (i, j, k) into the periodic bounds defined by the grid dimensions (nx, ny, nz).
-
-    If any of the input coordinates are outside the bounds [0, nx), [0, ny), or [0, nz),
-    they are wrapped around using periodic boundary conditions.
-
-    Parameters
-    ----------
-    i : np.int64
-        x-index of the point.
-    j : np.int64
-        y-index of the point.
-    k : np.int64
-        z-index of the point.
-    nx : np.int64
-        Number of grid points along x-direction.
-    ny : np.int64
-        Number of grid points along y-direction.
-    nz : np.int64
-        Number of grid points along z-direction.
-
-    Returns
-    -------
-    tuple[np.int64, np.int64, np.int64]
-        The wrapped (i, j, k) indices within the bounds.
-    """
-    if i >= nx:
-        i -= nx
-    elif i < 0:
+    if i < 0:
         i += nx
-    if j >= ny:
-        j -= ny
-    elif j < 0:
-        j += ny
-    if k >= nz:
-        k -= nz
-    elif k < 0:
-        k += nz
-    return i, j, k
+    elif i >= nx:
+        i -= nx
 
+    if j < 0:
+        j += ny
+    elif j >= ny:
+        j -= ny
+
+    if k < 0:
+        k += nz
+    elif k >= nz:
+        k -= nz
+
+    return i, j, k
 
 @njit(inline="always", cache=True)
 def wrap_point_w_shift(i, j, k, nx, ny, nz):
 
-    si, sj, sk = (0, 0, 0)
-    if i >= nx:
-        i -= nx
-        si = 1
-    elif i < 0:
+    si = 0
+    sj = 0
+    sk = 0
+
+    if i < 0:
         i += nx
         si = -1
-    if j >= ny:
-        j -= ny
-        sj = 1
-    elif j < 0:
+    elif i >= nx:
+        i -= nx
+        si = 1
+
+    if j < 0:
         j += ny
         sj = -1
-    if k >= nz:
-        k -= nz
-        sk = 1
-    elif k < 0:
+    elif j >= ny:
+        j -= ny
+        sj = 1
+
+    if k < 0:
         k += nz
         sk = -1
+    elif k >= nz:
+        k -= nz
+        sk = 1
+
     return i, j, k, si, sj, sk
 
 
@@ -340,6 +320,32 @@ def get_transforms_in_radius(
     dists = dists[sorted_indices]
     return offsets, dists
 
+@njit(cache=True)
+def compute_wrap_offset(point1, point2):
+    """
+    Computes wrap from point1 to point2
+
+    """
+    best_d2 = np.inf
+    best_i = 0
+    best_j = 0
+    best_k = 0
+
+    for i in (-1, 0, 1):
+        for j in (-1, 0, 1):
+            for k in (-1, 0, 1):
+                dx = (point2[0] + i) - point1[0]
+                dy = (point2[1] + j) - point1[1]
+                dz = (point2[2] + k) - point1[2]
+                d2 = dx * dx + dy * dy + dz * dz
+
+                if d2 < best_d2:
+                    best_d2 = d2
+                    best_i = i
+                    best_j = j
+                    best_k = k
+
+    return best_i, best_j, best_k
 
 @njit(cache=True)
 def get_ongrid_gradient_cart(i, j, k, data, dir2car):

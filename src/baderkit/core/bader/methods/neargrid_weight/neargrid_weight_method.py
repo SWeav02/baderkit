@@ -10,7 +10,7 @@ from baderkit.core.bader.methods.neargrid.neargrid_numba import (
     get_gradient_pointers_simple,
     refine_fast_neargrid,
 )
-from baderkit.core.bader.methods.shared_numba import get_edges
+from baderkit.core.utilities.basins import get_edges
 from baderkit.core.utilities.basic import get_lowest_int, get_lowest_uint
 
 from .neargrid_weight_numba import (
@@ -23,7 +23,7 @@ class NeargridWeightMethod(MethodBase):
 
     _use_overdetermined = False
 
-    def _run_bader(self, labels, images):
+    def _run_bader(self):
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
@@ -38,6 +38,8 @@ class NeargridWeightMethod(MethodBase):
         """
         reference_grid = self.reference_grid
         charge_grid = self.charge_grid
+        labels = self.labels
+        images = self.images
         reference_data = reference_grid.total
         charge_data = charge_grid.total
         shape = reference_grid.shape
@@ -189,13 +191,10 @@ class NeargridWeightMethod(MethodBase):
         volumes = volumes * reference_grid.structure.volume / reference_grid.ngridpts
         charges = charges / reference_grid.ngridpts
 
-        # get all results
-        results = {
-            "extrema_basin_labels": labels,
-            "basin_charges": charges,
-            "basin_volumes": volumes,
-            "vacuum_charge": vacuum_charge,
-            "vacuum_volume": vacuum_volume,
-            "extrema_basin_images": images,
-        }
-        return results
+        # set results
+        self._labels = labels
+        self._images = images
+        self._charges = charges
+        self._volumes = volumes
+        self._vacuum_charge = vacuum_charge
+        self._vacuum_volume = vacuum_volume

@@ -4,7 +4,7 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.bader.methods.shared_numba import get_best_neighbor_with_shift
+from baderkit.core.utilities.basins import get_best_neighbor_with_shift
 from baderkit.core.utilities.basic import coords_to_flat, wrap_point, wrap_point_w_shift
 
 

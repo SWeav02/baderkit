@@ -22,7 +22,7 @@ from baderkit.core.utilities.persistence import (
 )
 
 from .methods import Method
-from .methods.shared_numba import (
+from baderkit.core.utilities.basins import (
     get_edges,
     get_min_avg_surface_dists,
     get_neighboring_basin_surface_area,
@@ -92,9 +92,9 @@ class Bader(BaseAnalysis):
         "maxima_basin_labels",
         "maxima_basin_images",
         "maxima_frac",
-        "maxima_vox",
         "maxima_cart",
-        "maxima_voxel_groups",
+        "maxima_vox",
+        "ongrid_maxima_groups",
         "maxima_charge_values",
         "maxima_ref_values",
         "maxima_persistence_values",
@@ -104,12 +104,23 @@ class Bader(BaseAnalysis):
         "minima_basin_labels",
         "minima_basin_images",
         "minima_frac",
-        "minima_vox",
         "minima_cart",
-        "minima_voxel_groups",
+        "minima_vox",
+        "ongrid_minima_groups",
         "minima_charge_values",
         "minima_ref_values",
         "minima_persistence_values",
+        # saddle props
+        "saddle1_frac",
+        "saddle1_cart",
+        "saddle1_vox",
+        "saddle2_frac",
+        "saddle2_cart",
+        "saddle2_vox",
+        "saddle1_ref_values",
+        "saddle2_ref_values",
+        "saddle1_connections",
+        "saddle2_connections",
         # Assigned by calling the property
         "basin_min_surface_distances",
         "basin_avg_surface_distances",
@@ -334,6 +345,20 @@ class Bader(BaseAnalysis):
         return self._maxima_basin_images
 
     @property
+    def maxima_vox(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The grid coordinates of each attractor.
+
+        """
+        if self._maxima_vox is None:
+            self._run_bader()
+        return self._maxima_vox
+
+    @property
     def maxima_frac(self) -> NDArray[float]:
         """
 
@@ -346,53 +371,6 @@ class Bader(BaseAnalysis):
         if self._maxima_frac is None:
             self._run_bader()
         return self._maxima_frac
-
-    @property
-    def maxima_charge_values(self) -> NDArray[float]:
-        """
-
-        Returns
-        -------
-        NDArray[float]
-            The charge data value at each maximum. If the maximum is
-            off grid, this value will be interpolated.
-
-        """
-        # TODO: change this to quadratic fit to match reference value method
-        if self._maxima_charge_values is None:
-            self._maxima_charge_values = self.charge_grid.values_at(self.maxima_frac)
-        return self._maxima_charge_values.round(10)
-
-    @property
-    def maxima_ref_values(self) -> NDArray[float]:
-        """
-
-        Returns
-        -------
-        NDArray[float]
-            The reference data value at each maximum. If the maximum is
-            off grid, this value will be interpolated.
-
-        """
-        if self._maxima_ref_values is None:
-            # we get these values during each bader method anyways, so
-            # we run this here.
-            self._run_bader()
-        return self._maxima_ref_values
-
-    @property
-    def maxima_vox(self) -> NDArray[int]:
-        """
-
-        Returns
-        -------
-        NDArray[int]
-            The voxel coordinates of each attractor.
-
-        """
-        if self._maxima_vox is None:
-            self._run_bader()
-        return self._maxima_vox
 
     @property
     def maxima_cart(self) -> NDArray[float]:
@@ -409,7 +387,46 @@ class Bader(BaseAnalysis):
         return self._maxima_vox
 
     @property
-    def maxima_voxel_groups(self) -> NDArray[int]:
+    def maxima_charge_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The charge data value at each maximum.
+
+        """
+        if self._maxima_charge_values is None:
+            self._maxima_charge_values = self.charge_grid.total[
+                self.maxima_vox[:,0],
+                self.maxima_vox[:,1],
+                self.maxima_vox[:,2],
+                ]
+        return self._maxima_charge_values.round(10)
+
+    @property
+    def maxima_ref_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The reference data value at each maximum. If the maximum is
+            off grid, this value will be interpolated.
+
+        """
+        if self._maxima_ref_values is None:
+            # we get these values during each bader method anyways, so
+            # we run this here.
+            self._maxima_ref_values = self.reference_grid.total[
+                self.maxima_vox[:,0],
+                self.maxima_vox[:,1],
+                self.maxima_vox[:,2],
+                ]
+        return self._maxima_ref_values
+
+    @property
+    def ongrid_maxima_groups(self) -> NDArray[int]:
         """
 
         Returns
@@ -425,9 +442,9 @@ class Bader(BaseAnalysis):
             point. This also provides some indication of these maxima.
 
         """
-        if self._maxima_voxel_groups is None:
+        if self._ongrid_maxima_groups is None:
             self._run_bader()
-        return self._maxima_voxel_groups
+        return self._ongrid_maxima_groups
 
     @property
     def maxima_persistence_values(self) -> NDArray[int]:
@@ -437,14 +454,14 @@ class Bader(BaseAnalysis):
         -------
         NDArray[int]
             Each maxima may have been combined with several voxelated maxima
-            (see maxima_voxel_groups). For each maxima group, this  is the
+            (see ongrid_maxima_groups). For each maxima group, this  is the
             lowest value at which all of the maxima in the group are topologically
             connected if one takes the all voxels at or above that value
         """
         if self._maxima_persistence_values is None:
             # get groups
             tol = max(self.maxima_persistence_tol, 0)
-            maxima_groups = self.maxima_voxel_groups
+            maxima_groups = self.ongrid_maxima_groups
             maxima_values = self.maxima_ref_values
             # get the lowest value that the maximum would connect to with the
             # current persistence tol
@@ -656,6 +673,20 @@ class Bader(BaseAnalysis):
         return self._minima_basin_images
 
     @property
+    def minima_vox(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The grid coordinates of each local minimum.
+
+        """
+        if self._minima_vox is None:
+            self._run_minima_bader()
+        return self._minima_vox
+
+    @property
     def minima_frac(self) -> NDArray[float]:
         """
 
@@ -708,9 +739,13 @@ class Bader(BaseAnalysis):
             off grid, this value will be interpolated.
 
         """
-        # TODO: change this to quadratic fit to match reference value method
+
         if self._minima_charge_values is None:
-            self._minima_charge_values = self.charge_grid.values_at(self.minima_frac)
+            self._minima_charge_values = self.charge_grid.total[
+                self.minima_vox[:,0],
+                self.minima_vox[:,1],
+                self.minima_vox[:,2],
+                ]
         return self._minima_charge_values.round(10)
 
     @property
@@ -725,13 +760,15 @@ class Bader(BaseAnalysis):
 
         """
         if self._minima_ref_values is None:
-            # we get these values during each bader method anyways, so
-            # we run this here.
-            self._run_minima_bader()
+            self._minima_ref_values = self.reference_grid.total[
+                self.minima_vox[:,0],
+                self.minima_vox[:,1],
+                self.minima_vox[:,2],
+                ]
         return self._minima_ref_values.round(10)
 
     @property
-    def minima_voxel_groups(self) -> NDArray[int]:
+    def ongrid_minima_groups(self) -> NDArray[int]:
         """
 
         Returns
@@ -747,9 +784,9 @@ class Bader(BaseAnalysis):
             point. This also provides some indication of these minima.
 
         """
-        if self._minima_voxel_groups is None:
+        if self._ongrid_minima_groups is None:
             self._run_minima_bader()
-        return self._minima_voxel_groups
+        return self._ongrid_minima_groups
 
     @property
     def minima_persistence_values(self) -> NDArray[int]:
@@ -759,7 +796,7 @@ class Bader(BaseAnalysis):
         -------
         NDArray[int]
             Each minima may have been combined with several voxelated minima
-            (see minima_voxel_groups). For each minima group, this  is the
+            (see ongrid_minima_groups). For each minima group, this  is the
             highest value at which all of the minima in the group are topologically
             connected if one takes the all voxels at or below that value
         """
@@ -767,7 +804,7 @@ class Bader(BaseAnalysis):
             tol = max(self.minima_persistence_tol, 0)
             # self._run_minima_bader()
             # get groups
-            minima_groups = self.minima_voxel_groups
+            minima_groups = self.ongrid_minima_groups
             minima_values = self.minima_ref_values
             # get the lowest value that the maximum would connect to with the
             # current persistence tol
@@ -820,6 +857,170 @@ class Bader(BaseAnalysis):
                 "structure",
             ]
         )
+
+    ###########################################################################
+    # Saddle Properties
+    ###########################################################################
+
+    @property
+    def saddle1_vox(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Grid coordinates of the type 1 saddles found in the system
+
+        """
+        if self._saddle1_vox is None:
+            self._run_minima_bader()
+        return self._saddle1_vox
+
+    @property
+    def saddle1_frac(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Fractional coordinates of the type 1 saddles found in the system
+
+        """
+        if self._saddle1_frac is None:
+            self._run_minima_bader()
+        return self._saddle1_frac
+
+    @property
+    def saddle1_cart(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Cartesian coordinates of the type 1 saddles found in the system
+
+        """
+        if self._saddle1_cart is None:
+            self._saddle1_cart = self.reference_grid.frac_to_cart(self._saddle1_frac)
+        return self._saddle1_cart
+
+    @property
+    def saddle2_vox(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Voxel coordinates of the type 2 saddles found in the system
+
+        """
+        if self._saddle2_vox is None:
+            self._run_maxima_bader()
+        return self._saddle2_vox
+
+    @property
+    def saddle2_frac(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Fractional coordinates of the type 2 saddles found in the system
+
+        """
+        if self._saddle2_frac is None:
+            self._run_maxima_bader()
+        return self._saddle2_frac
+
+    @property
+    def saddle2_cart(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            Cartesian coordinates of the type 2 saddles found in the system
+
+        """
+        if self._saddle2_cart is None:
+            self._saddle2_cart = self.reference_grid.frac_to_cart(self._saddle2_frac)
+        return self._saddle1_cart
+
+    @property
+    def saddle1_ref_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The reference data value at each saddle1.
+
+        """
+        if self._saddle1_ref_values is None:
+            # we get these values during each bader method anyways, so
+            # we run this here.
+            self._saddle1_ref_values = self.reference_grid.total[
+                self.saddle1_vox[:,0],
+                self.saddle1_vox[:,1],
+                self.saddle1_vox[:,2],
+                ]
+
+        return self._saddle1_ref_values.round(10)
+
+    @property
+    def saddle2_ref_values(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The reference data value at each saddle2.
+
+        """
+        if self._saddle2_ref_values is None:
+            # we get these values during each bader method anyways, so
+            # we run this here.
+            self._saddle2_ref_values = self.reference_grid.total[
+                self.saddle2_vox[:,0],
+                self.saddle2_vox[:,1],
+                self.saddle2_vox[:,2],
+                ]
+
+        return self._saddle2_ref_values.round(10)
+
+    @property
+    def saddle1_connections(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            An Nx3 array where the first two entries of each row represent
+            the two minima the corresponding saddle connects to and the
+            third entry represents the image the second minimum sits in.
+            The first minima sits inside the cell.
+
+        """
+        if self._saddle1_connections is None:
+            self._run_minima_bader()
+        return self._saddle1_connections
+
+    @property
+    def saddle2_connections(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            An Nx3 array where the first two entries of each row represent
+            the two maxima the corresponding saddle connects to and the
+            third entry represents the image the second maximum sits in.
+            The first maxima sits inside the cell.
+
+        """
+        if self._saddle2_connections is None:
+            self._run_maxima_bader()
+        return self._saddle2_connections
 
     ###########################################################################
     # Atom Properties
@@ -1046,6 +1247,7 @@ class Bader(BaseAnalysis):
             vacuum_mask=self.vacuum_mask,
             num_vacuum=self.num_vacuum,
             persistence_tol=self.maxima_persistence_tol,
+            use_minima=False,
         )
         if self._use_overdetermined:
             method._use_overdetermined = True
@@ -1095,9 +1297,10 @@ class Bader(BaseAnalysis):
         if self._use_overdetermined:
             method._use_overdetermined = True
         results = method.run()
+
         # set related properties
         for key, value in results.items():
-            if "extrema" in key:
+            if "extrema" in key or "saddle" in key:
                 new_key = key.replace("extrema", "minima")
                 setattr(self, f"_{new_key}", value)
 
@@ -1275,7 +1478,7 @@ class Bader(BaseAnalysis):
         Gets the groups of voxels for each maximum and minimum that are within
         the extrema's basin and above/below the persistence value for that basin.
         The persistence value is defined as the value at which all voxelated
-        maxima/minima (see maxima_voxel_groups/minima_voxel_groups) are connected
+        maxima/minima (see ongrid_maxima_groups/ongrid_minima_groups) are connected
 
         Returns
         -------
@@ -1789,7 +1992,7 @@ class Bader(BaseAnalysis):
             "maxima_charge_values",
             "maxima_ref_values",
             "maxima_vox",
-            "maxima_voxel_groups",
+            "ongrid_maxima_groups",
             "basin_min_surface_distances",
             "basin_avg_surface_distances",
         ]:
@@ -1802,7 +2005,7 @@ class Bader(BaseAnalysis):
                 "minima_charge_values",
                 "minima_ref_values",
                 "minima_vox",
-                "minima_voxel_groups",
+                "ongrid_minima_groups",
             ]:
                 minima_results[result] = getattr(self, result, None)
 
@@ -1836,8 +2039,8 @@ class Bader(BaseAnalysis):
                 if basin_results[key] is None:
                     continue  # skip oxidation states if they fail
                 basin_results[key] = basin_results[key].tolist()
-            basin_results["maxima_voxel_groups"] = [
-                i.tolist() for i in basin_results["maxima_voxel_groups"]
+            basin_results["ongrid_maxima_groups"] = [
+                i.tolist() for i in basin_results["ongrid_maxima_groups"]
             ]
 
             # get serializable versions of each atom attribute
@@ -1866,8 +2069,8 @@ class Bader(BaseAnalysis):
                     if minima_results[key] is None:
                         continue  # skip oxidation states if they fail
                     minima_results[key] = minima_results[key].tolist()
-                minima_results["minima_voxel_groups"] = [
-                    i.tolist() for i in minima_results["minima_voxel_groups"]
+                minima_results["ongrid_minima_groups"] = [
+                    i.tolist() for i in minima_results["ongrid_minima_groups"]
                 ]
 
         results["atom_results"] = atom_results
