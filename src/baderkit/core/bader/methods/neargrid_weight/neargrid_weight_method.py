@@ -10,8 +10,8 @@ from baderkit.core.bader.methods.neargrid.neargrid_numba import (
     get_gradient_pointers_simple,
     refine_fast_neargrid,
 )
-from baderkit.core.utilities.basins import get_edges
 from baderkit.core.utilities.basic import get_lowest_int, get_lowest_uint
+from baderkit.core.utilities.basins import get_edges
 
 from .neargrid_weight_numba import (
     get_edge_charges_volumes,

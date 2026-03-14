@@ -14,6 +14,11 @@ from pymatgen.io.vasp import Potcar
 
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Structure
+from baderkit.core.utilities.basins import (
+    get_edges_w_images,
+    get_min_avg_surface_dists,
+    get_neighboring_basin_surface_area,
+)
 from baderkit.core.utilities.betti_numbers import (
     get_all_betti_numbers_scanning,
 )
@@ -22,11 +27,6 @@ from baderkit.core.utilities.persistence import (
 )
 
 from .methods import Method
-from baderkit.core.utilities.basins import (
-    get_edges,
-    get_min_avg_surface_dists,
-    get_neighboring_basin_surface_area,
-)
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
@@ -398,10 +398,10 @@ class Bader(BaseAnalysis):
         """
         if self._maxima_charge_values is None:
             self._maxima_charge_values = self.charge_grid.total[
-                self.maxima_vox[:,0],
-                self.maxima_vox[:,1],
-                self.maxima_vox[:,2],
-                ]
+                self.maxima_vox[:, 0],
+                self.maxima_vox[:, 1],
+                self.maxima_vox[:, 2],
+            ]
         return self._maxima_charge_values.round(10)
 
     @property
@@ -419,10 +419,10 @@ class Bader(BaseAnalysis):
             # we get these values during each bader method anyways, so
             # we run this here.
             self._maxima_ref_values = self.reference_grid.total[
-                self.maxima_vox[:,0],
-                self.maxima_vox[:,1],
-                self.maxima_vox[:,2],
-                ]
+                self.maxima_vox[:, 0],
+                self.maxima_vox[:, 1],
+                self.maxima_vox[:, 2],
+            ]
         return self._maxima_ref_values
 
     @property
@@ -580,8 +580,9 @@ class Bader(BaseAnalysis):
 
         """
         if self._basin_edges is None:
-            self._basin_edges = get_edges(
+            self._basin_edges = get_edges_w_images(
                 labeled_array=self.maxima_basin_labels,
+                images=self.maxima_basin_images,
                 vacuum_mask=np.zeros(self.maxima_basin_labels.shape, dtype=np.bool_),
                 neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
@@ -742,10 +743,10 @@ class Bader(BaseAnalysis):
 
         if self._minima_charge_values is None:
             self._minima_charge_values = self.charge_grid.total[
-                self.minima_vox[:,0],
-                self.minima_vox[:,1],
-                self.minima_vox[:,2],
-                ]
+                self.minima_vox[:, 0],
+                self.minima_vox[:, 1],
+                self.minima_vox[:, 2],
+            ]
         return self._minima_charge_values.round(10)
 
     @property
@@ -761,10 +762,10 @@ class Bader(BaseAnalysis):
         """
         if self._minima_ref_values is None:
             self._minima_ref_values = self.reference_grid.total[
-                self.minima_vox[:,0],
-                self.minima_vox[:,1],
-                self.minima_vox[:,2],
-                ]
+                self.minima_vox[:, 0],
+                self.minima_vox[:, 1],
+                self.minima_vox[:, 2],
+            ]
         return self._minima_ref_values.round(10)
 
     @property
@@ -960,10 +961,10 @@ class Bader(BaseAnalysis):
             # we get these values during each bader method anyways, so
             # we run this here.
             self._saddle1_ref_values = self.reference_grid.total[
-                self.saddle1_vox[:,0],
-                self.saddle1_vox[:,1],
-                self.saddle1_vox[:,2],
-                ]
+                self.saddle1_vox[:, 0],
+                self.saddle1_vox[:, 1],
+                self.saddle1_vox[:, 2],
+            ]
 
         return self._saddle1_ref_values.round(10)
 
@@ -981,10 +982,10 @@ class Bader(BaseAnalysis):
             # we get these values during each bader method anyways, so
             # we run this here.
             self._saddle2_ref_values = self.reference_grid.total[
-                self.saddle2_vox[:,0],
-                self.saddle2_vox[:,1],
-                self.saddle2_vox[:,2],
-                ]
+                self.saddle2_vox[:, 0],
+                self.saddle2_vox[:, 1],
+                self.saddle2_vox[:, 2],
+            ]
 
         return self._saddle2_ref_values.round(10)
 
@@ -1112,8 +1113,9 @@ class Bader(BaseAnalysis):
 
         """
         if self._atom_edges is None:
-            self._atom_edges = get_edges(
+            self._atom_edges = get_edges_w_images(
                 labeled_array=self.atom_labels,
+                images=self.maxima_basin_images,
                 vacuum_mask=np.zeros(self.atom_labels.shape, dtype=np.bool_),
                 neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
@@ -1720,7 +1722,7 @@ class Bader(BaseAnalysis):
         for atom_index in atom_indices:
             # get a mask at the requested atoms
             mask = self.atom_labels == atom_index
-            kwargs["suffix"] = "_a{atom_index}"
+            kwargs["suffix"] = f"_a{atom_index}"
             self._write_volume(volume_mask=mask, **kwargs)
 
     def write_all_atom_volumes(
@@ -1902,7 +1904,7 @@ class Bader(BaseAnalysis):
         filepath = Path(filepath)
 
         # Get basin results summary
-        basin_df = self.get_basin_results_dataframe()
+        basin_df = self.get_basin_results_dataframe(0.01)
         formatted_basin_df = basin_df.copy()
         numeric_cols = formatted_basin_df.select_dtypes(include="number").columns
         formatted_basin_df[numeric_cols] = formatted_basin_df[numeric_cols].map(

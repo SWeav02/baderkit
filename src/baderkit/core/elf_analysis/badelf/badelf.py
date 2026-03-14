@@ -13,10 +13,6 @@ from pymatgen.io.vasp import Potcar
 from scipy.ndimage import label
 from tqdm import tqdm
 
-from baderkit.core.utilities.basins import (
-    get_edges,
-    get_min_avg_surface_dists,
-)
 from baderkit.core.elf_analysis.badelf.badelf_numba import (
     get_badelf_assignments,
 )
@@ -26,6 +22,10 @@ from baderkit.core.elf_analysis.bifurcation_graph.enum_and_styling import (
 )
 from baderkit.core.elf_analysis.elf_labeler import ElfLabeler
 from baderkit.core.toolkit import Grid, Structure
+from baderkit.core.utilities.basins import (
+    get_edges,
+    get_min_avg_surface_dists,
+)
 from baderkit.core.utilities.file_parsers import Format
 from baderkit.core.utilities.voronoi import get_cell_wrapped_voronoi
 
@@ -1205,10 +1205,10 @@ class Badelf:
             A BadElfToolkit instance.
         """
 
-        reference_grid = Grid.from_vasp(reference_filename, **kwargs)
-        charge_grid = Grid.from_vasp(charge_filename, **kwargs)
+        reference_grid = Grid.from_vasp(reference_filename)
+        charge_grid = Grid.from_vasp(charge_filename)
         if total_charge_filename is not None:
-            total_charge = Grid.from_vasp(total_charge_filename, **kwargs)
+            total_charge = Grid.from_vasp(total_charge_filename)
         else:
             total_charge = None
         return cls(

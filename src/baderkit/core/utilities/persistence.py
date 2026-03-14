@@ -6,23 +6,23 @@ import numpy as np
 from numba import njit, prange
 
 from baderkit.core.utilities.basic import (
+    compute_wrap_offset,
+    coords_to_flat,
     dist,
     wrap_point,
-    coords_to_flat,
-    compute_wrap_offset,
 )
-from baderkit.core.utilities.interpolation import linear_slice
-from baderkit.core.utilities.union_find import union
 from baderkit.core.utilities.basins import (
     get_best_neighbor,
     reorder_labels,
-    )
+)
 from baderkit.core.utilities.critical_points import refine_critical_points
+from baderkit.core.utilities.interpolation import linear_slice
 from baderkit.core.utilities.transforms import (
-    INT_TO_IMAGE,
     ALL_NEIGHBOR_TRANSFORMS,
-    get_transform_dists
-    )
+    INT_TO_IMAGE,
+    get_transform_dists,
+)
+from baderkit.core.utilities.union_find import union
 
 # Predefine types
 # key_type = UniTuple(int64, 3)
@@ -62,6 +62,7 @@ from baderkit.core.utilities.transforms import (
 
 #     return unique_arr, inverse
 
+
 @njit(cache=True)
 def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     eps = 1e-12
@@ -78,8 +79,7 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
 
     # get approximate average value between extrema
     avg = (
-        p1_dist * (value1 + conn_value) / 2
-        + p2_dist * (value2 + conn_value) / 2
+        p1_dist * (value1 + conn_value) / 2 + p2_dist * (value2 + conn_value) / 2
     ) / distance
 
     # get persistence score:
@@ -87,6 +87,7 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     persistence_score = min(diff1, diff2) * distance / (abs(avg) + eps)
 
     return persistence_score
+
 
 @njit(cache=True)
 def grow_arrays(neighbors, values, conn_coords, neigh_coords):
@@ -104,6 +105,7 @@ def grow_arrays(neighbors, values, conn_coords, neigh_coords):
     new_neigh_coords[:, :m] = neigh_coords
 
     return new_neighbors, new_values, new_conn_coords, new_neigh_coords
+
 
 @njit(cache=True)
 def union_by_persistence(
@@ -214,6 +216,7 @@ def union_by_persistence(
 
     return labels
 
+
 @njit(cache=True)
 def get_approx_saddle_val(
     p0,
@@ -267,6 +270,7 @@ def get_approx_saddle_val(
 
     return conn_val
 
+
 @njit(parallel=True, cache=True)
 def get_all_approx_saddle_vals(
     data,
@@ -295,10 +299,13 @@ def get_all_approx_saddle_vals(
                 continue
             neigh_ext_value = extrema_values[neigh_ext_idx]
             if (
-                use_minima and neigh_ext_value > ext_value
-                or not use_minima and neigh_ext_value < ext_value
-                or neigh_ext_value == ext_value and neigh_ext_idx < ext_idx
-                    ):
+                use_minima
+                and neigh_ext_value > ext_value
+                or not use_minima
+                and neigh_ext_value < ext_value
+                or neigh_ext_value == ext_value
+                and neigh_ext_idx < ext_idx
+            ):
                 continue
 
             # get neighbor frac coord
@@ -308,7 +315,7 @@ def get_all_approx_saddle_vals(
 
             neigh_cart = wrapped_neigh_frac @ matrix
 
-            dist = np.linalg.norm(neigh_cart-ext_cart)
+            dist = np.linalg.norm(neigh_cart - ext_cart)
             if dist > max_cart_offset:
                 continue
             counts[ext_idx] += 1
@@ -333,10 +340,13 @@ def get_all_approx_saddle_vals(
                 continue
             neigh_ext_value = extrema_values[neigh_ext_idx]
             if (
-                use_minima and neigh_ext_value > ext_value
-                or not use_minima and neigh_ext_value < ext_value
-                or neigh_ext_value == ext_value and neigh_ext_idx < ext_idx
-                    ):
+                use_minima
+                and neigh_ext_value > ext_value
+                or not use_minima
+                and neigh_ext_value < ext_value
+                or neigh_ext_value == ext_value
+                and neigh_ext_idx < ext_idx
+            ):
                 continue
             # get neighbor frac coord
             neigh_frac = extrema_frac[neigh_ext_idx]
@@ -349,7 +359,7 @@ def get_all_approx_saddle_vals(
             if dist > max_cart_offset:
                 continue
 
-            n_points = max(int(round(dist*20)), 5)
+            n_points = max(int(round(dist * 20)), 5)
 
             conn_val = get_approx_saddle_val(
                 ext_frac,
@@ -365,16 +375,11 @@ def get_all_approx_saddle_vals(
             if conn_val == np.inf:
                 continue
 
-            conn_cart = ext_cart + offset/2
+            conn_cart = ext_cart + offset / 2
 
             # get persistence
             persistence_score = get_persistence_value(
-                ext_value,
-                neigh_ext_value,
-                conn_val,
-                ext_cart,
-                neigh_cart,
-                conn_cart
+                ext_value, neigh_ext_value, conn_val, ext_cart, neigh_cart, conn_cart
             )
 
             # add low persistence to our list
@@ -386,13 +391,8 @@ def get_all_approx_saddle_vals(
                 neigh_cart_coords[ext_idx, neigh_count] = neigh_cart
 
                 cursor[ext_idx] += 1
-    return (
-        all_conn_neighs,
-        all_conn_vals,
-        all_conn_coords,
-        neigh_cart_coords,
-        cursor
-    )
+    return (all_conn_neighs, all_conn_vals, all_conn_coords, neigh_cart_coords, cursor)
+
 
 @njit(cache=True)
 def init_by_approx_persistence(
@@ -414,7 +414,7 @@ def init_by_approx_persistence(
         ALL_NEIGHBOR_TRANSFORMS,
         shape=shape,
         matrix=matrix,
-        )
+    )
 
     extrema_frac = extrema_vox / shape
 
@@ -533,7 +533,7 @@ def init_by_approx_persistence(
         extrema_labels,
         extrema_values,
         use_minima,
-            )
+    )
 
     # refine remaining extrema
     root_vox = extrema_vox[root_indices]
@@ -544,7 +544,7 @@ def init_by_approx_persistence(
         data=data,
         matrix=matrix,
         target_index=target_idx,
-        )
+    )
 
     # combine any that refined to be adjacent
     rounded = np.floor(refined_vox).astype(np.int64) % shape
@@ -554,7 +554,7 @@ def init_by_approx_persistence(
         ext_frac = rounded_frac[idx]
         ext_vox = rounded[idx]
         ext_label = root_labels[idx]
-        for idx1 in range(idx+1, len(root_indices)):
+        for idx1 in range(idx + 1, len(root_indices)):
             neigh_idx = root_indices[idx1]
             neigh_frac = rounded_frac[idx1]
             wrapped = neigh_frac - np.round(neigh_frac - ext_frac)
@@ -563,7 +563,6 @@ def init_by_approx_persistence(
             if np.max(np.abs(offset)) < 1 + 1e-12:
                 neigh_label = extrema_labels[neigh_idx]
                 union(labels, ext_label, neigh_label)
-
 
     ###########################################################################
     # Root finding
@@ -576,7 +575,7 @@ def init_by_approx_persistence(
         extrema_labels,
         extrema_values,
         use_minima,
-            )
+    )
 
     final_root_labels = extrema_labels[root_indices]
     final_root_vox = extrema_vox[root_indices]
@@ -595,17 +594,16 @@ def init_by_approx_persistence(
         root_idx = np.searchsorted(final_root_labels, root)
         root_frac = final_refined_frac[root_idx]
         # get best image to wrap the maxima to its root
-        images[extrema_labels[ext_idx]] = compute_wrap_offset(
-            ext_frac, root_frac
-        )
+        images[extrema_labels[ext_idx]] = compute_wrap_offset(ext_frac, root_frac)
 
     return (
         labels,
         images,
         final_root_vox,
         final_refined_frac,
-        extrema_vox # return original list as well
+        extrema_vox,  # return original list as well
     )
+
 
 @njit(cache=True)
 def group_by_persistence(
@@ -669,8 +667,6 @@ def group_by_persistence(
 
                 cursor[ext_idx] += 1
 
-
-
     # create array to track unions between basins
     unions = np.arange(num_extrema)
 
@@ -695,7 +691,7 @@ def group_by_persistence(
         extrema_labels=np.arange(num_extrema),
         extrema_values=extrema_values,
         use_minima=use_minima,
-            )
+    )
 
     # Find the images each grouped maximum must cross to reach its parent
     root_transforms = np.empty((len(unions), 3), dtype=np.int8)
@@ -733,9 +729,9 @@ def get_persistence_cutoffs(data, groups, use_minima, group_vals, max_dist=5):
                 if i == j:
                     continue
                 ci1, cj1, ck1 = group[j]
-                dist = (
-                    (ci - ci1) ** 2 + ((cj - cj1) ** 2) + ((ck - ck1) ** 2)
-                ) ** (1 / 2)
+                dist = ((ci - ci1) ** 2 + ((cj - cj1) ** 2) + ((ck - ck1) ** 2)) ** (
+                    1 / 2
+                )
                 if dist < best_dist:
                     best_dist = dist
                     best_neigh = j
@@ -795,12 +791,7 @@ def get_persistence_groups(
                 value = data[i, j, k]
                 cutoff = persistence_cutoffs[label]
                 # if value is above the cutoff, add to the group
-                if (
-                    not use_minima
-                    and value >= cutoff
-                    or use_minima
-                    and value <= cutoff
-                ):
+                if not use_minima and value >= cutoff or use_minima and value <= cutoff:
                     point = np.array((i, j, k), dtype=np.int16)
                     persistence_groups[label].append(point)
 

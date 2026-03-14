@@ -4,13 +4,13 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.utilities.basins import get_best_neighbor
 from baderkit.core.utilities.basic import (
     coords_to_flat,
     flat_to_coords,
     wrap_point,
     wrap_point_w_shift,
 )
+from baderkit.core.utilities.basins import get_best_neighbor
 
 
 @njit(parallel=True, cache=True)

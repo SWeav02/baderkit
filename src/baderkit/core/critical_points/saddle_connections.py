@@ -8,7 +8,6 @@ from numpy.typing import NDArray
 
 from baderkit.core.utilities.basic import wrap_point, wrap_point_w_shift
 
-
 NEIGHBOR_TRANSFORMS = np.array(
     [
         (dx, dy, dz)

@@ -780,7 +780,7 @@ class SpinElfLabeler:
     def write_all_features(
         self,
         directory: str | Path = Path("."),
-        write_reference: bool = True,
+        write_elf: bool = True,
         prefix_override: str = None,
         **kwargs,
     ):
@@ -791,7 +791,7 @@ class SpinElfLabeler:
         ----------
         directory : str | Path, optional
             The directory to write to. The default is None.
-        write_reference : bool, optional
+        write_elf : bool, optional
             Whether or not to write the reference data rather than the charge
             density. The default is True.
         prefix_override : str, optional
@@ -808,7 +808,7 @@ class SpinElfLabeler:
 
         # get prefix
         if prefix_override is None:
-            if write_reference:
+            if write_elf:
                 prefix_override = self.original_reference_grid.data_type.prefix
             else:
                 prefix_override = self.original_charge_grid.data_type.prefix
@@ -823,7 +823,7 @@ class SpinElfLabeler:
             self.elf_labeler_up.write_feature_basins(
                 feature_indices=[feat_idx],
                 directory=directory,
-                write_reference=write_reference,
+                write_elf=write_elf,
                 prefix_override=temp_prefix,
                 **kwargs,
             )
@@ -845,7 +845,7 @@ class SpinElfLabeler:
             self.elf_labeler_down.write_feature_basins(
                 feature_indices=[feat_idx],
                 directory=directory,
-                write_reference=write_reference,
+                write_elf=write_elf,
                 prefix_override=temp_prefix,
                 **kwargs,
             )
@@ -861,7 +861,7 @@ class SpinElfLabeler:
         included_types: list[FeatureType],
         directory: str | Path = Path("."),
         prefix_override=None,
-        write_reference: bool = True,
+        write_elf: bool = True,
         **kwargs,
     ):
         """
@@ -880,7 +880,7 @@ class SpinElfLabeler:
             The string to add at the front of the output path. If None, defaults
             to the VASP file name equivalent to the data type stored in the
             grid.
-        write_reference : bool, optional
+        write_elf : bool, optional
             Whether or not to write the reference data rather than the charge data.
             Default is True.
         **kwargs :
@@ -892,7 +892,7 @@ class SpinElfLabeler:
 
         # get prefix
         if prefix_override is None:
-            if write_reference:
+            if write_elf:
                 prefix_override = self.original_reference_grid.data_type.prefix
             else:
                 prefix_override = self.original_charge_grid.data_type.prefix
@@ -909,7 +909,7 @@ class SpinElfLabeler:
             self.elf_labeler_up.write_features_by_type(
                 included_types=[feat_type],
                 directory=directory,
-                write_reference=write_reference,
+                write_elf=write_elf,
                 prefix_override=temp_prefix,
                 **kwargs,
             )
@@ -932,7 +932,7 @@ class SpinElfLabeler:
             self.elf_labeler_down.write_features_by_type(
                 included_types=[feat_type],
                 directory=directory,
-                write_reference=write_reference,
+                write_elf=write_elf,
                 prefix_override=temp_prefix,
                 **kwargs,
             )
@@ -948,7 +948,7 @@ class SpinElfLabeler:
         included_types: list[FeatureType],
         directory: str | Path = Path("."),
         prefix_override=None,
-        write_reference: bool = True,
+        write_elf: bool = True,
         **kwargs,
     ):
         """
@@ -967,7 +967,7 @@ class SpinElfLabeler:
             The string to add at the front of the output path. If None, defaults
             to the VASP file name equivalent to the data type stored in the
             grid.
-        write_reference : bool, optional
+        write_elf : bool, optional
             Whether or not to write the reference data rather than the charge data.
             Default is True.
         **kwargs :
@@ -979,7 +979,7 @@ class SpinElfLabeler:
 
         # get prefix
         if prefix_override is None:
-            if write_reference:
+            if write_elf:
                 prefix_override = self.original_reference_grid.data_type.prefix
             else:
                 prefix_override = self.original_charge_grid.data_type.prefix
@@ -993,7 +993,7 @@ class SpinElfLabeler:
         self.elf_labeler_up.write_features_by_type_sum(
             included_types=included_types,
             directory=directory,
-            write_reference=write_reference,
+            write_elf=write_elf,
             prefix_override=temp_prefix,
             **kwargs,
         )
@@ -1015,7 +1015,7 @@ class SpinElfLabeler:
         self.elf_labeler_down.write_features_by_type_sum(
             included_types=included_types,
             directory=directory,
-            write_reference=write_reference,
+            write_elf=write_elf,
             prefix_override=temp_prefix,
             **kwargs,
         )

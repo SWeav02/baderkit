@@ -1,31 +1,29 @@
 # -*- coding: utf-8 -*-
 
-from numba import njit, prange
 import numpy as np
+from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.utilities.transforms import (
-    INT_TO_IMAGE,
-    IMAGE_TO_INT,
-    ALL_NEIGHBOR_TRANSFORMS,
-    )
 from baderkit.core.utilities.basic import (
+    get_norm,
+    merge_frac_coords_weighted,
     wrap_point,
     wrap_point_w_shift,
-    get_norm,
-    merge_frac_coords_weighted
-    )
+)
 from baderkit.core.utilities.interpolation import (
     spline_grad_and_hess,
-    )
-from baderkit.core.utilities.union_find import (
-    union,
-    find_root
-    )
+)
+from baderkit.core.utilities.transforms import (
+    ALL_NEIGHBOR_TRANSFORMS,
+    IMAGE_TO_INT,
+    INT_TO_IMAGE,
+)
+from baderkit.core.utilities.union_find import find_root, union
 
 ###############################################################################
 # Classifying Methods
 ###############################################################################
+
 
 @njit(cache=True)
 def classify_critical_point(H):
@@ -45,6 +43,7 @@ def classify_critical_point(H):
 
     return -1
 
+
 # @njit(cache=True, fastmath=True)
 # def compute_signature(H, eig_rel_tol):
 #     evals, _ = np.linalg.eigh(H)
@@ -58,6 +57,7 @@ def classify_critical_point(H):
 #             n_neg += 1
 #         elif abs(i) < tol:
 #             n_flat += 1
+
 
 #     return n_neg, n_flat
 @njit(cache=True)
@@ -76,6 +76,7 @@ def compute_signature(H, eig_rel_tol):
             n_flat += 1
 
     return n_neg, n_flat
+
 
 @njit(cache=True)
 def is_ongrid_saddle(
@@ -110,6 +111,7 @@ def is_ongrid_saddle(
                 return False
 
     return True
+
 
 @njit(fastmath=True, cache=True)
 def is_ongrid_newton_crit(
@@ -179,11 +181,11 @@ def is_ongrid_newton_crit(
     inv_det = 1.0 / det
 
     # inverse Hessian (symmetric)
-    iHxx =  (Hyy * Hzz - Hyz * Hyz) * inv_det
-    iHyy =  (Hxx * Hzz - Hxz * Hxz) * inv_det
-    iHzz =  (Hxx * Hyy - Hxy * Hxy) * inv_det
+    iHxx = (Hyy * Hzz - Hyz * Hyz) * inv_det
+    iHyy = (Hxx * Hzz - Hxz * Hxz) * inv_det
+    iHzz = (Hxx * Hyy - Hxy * Hxy) * inv_det
     iHxy = -(Hxy * Hzz - Hxz * Hyz) * inv_det
-    iHxz =  (Hxy * Hyz - Hyy * Hxz) * inv_det
+    iHxz = (Hxy * Hyz - Hyy * Hxz) * inv_det
     iHyz = -(Hxx * Hyz - Hxy * Hxz) * inv_det
 
     # Newton step
@@ -228,9 +230,11 @@ def is_ongrid_newton_crit(
 
     return morse
 
+
 ###############################################################################
 # Critical Finding Methods
 ###############################################################################
+
 
 @njit(inline="always", cache=True)
 def get_extrema_saddle_connections(
@@ -289,12 +293,7 @@ def get_extrema_saddle_connections(
         # note if this point belongs to a different basin
         if label != neigh_label or image != neigh_image:
 
-            return (
-                label,
-                neigh_label,
-                image,
-                neigh_image
-            )
+            return (label, neigh_label, image, neigh_image)
 
     # if no neighbor was found, we just return a fake value
     return max_val, max_val, max_val, max_val
@@ -327,7 +326,6 @@ def get_single_point_saddles(
     return best_vals, best_indices
 
 
-
 @njit(cache=True, parallel=True)
 def get_canonical_saddle_connections(
     saddle_coords,
@@ -335,8 +333,8 @@ def get_canonical_saddle_connections(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
     use_minima,
-        ):
-    nx,ny,nz = labels.shape
+):
+    nx, ny, nz = labels.shape
     # create an array to track connections between these points.
     # For each entry we will have:
     # 1: the lower label index
@@ -366,6 +364,7 @@ def get_canonical_saddle_connections(
         saddle_connections[idx, 2] = lower_shift
         saddle_connections[idx, 3] = higher_shift
     return saddle_connections
+
 
 @njit(parallel=True, cache=True)
 def get_saddles_from_basins(
@@ -410,9 +409,10 @@ def get_saddles_from_basins(
         labels=labels,
         images=images,
         use_minima=use_minima,
-            )
+    )
 
     return saddle_coords, saddle_connections
+
 
 @njit(parallel=True, cache=True)
 def remove_false_saddles(
@@ -422,7 +422,7 @@ def remove_false_saddles(
     data: NDArray[np.float64],
     matrix,
     use_minima: bool = False,
-        ):
+):
     nx, ny, nz = data.shape
 
     # Metric tensors
@@ -453,10 +453,7 @@ def remove_false_saddles(
             H_frac_to_cart,
         )
 
-        if (
-            use_minima and morse_idx == 1
-            or not use_minima and morse_idx == 2
-            ):
+        if use_minima and morse_idx == 1 or not use_minima and morse_idx == 2:
             # this is a saddle
             saddle_mask[saddle_idx] = True
 
@@ -471,20 +468,20 @@ def remove_false_saddles(
         labels=labels,
         images=images,
         use_minima=use_minima,
-            )
+    )
 
     # remove false saddles
-    true_saddles = np.where(saddle_connections[:,0] != np.iinfo(saddle_connections.dtype).max)[0]
-    saddle_indices=saddle_indices[true_saddles]
-    saddle_connections=saddle_connections[true_saddles]
+    true_saddles = np.where(
+        saddle_connections[:, 0] != np.iinfo(saddle_connections.dtype).max
+    )[0]
+    saddle_indices = saddle_indices[true_saddles]
+    saddle_connections = saddle_connections[true_saddles]
 
     return saddle_coords, saddle_connections
 
+
 @njit(cache=True)
-def remove_adjacent_saddles(
-    refined_vox,
-    shape
-        ):
+def remove_adjacent_saddles(refined_vox, shape):
     unions = np.arange(len(refined_vox))
     # combine any that refined to be adjacent
     rounded = np.round(refined_vox).astype(np.int64) % shape
@@ -492,7 +489,7 @@ def remove_adjacent_saddles(
     for ext_idx in range(len(unions)):
         ext_frac = rounded_frac[ext_idx]
         ext_vox = rounded[ext_idx]
-        for neigh_idx in range(ext_idx+1, len(unions)):
+        for neigh_idx in range(ext_idx + 1, len(unions)):
             neigh_frac = rounded_frac[neigh_idx]
             wrapped = neigh_frac - np.round(neigh_frac - ext_frac)
             wrapped_vox = wrapped * shape
@@ -506,9 +503,11 @@ def remove_adjacent_saddles(
     important = np.where(roots == np.arange(len(refined_vox)))[0]
     return important
 
+
 ###############################################################################
 # Newton Refinement
 ###############################################################################
+
 
 @njit(cache=True, fastmath=True, inline="always")
 def clamp_step(dx, max_step):
@@ -522,9 +521,11 @@ def clamp_step(dx, max_step):
     dx *= min(1.0, max_step / (step_norm + 1e-12))
     return dx, True
 
+
 @njit(cache=True, fastmath=True, inline="always")
 def outside_voxel(coord, vmin, vmax):
     return np.any(coord < vmin) or np.any(coord > vmax)
+
 
 @njit(cache=True, inline="always")
 def flat_aware_newton_step(
@@ -543,6 +544,7 @@ def flat_aware_newton_step(
             dx += -(vecs[:, i] @ g) / evals[i] * vecs[:, i]
 
     return dx
+
 
 @njit(cache=True, inline="always")
 def targeted_newton_step(
@@ -579,6 +581,7 @@ def targeted_newton_step(
 
     return dx
 
+
 @njit(cache=True, fastmath=True)
 def newton_refine(
     coord,
@@ -604,7 +607,12 @@ def newton_refine(
 
         # get step
         # dx = flat_aware_newton_step(g, H, eig_rel_tol)
-        dx = targeted_newton_step(g, H, target_index, eig_rel_tol,)
+        dx = targeted_newton_step(
+            g,
+            H,
+            target_index,
+            eig_rel_tol,
+        )
 
         # check for convergence
         if np.linalg.norm(dx) < grad_tol:
@@ -623,6 +631,7 @@ def newton_refine(
     morse_index, n_flat = compute_signature(H, eig_rel_tol)
 
     return coord, converged, morse_index
+
 
 @njit(cache=True, fastmath=True)
 def newton_refine_in_voxel(
@@ -653,7 +662,12 @@ def newton_refine_in_voxel(
 
         # get step
         # dx = flat_aware_newton_step(g, H, eig_rel_tol)
-        dx = targeted_newton_step(g, H, target_index, eig_rel_tol,)
+        dx = targeted_newton_step(
+            g,
+            H,
+            target_index,
+            eig_rel_tol,
+        )
 
         # check for convergence
         if np.linalg.norm(dx) < grad_tol:
@@ -676,6 +690,7 @@ def newton_refine_in_voxel(
     morse_index, n_flat = compute_signature(H, eig_rel_tol)
 
     return coord, converged, morse_index
+
 
 @njit(parallel=True, cache=True)
 def refine_critical_points(
@@ -728,6 +743,7 @@ def refine_critical_points(
             refined_coords[coord_idx] = coord
 
     return refined_coords, successes
+
 
 # @njit(fastmath=True)
 # def newton_refine_critical(
@@ -1009,6 +1025,7 @@ def refine_critical_points(
 # Parabolic Fitting
 ###############################################################################
 
+
 @njit(fastmath=True, cache=True)
 def refine_frac_extrema_parabolic(grid, frac_coords, lattice, use_minima=False):
     """
@@ -1164,7 +1181,6 @@ def refine_frac_extrema_parabolic(grid, frac_coords, lattice, use_minima=False):
     refined_value = sign * refined_value_signed
 
     return refined_frac, refined_value
-
 
 
 @njit(parallel=True, cache=True)

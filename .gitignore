@@ -5,4 +5,4 @@ src/baderkit/trame
 build
 ~/sync_files.py
 overlap*
-scratch
+*scratch.py

@@ -5,17 +5,18 @@ from numba import njit, prange
 from numpy.typing import NDArray
 
 from baderkit.core.utilities.basic import (
+    coords_to_flat,
     flat_to_coords,
     wrap_point,
     wrap_point_w_shift,
 )
+from baderkit.core.utilities.transforms import IMAGE_TO_INT, INT_TO_IMAGE
 from baderkit.core.utilities.union_find import find_root
-from baderkit.core.utilities.transforms import INT_TO_IMAGE, IMAGE_TO_INT
-
 
 ###############################################################################
 # Neighbor Finding Methods
 ###############################################################################
+
 
 @njit(cache=True, inline="always")
 def get_best_neighbor(
@@ -178,9 +179,11 @@ def get_best_neighbor_with_shift(
         np.array((bsi, bsj, bsk), dtype=np.int8),
     )
 
+
 ###############################################################################
 # Edge Finding Methods
 ###############################################################################
+
 
 @njit(parallel=True, cache=True)
 def get_edges(
@@ -308,6 +311,81 @@ def get_edges_w_images(
     return edges
 
 
+@njit(parallel=True, cache=True)
+def get_edges_w_flat_images(
+    labeled_array: NDArray[np.int64],
+    images: NDArray[np.int64],
+    neighbor_transforms: NDArray[np.int64],
+    vacuum_mask: NDArray[np.bool_],
+):
+    """
+    In a 3D array of labeled voxels, finds the voxels that neighbor at
+    least one voxel with a different label.
+
+    Parameters
+    ----------
+    labeled_array : NDArray[np.int64]
+        A 3D array where each entry represents the basin label of the point.
+    images : NDArray[np.int64]
+        A 3D array where each entry represents the periodic image of the basin
+        the point belongs to
+    neighbor_transforms : NDArray[np.int64]
+        The transformations from each voxel to its neighbors.
+    vacuum_mask : NDArray[np.bool_]
+        A 3D array representing the location of the vacuum
+
+    Returns
+    -------
+    edges : NDArray[np.bool_]
+        A mask with the same shape as the input grid that is True at points
+        on basin edges.
+
+    """
+    nx, ny, nz = labeled_array.shape
+    ny_nz = ny * nz
+    # create 3D array to store edges
+    edges = np.zeros_like(labeled_array, dtype=np.bool_)
+
+    # loop over each voxel in parallel
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                # if this voxel is part of the vacuum, continue
+                if vacuum_mask[i, j, k]:
+                    continue
+                # get this voxels label and image
+                label = labeled_array[i, j, k]
+                flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
+                mi, mj, mk = images[flat_idx]
+                image = IMAGE_TO_INT[mi, mj, mk]
+                # iterate over the neighboring voxels
+                for si, sj, sk in neighbor_transforms:
+                    # wrap points
+                    ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
+                        i + si, j + sj, k + sk, nx, ny, nz
+                    )
+                    # skip vacuum neighs
+                    if vacuum_mask[ii, jj, kk]:
+                        continue
+                    # get neighbors label and image
+                    neigh_label = labeled_array[ii, jj, kk]
+                    if neigh_label != label:
+                        edges[i, j, k] = True
+                        break
+
+                    flat_neigh = coords_to_flat(ii, jj, kk, ny_nz, nz)
+                    # adjust neigh image
+                    mii, mjj, mkk = images[flat_neigh]
+                    mii += ssi
+                    mjj += ssj
+                    mkk += ssk
+                    neigh_image = IMAGE_TO_INT[mii, mjj, mkk]
+                    if neigh_image != image:
+                        edges[i, j, k] = True
+                        break
+    return edges
+
+
 @njit(inline="always", cache=True)
 def get_differing_neighs(
     i,
@@ -424,6 +502,7 @@ def get_basin_edges(
                     edges[i, j, k] = 2
 
     return edges
+
 
 @njit(inline="always", cache=True)
 def get_differing_neighs_thin(
@@ -543,9 +622,11 @@ def get_thin_basin_edges(
 
     return edges
 
+
 ###############################################################################
 # Morse Manifold Methods
 ###############################################################################
+
 
 @njit(parallel=True, cache=True)
 def get_manifold_labels(
@@ -759,9 +840,11 @@ def get_manifold_labels_thin(
 
     return edges
 
+
 ###############################################################################
 # Property Calculating Methods
 ###############################################################################
+
 
 @njit(cache=True)
 def get_neighboring_basin_surface_area(
@@ -812,9 +895,7 @@ def get_neighboring_basin_surface_area(
                 # get this voxels label
                 label = labeled_array[i, j, k]
                 # iterate over the neighboring voxels
-                for (si, sj, sk), area in zip(
-                    neighbor_transforms, neighbor_areas
-                ):
+                for (si, sj, sk), area in zip(neighbor_transforms, neighbor_areas):
                     # wrap points
                     ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
                     # get neighbors label
@@ -825,6 +906,7 @@ def get_neighboring_basin_surface_area(
                     # add to our count for this connection
                     connection_counts[label, neigh_label] += area
     return connection_counts
+
 
 @njit(fastmath=True, cache=True)
 def get_basin_charges_and_volumes(
@@ -859,6 +941,7 @@ def get_basin_charges_and_volumes(
     vacuum_volume = vacuum_volume * cell_volume / total_points
     vacuum_charge = vacuum_charge / total_points
     return charges, volumes, vacuum_charge, vacuum_volume
+
 
 @njit(cache=True)
 def get_basin_min_and_max(
@@ -938,9 +1021,11 @@ def get_min_avg_surface_dists(
     average_dists = dist_sums / edge_totals
     return dists, average_dists
 
+
 #############################################################################
 # Other Helper Functions
 #############################################################################
+
 
 @njit(parallel=True, cache=True)
 def get_extrema(
@@ -999,6 +1084,7 @@ def get_extrema(
                     extrema[i, j, k] = 1
     return extrema
 
+
 @njit(cache=True)
 def reorder_labels(
     labels,
@@ -1006,9 +1092,9 @@ def reorder_labels(
     extrema_labels,
     extrema_values,
     use_minima,
-        ):
+):
     nx, ny, nz = data.shape
-    ny_nz = ny*nz
+    ny_nz = ny * nz
 
     roots = np.empty(len(extrema_labels), dtype=labels.dtype)
     for ext_idx in range(len(extrema_labels)):
@@ -1049,6 +1135,7 @@ def reorder_labels(
         final_roots[root_idx] = best_idx
 
     return labels, np.sort(final_roots)
+
 
 @njit(parallel=True, cache=True)
 def update_labels_and_images(

@@ -109,5 +109,10 @@ class WeightMethod(MethodBase):
         self._images = images
         self._charges = charges
         self._volumes = volumes
-        self._vacuum_charge = self.charge_grid.total[self.vacuum_mask].sum() / shape.prod()
-        self._vacuum_volume = (self.num_vacuum / reference_grid.ngridpts) * reference_grid.structure.volume,
+        self._vacuum_charge = (
+            self.charge_grid.total[self.vacuum_mask].sum() / shape.prod()
+        )
+        self._vacuum_volume = (
+            (self.num_vacuum / reference_grid.ngridpts)
+            * reference_grid.structure.volume,
+        )

@@ -10,11 +10,8 @@ from baderkit.core.bader.bader import Bader
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Grid
 from baderkit.core.utilities.basic import merge_frac_coords_weighted
+from baderkit.core.utilities.basins import get_manifold_labels, get_manifold_labels_thin
 from baderkit.core.utilities.transforms import INT_TO_IMAGE
-from baderkit.core.utilities.basins import (
-    get_manifold_labels,
-    get_manifold_labels_thin
-    )
 
 from .saddle_connections import (
     get_saddle_saddle_connections,
@@ -254,11 +251,11 @@ class CriticalPoints(BaseAnalysis):
             conns = self.bader.saddle1_connections
             saddle_indices = np.arange(len(conns))
             # get first part
-            ext1 = conns[:,0]
-            images1 = conns[:,2]
+            ext1 = conns[:, 0]
+            images1 = conns[:, 2]
 
-            ext2 = conns[:,1]
-            images2 = conns[:,3]
+            ext2 = conns[:, 1]
+            images2 = conns[:, 3]
 
             conns1 = np.column_stack((saddle_indices, ext1, images1))
             conns2 = np.column_stack((saddle_indices, ext2, images2))
@@ -308,11 +305,11 @@ class CriticalPoints(BaseAnalysis):
             conns = self.bader.saddle2_connections
             saddle_indices = np.arange(len(conns))
             # get first part
-            ext1 = conns[:,0]
-            images1 = conns[:,2]
+            ext1 = conns[:, 0]
+            images1 = conns[:, 2]
 
-            ext2 = conns[:,1]
-            images2 = conns[:,3]
+            ext2 = conns[:, 1]
+            images2 = conns[:, 3]
 
             conns1 = np.column_stack((saddle_indices, ext1, images1))
             conns2 = np.column_stack((saddle_indices, ext2, images2))

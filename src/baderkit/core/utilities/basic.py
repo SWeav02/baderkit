@@ -31,6 +31,7 @@ def dist(p1, p2):
     x1, y1, z1 = p2
     return get_norm(x1 - x, y1 - y, z1 - z)
 
+
 @njit(cache=True)
 def get_gradient_cart(i, j, k, data, dir2car):
     # dir2car = np.linalg.inv(row_matrix).T
@@ -77,6 +78,7 @@ def mutiple_dists(p1s, p2s):
         dists[idx] = dist(p1s[idx], p2s[idx])
     return dists
 
+
 @njit(inline="always", cache=True)
 def wrap_point(i, j, k, nx, ny, nz):
 
@@ -96,6 +98,7 @@ def wrap_point(i, j, k, nx, ny, nz):
         k -= nz
 
     return i, j, k
+
 
 @njit(inline="always", cache=True)
 def wrap_point_w_shift(i, j, k, nx, ny, nz):
@@ -320,6 +323,7 @@ def get_transforms_in_radius(
     dists = dists[sorted_indices]
     return offsets, dists
 
+
 @njit(cache=True)
 def compute_wrap_offset(point1, point2):
     """
@@ -346,6 +350,7 @@ def compute_wrap_offset(point1, point2):
                     best_k = k
 
     return best_i, best_j, best_k
+
 
 @njit(cache=True)
 def get_ongrid_gradient_cart(i, j, k, data, dir2car):

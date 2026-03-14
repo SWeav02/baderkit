@@ -205,9 +205,11 @@ def linear_slice(
 
     return interpolate_points(coords, method, data, is_frac)
 
+
 ###############################################################################
 # Gradient and Hessian
 ###############################################################################
+
 
 @njit(fastmath=True)
 def spline_grad(i, j, k, data, h=0.25, is_frac=False):

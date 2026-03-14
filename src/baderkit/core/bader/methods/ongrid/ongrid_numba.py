@@ -4,8 +4,8 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.utilities.basins import get_best_neighbor_with_shift
 from baderkit.core.utilities.basic import coords_to_flat
+from baderkit.core.utilities.basins import get_best_neighbor_with_shift
 
 
 @njit(parallel=True, cache=True)

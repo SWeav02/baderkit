@@ -393,9 +393,6 @@ def cartesian_grad_norm2(g, inv_G):
     )
 
 
-
-
-
 @njit(fastmath=True)
 def check_flat_extrema(evals, eig_tol):
     n_flat = 0
@@ -443,12 +440,6 @@ def modified_hessian(H, g_norm, Q, g, lambda0, grad_tol):
     return H_mod, evals, Q, g_proj
 
 
-
-
-
-
-
-
 @njit(cache=True)
 def flat_aware_newton_step(
     g,
@@ -466,8 +457,6 @@ def flat_aware_newton_step(
             dx += -(vecs[:, i] @ g) / evals[i] * vecs[:, i]
 
     return dx
-
-
 
 
 ###############################################################################
