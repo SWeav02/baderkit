@@ -83,8 +83,8 @@ def test_running_bader_methods(tmp_path, method):
     counts = {
         "weight": 66632,
         "ongrid": 72545,
-        "neargrid": 67203,
-        "neargrid-weight": 67203,
+        "neargrid": 67199,
+        "neargrid-weight": 67199,
     }
     assert len(np.where(bader.maxima_basin_labels == 2)[0]) == counts[method]
 

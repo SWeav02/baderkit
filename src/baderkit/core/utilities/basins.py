@@ -1057,7 +1057,9 @@ def get_extrema(
     """
     nx, ny, nz = data.shape
     # create 3D array to store extrema
-    extrema = np.zeros_like(data, dtype=np.uint8)
+    extrema = np.zeros_like(data, dtype=np.bool_)
+    factor = -1 if use_minima else 1
+
     # loop over each voxel in parallel
     for i in prange(nx):
         for j in range(ny):
@@ -1066,22 +1068,18 @@ def get_extrema(
                 if vacuum_mask[i, j, k]:
                     continue
                 # get this voxels value
-                value = data[i, j, k]
+                value = data[i, j, k] * factor
                 is_max = True
                 # iterate over the neighboring voxels
                 for si, sj, sk in neighbor_transforms:
                     # wrap points
                     ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-                    if not use_minima:
-                        if data[ii, jj, kk] > value:
-                            is_max = False
-                            break
-                    else:
-                        if data[ii, jj, kk] < value:
-                            is_max = False
-                            break
+                    if data[ii, jj, kk] * factor > value:
+                        is_max = False
+                        break
+
                 if is_max:
-                    extrema[i, j, k] = 1
+                    extrema[i, j, k] = True
     return extrema
 
 

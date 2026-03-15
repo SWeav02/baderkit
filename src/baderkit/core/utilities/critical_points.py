@@ -474,7 +474,8 @@ def remove_false_saddles(
     true_saddles = np.where(
         saddle_connections[:, 0] != np.iinfo(saddle_connections.dtype).max
     )[0]
-    saddle_indices = saddle_indices[true_saddles]
+    # saddle_indices = saddle_indices[true_saddles]
+    saddle_coords = saddle_coords[true_saddles]
     saddle_connections = saddle_connections[true_saddles]
 
     return saddle_coords, saddle_connections
