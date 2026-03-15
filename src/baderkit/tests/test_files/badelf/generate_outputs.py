@@ -9,8 +9,8 @@ parent = path.parent
 
 for method in ["badelf", "voronelf", "zero-flux"]:
     badelf = SpinBadelf.from_vasp(
-        charge_file=parent / "CHGCAR",
-        reference_file=parent / "ELFCAR",
+        charge_filename=parent / "CHGCAR",
+        reference_filename=parent / "ELFCAR",
         method=method,
     )
     subfolder = path / method

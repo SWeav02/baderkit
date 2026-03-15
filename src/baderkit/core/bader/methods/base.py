@@ -158,7 +158,6 @@ class MethodBase:
             self._images,
             self._extrema_vox,
             self._extrema_frac,
-            self._original_vox,
         ) = init_by_approx_persistence(
             labels=labels,
             data=self.reference_grid.total,

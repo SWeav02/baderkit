@@ -4,7 +4,7 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.utilities.basic import coords_to_flat
+from baderkit.core.utilities.basic import coords_to_flat, flat_to_coords
 from baderkit.core.utilities.basins import get_best_neighbor_with_shift
 
 
@@ -52,30 +52,28 @@ def get_steepest_pointers(
     nx, ny, nz = data.shape
     ny_nz = ny * nz
     # loop over each voxel in parallel
-    for i in prange(nx):
-        for j in range(ny):
-            for k in range(nz):
-                # get the flat index of this point
-                flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
-                # check if this is a vacuum point. If so, we don't even bother
-                # with the label.
-                if vacuum_mask[i, j, k]:
-                    continue
-                # check if this is a maximum. If so, we should have assigned
-                # this label earlier and we continue
-                if extrema_mask[i, j, k]:
-                    continue
-                # get the best neighbor
-                _, (x, y, z), shift = get_best_neighbor_with_shift(
-                    data=data,
-                    i=i,
-                    j=j,
-                    k=k,
-                    neighbor_transforms=neighbor_transforms,
-                    neighbor_dists=neighbor_dists,
-                    use_minima=use_minima,
-                )
-                labels[flat_idx] = coords_to_flat(x, y, z, ny_nz, nz)
-                images[flat_idx] = shift
+    for flat_idx in prange(len(labels)):
+        i, j, k = flat_to_coords(flat_idx, ny_nz, nz)
+
+        # check if this is a vacuum point. If so, we don't even bother
+        # with the label.
+        if vacuum_mask[i, j, k]:
+            continue
+        # check if this is a maximum. If so, we should have assigned
+        # this label earlier and we continue
+        if extrema_mask[i, j, k]:
+            continue
+        # get the best neighbor
+        _, (x, y, z), shift = get_best_neighbor_with_shift(
+            data=data,
+            i=i,
+            j=j,
+            k=k,
+            neighbor_transforms=neighbor_transforms,
+            neighbor_dists=neighbor_dists,
+            use_minima=use_minima,
+        )
+        labels[flat_idx] = coords_to_flat(x, y, z, ny_nz, nz)
+        images[flat_idx] = shift
 
     return labels, images

@@ -59,6 +59,34 @@ def find_root_with_shift(parent, offset_x, offset_y, offset_z, x):
 
 
 @njit(cache=True, inline="always")
+def find_root_with_shift1(parent, offset, x):
+    """Find root with partial compression and accumulate offset for periodic cycle counting"""
+    # local aliasing to avoid repeated global lookups
+    y = x
+
+    # Path-halving loop: compress path by setting parent[y] = parent[parent[y]]
+    # and updating offset[y] to remain consistent.
+    # This reduces the path length quickly with fewer writes than full compression.
+    while parent[y] != y and parent[parent[y]] != parent[y]:
+        p = parent[y]
+        # add p's offset into y so that y points to p's parent consistently
+        offset[y] += offset[p]
+        # set y to point to grandparent
+        parent[y] = parent[p]
+        # advance y (we short-circuited one level)
+        y = parent[y]
+
+    # Final climb to accumulate the cumulative offset; path is now short.
+    offset_new = np.zeros(3, dtype=np.int8)
+    y = x
+    while parent[y] != y:
+        offset_new += offset[y]
+        y = parent[y]
+
+    return y, offset_new
+
+
+@njit(cache=True, inline="always")
 def find_root_with_shift_no_compression(parent, offset_x, offset_y, offset_z, x):
     """Find root and offset with no compression/accumulation. Parallel friendly"""
     cx = 0
@@ -152,6 +180,22 @@ def union_with_shift(
             root_mask[ra] = True
         if root_mask[rb]:
             root_mask[rb] = False
+
+
+@njit(cache=True, inline="always")
+def union_with_shift1(parent, offset, a, b, shift):
+    """Create union between two points and accumulate shift needed to calculate cycles around periodic boundaries"""
+    ra, shifta = find_root_with_shift1(parent, offset, a)
+    rb, shiftb = find_root_with_shift1(parent, offset, b)
+
+    if ra == rb:
+        # no need to combine
+        return
+
+    total_shift = shift + shiftb - shifta
+
+    parent[ra] = rb
+    offset[ra] = total_shift
 
 
 ###############################################################################
