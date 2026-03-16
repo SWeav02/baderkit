@@ -101,6 +101,17 @@ def find_root_with_shift_no_compression(parent, offset_x, offset_y, offset_z, x)
     return x, cx, cy, cz
 
 
+@njit(cache=True, inline="always")
+def find_root_with_shift_no_compression1(parent, offset, x):
+    """Find root and offset with no compression/accumulation. Parallel friendly"""
+    shift = np.zeros(3, dtype=np.int8)
+    while parent[x] != x:
+        shift += offset[x]
+        x = parent[x]
+
+    return x, shift
+
+
 ###############################################################################
 # Union Methods
 ###############################################################################

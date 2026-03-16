@@ -19,11 +19,14 @@ from baderkit.core.utilities.critical_points import refine_critical_points
 from baderkit.core.utilities.interpolation import linear_slice
 from baderkit.core.utilities.transforms import (
     ALL_NEIGHBOR_TRANSFORMS,
+    IMAGE_TO_INT,
     INT_TO_IMAGE,
     get_transform_dists,
 )
 from baderkit.core.utilities.union_find import (
+    find_root_no_compression,
     find_root_with_shift1,
+    find_root_with_shift_no_compression1,
     union,
     union_with_shift1,
 )
@@ -324,36 +327,140 @@ def get_approx_saddle_val(
     return conn_val
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
+# def group_by_low_approx_persistence(
+#     data,
+#     labels,
+#     images,
+#     extrema_values,
+#     extrema_labels,
+#     extrema_vox,
+#     max_cart_offset,
+#     use_minima,
+#     persistence_tol,
+#     matrix,
+# ):
+#     shape = np.array(data.shape)
+#     nx, ny, nz = data.shape
+#     extrema_frac = extrema_vox / shape
+#     extrema_cart = extrema_frac @ matrix
+#     num_extrema = len(extrema_values)
+
+#     best_neighs = np.arange(num_extrema)
+#     best_shifts = np.zeros((num_extrema, 3), dtype=np.int8)
+
+#     # loop over each point and find the best neighbor
+#     for ext_idx in prange(num_extrema):
+#         ext_frac = extrema_frac[ext_idx]
+#         ext_cart = extrema_cart[ext_idx]
+#         ext_value = extrema_values[ext_idx]
+
+#         # create a tracker for the best neighbor
+#         best_label = int(ext_idx)
+#         best_persistence = np.inf
+#         best_shift = np.zeros(3, dtype=np.int8)
+#         for neigh_ext_idx in range(num_extrema):
+#             # skip the original index
+#             if ext_idx == neigh_ext_idx:
+#                 continue
+#             # skip neighbors with less extreme values
+#             neigh_ext_value = extrema_values[neigh_ext_idx]
+#             if (
+#                 use_minima
+#                 and neigh_ext_value > ext_value
+#                 or not use_minima
+#                 and neigh_ext_value < ext_value
+#                 or neigh_ext_value == ext_value
+#                 and neigh_ext_idx > ext_idx
+#             ):
+#                 continue
+
+#             # get neighbor frac coord
+#             neigh_frac = extrema_frac[neigh_ext_idx]
+#             shift = np.round(neigh_frac - ext_frac).astype(np.int8)
+#             wrapped_neigh_frac = neigh_frac - shift
+
+#             # check if this neighbor is outside our cutoff and continue if so
+#             neigh_cart = wrapped_neigh_frac @ matrix
+
+#             offset = neigh_cart - ext_cart
+#             dist = np.linalg.norm(offset)
+#             if dist > max_cart_offset:
+#                 continue
+
+#             # get the value these extrema connect at
+#             n_points = max(int(round(dist * 20)), 5)
+#             conn_val = get_approx_saddle_val(
+#                 ext_frac,
+#                 wrapped_neigh_frac,
+#                 n_points,
+#                 data,
+#                 use_minima,
+#                 nx,
+#                 ny,
+#                 nz,
+#             )
+
+#             if conn_val == np.inf:
+#                 continue
+
+#             conn_cart = ext_cart + offset / 2
+
+#             # get persistence
+#             persistence_score = get_persistence_value(
+#                 ext_value, neigh_ext_value, conn_val, ext_cart, neigh_cart, conn_cart
+#             )
+
+#             # if our persistence is below our tolerance and the current best,
+#             # update the best label
+#             if (
+#                 persistence_score < persistence_tol
+#                 and persistence_score < best_persistence
+#             ):
+#                 best_label = neigh_ext_idx
+#                 best_shift = shift
+#                 best_persistence = persistence_score
+#         best_neighs[ext_idx] = best_label
+#         best_shifts[ext_idx] = best_shift
+
+#     # go through and union each label
+#     for ext_idx, (neigh_idx, neigh_image) in enumerate(zip(best_neighs, best_shifts)):
+#         label = extrema_labels[ext_idx]
+#         neigh_label = extrema_labels[neigh_idx]
+#         union_with_shift1(labels, images, label, neigh_label, neigh_image)
+
+#     return labels, images
+
+
+@njit(cache=True)
 def group_by_low_approx_persistence(
     data,
     labels,
     images,
     extrema_values,
     extrema_labels,
-    extrema_frac,
+    extrema_vox,
     max_cart_offset,
     use_minima,
     persistence_tol,
     matrix,
 ):
+    shape = np.array(data.shape)
     nx, ny, nz = data.shape
+    extrema_frac = extrema_vox / shape
     extrema_cart = extrema_frac @ matrix
     num_extrema = len(extrema_values)
 
-    best_neighs = np.arange(num_extrema)
-    best_shifts = np.zeros((num_extrema, 3), dtype=np.int8)
+    # get approximate saddle points and connected basins
+    saddle_coords = []
+    saddle_connections = []
+    saddle_values = []
 
-    # loop over each point and find the best neighbor
-    for ext_idx in prange(num_extrema):
+    for ext_idx in range(num_extrema):
         ext_frac = extrema_frac[ext_idx]
         ext_cart = extrema_cart[ext_idx]
         ext_value = extrema_values[ext_idx]
 
-        # create a tracker for the best neighbor
-        best_label = int(ext_idx)
-        best_persistence = np.inf
-        best_shift = np.zeros(3, dtype=np.int8)
         for neigh_ext_idx in range(num_extrema):
             # skip the original index
             if ext_idx == neigh_ext_idx:
@@ -372,8 +479,10 @@ def group_by_low_approx_persistence(
 
             # get neighbor frac coord
             neigh_frac = extrema_frac[neigh_ext_idx]
-            shift = np.round(neigh_frac - ext_frac).astype(np.int8)
-            wrapped_neigh_frac = neigh_frac - shift
+            # get shift from neigh coord to extrema
+            shift = np.round(ext_frac - neigh_frac).astype(np.int8)
+            # wrap to be as close as possible
+            wrapped_neigh_frac = neigh_frac + shift
 
             # check if this neighbor is outside our cutoff and continue if so
             neigh_cart = wrapped_neigh_frac @ matrix
@@ -396,33 +505,48 @@ def group_by_low_approx_persistence(
                 nz,
             )
 
-            if conn_val == np.inf:
-                continue
-
-            conn_cart = ext_cart + offset / 2
+            saddle_cart = ext_cart + offset / 2
 
             # get persistence
             persistence_score = get_persistence_value(
-                ext_value, neigh_ext_value, conn_val, ext_cart, neigh_cart, conn_cart
+                ext_value, neigh_ext_value, conn_val, ext_cart, neigh_cart, saddle_cart
             )
 
-            # if our persistence is below our tolerance and the current best,
-            # update the best label
-            if (
-                persistence_score < persistence_tol
-                and persistence_score < best_persistence
-            ):
-                best_label = neigh_ext_idx
-                best_shift = shift
-                best_persistence = persistence_score
-        best_neighs[ext_idx] = best_label
-        best_shifts[ext_idx] = best_shift
+            # if our persistence is below our tolerance we add this saddle
+            if persistence_score < persistence_tol:
+                saddle_coords.append(saddle_cart)
+                image = IMAGE_TO_INT[shift[0], shift[1], shift[2]]
+                saddle_connections.append(
+                    np.array((ext_idx, neigh_ext_idx, 13, image), dtype=np.int16)
+                )
+                saddle_values.append(conn_val)
 
-    # go through and union each label
-    for ext_idx, (neigh_idx, neigh_image) in enumerate(zip(best_neighs, best_shifts)):
+    # convert lists to arrays
+    saddle_coords_array = np.empty((len(saddle_coords), 3), dtype=np.float64)
+    saddle_connections_array = np.empty((len(saddle_coords), 4), dtype=np.int16)
+    for idx, (coord, conn) in enumerate(zip(saddle_coords, saddle_connections)):
+        saddle_coords_array[idx] = coord
+        saddle_connections_array[idx] = conn
+    saddle_values = np.array(saddle_values, dtype=np.float64)
+
+    # get unions and images
+    unions, ext_images = group_by_persistence(
+        data=data,
+        extrema_vox=extrema_vox,
+        basin_connections=saddle_connections_array,
+        saddle_values=saddle_values,
+        saddle_carts=saddle_coords_array,
+        persistence_tol=persistence_tol,
+        matrix=matrix,
+        use_minima=use_minima,
+    )
+
+    # update labels and images
+    for ext_idx, (root_idx, image) in enumerate(zip(unions, ext_images)):
         label = extrema_labels[ext_idx]
-        neigh_label = extrema_labels[neigh_idx]
-        union_with_shift1(labels, images, label, neigh_label, neigh_image)
+        root_label = extrema_labels[root_idx]
+        labels[label] = root_label
+        images[label] = image
 
     return labels, images
 
@@ -460,7 +584,7 @@ def group_by_refinement(
     )
 
     # get best neighbors of each
-    rounded = np.floor(refined_vox).astype(np.int64) % shape
+    rounded = np.floor(refined_vox).astype(np.int64)
     rounded_frac = rounded / shape
 
     best_neighs = np.arange(len(root_vox))
@@ -500,12 +624,12 @@ def group_by_refinement(
             if np.max(np.abs(offset)) > 1 + 1e-12:
                 continue
 
-            # get the shift to this new point
+            # get unrefined shift from neighbor to ext
             neigh_orig_frac = extrema_frac[neigh_idx]
-            total_shift = np.round(neigh_orig_frac - ext_orig_frac).astype(np.int8)
+            shift = np.round(ext_orig_frac - neigh_orig_frac).astype(np.int8)
 
             best_idx = idx1
-            best_shift = total_shift
+            best_shift = shift
         # update label and image
         best_neighs[idx] = best_idx
         best_shifts[idx] = best_shift
@@ -567,7 +691,7 @@ def init_by_approx_persistence(
         images,
         extrema_values,
         extrema_labels,
-        extrema_frac,
+        extrema_vox,
         max_cart_offset,
         use_minima,
         persistence_tol,
@@ -626,7 +750,6 @@ def init_by_approx_persistence(
 def group_by_persistence(
     data,
     extrema_vox,
-    extrema_frac,
     basin_connections,
     saddle_values,
     saddle_carts,
@@ -634,93 +757,91 @@ def group_by_persistence(
     matrix,
     use_minima=False,
 ):
-    num_extrema = len(extrema_frac)
+    shape = np.array(data.shape)
+    num_extrema = len(extrema_vox)
+    num_saddles = len(saddle_carts)
+    extrema_frac = extrema_vox / shape
 
     # get values at extrema points
-    extrema_values = np.empty(len(extrema_frac), dtype=np.float64)
+    extrema_values = np.empty(num_extrema, dtype=np.float64)
     for idx, (i, j, k) in enumerate(extrema_vox):
         extrema_values[idx] = data[i, j, k]
 
-    # get max neighbor count
-    counts = np.zeros(num_extrema, dtype=np.int64)
-    for ext1, ext2, image1, image2 in basin_connections:
-        counts[ext1] += 1
-    max_count = counts.max()
+    # create array to track unions between basins
+    unions = np.arange(num_extrema)
+    images = np.zeros((num_extrema, 3), dtype=np.int8)
 
-    # create arrays to track connections
-    max_degree = max_count
-    all_conn_neighs = np.full((num_extrema, max_degree), -1, np.int64)
-    all_conn_vals = np.zeros((num_extrema, max_degree), np.float64)
-    all_conn_coords = np.zeros((num_extrema, max_degree, 3), np.float64)
-    all_neigh_coords = np.zeros((num_extrema, max_degree, 3), np.float64)
+    # loop until no new unions are added
+    num_added = 1
+    while num_added > 0:
+        num_added = 0
 
-    cursor = np.zeros(num_extrema, dtype=np.int64)
+        for saddle_idx in range(num_saddles):
 
-    for ext_idx in prange(num_extrema):
-        for i, (ext1, ext2, image1, image2) in enumerate(basin_connections):
-            if ext1 != ext_idx:
+            ext1, ext2, image1, image2 = basin_connections[saddle_idx]
+
+            root1, shift1 = find_root_with_shift1(unions, images, ext1)
+            root2, shift2 = find_root_with_shift1(unions, images, ext2)
+
+            # skip if this saddle does not involve the current root
+            # NOTE: connections should be ordered by value ahead of time
+            if root1 == root2:
                 continue
-            neigh_count = cursor[ext1]
 
-            saddle_val = saddle_values[i]
-            saddle_cart = saddle_carts[i]
+            # convert images
+            image1 = INT_TO_IMAGE[image1]
+            image2 = INT_TO_IMAGE[image2]
 
-            c1 = (extrema_frac[ext1] + INT_TO_IMAGE[image1]) @ matrix
-            c2 = (extrema_frac[ext2] + INT_TO_IMAGE[image2]) @ matrix
+            # get saddle coord/val
+            saddle_cart = saddle_carts[saddle_idx]
+            saddle_val = saddle_values[saddle_idx]
 
+            # get extrema coords.
+            tot_shift1 = image1 + shift1
+            tot_shift2 = image2 + shift2
+            c1 = (extrema_frac[root1] + tot_shift1) @ matrix
+            c2 = (extrema_frac[root2] + tot_shift2) @ matrix
+
+            # calculate persistence score
             score = get_persistence_value(
-                extrema_values[ext1],
-                extrema_values[ext2],
+                extrema_values[root1],
+                extrema_values[root2],
                 saddle_val,
                 c1,
                 c2,
                 saddle_cart,
             )
+
+            # if our score is below the tolerance, union
             if score < persistence_tol:
-                all_conn_neighs[ext_idx, neigh_count] = ext2
-                all_conn_vals[ext_idx, neigh_count] = saddle_val
-                all_conn_coords[ext_idx, neigh_count] = saddle_cart
-                all_neigh_coords[ext_idx, neigh_count] = c2
+                ext_val = extrema_values[root1]
+                neigh_val = extrema_values[root2]
+                if (
+                    (not use_minima and neigh_val < ext_val)
+                    or (use_minima and neigh_val > ext_val)
+                    or (neigh_val == ext_val and root2 > root1)
+                ):
+                    upper = ext1
+                    lower = ext2
+                    image = image1 - image2
+                else:
+                    upper = ext2
+                    lower = ext1
+                    image = image2 - image1
+                num_added += 1
+                union_with_shift1(unions, images, lower, upper, image)
 
-                cursor[ext_idx] += 1
-
-    # create array to track unions between basins
-    unions = np.arange(num_extrema)
-
-    if max_count > 0:
-        unions = union_by_persistence(
-            all_conn_neighs,
-            all_conn_vals,
-            all_conn_coords,
-            all_neigh_coords,
-            cursor,
-            labels=unions,
-            matrix=matrix,
-            extrema_values=extrema_values,
-            extrema_labels=np.arange(len(extrema_values)),
-            use_minima=use_minima,
-            persistence_tol=persistence_tol,
+    # get the roots of each extrema
+    for ext_idx in range(num_extrema):
+        root, shift = find_root_with_shift1(
+            unions,
+            images,
+            ext_idx,
         )
+        unions[ext_idx] = root
+        images[ext_idx] = shift
 
-    # update labels to the highest valued point
-    unions, _ = reorder_labels(
-        unions,
-        data,
-        extrema_labels=np.arange(num_extrema),
-        extrema_values=extrema_values,
-        use_minima=use_minima,
-    )
-
-    # Find the images each grouped maximum must cross to reach its parent
-    root_transforms = np.empty((len(unions), 3), dtype=np.int8)
-    for ext_idx, root in enumerate(unions):
-        # get fractional coordinates
-        ext_frac = extrema_frac[ext_idx]
-        root_frac = extrema_frac[root]
-        # get best image to wrap the maxima to its root
-        root_transforms[ext_idx] = compute_wrap_offset(ext_frac, root_frac)
-
-    return unions, root_transforms
+    return unions, images
 
 
 @njit(cache=True, parallel=True)

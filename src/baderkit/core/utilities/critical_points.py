@@ -269,16 +269,18 @@ def get_extrema_saddle_connections(
         )
         # skip points with a higher value
         neigh_value = data[ii, jj, kk]
+        neigh_label = labels[ii, jj, kk]
         if use_minima:
             if neigh_value > value:
                 continue
-        else:
+        elif not use_minima:
             if neigh_value < value:
+                continue
+        else:
+            if neigh_value == value and neigh_label > label:
                 continue
 
         # get the label and image of this neighbor
-        neigh_label = labels[ii, jj, kk]
-        neigh_image = images[ii, jj, kk]
 
         # update image to be relative to the current points transformation
         if ssi == 0 and ssj == 0 and ssk == 0:
@@ -716,16 +718,6 @@ def refine_critical_points(
     for coord_idx in prange(len(critical_coords)):
         coord = critical_coords[coord_idx]
         # refine
-        # new_coord, success, morse_index = newton_refine(
-        #     coord,
-        #     data,
-        #     target_index,
-        #     inv_G,
-        #     max_iter,
-        #     grad_tol,
-        #     h,
-        #     eig_rel_tol,
-        # )
         new_coord, success, morse_index = newton_refine_in_voxel(
             coord,
             data,

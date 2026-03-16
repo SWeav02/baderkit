@@ -199,7 +199,6 @@ class MethodBase:
         t0 = time.time()
         extrema_roots, root_transforms = group_by_persistence(
             data=self.reference_grid.total,
-            extrema_frac=self.extrema_frac,
             extrema_vox=self.extrema_vox,
             basin_connections=best_connections,
             saddle_values=best_vals,
