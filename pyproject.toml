@@ -63,7 +63,7 @@ dependencies = [
 
 [project.optional-dependencies]
 gui = [
-    "pyvista>=0.44.0,<=0.46.3",
+    "pyvista>=0.44.0,<=0.47.1",
     "pyvistaqt>=0.6.0,<=0.11.3",
     "qtpy>=2.0.0,<3.0",
     "PyQt5"
@@ -71,7 +71,7 @@ gui = [
 
 # For development and testing. Taken straight from simmate
 DEV = [
-    "pyvista>=0.44.0,<=0.46.3",
+    "pyvista>=0.44.0,<=0.47.1",
     "pyvistaqt>=0.6.0,<=0.11.3",
     "qtpy>=2.0.0,<3.0",
     "pytest",
