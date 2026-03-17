@@ -191,6 +191,8 @@ doing your own tests for your system.
     results in adjacent grid points with the same value. The Henkelman group's code
     treats these as individual maxima/basins, while we combine them to the correct
     single maximum/basin.
+
+    ![basin_reduction](/images/basin_reduction.png)
     
     - **Pointers Over Paths:** Except for in the `weight` method, the Henkelman code
     starts at an arbitrary point and climbs a path to a maximum, assigning
