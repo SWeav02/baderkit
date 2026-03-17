@@ -86,9 +86,10 @@ class BaseAnalysis(ABC):
 
         # check if the total charge grid has values below 0
         if vacuum_tol is not False:
-            assert (
-                total_charge_grid.total.min() >= 0
-            ), "The charge grid used to detect vacuum has values below 0. This typically results from too low of a grid density and causes incorrect partitions."
+            if total_charge_grid.total.min() < 0:
+                logging.warning(
+                    "The charge grid used to detect vacuum has values below 0. This typically results from too low of a grid density and can cause incorrect partitions. Check results carefully."
+                )
 
         # if vacuum tolerance is True, set it to the same default as above
         if vacuum_tol is True:
