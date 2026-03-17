@@ -19,7 +19,6 @@ dependencies:
   - pyvista>=0.44.0,<=0.46.3
   - qtpy>=2.0.0,<3.0
   - pyvistaqt>=0.6.0,<=0.11.3
-  - PyQt5
 
   # Preferred IDE
   - spyder
