@@ -1,8 +1,8 @@
 # Examples
 
 This page hosts various examples for using BaderKit for cases not covered on
-the [Quick Start](/baderkit/index) page. If you run into issues and cannot find
-the answer here or using our [API reference](/baderkit/api_reference/bader),
+the Quick Start pages. If you run into issues and cannot find
+the answer here or using our [API reference](/baderkit/api_reference/core/bader),
 feel free to open an [issue](https://github.com/SWeav02/baderkit/issues) or
 [discussion](https://github.com/SWeav02/baderkit/discussions) on our github page.
 Similarly, if you have an example you would like to add, please open a [discussion](https://github.com/SWeav02/baderkit/discussions)

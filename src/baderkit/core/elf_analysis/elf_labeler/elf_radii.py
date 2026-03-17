@@ -263,7 +263,8 @@ class ElfRadiiTools:
             rotation_matrices=rotation_matrices,
             translation_vectors=translation_vectors,
             pair_dists=pair_dists,
-            tol=0.02,
+            shape=self.grid.shape,
+            tol=1,
         )
 
         # get a mask for reversed bonds
@@ -382,7 +383,7 @@ class ElfRadiiTools:
             translation_vectors=translation_vectors,
             shape=self.grid.shape,
             frac2cart=self.grid.matrix,
-            tol=0.02,
+            tol=1,
         )
 
         # reduce to unique

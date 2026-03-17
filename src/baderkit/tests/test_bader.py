@@ -58,10 +58,10 @@ def test_writing_bader(tmp_path):
     bader.write_basin_tsv(tmp_path / "bader_basins.tsv")
 
     # Try writing results
-    bader.write_atom_volumes([0], directory=tmp_path)
-    bader.write_atom_volumes_sum([0], directory=tmp_path)
-    bader.write_basin_volumes([0], directory=tmp_path)
-    bader.write_basin_volumes_sum([0], directory=tmp_path)
+    bader.write_atom_volumes([0], filename=tmp_path / "CHGCAR")
+    bader.write_atom_volumes_sum([0], filename=tmp_path / "CHGCAR")
+    bader.write_basin_volumes([0], filename=tmp_path / "CHGCAR")
+    bader.write_basin_volumes_sum([0], filename=tmp_path / "CHGCAR")
     assert Path(tmp_path / "bader.json").exists()
     assert Path(tmp_path / "bader_atoms.tsv").exists()
     assert Path(tmp_path / "bader_basins.tsv").exists()
@@ -78,7 +78,7 @@ def test_writing_bader(tmp_path):
 def test_running_bader_methods(tmp_path, method):
     bader = Bader.from_dynamic(TEST_CHGCAR, method=method)
 
-    assert len(np.where(bader.basin_labels == -1)[0]) == 0
+    assert len(np.where(bader.maxima_basin_labels == len(bader.structure))[0]) == 0
 
     counts = {
         "weight": 66632,
@@ -86,7 +86,7 @@ def test_running_bader_methods(tmp_path, method):
         "neargrid": 67199,
         "neargrid-weight": 67199,
     }
-    assert len(np.where(bader.basin_labels == 0)[0]) == counts[method]
+    assert len(np.where(bader.maxima_basin_labels == 2)[0]) == counts[method]
 
     with open(TEST_BADER_FOLDER / method / "bader.json", "r") as file:
         expected_json = file.read()

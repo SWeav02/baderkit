@@ -84,9 +84,7 @@ class BasinTab(qw.QWidget):
             # get data
             charge = str(round(bader.basin_charges[i], 4))
             volume = str(round(bader.basin_volumes[i], 4))
-            coords = (
-                "(" + ", ".join(f"{x:.3f}" for x in bader.basin_maxima_frac[i]) + ")"
-            )
+            coords = "(" + ", ".join(f"{x:.3f}" for x in bader.maxima_frac[i]) + ")"
 
             # create a widget for visibility
             visible_widget = qw.QCheckBox()
@@ -100,7 +98,8 @@ class BasinTab(qw.QWidget):
 
             # make child row under the species row
             basin_item = qw.QTreeWidgetItem(
-                atom_trees[atom_idx], [f"basin {i}", "", charge, volume, coords]
+                atom_trees[atom_idx],
+                [f"basin {i}", "", charge, volume, coords],
             )
             self.tree.setItemWidget(basin_item, 1, centered_widget(visible_widget))
 

@@ -42,13 +42,13 @@ def interp_linear(i, j, k, data, is_frac=True):
         j = j * ny
         k = k * nz
 
-    # wrap coord
-    i, j, k = wrap_point(i, j, k, nx, ny, nz)
-
     # get rounded down voxel coords
     ri = int(i // 1.0)
     rj = int(j // 1.0)
     rk = int(k // 1.0)
+
+    # wrap coord
+    ri, rj, rk = wrap_point(ri, rj, rk, nx, ny, nz)
 
     # get offset from rounded voxel coord
     di = i - ri
@@ -165,8 +165,6 @@ def interpolate_point(
         value = interp_linear(i, j, k, data, is_frac)
     elif method == "cubic":
         value = interp_spline(i, j, k, data, is_frac)
-    # elif method == "quintic":
-    #     value = interp_spline(i, j, k, data, order=5)
 
     return value
 
@@ -186,10 +184,6 @@ def interpolate_points(points, method, data, is_frac=True):
         for point_idx in prange(len(points)):
             i, j, k = points[point_idx]
             out[point_idx] = interp_spline(i, j, k, data, is_frac)
-    # elif method == "quintic":
-    #     for i in prange(len(points)):
-    #         i, j, k = points[i]
-    #         out[i] = interp_spline(i, j, k, data, order=5)
 
     return out
 
@@ -213,254 +207,213 @@ def linear_slice(
 
 
 ###############################################################################
-# Parabolic Fitting
+# Gradient and Hessian
 ###############################################################################
-@njit(fastmath=True, cache=True)
-def refine_frac_max_parabolic(grid, frac_coords, lattice):
+
+
+@njit(fastmath=True)
+def spline_grad(i, j, k, data, h=0.25, is_frac=False):
     """
-    Numerically stable refinement of a local maximum on a 3D periodic grid.
-    Fits a local quadratic and enforces concavity.
-
-    Parameters
-    ----------
-    grid : 3D ndarray
-        Periodic scalar field (e.g., charge density).
-    frac_coords : tuple of float
-        Fractional coordinates (fx, fy, fz) of the approximate maximum (in [0, 1)).
-    lattice : ndarray, shape (3, 3)
-        Lattice vectors as rows (real-space basis).
-
-    Returns
-    -------
-    refined_frac : ndarray, shape (3,)
-        Refined fractional coordinates of the true maximum (wrapped to [0, 1)).
-    refined_value : float
-        Interpolated value at the refined maximum.
+    Gradient of spline-interpolated scalar field
+    with respect to grid coordinates (i, j, k).
     """
+    nx, ny, nz = data.shape
 
-    nx, ny, nz = grid.shape
-    fx, fy, fz = frac_coords
+    # convert fractional to voxel coordinates
+    if is_frac:
+        i = i * nx
+        j = j * ny
+        k = k * nz
 
-    # --- Step 1: nearest grid point
-    ix = int(round(fx * nx)) % nx
-    iy = int(round(fy * ny)) % ny
-    iz = int(round(fz * nz)) % nz
+    i = float(i)
+    j = float(j)
+    k = float(k)
 
-    # --- Step 2: extract 3×3×3 neighborhood
-    region = np.empty((3, 3, 3), dtype=grid.dtype)
-    for dx in range(-1, 2):
-        for dy in range(-1, 2):
-            for dz in range(-1, 2):
-                region[dx + 1, dy + 1, dz + 1] = grid[
-                    (ix + dx) % nx, (iy + dy) % ny, (iz + dz) % nz
-                ]
+    fxp = interp_spline(i + h, j, k, data, False)
+    fxm = interp_spline(i - h, j, k, data, False)
 
-    # --- Step 3: design matrix
-    A = np.empty((27, 10), dtype=np.float64)
-    b = np.empty(27, dtype=np.float64)
-    inv_n = np.array([1.0 / nx, 1.0 / ny, 1.0 / nz])
-    row = 0
-    for dx in range(-1, 2):
-        for dy in range(-1, 2):
-            for dz in range(-1, 2):
-                # fractional → Cartesian offset
-                fxo = dx * inv_n[0]
-                fyo = dy * inv_n[1]
-                fzo = dz * inv_n[2]
-                ox = lattice[0, 0] * fxo + lattice[1, 0] * fyo + lattice[2, 0] * fzo
-                oy = lattice[0, 1] * fxo + lattice[1, 1] * fyo + lattice[2, 1] * fzo
-                oz = lattice[0, 2] * fxo + lattice[1, 2] * fyo + lattice[2, 2] * fzo
+    fyp = interp_spline(i, j + h, k, data, False)
+    fym = interp_spline(i, j - h, k, data, False)
 
-                A[row, 0] = 1.0
-                A[row, 1] = ox
-                A[row, 2] = oy
-                A[row, 3] = oz
-                A[row, 4] = ox * ox
-                A[row, 5] = oy * oy
-                A[row, 6] = oz * oz
-                A[row, 7] = ox * oy
-                A[row, 8] = ox * oz
-                A[row, 9] = oy * oz
-                b[row] = region[dx + 1, dy + 1, dz + 1]
-                row += 1
+    fzp = interp_spline(i, j, k + h, data, False)
+    fzm = interp_spline(i, j, k - h, data, False)
 
-    # --- Step 4: regularized least squares
-    ATA = np.dot(A.T, A)
-    ATb = np.dot(A.T, b)
-    # Regularization (Tikhonov) improves numerical stability
-    for i in range(10):
-        ATA[i, i] += 1e-10
-    coeffs = np.linalg.solve(ATA, ATb)
+    gx = (fxp - fxm) / (2.0 * h)
+    gy = (fyp - fym) / (2.0 * h)
+    gz = (fzp - fzm) / (2.0 * h)
 
-    a0 = coeffs[0]
-    ax, ay, az = coeffs[1], coeffs[2], coeffs[3]
-    axx, ayy, azz = coeffs[4], coeffs[5], coeffs[6]
-    axy, axz, ayz = coeffs[7], coeffs[8], coeffs[9]
-
-    # --- Step 5: solve ∇f = 0 → M * offset = -grad
-    M = np.empty((3, 3), dtype=np.float64)
-    M[0, 0] = 2.0 * axx
-    M[1, 1] = 2.0 * ayy
-    M[2, 2] = 2.0 * azz
-    M[0, 1] = M[1, 0] = axy
-    M[0, 2] = M[2, 0] = axz
-    M[1, 2] = M[2, 1] = ayz
-    grad = np.array([ax, ay, az])
-
-    # Ensure concave-down surface: flip signs if all curvatures are positive
-    trace_M = M[0, 0] + M[1, 1] + M[2, 2]
-    if trace_M > 0:
-        M *= -1.0
-        grad *= -1.0
-
-    # --- Step 6: solve for offset
-    try:
-        offset_cart = np.linalg.solve(M, -grad)
-    except:
-        offset_cart = np.zeros(3)
-
-    # --- Step 7: clamp offset to within one voxel size
-    step_cart = np.sqrt(np.sum((lattice / np.array([[nx, ny, nz]])) ** 2, axis=1))
-    max_step = np.max(step_cart)
-    norm_offset = np.sqrt(np.sum(offset_cart**2))
-    if norm_offset > max_step:
-        offset_cart *= max_step / norm_offset
-
-    # --- Step 8: compute refined value
-    x, y, z = offset_cart
-    refined_value = (
-        a0
-        + ax * x
-        + ay * y
-        + az * z
-        + axx * x * x
-        + ayy * y * y
-        + azz * z * z
-        + axy * x * y
-        + axz * x * z
-        + ayz * y * z
-    )
-
-    # Ensure it doesn't fall below nearby grid values
-    region_max = np.max(region)
-    if refined_value < region_max:
-        refined_value = region_max
-        offset_cart[:] = 0.0  # fallback: stay at grid point
-
-    # --- Step 9: Cartesian → fractional offset
-    frac_offset = np.linalg.solve(lattice.T, offset_cart)
-    refined_frac = np.empty(3, dtype=np.float64)
-    refined_frac[0] = (fx + frac_offset[0]) % 1.0
-    refined_frac[1] = (fy + frac_offset[1]) % 1.0
-    refined_frac[2] = (fz + frac_offset[2]) % 1.0
-
-    return refined_frac, refined_value
+    return gx, gy, gz
 
 
-@njit(parallel=True, cache=True)
-def refine_maxima(
-    maxima_coords,
-    data,
-    lattice,
-):
-    new_coords = np.empty_like(maxima_coords, dtype=np.float64)
-    new_values = np.empty(len(maxima_coords), dtype=np.float64)
-    for coord_idx in prange(len(maxima_coords)):
-        coord = maxima_coords[coord_idx]
-        new_coord, new_value = refine_frac_max_parabolic(data, coord, lattice)
-        new_coords[coord_idx] = new_coord
-        new_values[coord_idx] = new_value
-    # round and wrap coords
-    new_coords = np.round(new_coords, 6)
-    new_coords %= 1
-    return new_coords, new_values
+@njit(fastmath=True)
+def spline_hess(i, j, k, data, h=0.25, is_frac=False):
+    """
+    Hessian of spline-interpolated scalar field
+    with respect to grid coordinates (i, j, k).
+    """
+    nx, ny, nz = data.shape
+    if is_frac:
+        i = i * nx
+        j = j * ny
+        k = k * nz
+
+    i = float(i)
+    j = float(j)
+    k = float(k)
+
+    hh = h * h
+    hh4 = 4.0 * hh
+
+    f0 = interp_spline(i, j, k, data, False)
+    f02 = f0 * 2
+
+    # Second derivatives
+    f_xx = (
+        interp_spline(i + h, j, k, data, False)
+        - f02
+        + interp_spline(i - h, j, k, data, False)
+    ) / hh
+
+    f_yy = (
+        interp_spline(i, j + h, k, data, False)
+        - f02
+        + interp_spline(i, j - h, k, data, False)
+    ) / hh
+
+    f_zz = (
+        interp_spline(i, j, k + h, data, False)
+        - f02
+        + interp_spline(i, j, k - h, data, False)
+    ) / hh
+
+    # Mixed partials
+    f_xy = (
+        interp_spline(i + h, j + h, k, data, False)
+        - interp_spline(i + h, j - h, k, data, False)
+        - interp_spline(i - h, j + h, k, data, False)
+        + interp_spline(i - h, j - h, k, data, False)
+    ) / hh4
+
+    f_xz = (
+        interp_spline(i + h, j, k + h, data, False)
+        - interp_spline(i + h, j, k - h, data, False)
+        - interp_spline(i - h, j, k + h, data, False)
+        + interp_spline(i - h, j, k - h, data, False)
+    ) / hh4
+
+    f_yz = (
+        interp_spline(i, j + h, k + h, data, False)
+        - interp_spline(i, j + h, k - h, data, False)
+        - interp_spline(i, j - h, k + h, data, False)
+        + interp_spline(i, j - h, k - h, data, False)
+    ) / hh4
+
+    H = np.empty((3, 3))
+    H[0, 0] = f_xx
+    H[1, 1] = f_yy
+    H[2, 2] = f_zz
+
+    H[0, 1] = H[1, 0] = f_xy
+    H[0, 2] = H[2, 0] = f_xz
+    H[1, 2] = H[2, 1] = f_yz
+
+    return H
 
 
-# Method that refines maxima using spline interpolation. I had a lot of issues with
-# ringing/overshooting
-# @njit(parallel=True, fastmath=True, cache=True)
-# def refine_maxima(
-#     maxima_coords,
-#     data,
-#     neighbor_transforms,
-#     tol=1e-8,
-#     is_frac=True,
-# ):
-#     nx, ny, nz = data.shape
-#     # copy initial maxima to avoid overwriting them
-#     maxima_coords = maxima_coords.copy()
-#     # copy transforms to avoid altering in place
-#     neighbor_transforms = neighbor_transforms.copy().astype(np.float64)
+@njit(fastmath=True)
+def spline_grad_and_hess(coord, data, h=0.25):
+    """
+    Compute both gradient and Hessian of a spline-interpolated scalar field
+    with respect to grid coordinates (i, j, k), minimizing redundant interpolations.
+    """
+    nx, ny, nz = data.shape
 
-#     # normalize in each direction to one
-#     for transform_idx, transform in enumerate(neighbor_transforms):
-#         neighbor_transforms[transform_idx] = transform / np.linalg.norm(transform)
+    i, j, k = coord
 
-#     # if fractional, convert each coordinate to voxel coords
-#     if is_frac:
-#         for max_coord in maxima_coords:
-#             max_coord[0] *= nx
-#             max_coord[1] *= ny
-#             max_coord[2] *= nz
+    h2 = 2.0 * h
+    hh = h * h
+    hh4 = 4.0 * hh
 
-#     # get the initial values
-#     current_values = interpolate_points(
-#         data=data,
-#         points=maxima_coords,
-#         method="cubic",
-#         is_frac=False,
-#     )
-#     # loop over coords in parallel and optimize positions
-#     for coord_idx in prange(len(maxima_coords)):
-#         i, j, k = maxima_coords[coord_idx]
+    # Central point
+    f0 = interp_spline(i, j, k, data, False)
+    f02 = f0 * 2
 
-#         frac_mult = 1
-#         # create initial delta magnitude
-#         delta_mag = 1.0
-#         loop_count = 0
-#         while delta_mag > tol and loop_count < 50:
-#             loop_count += 1
-#             # increase frac multiplier
-#             frac_mult *= 2
-#             # get smaller transform than last loop
-#             current_trans = neighbor_transforms / frac_mult
-#             # get current best position
-#             i, j, k = maxima_coords[coord_idx]
-#             # loop over transforms and check if they improve our value
-#             for si, sj, sk in current_trans:
-#                 ti = i + si
-#                 tj = j + sj
-#                 tk = k + sk
-#                 value = interp_spline(
-#                     ti,
-#                     tj,
-#                     tk,
-#                     data=data,
-#                     is_frac=False,
-#                     )
-#                 # if value is improved, update the best position/value
-#                 if value > current_values[coord_idx]:
-#                     current_values[coord_idx] = value
-#                     maxima_coords[coord_idx] = (ti, tj, tk)
-#                     # calculate magnitude of delta in fractional coordinates
-#                     fsi = si / nx
-#                     fsj = sj / ny
-#                     fsk = sk / nz
-#                     delta_mag = (fsi * fsi + fsj * fsj + fsk * fsk) ** 0.5
-#     dec = -int(math.log10(tol))
-#     if is_frac:
-#         # convert to frac, round, and wrap
-#         for max_idx, (i, j, k) in enumerate(maxima_coords):
-#             i = round(i / nx, dec) % 1.0
-#             j = round(j / ny, dec) % 1.0
-#             k = round(k / nz, dec) % 1.0
-#             maxima_coords[max_idx] = (i, j, k)
-#     else:
-#         # round and wrap
-#         for max_idx, (i, j, k) in enumerate(maxima_coords):
-#             i = round(i, dec) % nx
-#             j = round(j, dec) % ny
-#             k = round(k, dec) % nz
-#             maxima_coords[max_idx] = (i, j, k)
+    # Neighbor points for gradient and Hessian
+    fxp = interp_spline(i + h, j, k, data, False)
+    fxm = interp_spline(i - h, j, k, data, False)
+    fyp = interp_spline(i, j + h, k, data, False)
+    fym = interp_spline(i, j - h, k, data, False)
+    fzp = interp_spline(i, j, k + h, data, False)
+    fzm = interp_spline(i, j, k - h, data, False)
 
-#     return maxima_coords, current_values
+    # Gradient
+    gx = (fxp - fxm) / h2
+    gy = (fyp - fym) / h2
+    gz = (fzp - fzm) / h2
+
+    # Second derivatives (Hessian diagonal)
+    f_xx = (fxp - f02 + fxm) / hh
+    f_yy = (fyp - f02 + fym) / hh
+    f_zz = (fzp - f02 + fzm) / hh
+
+    # Mixed partials
+    f_xy = (
+        interp_spline(i + h, j + h, k, data, False)
+        - interp_spline(i + h, j - h, k, data, False)
+        - interp_spline(i - h, j + h, k, data, False)
+        + interp_spline(i - h, j - h, k, data, False)
+    ) / hh4
+
+    f_xz = (
+        interp_spline(i + h, j, k + h, data, False)
+        - interp_spline(i + h, j, k - h, data, False)
+        - interp_spline(i - h, j, k + h, data, False)
+        + interp_spline(i - h, j, k - h, data, False)
+    ) / hh4
+
+    f_yz = (
+        interp_spline(i, j + h, k + h, data, False)
+        - interp_spline(i, j + h, k - h, data, False)
+        - interp_spline(i, j - h, k + h, data, False)
+        + interp_spline(i, j - h, k - h, data, False)
+    ) / hh4
+
+    H = np.empty((3, 3))
+    H[0, 0] = f_xx
+    H[1, 1] = f_yy
+    H[2, 2] = f_zz
+    H[0, 1] = H[1, 0] = f_xy
+    H[0, 2] = H[2, 0] = f_xz
+    H[1, 2] = H[2, 1] = f_yz
+
+    return np.array((gx, gy, gz), dtype=np.float64), H
+
+
+@njit(fastmath=True)
+def spline_grad_cart(i, j, k, data, dir2car, h=0.25, is_frac=False):
+    nx, ny, nz = data.shape
+
+    # get gradient in voxel coords
+    gi, gj, gk = spline_grad(i, j, k, data, h, is_frac)
+
+    # convert to fractional-coordinate gradient
+    gi *= nx
+    gj *= ny
+    gk *= nz
+
+    # convert to Cartesian gradient
+    gx = dir2car[0, 0] * gi + dir2car[0, 1] * gj + dir2car[0, 2] * gk
+    gy = dir2car[1, 0] * gi + dir2car[1, 1] * gj + dir2car[1, 2] * gk
+    gz = dir2car[2, 0] * gi + dir2car[2, 1] * gj + dir2car[2, 2] * gk
+
+    return gx, gy, gz
+
+
+@njit(fastmath=True)
+def spline_hess_cart(i, j, k, data, dir2car, h=0.25, is_frac=False):
+
+    # get hessian in grid coords
+    H = spline_hess(i, j, k, data, h, is_frac)
+
+    # convert to cartesian and return
+    return dir2car @ H @ dir2car.T

@@ -11,9 +11,10 @@ import pandas as pd
 from numpy.typing import NDArray
 from pymatgen.io.vasp import Potcar
 
-from baderkit.core import Grid, SpinElfLabeler, Structure
-from baderkit.core.badelf.badelf import Badelf
-from baderkit.core.labelers.bifurcation_graph.enum_and_styling import FeatureType
+from baderkit.core.elf_analysis.badelf.badelf import Badelf
+from baderkit.core.elf_analysis.bifurcation_graph.enum_and_styling import FeatureType
+from baderkit.core.elf_analysis.elf_labeler import SpinElfLabeler
+from baderkit.core.toolkit import Grid, Structure
 from baderkit.core.utilities.file_parsers import Format
 
 
@@ -576,8 +577,9 @@ class SpinBadelf:
     @classmethod
     def from_vasp(
         cls,
-        reference_file: str | Path = "ELFCAR",
-        charge_file: str | Path = "CHGCAR",
+        reference_filename: str | Path = "ELFCAR",
+        charge_filename: str | Path = "CHGCAR",
+        total_charge_filename: str | Path | None = None,
         **kwargs,
     ):
         """
@@ -592,6 +594,9 @@ class SpinBadelf:
         charge_file : str | Path, optional
             The path to the file containing the charge density. Must be a VASP
             CHGCAR or ELFCAR type file. The default is "CHGCAR".
+        total_charge_filename : str | Path | None
+            The path to the file used for masking out vacuum. If not, defaults
+            to the charge file.
         **kwargs : any
             Additional keyword arguments for the SpinBadElfToolkit class.
 
@@ -601,9 +606,18 @@ class SpinBadelf:
             A SpinBadElfToolkit instance.
         """
 
-        reference_grid = Grid.from_vasp(reference_file, total_only=False)
-        charge_grid = Grid.from_vasp(charge_file, total_only=False)
-        return cls(reference_grid=reference_grid, charge_grid=charge_grid, **kwargs)
+        reference_grid = Grid.from_vasp(reference_filename, total_only=False)
+        charge_grid = Grid.from_vasp(charge_filename, total_only=False)
+        if total_charge_filename is not None:
+            total_charge = Grid.from_vasp(total_charge_filename, total_only=False)
+        else:
+            total_charge = None
+        return cls(
+            reference_grid=reference_grid,
+            charge_grid=charge_grid,
+            total_charge_grid=total_charge,
+            **kwargs,
+        )
 
     def write_atom_volumes(
         self,

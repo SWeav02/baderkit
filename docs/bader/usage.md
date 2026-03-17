@@ -12,10 +12,9 @@ than the original code.
 ## Basic Use
 
 BaderKit can be used through the command line interface or through
-Python script. This page covers only the most simple use case of running 
-Bader charge analysis on a VASP `CHGCAR` or Gaussian `cube` file. For more 
-advance usage, see our [API reference](/baderkit/api_reference/core/bader) 
-and [Examples](/baderkit/examples) pages.
+Python script. This page covers only the most simple use case of running Bader charge analysis on a VASP `CHGCAR` or Gaussian `cube` file. For more advance usage, see our [API reference](/baderkit/api_reference/core/bader) and [Examples](/baderkit/examples) pages.
+
+The example `CHGCAR` file used in this tutorial can be found in this [Google Drive folder](https://drive.google.com/drive/folders/1cOuYv6SN4EJgJNTy7jJbh8Gn3Un0ZZp4?usp=drive_link).
 
 
 === "Command Line"
@@ -38,16 +37,28 @@ and [Examples](/baderkit/examples) pages.
         ```bash
         baderkit run chargefile
         ```
-    
-    Output files for atoms and bader basins will be written automatically to 
-    `bader_atom_summary.tsv` and `bader_basin_summary.tsv` respectively. Each file includes rows for each atom or basin with columns for:
+    You should see an output similar to this:
 
-    - atom labels/assignments
-    - coordinates (fractional) 
-    - charges (*e*) 
-    - volumes (Å<sup>3</sup>)
-    - minimum surface distances (Å)
-    - distances to nearest atom (Å) <small>**basins only**</small>
+    ```bash
+    2026-03-10 11:24:50 INFO     Loading CHGCAR
+                        INFO     Time: 0.06
+                        INFO     Data type set as charge from data range
+                        INFO     Beginning Bader Algorithm Using 'weight' Method
+    2026-03-10 11:24:51 INFO     Initializing Labels
+                        INFO     Initialization Complete
+                        INFO     Time: 0.14
+                        INFO     Sorting Reference Data
+                        INFO     Assigning Charges and Volumes
+                        INFO     Combining Low-Persistence Basins
+    2026-03-10 11:24:53 INFO     Refining Maxima
+                        INFO     Bader Algorithm Complete
+                        INFO     Time: 2.75
+                        INFO     Assigning Atom Properties
+                        INFO     Atom Assignment Finished
+                        INFO     Time: 0.01
+    ```
+    
+    A summary of all properties will be written to `bader.json`. See [here](https://drive.google.com/file/d/1NoxtsBNq5n7dgzPfeNX7uu6sOBHJk28n/view?usp=drive_link) for an example.
     
     Additional arguments and options such as those for printing output files or using different 
     algorithms can be viewed by running the help command.
@@ -63,34 +74,54 @@ and [Examples](/baderkit/examples) pages.
         from baderkit.core import Bader
         ```
     
-    2. Use the `Bader` class' `from_dynamic` method to read a `CHGCAR` or `cube`
-    file.
+    2. Use the `Bader` class' `from_dynamic` method to read a `CHGCAR` or `cube` file.
     
         ```python
         # instantiate the class
         bader = Bader.from_dynamic("path/to/charge_file")
         ```
     
-    3. To run the analysis, we can call any class property. Try getting a complete
-    summary in dictionary format.
+    3. To run the analysis, we can call any class property. Try getting a complete summary in dictionary format.
         ```python
-        results = bader.to_json()
+        results = bader.to_dict()
+        ```
+    You should see an output similar to this:
+        ```bash
+        2026-03-10 11:33:36 INFO     Beginning Bader Algorithm Using 'weight' Method   
+        2026-03-10 11:33:37 INFO     Initializing Labels                               
+                            INFO     Initialization Complete                           
+                            INFO     Time: 0.29                                        
+                            INFO     Sorting Reference Data                            
+                            INFO     Assigning Charges and Volumes                     
+                            INFO     Combining Low-Persistence Basins                  
+                            INFO     Refining Maxima                                   
+        2026-03-10 11:33:38 INFO     Bader Algorithm Complete                          
+                            INFO     Time: 1.38                                        
+                            INFO     Assigning Atom Properties                         
+                            INFO     Atom Assignment Finished                          
+                            INFO     Time: 0.0 
         ```
     
-    4. Now try getting individual properties. For more details on each property,
-    see the [API reference](../api_reference/core/bader/#src.baderkit.core.bader.Bader).
+    4. Now try getting an individual property. 
         ```python
         atom_charges = bader.atom_charges # Total atom charges
-        atom_labels = bader.atom_labels # Atom assignments for each point in the grid
-        basin_volumes = bader.basin_volumes # The volumes of each bader basin
-        maxima_coords = bader.basin_maxima_frac # Frac coordinates of each attractor
+        basin_volumes = bader.basin_volumes # The volumes of each 
+
+        print(atom_charges)
+        print(basin_volumes)
         ```
+    This should show something like the following:
+        ```python
+        [18.99905303 18.99905303 19.00088048 19.00088048]
+        [17.36053278 17.36053278 17.36794633 17.36794633]
+        ```
+    For more details on each property, see the [API reference](../api_reference/core/bader/#src.baderkit.core.bader.Bader).
     
     5. BaderKit also provides convenience methods for writing results to file. First,
     let's write a summary of the full analysis.
     
         ```python
-        bader.write_json()
+        bader.write_json("bader.json")
         ```
     
     6. Now let's write the volume assigned to one of our atoms.
@@ -119,21 +150,17 @@ and [Examples](/baderkit/examples) pages.
         ```
         
         This will launch a new window:
-        ![streamlit_app](images/pyqt_screenshot.png)
+        ![pyqt_app](/images/pyqt_screenshot.png)
 
     3. Browse to find you charge density file, select your method, and run!
 
+!!! Note
+    To automatically calculate oxidation states, the path to a POTCAR file must be specified. If none is provided, oxidation states will not be included in any output summaries, and only charges (which depend on the pseudopotential used) will be provided. If you would like us to add functionality for other codes, please open an issue on our [Issues page](https://github.com/SWeav02/baderkit/issues)
 ---
 
 ## Warning for VASP (And other pseudopotential codes)
 
-VASP and other pseudopotential codes only include the valence electrons
-in their charge density outputs. In VASP, there is an option to write out the
-core electron density by adding the tag `LAECHG=.TRUE.` to your `INCAR` file.
-
-This will write the core charge density to an `AEECAR0` file and the valence 
-to `AECCAR2` which can be summed together to get a total charge density that
-is much more accurate for partitioning. **We highly recommend doing this**.
+VASP and other pseudopotential codes only include valence electrons in their charge density outputs. Most allow you to write out the core electron density separately. For example, in VASP this can be done by adding the tag `LAECHG=.TRUE.` to your `INCAR` file. This will write the core charge density to an `AECCAR0` file and the valence to `AECCAR2` which can be summed together to get a total charge density that is much more accurate for partitioning and locating vacuum regions. **We highly recommend doing this**.
 
 === "Command Line"
     1. Sum the files using BaderKit's convenience method.
@@ -143,7 +170,7 @@ is much more accurate for partitioning. **We highly recommend doing this**.
     2. Run the analysis using this total charge density as the reference for
     partitioning.
     ```bash
-    baderkit run CHGCAR -ref CHGCAR_sum
+    baderkit run CHGCAR -tot CHGCAR_sum
     ```
     
 === "Python"
@@ -171,8 +198,12 @@ is much more accurate for partitioning. **We highly recommend doing this**.
     From here, the `Bader` class object can be used as described in the [Basic Use](/baderkit/#__tabbed_2_2)
     section.
 
-!!! Warning
-    A fine grid is needed to accurately reproduce the core charge density. We
-    have found that a grid density of ~22 pts/Å along each lattice vector (~10000 pts / Å<sup>3</sup>) is
-    fine enough in most cases, but we generally recommend testing an
-    increasing set of grid densities until convergence is reached.
+---
+
+## Suggested DFT Parameters
+
+By experience, Bader charge analysis typically requires only moderate calculation quality. As a starting point, our lab typically uses the PBE or PBEsol functional, a Monkhorst–Pack k-point mesh with a spacing of 0.25 Å<sup>-1</sup>, a plane wave kinetic energy cutoff that is 1.3 times the highest energy cutoff in the pseudopotential file, and a energy difference cutoff of 1 x 10<sup>-6</sup> eV. Depending on the system these may need to be adjusted. For example, metallic systems require a much finer k-point mesh.
+
+For grid based software such as this, the most important parameter is the grid density. The exact required grid density will depend on the system and the selected algorithm (see [Methods](/baderkit/bader/methods/#__tabbed_2_2)), but we have found that a grid density of ~22 pts/Å along each lattice vector (~10000 pts / Å<sup>3</sup>) is fine enough in most cases.
+
+As always, when extremely accurate results are required, we recommend increasing the quality of each parameter until convergence is reached for your system.

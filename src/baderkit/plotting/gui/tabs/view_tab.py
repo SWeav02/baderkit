@@ -48,7 +48,10 @@ class ViewTab(qw.QWidget):
 
         # lattice thickness
         self.lattice_thickness = DoubleSpinBox(
-            min_value=0.01, max_value=10.00, plot_prop="lattice_thickness", main=main
+            min_value=0.01,
+            max_value=10.00,
+            plot_prop="lattice_thickness",
+            main=main,
         )
         self.basic_layout.addRow("Lattice Thickness", self.lattice_thickness)
 
@@ -99,6 +102,15 @@ class ViewTab(qw.QWidget):
         )
         self.view_layout.addRow("Camera Rotation", self.rotation)
 
+        # distance
+        self.distance = DoubleSpinBox(
+            min_value=0.0,
+            max_value=100.0,
+            decimals=1,
+            current_value=5.0,
+        )
+        self.view_layout.addRow("Camera Distance", self.distance)
+
         # view button
         view_button = qw.QPushButton("Set View")
         view_button.pressed.connect(self.set_view)
@@ -114,9 +126,12 @@ class ViewTab(qw.QWidget):
         self.lattice_thickness.setValue(bader_plotter.lattice_thickness)
 
         # set view
-        view = bader_plotter.view_indices
+        view = bader_plotter._camera_hkl
         for i, spinner in zip(view, self.view_indices):
             spinner.setValue(i)
+
+        self.rotation.setValue(bader_plotter._camera_rotation)
+        self.distance.setValue(bader_plotter._camera_distance)
 
         # Make options visible
         self.layout.setCurrentIndex(1)
@@ -130,9 +145,10 @@ class ViewTab(qw.QWidget):
         # get rotation
         rotation = self.rotation.value()
 
-        # get camera position
-        camera_position = bader_plotter.get_camera_position_from_miller(
-            i, j, k, rotation
-        )
+        # get distance
+        dist = self.distance.value()
 
-        self.main.set_property(camera_position, "camera_position")
+        # set property
+        bader_plotter.plotter.suppress_rendering = True
+        bader_plotter.set_camera_to_hkl(i, j, k, rotation, dist)
+        bader_plotter.plotter.suppress_rendering = False

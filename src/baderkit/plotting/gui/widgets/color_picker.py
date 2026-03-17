@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-
+from pyvista import Color
 from qtpy import QtCore, QtGui
 from qtpy import QtWidgets as qw
 
@@ -36,6 +36,10 @@ class ColorPicker(qw.QWidget):
 
     def set_color(self, color: str):
         """Set the current color and update the button style."""
+        # normalize color
+        color = Color(color)
+        color = color.hex_rgb
+
         self._color = QtGui.QColor(color)
         if self.isEnabled():
             self.button.setStyleSheet(

@@ -4,15 +4,22 @@ import numpy as np
 from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.bader.methods.shared_numba import get_best_neighbor
-from baderkit.core.utilities.basic import coords_to_flat, wrap_point
+from baderkit.core.utilities.basic import (
+    coords_to_flat,
+    flat_to_coords,
+    wrap_point,
+    wrap_point_w_shift,
+)
+from baderkit.core.utilities.basins import get_best_neighbor_with_shift
+from baderkit.core.utilities.transforms import IMAGE_TO_INT
 
 
-@njit(cache=True, inline="always")
-def get_gradient_simple(
+@njit(cache=True)
+def get_gradient(
     data: NDArray[np.float64],
     voxel_coord: NDArray[np.int64],
     dir2lat: NDArray[np.float64],
+    use_minima: bool = False,
 ) -> tuple[NDArray[np.int64], NDArray[np.int64], np.bool_]:
     """
     Peforms a neargrid step from the provided voxel coordinate.
@@ -61,6 +68,13 @@ def get_gradient_simple(
     r0 = dir2lat[0, 0] * gi + dir2lat[0, 1] * gj + dir2lat[0, 2] * gk
     r1 = dir2lat[1, 0] * gi + dir2lat[1, 1] * gj + dir2lat[1, 2] * gk
     r2 = dir2lat[2, 0] * gi + dir2lat[2, 1] * gj + dir2lat[2, 2] * gk
+
+    # if finding minima, flip the sign
+    if use_minima:
+        r0 = -r0
+        r1 = -r1
+        r2 = -r2
+
     return r0, r1, r2
 
 
@@ -78,6 +92,7 @@ def get_gradient_overdetermined(
     transform_dists,
     car2lat,
     inv_norm_cart_trans,
+    use_minima: bool = False,
 ):
     nx, ny, nz = data.shape
     # Value at the central point
@@ -121,6 +136,12 @@ def get_gradient_overdetermined(
     tk_new = car2lat[2, 0] * ti + car2lat[2, 1] * tj + car2lat[2, 2] * tk
 
     ti, tj, tk = ti_new, tj_new, tk_new
+
+    if use_minima:
+        ti = -ti
+        tj = -tj
+        tk = -tk
+
     return ti, tj, tk
 
 
@@ -131,11 +152,13 @@ def get_gradient_overdetermined(
 def get_gradient_pointers_simple(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
+    images: NDArray[np.int64],
     dir2lat: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
     vacuum_mask: NDArray[np.bool_],
-    maxima_mask: NDArray[np.bool_],
+    extrema_mask: NDArray[np.bool_],
+    use_minima: bool = False,
 ):
     """
     Calculates the ongrid steps and delta r at each point in the grid
@@ -145,7 +168,9 @@ def get_gradient_pointers_simple(
     data : NDArray[np.float64]
         A 3D grid of values for each point.
     labels : NDArray[np.int64]
-        A 1D grid with maxima assignments
+        A 1D grid with extrema assignments
+    images : NDArray[np.int64]
+        A Nx3 array of images tracking cycles around periodic edges
     dir2lat : NDArray[np.float64]
         A matrix for converting from direct coordinates to lattice coords
     neighbor_transforms : NDArray[np.int64]
@@ -154,8 +179,11 @@ def get_gradient_pointers_simple(
         The distance to each neighboring voxel.
     vacuum_mask : NDArray[np.bool_]
         A 3D array representing the location of the vacuum.
-    vacuum_mask : NDArray[np.bool_]
-        A 3D array representing the location of local maxima in the grid
+    extrema_mask : NDArray[np.bool_]
+        A 3D array representing the location of local extrema in the grid
+    use_minima : bool, optional
+        Whether or not to use the negative of the gradient to move towards
+        minima
 
     Returns
     -------
@@ -164,8 +192,8 @@ def get_gradient_pointers_simple(
         along the gradient. A value of -1 indicates a vacuum point.
     gradients : NDArray[np.float32]
         A 4D array where gradients[i,j,k] returns the gradient at point (i,j,k)
-    maxima_mask : NDArray[np.bool_]
-        A 3D array that is True at maxima
+    extrema_mask : NDArray[np.bool_]
+        A 3D array that is True at extrema
 
     """
     nx, ny, nz = data.shape
@@ -174,72 +202,82 @@ def get_gradient_pointers_simple(
     # NOTE: I would even do a float16 here but numba doesn't support it. I doubt
     # we need the accuracy.
     gradients = np.zeros((nx, ny, nz, 3), dtype=np.float32)
+    if use_minima:
+        mult = -1
+    else:
+        mult = 1
     # loop over each grid point in parallel
-    for i in prange(nx):
-        for j in range(ny):
-            for k in range(nz):
-                # get the flat index of this point
-                flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
-                # check if this point is part of the vacuum. If it is, we can
-                # ignore this point.
-                if vacuum_mask[i, j, k]:
-                    continue
-                # check if this point is a maximum. If so, we should already have
-                # given this point an assignment previously
-                if maxima_mask[i, j, k]:
-                    continue
-                # get gradient
-                gi, gj, gk = get_gradient_simple(
-                    data=data,
-                    voxel_coord=(i, j, k),
-                    dir2lat=dir2lat,
-                )
-                max_grad = 0.0
-                for x in (gi, gj, gk):
-                    ax = abs(x)
-                    if ax > max_grad:
-                        max_grad = ax
-                if max_grad < 1e-30:
-                    # we have no gradient so we reset the total delta r
-                    # Check if this is a maximum and if not step ongrid
-                    (si, sj, sk), (ni, nj, nk) = get_best_neighbor(
-                        data=data,
-                        i=i,
-                        j=j,
-                        k=k,
-                        neighbor_transforms=neighbor_transforms,
-                        neighbor_dists=neighbor_dists,
-                    )
-                    # set gradient and point. Note gradient is exactly ongrid in
-                    # this instance
-                    gradients[i, j, k] = (si, sj, sk)
-                    labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
+    for flat_idx in prange(len(labels)):
+        i, j, k = flat_to_coords(flat_idx, ny_nz, nz)
+        # check if this point is part of the vacuum. If it is, we can
+        # ignore this point.
+        if vacuum_mask[i, j, k]:
+            continue
+        # check if this point is a maximum. If so, we should already have
+        # given this point an assignment previously
+        if extrema_mask[i, j, k]:
+            continue
+        # get gradient
+        gi, gj, gk = get_gradient(
+            data=data,
+            voxel_coord=(i, j, k),
+            dir2lat=dir2lat,
+            use_minima=use_minima,
+        )
+        # get the largest gradient direction
+        max_grad = 0.0
+        for x in (gi, gj, gk):
+            ax = abs(x)
+            if ax > max_grad:
+                max_grad = ax
+        if max_grad < 1e-30:
+            # we have no gradient
+            # Check if this is a maximum and if not step ongrid
+            (si, sj, sk), (ni, nj, nk), shift = get_best_neighbor_with_shift(
+                data=data,
+                i=i,
+                j=j,
+                k=k,
+                neighbor_transforms=neighbor_transforms,
+                neighbor_dists=neighbor_dists,
+                use_minima=use_minima,
+            )
+            # set gradient and point. Note gradient is exactly ongrid in
+            # this instance
+            gradients[i, j, k] = (si, sj, sk)
+            labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
+            images[flat_idx] = shift
 
-                    continue
-                # Normalize
-                gi /= max_grad
-                gj /= max_grad
-                gk /= max_grad
-                # get pointer
-                pi, pj, pk = round(gi), round(gj), round(gk)
-                # get neighbor and wrap
-                ni, nj, nk = wrap_point(i + pi, j + pj, k + pk, nx, ny, nz)
-                # Ensure neighbor is higher than the current point, or backup to
-                # ongrid.
-                if data[i, j, k] >= data[ni, nj, nk]:
-                    shift, (ni, nj, nk) = get_best_neighbor(
-                        data=data,
-                        i=i,
-                        j=j,
-                        k=k,
-                        neighbor_transforms=neighbor_transforms,
-                        neighbor_dists=neighbor_dists,
-                    )
+            continue
+        # Normalize gradient
+        gi /= max_grad
+        gj /= max_grad
+        gk /= max_grad
+        # get pointer
+        pi, pj, pk = round(gi), round(gj), round(gk)
+        # get neighbor and wrap
+        ni, nj, nk, si, sj, sk = wrap_point_w_shift(i + pi, j + pj, k + pk, nx, ny, nz)
+        shift = np.array((si, sj, sk), dtype=np.int8)
+        # Ensure neighbor is higher than the current point, or backup to
+        # ongrid.
 
-                # save neighbor, dr, and pointer
-                gradients[i, j, k] = (gi, gj, gk)
-                labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
-    return labels, gradients
+        if mult * data[i, j, k] >= mult * data[ni, nj, nk]:
+            (gi, gj, gk), (ni, nj, nk), shift = get_best_neighbor_with_shift(
+                data=data,
+                i=i,
+                j=j,
+                k=k,
+                neighbor_transforms=neighbor_transforms,
+                neighbor_dists=neighbor_dists,
+                use_minima=use_minima,
+            )
+
+        # save neighbor, dr, and pointer
+        gradients[i, j, k] = (gi, gj, gk)
+        labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
+        images[flat_idx] = shift
+
+    return labels, images, gradients
 
 
 # NOTE: This is an alternative method that calculates the gradient using all
@@ -251,12 +289,14 @@ def get_gradient_pointers_simple(
 def get_gradient_pointers_overdetermined(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
+    images: NDArray[np.int64],
     car2lat,
     inv_norm_cart_trans,
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
     vacuum_mask: NDArray[np.bool_],
-    maxima_mask: NDArray[np.bool_],
+    extrema_mask: NDArray[np.bool_],
+    use_minima: bool = False,
 ):
     """
     Calculates the ongrid steps and delta r at each point in the grid
@@ -266,7 +306,9 @@ def get_gradient_pointers_overdetermined(
     data : NDArray[np.float64]
         A 3D grid of values for each point.
     labels : NDArray[np.int64]
-        A 1D grid with maxima assignments
+        A 1D grid with extrema assignments
+    images : NDArray[np.int64]
+        A Nx3 array of images tracking cycles around periodic edges
     car2lat : NDArray[np.float64]
         A matrix for converting from cartesian coordinates to lattice coords
     inv_norm_cart_trans : NDArray[np.float64]
@@ -277,8 +319,11 @@ def get_gradient_pointers_overdetermined(
         The distance to each neighboring voxel.
     vacuum_mask : NDArray[np.bool_]
         A 3D array representing the location of the vacuum.
-    maxima_mask : NDArray[np.bool_]
-        A 3D array that is True at maxima
+    extrema_mask : NDArray[np.bool_]
+        A 3D array that is True at extrema
+    use_minima : bool, optional
+        Whether or not to use the negative of the gradient to move towards
+        minima
 
     Returns
     -------
@@ -287,8 +332,8 @@ def get_gradient_pointers_overdetermined(
         along the gradient. A value of -1 indicates a vacuum point.
     gradients : NDArray[np.float32]
         A 4D array where gradients[i,j,k] returns the gradient at point (i,j,k)
-    maxima_mask : NDArray[np.bool_]
-        A 3D array that is True at maxima
+    extrema_mask : NDArray[np.bool_]
+        A 3D array that is True at extrema
 
     """
     nx, ny, nz = data.shape
@@ -312,7 +357,7 @@ def get_gradient_pointers_overdetermined(
                 # ignore this point.
                 if vacuum_mask[i, j, k]:
                     continue
-                if maxima_mask[i, j, k]:
+                if extrema_mask[i, j, k]:
                     continue
                 # get gradient
                 gi, gj, gk = get_gradient_overdetermined(
@@ -324,6 +369,7 @@ def get_gradient_pointers_overdetermined(
                     transform_dists=half_dists,
                     car2lat=car2lat,
                     inv_norm_cart_trans=inv_norm_cart_trans,
+                    use_minima=use_minima,
                 )
                 max_grad = 0.0
                 for x in (gi, gj, gk):
@@ -333,19 +379,20 @@ def get_gradient_pointers_overdetermined(
                 if max_grad < 1e-30:
                     # we have no gradient so we reset the total delta r
                     # Check if this is a maximum and if not step ongrid
-                    (si, sj, sk), (ni, nj, nk) = get_best_neighbor(
+                    (si, sj, sk), (ni, nj, nk), shift = get_best_neighbor_with_shift(
                         data=data,
                         i=i,
                         j=j,
                         k=k,
                         neighbor_transforms=neighbor_transforms,
                         neighbor_dists=neighbor_dists,
+                        use_minima=use_minima,
                     )
                     # set gradient and point. Note gradient is exactly ongrid in
                     # this instance
                     gradients[i, j, k] = (si, sj, sk)
                     labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
-
+                    images[flat_idx] = shift
                     continue
                 # Normalize
                 gi /= max_grad
@@ -354,33 +401,46 @@ def get_gradient_pointers_overdetermined(
                 # get pointer
                 pi, pj, pk = round(gi), round(gj), round(gk)
                 # get neighbor and wrap
-                ni, nj, nk = wrap_point(i + pi, j + pj, k + pk, nx, ny, nz)
+                ni, nj, nk, si, sj, sk = wrap_point_w_shift(
+                    i + pi, j + pj, k + pk, nx, ny, nz
+                )
+                shift = np.array((si, sj, sk), dtype=np.int8)
                 # Ensure neighbor is higher than the current point, or backup to
                 # ongrid.
-                if data[i, j, k] >= data[ni, nj, nk]:
-                    shift, (ni, nj, nk) = get_best_neighbor(
+                if use_minima:
+                    mult = -1
+                else:
+                    mult = 1
+                if mult * data[i, j, k] >= mult * data[ni, nj, nk]:
+                    _, (ni, nj, nk), shift = get_best_neighbor_with_shift(
                         data=data,
                         i=i,
                         j=j,
                         k=k,
                         neighbor_transforms=neighbor_transforms,
                         neighbor_dists=neighbor_dists,
+                        use_minima=use_minima,
                     )
                 # save neighbor, dr, and pointer
                 gradients[i, j, k] = (gi, gj, gk)
                 labels[flat_idx] = coords_to_flat(ni, nj, nk, ny_nz, nz)
-    return labels, gradients
+                images[flat_idx] = shift
+
+    return labels, images, gradients
 
 
 @njit(parallel=True, cache=True)
 def refine_fast_neargrid(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
+    images: NDArray[np.int64],
     refinement_mask: NDArray[np.bool_],
-    maxima_mask: NDArray[np.bool_],
+    extrema_mask: NDArray[np.bool_],
     gradients: NDArray[np.float32],
     neighbor_transforms: NDArray[np.int64],
     neighbor_dists: NDArray[np.float64],
+    vacuum_label: int,
+    use_minima: bool = False,
 ) -> NDArray[np.int64]:
     """
     Refines the provided voxels by running the neargrid method until a maximum
@@ -392,16 +452,21 @@ def refine_fast_neargrid(
         A 3D grid of values for each point.
     labels : NDArray[np.int64]
         A 3D grid of labels representing current voxel assignments.
+    images : NDArray[np.int64]
+        A Nx3 array of images tracking cycles around periodic edges
     refinement_mask : NDArray[np.bool_]
         A 3D mask that is true at the voxel indices to be refined.
-    maxima_mask : NDArray[np.bool_]
-        A 3D mask that is true at maxima.
+    extrema_mask : NDArray[np.bool_]
+        A 3D mask that is true at extrema.
     gradients : NDArray[np.float16]
         A 4D array where gradients[i,j,k] returns the gradient at point (i,j,k)
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
     neighbor_dists : NDArray[np.float64]
         The distance to each neighboring voxel.
+    use_minima : bool, optional
+        Whether or not to use the negative of the gradient to move towards
+        minima
 
     Returns
     -------
@@ -427,9 +492,15 @@ def refine_fast_neargrid(
         reassignments = 0
         for vox_idx in prange(len(refinement_indices)):
             i, j, k = refinement_indices[vox_idx]
+            flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
             # get our initial label for comparison. We need to take absolute value
             # because refined labels are marked as negative
             label = abs(labels[i, j, k])
+            # get initial image
+            mi, mj, mk = images[flat_idx]
+            image = IMAGE_TO_INT[mi, mj, mk]
+            # initialize shift tracking for wrapping around periodic boundaries
+            wi, wj, wk = (0, 0, 0)
             # create delta r
             tdi, tdj, tdk = (0.0, 0.0, 0.0)
             # set the initial coord
@@ -438,14 +509,15 @@ def refine_fast_neargrid(
             path = []
             # start climbing
             while True:
-                # check if we've hit a maximum
-                if maxima_mask[ii, jj, kk]:
+                # check if we've hit an extrema or a vacuum in minima mode
+                if extrema_mask[ii, jj, kk] or labels[ii, jj, kk] == vacuum_label:
                     # remove the point from the refinement list
                     refinement_mask[i, j, k] = False
                     # We've hit a maximum.
                     current_label = abs(labels[ii, jj, kk])
+                    current_image = IMAGE_TO_INT[wi, wj, wk]
                     # Check if this is a reassignment
-                    if label != current_label:
+                    if label != current_label or image != current_image:
                         reassignments += 1
                         # add neighbors to our refinement mask for the next iteration
                         for si, sj, sk in neighbor_transforms:
@@ -461,6 +533,7 @@ def refine_fast_neargrid(
                                 labels[ni, nj, nk] = -abs(labels[ni, nj, nk])
                     # relabel just this voxel then stop the loop
                     labels[i, j, k] = -current_label
+                    images[flat_idx] = (wi, wj, wk)
                     break
 
                 # Otherwise, we have not reached a maximum and want to continue
@@ -491,23 +564,30 @@ def refine_fast_neargrid(
                 tdj -= round(tdj)
                 tdk -= round(tdk)
                 # 5. wrap coord
-                ni, nj, nk = wrap_point(ni, nj, nk, nx, ny, nz)
+                ni, nj, nk, si, sj, sk = wrap_point_w_shift(ni, nj, nk, nx, ny, nz)
                 # 6. Get flat index
                 new_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
                 # check if we've hit a point in the path or a vacuum point
-                if new_idx in path or not labels[ni, nj, nk]:
-                    _, (ni, nj, nk) = get_best_neighbor(
+                if new_idx in path or abs(labels[ni, nj, nk]) == vacuum_label:
+                    _, (ni, nj, nk), shift = get_best_neighbor_with_shift(
                         data=data,
                         i=ii,
                         j=jj,
                         k=kk,
                         neighbor_transforms=neighbor_transforms,
                         neighbor_dists=neighbor_dists,
+                        use_minima=use_minima,
                     )
+                    si, sj, sk = shift
                     # reset delta r because we used an ongrid step
                     tdi, tdj, tdk = (0.0, 0.0, 0.0)
+
                 # update the current coord
                 ii, jj, kk = ni, nj, nk
+                # add any wrapping to our total
+                wi += si
+                wj += sj
+                wk += sk
         print(f"{reassignments} values changed")
 
-    return labels
+    return labels, images

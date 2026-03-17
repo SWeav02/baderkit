@@ -10,6 +10,9 @@ methods = Bader.all_methods()
 baderkit_time_df = pd.read_csv("time_summary_baderkit.csv")
 henk_time_df = pd.read_csv("time_summary_henk.csv")
 
+baderkit_time_df -= baderkit_time_df.iloc[0].min()
+henk_time_df -= henk_time_df.iloc[0].min()
+
 plt.style.use("seaborn-v0_8-darkgrid")
 
 # different dash styles and markers for up to 4 methods
@@ -36,7 +39,7 @@ axes[0].axhline(min_baderkit_time, color="gray", linestyle="--", linewidth=1)
 axes[0].set_title("BaderKit Runtime")
 axes[0].set_xlabel("Grid points (millions)")
 axes[0].set_ylabel("Average runtime (s)")
-axes[0].set_ylim(-5, 50)
+axes[0].set_ylim(-5, 90)
 axes[0].legend()
 
 # Right subplot: Henk
@@ -56,7 +59,7 @@ min_henk_time = henk_time_df[henk_methods].min().min()
 axes[1].axhline(min_henk_time, color="gray", linestyle="--", linewidth=1)
 axes[1].set_title("Henkelman Runtime")
 axes[1].set_xlabel("Grid points (millions)")
-axes[1].set_ylim(-5, 50)
+axes[1].set_ylim(-5, 90)
 axes[1].legend()
 
 plt.tight_layout()

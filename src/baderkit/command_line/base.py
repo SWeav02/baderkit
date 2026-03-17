@@ -66,9 +66,15 @@ def run(
         default=...,
         help="The path to the charge density file",
     ),
+    total_charge_file: Path = typer.Option(
+        None,
+        "--total-charge-file",
+        "-tot",
+        help="The path to the total charge file",
+    ),
     reference_file: Path = typer.Option(
         None,
-        "--reference_file",
+        "--reference-file",
         "-ref",
         help="The path to the reference file",
     ),
@@ -112,6 +118,12 @@ def run(
         help="Optional printing of atom or bader basins",
         case_sensitive=False,
     ),
+    include_minima: bool = typer.Option(
+        False,
+        "--include-minima",
+        "-im",
+        help="Whether or not to include summary of Bader calculation performed on the minima (dual)",
+    ),
     indices: str = typer.Argument(
         default="",
         help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins [1,2,3]`",
@@ -127,6 +139,7 @@ def run(
     # instance bader
     bader = Bader.from_dynamic(
         charge_filename=charge_file,
+        total_charge_filename=total_charge_file,
         reference_filename=reference_file,
         method=method,
         format=format,
@@ -135,7 +148,7 @@ def run(
         basin_tol=basin_tolerance,
     )
     # write summary
-    bader.write_json()
+    bader.write_json("bader.json")
 
     # convert indices from string to list
     try:
@@ -401,12 +414,13 @@ def gui():
     Launches the BaderKit GUI application
     """
     try:
+        import PyQt5
         import pyvista
         import pyvistaqt
         import qtpy
     except:
         logging.warning(
-            "Baderkits GUI requires additional dependencies. Please run 'pip install baderkit\[gui]'"
+            "Baderkits GUI requires additional dependencies. Please run 'pip install baderkit[gui]'"
         )
         return
 
@@ -438,8 +452,14 @@ def badelf(
         default=...,
         help="The path to the reference file",
     ),
+    total_charge_file: Path = typer.Option(
+        None,
+        "--total-charge-file",
+        "-tot",
+        help="The path to the total charge file",
+    ),
     method: BadelfMethod = typer.Option(
-        BadelfMethod.badelf,
+        BadelfMethod.zero_flux,
         "--method",
         "-m",
         help="The method to use for separating atoms and electrides",
@@ -490,13 +510,14 @@ def badelf(
     # instance bader
     badelf = Badelf.from_vasp(
         charge_filename=charge_file,
+        total_charge_filename=total_charge_file,
         reference_filename=reference_file,
         method=method,
         elf_labeler={"method": bader_method},
         # format=format,
     )
     # write summary
-    badelf.write_json()
+    badelf.write_json("badelf.json")
 
     # convert indices from string to list
     try:
@@ -533,6 +554,12 @@ def label(
     reference_file: Path = typer.Argument(
         default=...,
         help="The path to the reference file",
+    ),
+    total_charge_file: Path = typer.Option(
+        None,
+        "--total-charge-file",
+        "-tot",
+        help="The path to the total charge file",
     ),
     method: Method = typer.Option(
         Method.weight,
@@ -579,12 +606,13 @@ def label(
     # instance bader
     labeler = ElfLabeler.from_vasp(
         charge_filename=charge_file,
+        total_charge_filename=total_charge_file,
         reference_filename=reference_file,
         method=method,
         # format=format,
     )
     # write summary
-    labeler.write_json()
+    labeler.write_json("label.json")
 
     labeler.labeled_structure.to("POSCAR_labeled", "POSCAR")
 

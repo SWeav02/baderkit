@@ -6,11 +6,69 @@ from numba import njit, prange
 from numpy.typing import NDArray
 
 
+def get_lowest_uint(max_value):
+    for dtype in (np.uint8, np.uint16, np.uint32, np.uint64):
+        if np.iinfo(dtype).max > max_value:
+            break
+    return dtype
+
+
+def get_lowest_int(max_value):
+    for dtype in (np.int8, np.int16, np.int32, np.int64):
+        if np.iinfo(dtype).max > max_value:
+            break
+    return dtype
+
+
+@njit(cache=True)
+def get_norm(i, j, k):
+    return (i**2 + j**2 + k**2) ** (1 / 2)
+
+
 @njit(cache=True, inline="always")
 def dist(p1, p2):
     x, y, z = p1
     x1, y1, z1 = p2
-    return ((x1 - x) ** 2 + (y1 - y) ** 2 + (z1 - z) ** 2) ** (0.5)
+    return get_norm(x1 - x, y1 - y, z1 - z)
+
+
+@njit(cache=True)
+def get_gradient_cart(i, j, k, data, dir2car):
+    # dir2car = np.linalg.inv(row_matrix).T
+    nx, ny, nz = data.shape
+
+    c000 = data[i, j, k]
+    c100 = data[(i + 1) % nx, j, k]
+    c_100 = data[(i - 1) % nx, j, k]
+    c010 = data[i, (j + 1) % ny, k]
+    c0_10 = data[i, (j - 1) % ny, k]
+    c001 = data[i, j, (k + 1) % nz]
+    c00_1 = data[i, j, (k - 1) % nz]
+
+    # central differences in voxel coordinates
+    gi = (c100 - c_100) / (2.0)
+    gj = (c010 - c0_10) / (2.0)
+    gk = (c001 - c00_1) / (2.0)
+
+    # optional extrema clamping
+    if c100 <= c000 and c_100 <= c000:
+        gi = 0.0
+    if c010 <= c000 and c0_10 <= c000:
+        gj = 0.0
+    if c001 <= c000 and c00_1 <= c000:
+        gk = 0.0
+
+    # convert to fractional-coordinate gradient
+    gi *= nx
+    gj *= ny
+    gk *= nz
+
+    # convert to Cartesian gradient
+    gx = dir2car[0, 0] * gi + dir2car[0, 1] * gj + dir2car[0, 2] * gk
+    gy = dir2car[1, 0] * gi + dir2car[1, 1] * gj + dir2car[1, 2] * gk
+    gz = dir2car[2, 0] * gi + dir2car[2, 1] * gj + dir2car[2, 2] * gk
+
+    return gx, gy, gz
 
 
 @njit(cache=True, parallel=True, inline="always")
@@ -21,77 +79,59 @@ def mutiple_dists(p1s, p2s):
     return dists
 
 
-@njit(cache=True, inline="always")
-def wrap_point(
-    i: np.int64, j: np.int64, k: np.int64, nx: np.int64, ny: np.int64, nz: np.int64
-) -> tuple[np.int64, np.int64, np.int64]:
-    """
-    Wraps a 3D point (i, j, k) into the periodic bounds defined by the grid dimensions (nx, ny, nz).
+@njit(inline="always", cache=True)
+def wrap_point(i, j, k, nx, ny, nz):
 
-    If any of the input coordinates are outside the bounds [0, nx), [0, ny), or [0, nz),
-    they are wrapped around using periodic boundary conditions.
-
-    Parameters
-    ----------
-    i : np.int64
-        x-index of the point.
-    j : np.int64
-        y-index of the point.
-    k : np.int64
-        z-index of the point.
-    nx : np.int64
-        Number of grid points along x-direction.
-    ny : np.int64
-        Number of grid points along y-direction.
-    nz : np.int64
-        Number of grid points along z-direction.
-
-    Returns
-    -------
-    tuple[np.int64, np.int64, np.int64]
-        The wrapped (i, j, k) indices within the bounds.
-    """
-    if i >= nx:
-        i -= nx
-    elif i < 0:
+    if i < 0:
         i += nx
-    if j >= ny:
-        j -= ny
-    elif j < 0:
+    elif i >= nx:
+        i -= nx
+
+    if j < 0:
         j += ny
-    if k >= nz:
-        k -= nz
-    elif k < 0:
+    elif j >= ny:
+        j -= ny
+
+    if k < 0:
         k += nz
+    elif k >= nz:
+        k -= nz
+
     return i, j, k
 
 
 @njit(inline="always", cache=True)
 def wrap_point_w_shift(i, j, k, nx, ny, nz):
 
-    si, sj, sk = (0, 0, 0)
-    if i >= nx:
-        i -= nx
-        si = 1
-    elif i < 0:
+    si = 0
+    sj = 0
+    sk = 0
+
+    if i < 0:
         i += nx
         si = -1
-    if j >= ny:
-        j -= ny
-        sj = 1
-    elif j < 0:
+    elif i >= nx:
+        i -= nx
+        si = 1
+
+    if j < 0:
         j += ny
         sj = -1
-    if k >= nz:
-        k -= nz
-        sk = 1
-    elif k < 0:
+    elif j >= ny:
+        j -= ny
+        sj = 1
+
+    if k < 0:
         k += nz
         sk = -1
+    elif k >= nz:
+        k -= nz
+        sk = 1
+
     return i, j, k, si, sj, sk
 
 
-@njit(fastmath=True, cache=True, inline="always")
+@njit(fastmath=True, cache=True)
 def flat_to_coords(idx, ny_nz, nz):
     i = idx // (ny_nz)
     j = (idx % (ny_nz)) // nz
@@ -99,7 +139,7 @@ def flat_to_coords(idx, ny_nz, nz):
     return i, j, k
 
 
-@njit(fastmath=True, cache=True, inline="always")
+@njit(fastmath=True, cache=True)
 def coords_to_flat(i, j, k, ny_nz, nz):
     return i * (ny_nz) + j * nz + k
 
@@ -158,6 +198,8 @@ def merge_frac_coords(
 def merge_frac_coords_weighted(
     frac_coords,
     values,
+    ref_coord=None,
+    wrap=True,
 ):
     # normalize values
     values /= values.sum()
@@ -168,10 +210,16 @@ def merge_frac_coords_weighted(
     total2 = 0.0
 
     # reference coord used for unwrapping
-    ref0 = 0.0
-    ref1 = 0.0
-    ref2 = 0.0
-    ref_set = False
+    if ref_coord is None:
+        ref0 = 0.0
+        ref1 = 0.0
+        ref2 = 0.0
+        ref_set = False
+    else:
+        ref0 = ref_coord[0]
+        ref1 = ref_coord[1]
+        ref2 = ref_coord[2]
+        ref_set = True
 
     # scan all maxima and pick those that belong to this target_group
     for (c0, c1, c2), weight in zip(frac_coords, values):
@@ -193,7 +241,10 @@ def merge_frac_coords_weighted(
         total1 += un1 * weight
         total2 += un2 * weight
 
-    return np.array((total0 % 1.0, total1 % 1.0, total2 % 1.0), dtype=np.float64)
+    if wrap:
+        return np.array((total0 % 1.0, total1 % 1.0, total2 % 1.0), dtype=np.float64)
+    else:
+        return np.array((total0, total1, total2), dtype=np.float64)
 
 
 @njit(parallel=True)
@@ -271,3 +322,69 @@ def get_transforms_in_radius(
     offsets = offsets[sorted_indices]
     dists = dists[sorted_indices]
     return offsets, dists
+
+
+@njit(cache=True)
+def compute_wrap_offset(point1, point2):
+    """
+    Computes wrap from point1 to point2
+
+    """
+    best_d2 = np.inf
+    best_i = 0
+    best_j = 0
+    best_k = 0
+
+    for i in (-1, 0, 1):
+        for j in (-1, 0, 1):
+            for k in (-1, 0, 1):
+                dx = (point2[0] + i) - point1[0]
+                dy = (point2[1] + j) - point1[1]
+                dz = (point2[2] + k) - point1[2]
+                d2 = dx * dx + dy * dy + dz * dz
+
+                if d2 < best_d2:
+                    best_d2 = d2
+                    best_i = i
+                    best_j = j
+                    best_k = k
+
+    return best_i, best_j, best_k
+
+
+@njit(cache=True)
+def get_ongrid_gradient_cart(i, j, k, data, dir2car):
+    nx, ny, nz = data.shape
+
+    c000 = data[i, j, k]
+    c100 = data[(i + 1) % nx, j, k]
+    c_100 = data[(i - 1) % nx, j, k]
+    c010 = data[i, (j + 1) % ny, k]
+    c0_10 = data[i, (j - 1) % ny, k]
+    c001 = data[i, j, (k + 1) % nz]
+    c00_1 = data[i, j, (k - 1) % nz]
+
+    # central differences in voxel coordinates
+    gi = (c100 - c_100) / (2.0)
+    gj = (c010 - c0_10) / (2.0)
+    gk = (c001 - c00_1) / (2.0)
+
+    # optional extrema clamping
+    if c100 <= c000 and c_100 <= c000:
+        gi = 0.0
+    if c010 <= c000 and c0_10 <= c000:
+        gj = 0.0
+    if c001 <= c000 and c00_1 <= c000:
+        gk = 0.0
+
+    # convert to fractional-coordinate gradient
+    gi *= nx
+    gj *= ny
+    gk *= nz
+
+    # convert to Cartesian gradient
+    gx = dir2car[0, 0] * gi + dir2car[0, 1] * gj + dir2car[0, 2] * gk
+    gy = dir2car[1, 0] * gi + dir2car[1, 1] * gj + dir2car[1, 2] * gk
+    gz = dir2car[2, 0] * gi + dir2car[2, 1] * gj + dir2car[2, 2] * gk
+
+    return gx, gy, gz

@@ -5,7 +5,8 @@ import logging
 import numpy as np
 
 from baderkit.core.bader.methods.base import MethodBase
-from baderkit.core.bader.methods.shared_numba import get_edges
+from baderkit.core.utilities.basic import get_lowest_int, get_lowest_uint
+from baderkit.core.utilities.basins import get_edges_w_flat_images
 
 from .neargrid_numba import (
     get_gradient_pointers_overdetermined,
@@ -18,7 +19,7 @@ class NeargridMethod(MethodBase):
 
     _use_overdetermined = False
 
-    def _run_bader(self, labels):
+    def _run_bader(self):
         """
         Assigns voxels to basins and calculates charge using the near-grid
         method:
@@ -33,20 +34,24 @@ class NeargridMethod(MethodBase):
         """
         reference_grid = self.reference_grid
         reference_data = reference_grid.total
+        labels = self.labels
+        images = self.images
         shape = reference_grid.shape
         # get neigbhor transforms
         neighbor_transforms, neighbor_dists = reference_grid.point_neighbor_transforms
         logging.info("Calculating Gradients")
         if not self._use_overdetermined:
             # calculate gradients and pointers to best neighbors
-            labels, gradients = get_gradient_pointers_simple(
+            labels, images, gradients = get_gradient_pointers_simple(
                 data=reference_data,
                 labels=labels,
+                images=images,
                 dir2lat=self.dir2lat,
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                maxima_mask=self.maxima_mask,
+                extrema_mask=self.extrema_mask,
+                use_minima=self.use_minima,
             )
         else:
             # NOTE: This is an alternatvie method using an overdetermined system
@@ -60,66 +65,72 @@ class NeargridMethod(MethodBase):
             # get the pseudo inverse
             inv_norm_cart_trans = np.linalg.pinv(norm_cart_transforms[:13])
             # calculate gradients and pointers to best neighbors
-            labels, gradients, self._maxima_mask = get_gradient_pointers_overdetermined(
+            labels, images, gradients = get_gradient_pointers_overdetermined(
                 data=reference_data,
                 labels=labels,
+                images=images,
                 car2lat=self.car2lat,
                 inv_norm_cart_trans=inv_norm_cart_trans,
                 neighbor_dists=neighbor_dists,
                 neighbor_transforms=neighbor_transforms,
                 vacuum_mask=self.vacuum_mask,
-                maxima_mask=self.maxima_mask,
+                extrema_mask=self.extrema_mask,
+                use_minima=self.use_minima,
             )
         # Find roots
-        # NOTE: Vacuum points are indicated by a value of -1 and we want to
-        # ignore these
         logging.info("Finding Roots")
-        labels = self.get_roots(labels)
-        # We now have our roots. Relabel so that they go from 0 to the length of our
-        # roots
-        unique_roots, labels = np.unique(labels, return_inverse=True)
-        # shift back to vacuum at -1
-        if -1 in unique_roots:
-            labels -= 1
-        # reconstruct a 3D array with our labels
-        labels = labels.reshape(shape)
-        # get frac coords
+        labels, images = self.get_roots(labels, images)
+
+        # reconstruct a 3D array with our labels. make sure our data type can
+        # include negative values so that we can mark points needing refinement
+        dtype = get_lowest_int(len(self.extrema_vox) + 1)
+        labels = labels.reshape(shape).astype(dtype)
 
         logging.info("Starting Edge Refinement")
-        # reduce maxima/basins
-        # labels, self._maxima_frac = self.reduce_label_maxima(labels)
-        # shift to vacuum at 0
+
+        # shift indices to start at 1
         labels += 1
 
         # Now we refine the edges with the neargrid method
         # Get our edges, not including edges on the vacuum.
-        refinement_mask = get_edges(
+        refinement_mask = get_edges_w_flat_images(
             labeled_array=labels,
+            images=images,
             neighbor_transforms=neighbor_transforms,
             vacuum_mask=self.vacuum_mask,
         )
-        # remove maxima from refinement
-        refinement_mask[self.maxima_mask] = False
-        # note these labels should not be reassigned again in future cycles
-        labels[refinement_mask] = -labels[refinement_mask]
-        labels = refine_fast_neargrid(
+
+        # remove extrema from refinement
+        refinement_mask[self.extrema_mask] = False
+        # note these labels and the vacuum should not be reassigned again in future cycles
+        labels[refinement_mask | self.vacuum_mask] = -labels[
+            refinement_mask | self.vacuum_mask
+        ]
+        labels, images = refine_fast_neargrid(
             data=reference_data,
             labels=labels,
+            images=images,
             refinement_mask=refinement_mask,
-            maxima_mask=self.maxima_mask,
+            extrema_mask=self.extrema_mask,
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
+            vacuum_label=-(len(self.extrema_vox) + 1),
+            use_minima=self.use_minima,
         )
-
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1
-        # get all results
-        results = {
-            "basin_labels": labels,
-        }
+        dtype = get_lowest_uint(len(self.extrema_vox) + 1)
+        labels = labels.reshape(shape).astype(dtype)
+
+        # condense images
+        images = self.condense_images(images)
+        images = images.reshape(shape)
+        # set all results
+        self._labels = labels
+        self._images = images
+
         # assign charges/volumes, etc.
         logging.info("Assigning Charges and Volumes")
-        results.update(self.get_basin_charges_and_volumes(labels))
-        return results
+        self.get_basin_charges_and_volumes(labels)

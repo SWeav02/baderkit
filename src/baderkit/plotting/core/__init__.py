@@ -1,3 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from .plotter import BaderPlotter, GridPlotter, StructurePlotter
+from .bader import BaderPlotter
+from .critical_points import CriticalPointsPlotter
+from .grid import GridPlotter
+from .structure import StructurePlotter

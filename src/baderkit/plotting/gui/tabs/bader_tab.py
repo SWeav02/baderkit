@@ -5,7 +5,11 @@ from qtpy import QtCore as qc
 from qtpy import QtWidgets as qw
 
 from baderkit.core import Bader, Grid
-from baderkit.plotting.gui.widgets import DoubleSpinBox, ErrorWindow, FilePicker
+from baderkit.plotting.gui.widgets import (
+    DoubleSpinBox,
+    ErrorWindow,
+    FilePicker,
+)
 
 
 class BaderTab(qw.QWidget):
@@ -32,11 +36,25 @@ class BaderTab(qw.QWidget):
         basic_box.setLayout(basic_layout)
         layout.addWidget(basic_box)
 
+        # select data source
+        self.data_source = qw.QComboBox()
+        for source in ["charge_grid", "total_charge_grid", "reference_grid"]:
+            self.data_source.addItem(source)
+        self.data_source.setCurrentText("reference_grid")
+        basic_layout.addRow("Isosurface Grid", self.data_source)
+        self.main.data_source = self.data_source
+
         # add a file picker for the charge density
         self.charge_filepicker = FilePicker()
         self.charge_filepicker.line_edit.textChanged.connect(self.check_paths)
         basic_layout.addRow("Charge File", self.charge_filepicker)
         basic_layout.setAlignment(self.charge_filepicker, qc.Qt.AlignVCenter)
+
+        # add a file picker for the total charge density
+        self.total_filepicker = FilePicker()
+        self.total_filepicker.line_edit.textChanged.connect(self.check_paths)
+        basic_layout.addRow("Total Charge File (Optional)", self.total_filepicker)
+        basic_layout.setAlignment(self.total_filepicker, qc.Qt.AlignVCenter)
 
         # add a file picker for the reference
         self.reference_filepicker = FilePicker()
@@ -103,13 +121,19 @@ class BaderTab(qw.QWidget):
         self.run_button.setText("Running...")
 
         self.thread = qc.QThread()
-        self.worker = BaderWorker(
-            charge_path=Path(self.charge_filepicker.file_path()),
-            reference_path=Path(self.reference_filepicker.file_path()),
-            method=self.method_select.currentText(),
-            vacuum_tol=self.vacuum_tol.value(),
-            basin_tol=self.basin_tol.value(),
-        )
+        try:
+            self.worker = BaderWorker(
+                charge_path=Path(self.charge_filepicker.file_path()),
+                total_path=Path(self.total_filepicker.file_path()),
+                reference_path=Path(self.reference_filepicker.file_path()),
+                method=self.method_select.currentText(),
+                vacuum_tol=self.vacuum_tol.value(),
+                basin_tol=self.basin_tol.value(),
+            )
+        except Exception as e:
+            error = qc.Signal(str)
+            error.emit(f"Bader class failed to load with the following error:\n {e}")
+            return
 
         # connect worker signals
         self.worker.finished.connect(self.on_bader_finished)
@@ -151,6 +175,7 @@ class BaderWorker(qc.QObject):
     def __init__(
         self,
         charge_path,
+        total_path,
         reference_path,
         method,
         vacuum_tol,
@@ -158,6 +183,7 @@ class BaderWorker(qc.QObject):
     ):
         super().__init__()
         self.charge_path = charge_path
+        self.total_path = total_path
         self.reference_path = reference_path
         self.method = method
         self.vacuum_tol = vacuum_tol
@@ -169,6 +195,12 @@ class BaderWorker(qc.QObject):
             # get grids
             charge_path = self.charge_path
             charge_grid = Grid.from_dynamic(charge_path)
+
+            total_path = self.total_path
+            if total_path.name:
+                total_grid = Grid.from_dynamic(total_path)
+            else:
+                total_grid = None
             reference_path = self.reference_path
             if reference_path.name:
                 reference_grid = Grid.from_dynamic(reference_path)
@@ -180,15 +212,16 @@ class BaderWorker(qc.QObject):
 
         # create bader object
         bader = Bader(
-            charge_grid,
-            reference_grid,
+            charge_grid=charge_grid,
+            total_grid=total_grid,
+            reference_grid=reference_grid,
             method=self.method,
             vacuum_tol=self.vacuum_tol,
             basin_tol=self.basin_tol,
         )
 
         try:
-            _ = bader.results_summary  # force evaluation
+            _ = bader.to_dict()  # force evaluation
         except Exception as e:
             self.error.emit(f"Bader algorithm failed with the following error:\n {e}")
             return

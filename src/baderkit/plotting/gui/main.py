@@ -94,7 +94,12 @@ class MainWindow(pvMainWindow):
 
         # --- create plotter, ask it to attach to the container ---
         # otherwise reparent the interactor widget below.
-        self.bader_plotter = BaderPlotter(bader, qt_plotter=True, qt_frame=container)
+        self.bader_plotter = BaderPlotter(
+            bader,
+            grid_name=self.data_source.currentText(),
+            qt_plotter=True,
+            qt_frame=container,
+        )
 
         # get the actual QWidget that must be inserted
         plot_widget = self.bader_plotter.plotter.interactor

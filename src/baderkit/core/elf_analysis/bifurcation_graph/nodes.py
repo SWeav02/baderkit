@@ -303,7 +303,7 @@ class ReducibleNode(NodeBase):
         # delete self
         self.remove()
         # check if the basins in this node form a point, ring, or cage
-        frac_coords = self.bifurcation_graph.basin_maxima_frac[self.basins]
+        frac_coords = self.bifurcation_graph.bader.maxima_frac[self.basins]
         irreducible_type = get_pt_ring_cage(frac_coords)
         if irreducible_type == 0:
             domain_subtype = DomainSubtype.irreducible_point
@@ -386,15 +386,15 @@ class IrreducibleNode(NodeBase):
 
     @cached_property
     def charge(self) -> float:
-        return self.bifurcation_graph.basin_charges[self.basins].sum()
+        return self.bifurcation_graph.bader.basin_charges[self.basins].sum()
 
     @cached_property
     def volume(self) -> float:
-        return self.bifurcation_graph.basin_volumes[self.basins].sum()
+        return self.bifurcation_graph.bader.basin_volumes[self.basins].sum()
 
     @cached_property
     def frac_coords(self) -> NDArray:
-        return self.bifurcation_graph.basin_maxima_frac[self.basins]
+        return self.bifurcation_graph.bader.maxima_frac[self.basins]
 
     @cached_property
     def average_frac_coords(self) -> NDArray:
@@ -498,13 +498,14 @@ class IrreducibleNode(NodeBase):
                         feat_idx = self.bifurcation_graph.get_feature_nodes(
                             FeatureType.bare_types
                         ).index(self)
+                        struc_idx = len(self.bifurcation_graph.structure) + feat_idx
                     except:
                         breakpoint()
-                    struc_idx = len(self.bifurcation_graph.structure) + feat_idx
                 else:
                     # temporarily add this feature to our structure
                     feature_structure.append("H-", self.average_frac_coords)
                     struc_idx = -1
+
                 coordination = self.bifurcation_graph.cnn.get_nn_info(
                     feature_structure, struc_idx
                 )

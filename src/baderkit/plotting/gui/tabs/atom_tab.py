@@ -5,7 +5,11 @@ from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
 from baderkit.plotting.core.defaults import ATOM_COLORS
-from baderkit.plotting.gui.widgets import ColorPicker, DoubleSpinBox, centered_widget
+from baderkit.plotting.gui.widgets import (
+    ColorPicker,
+    DoubleSpinBox,
+    centered_widget,
+)
 
 
 class AtomsTab(qw.QWidget):
@@ -36,6 +40,13 @@ class AtomsTab(qw.QWidget):
         form_layout = qw.QFormLayout()
         form.setLayout(form_layout)
         self.settings_layout.addWidget(form)
+
+        self.pbr = qw.QCheckBox()
+        self.pbr.setChecked(False)
+        self.pbr.setSizePolicy(qw.QSizePolicy.Minimum, qw.QSizePolicy.Preferred)
+        self.pbr.toggled.connect(self.set_pbr)
+        form_layout.addRow("Physically Based Rendering", self.pbr)
+
         self.metallicity = DoubleSpinBox(
             min_value=0.0,
             max_value=1.0,
@@ -172,6 +183,9 @@ class AtomsTab(qw.QWidget):
         # Make options visible
         self.layout.setCurrentIndex(1)
 
+    def set_pbr(self):
+        self.main.set_property(self.pbr.isChecked(), "pbr")
+
     def set_radii(self):
         # get radius from each atom
         radii = []
@@ -190,7 +204,9 @@ class AtomsTab(qw.QWidget):
         visible = []
         for i, visible_widget in enumerate(self.atom_visibility):
             if visible_widget.isChecked():
-                visible.append(i)
+                visible.append(1.0)
+            else:
+                visible.append(0.0)
         self.main.set_property(visible, "visible_atoms")
 
     # Iterate all items and delete their widgets

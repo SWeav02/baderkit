@@ -20,17 +20,22 @@ TEST_CHGCAR_HDF5 = TEST_FOLDER / "CHGCAR.hdf5"
 def test_read_badelf_from_file():
     # test default read ins
     badelf = Badelf.from_vasp(
-        charge_file=TEST_CHGCAR,
-        reference_file=TEST_ELFCAR,
+        charge_filename=TEST_CHGCAR,
+        reference_filename=TEST_ELFCAR,
     )
 
-    badelf = SpinBadelf.from_vasp(charge_file=TEST_CHGCAR, reference_file=TEST_ELFCAR)
+    badelf = SpinBadelf.from_vasp(
+        charge_filename=TEST_CHGCAR,
+        reference_filename=TEST_ELFCAR,
+    )
     assert badelf.charge_grid.diff is not None
 
 
 def test_writing_badelf(tmp_path):
     # read in badelf
-    badelf = SpinBadelf.from_vasp(charge_file=TEST_CHGCAR, reference_file=TEST_ELFCAR)
+    badelf = SpinBadelf.from_vasp(
+        charge_filename=TEST_CHGCAR, reference_filename=TEST_ELFCAR
+    )
 
     # write results files
     badelf.write_json(tmp_path / "badelf.json", write_spin=True)
@@ -52,8 +57,8 @@ def test_writing_badelf(tmp_path):
 )
 def test_running_badelf_methods(tmp_path, method):
     badelf = SpinBadelf.from_vasp(
-        charge_file=TEST_CHGCAR,
-        reference_file=TEST_ELFCAR,
+        charge_filename=TEST_CHGCAR,
+        reference_filename=TEST_ELFCAR,
         method=method,
     )
     with open(TEST_BADELF_FOLDER / method / "badelf.json", "r") as file:
