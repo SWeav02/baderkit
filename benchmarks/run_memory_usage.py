@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 
+import multiprocessing as mp
 import os
+import resource
+import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Callable, Tuple
 
@@ -18,57 +22,69 @@ from baderkit.core import Bader, Grid
 ###############################################################################
 
 
+
 def measure_peak_memory(
-    func: Callable, *args, interval: float = 0.01, **kwargs
+    func: Callable, *args, ctx: mp.context = None, **kwargs
 ) -> Tuple[Any, float]:
     """
-    Run a function and measure its peak memory usage (RSS).
+    Run `func(*args, **kwargs)` in a child process and return (result, peak_mb).
+    Peak includes C allocations (reported by the OS for the child).
+    Uses multiprocessing.Pipe to get (result, child_ru_maxrss) back from the child.
 
-    Parameters
-    ----------
-    func : Callable
-        The function to run.
-    *args, **kwargs :
-        Arguments to pass to the function.
-    interval : float, optional
-        How often to sample memory usage in seconds (default: 0.01).
-
-    Returns
-    -------
-    result : Any
-        The return value of the function.
-    peak_mb : float
-        Peak resident set size (RSS) in MB.
+    Notes:
+    - On Linux ru_maxrss is returned in kilobytes. On macOS it is bytes.
+    - If your arguments (args/kwargs) include very large numpy arrays, prefer using
+      a "fork" start method (default on Linux). On Windows or when spawn is used,
+      arguments will be pickled and that duplicate may inflate memory usage.
     """
-    process = psutil.Process(os.getpid())
-    peak_rss = 0.0
-    running = True
+    # Choose context: prefer fork to avoid pickling big objects (only available on Unix)
+    if ctx is None:
+        try:
+            ctx = mp.get_context("fork")
+        except Exception:
+            ctx = mp.get_context("spawn")
 
-    def monitor():
-        nonlocal peak_rss
-        while running:
-            rss = process.memory_info().rss
-            if rss > peak_rss:
-                peak_rss = rss
-            time.sleep(interval)
+    parent_conn, child_conn = mp.Pipe(duplex=False)
 
-    # Start monitor in background
-    thread = threading.Thread(target=monitor, daemon=True)
-    thread.start()
+    def _worker(conn, fn, a, kw):
+        try:
+            res = fn(*a, **kw)
+            # ru_maxrss for this child (RUSAGE_SELF)
+            r = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            conn.send(("ok", res, r))
+        except Exception:
+            tb = traceback.format_exc()
+            conn.send(("err", tb))
+        finally:
+            conn.close()
 
-    try:
-        result = func(*args, **kwargs)
-    finally:
-        running = False
-        thread.join()
+    p = ctx.Process(target=_worker, args=(child_conn, func, args, kwargs))
+    p.start()
 
-    return result, peak_rss / 1024**2  # MB
+    # Wait for child to send result (this will block until the child sends)
+    status, *payload = parent_conn.recv()
+    p.join()
+
+    if status == "err":
+        raise RuntimeError(f"Child process raised an exception:\n{payload[0]}")
+
+    result, ru_maxrss = payload  # (result, ru_maxrss)
+
+    # Interpret ru_maxrss units: Linux -> kilobytes, macOS/BSD -> bytes.
+    if sys.platform.startswith("linux"):
+        peak_bytes = int(ru_maxrss) * 1024
+    else:
+        # macOS/bsd return bytes for ru_maxrss
+        peak_bytes = int(ru_maxrss)
+
+    peak_mb = peak_bytes / 1024**2
+    return result, peak_mb
 
 
 # function for running bader
 def run_bader(charge_grid, reference_grid, method, **kwargs):
-    bader = Bader(charge_grid, reference_grid, method)
-    return bader.results_summary
+    bader = Bader(charge_grid=charge_grid, reference_grid=reference_grid, method=method)
+    return bader.to_dict()
 
 
 ###############################################################################

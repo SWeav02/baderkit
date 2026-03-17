@@ -29,7 +29,9 @@ for grid_num in grid_nums:
 
     # run each method and save Na oxidation state
     for method in methods:
-        bader = Bader(charge_grid, reference_grid, method=method)
+        bader = Bader(
+            charge_grid=charge_grid, reference_grid=reference_grid, method=method
+        )
         charges[method].append(9 - bader.atom_charges[0])
 
 ###############################################################################

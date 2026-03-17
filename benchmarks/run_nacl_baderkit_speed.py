@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from baderkit.core import Bader
+
 ###############################################################################
 # Parameters
 ###############################################################################
@@ -16,7 +18,7 @@ test_num = 10
 grid_nums = [60, 120, 180, 240, 300]
 
 # Replace this with the actual list of methods you want to test
-methods = ["ongrid", "neargrid", "weight"]
+methods = ["ongrid", "neargrid", "weight", "neargrid-weight"]
 
 all_time_avgs = {}
 all_time_std = {}
@@ -31,6 +33,9 @@ for method in methods:
         folder = directory / str(grid_num)
         assert folder.exists()
         times = []
+        # run method once
+        bader = Bader.from_vasp(folder / "CHGCAR", method=method)
+        bader.atom_charges
         for i in range(test_num):
             t0 = time.time()
             subprocess.run(

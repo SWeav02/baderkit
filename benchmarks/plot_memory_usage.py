@@ -9,7 +9,7 @@ from baderkit.core import Bader
 methods = Bader.all_methods()
 
 # load results
-memory_df = pd.read_csv("memory_summary_baderkit.csv")
+memory_df = pd.read_csv("peak_memory.csv")
 
 plt.style.use("seaborn-v0_8-darkgrid")
 
@@ -21,8 +21,8 @@ markers = ["o", "s", "^", "D"]  # circle, square, triangle, diamond
 fig, ax = plt.subplots()
 for i, method in enumerate(methods):
     ax.plot(
-        memory_df["ngrid_points"] / 1_000_000,
-        memory_df[method] / 1_000,
+        memory_df["folder"] ** 3 / 1_000_000,
+        memory_df[method] / 1_000_000,
         marker=markers[i % len(markers)],
         linestyle=line_styles[i % len(line_styles)],
         label=method,

@@ -1,0 +1,33 @@
+Global Parameters
+ISTART =  1            (Read existing wavefunction, if there)
+ISPIN  =  2            (Non-Spin polarised DFT)
+# ICHARG =  11         (Non-self-consistent: GGA/LDA band structures)
+LREAL  = .FALSE.       (Projection operators: automatic)
+# ENCUT  =  400        (Cut-off energy for plane wave basis set, in eV)
+# PREC   =  Accurate   (Precision level: Normal or Accurate, set Accurate when perform structure lattice relaxation calculation)
+LWAVE  = .TRUE.        (Write WAVECAR or not)
+LCHARG = .TRUE.        (Write CHGCAR or not)
+LAECHG = .TRUE.
+LELF   = .TRUE.
+LASPH  = .TRUE.        (Give more accurate total energies and band structure calculations)
+PREC   = Accurate      (Accurate strictly avoids any aliasing or wrap around errors)
+# LVTOT  = .TRUE.      (Write total electrostatic potential into LOCPOT or not)
+# LVHAR  = .TRUE.      (Write ionic + Hartree electrostatic potential into LOCPOT or not)
+# NELECT =             (No. of electrons: charged cells, be careful)
+# LPLANE = .TRUE.      (Real space distribution, supercells)
+# NWRITE = 2           (Medium-level output)
+# KPAR   = 2           (Divides k-grid into separate groups)
+NGX    = 20        (FFT grid mesh density for nice charge/potential plots)
+NGY    = 20        (FFT grid mesh density for nice charge/potential plots)
+NGZ    = 60        (FFT grid mesh density for nice charge/potential plots)
+NGXF    = 20        (FFT grid mesh density for nice charge/potential plots)
+NGYF    = 20        (FFT grid mesh density for nice charge/potential plots)
+NGZF    = 60        (FFT grid mesh density for nice charge/potential plots)
+
+ 
+Static Calculation
+ISMEAR =  0            (gaussian smearing method)
+SIGMA  =  0.05         (please check the width of the smearing)
+NELM   =  60           (Max electronic SCF steps)
+EDIFF  =  1E-06        (SCF energy convergence, in eV)
+ 
