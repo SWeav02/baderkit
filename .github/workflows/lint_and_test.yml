@@ -23,7 +23,7 @@ jobs:
     runs-on: "ubuntu-latest"
     steps:
       - name: Initial setup
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
       - name: Black
         uses: psf/black@stable
       - name: iSort
@@ -42,7 +42,7 @@ jobs:
 
     steps:
       - name: Initial setup
-        uses: actions/checkout@v3
+        uses: actions/checkout@v6
 
 
       - name: Create conda env and install deps
