@@ -414,6 +414,7 @@ def gui():
     Launches the BaderKit GUI application
     """
     try:
+        import PyQt5
         import pyvista
         import pyvistaqt
         import qtpy

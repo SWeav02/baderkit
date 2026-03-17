@@ -22,7 +22,6 @@ from baderkit.core import Bader, Grid
 ###############################################################################
 
 
-
 def measure_peak_memory(
     func: Callable, *args, ctx: mp.context = None, **kwargs
 ) -> Tuple[Any, float]:
