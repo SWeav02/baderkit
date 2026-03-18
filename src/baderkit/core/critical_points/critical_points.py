@@ -10,7 +10,7 @@ from baderkit.core.bader.bader import Bader
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Grid
 from baderkit.core.utilities.basic import merge_frac_coords_weighted
-from baderkit.core.utilities.basins import get_manifold_labels, get_manifold_labels_thin
+from baderkit.core.utilities.basins import get_manifold_labels
 from baderkit.core.utilities.transforms import INT_TO_IMAGE
 
 from .saddle_connections import (
@@ -98,30 +98,19 @@ class CriticalPoints(BaseAnalysis):
     ]
 
     def __init__(
-        self,
-        reference_grid: Grid | Bader,
-        charge_grid: Grid | None = None,
-        total_charge_grid: Grid | None = None,
-        persistence_tol: float = 0.01,
-        **kwargs,
-    ):
-        if type(reference_grid) == Bader:
-            bader = reference_grid
-            reference_grid = bader.reference_grid
-            charge_grid = bader.charge_grid
-            total_charge_grid = bader.total_charge_grid
-        elif type(reference_grid) == Grid:
-            if charge_grid is None:
-                charge_grid = reference_grid
-            if total_charge_grid is None:
-                total_charge_grid = total_charge_grid
-            bader = Bader(
-                charge_grid=charge_grid,
-                total_charge_grid=total_charge_grid,
-                reference_grid=reference_grid,
-                persistence_tol=persistence_tol,
-                **kwargs,
-            )
+            self,
+            charge_grid: Grid,
+            reference_grid: Grid | None = None,
+            total_charge_grid: Grid | None = None,
+            **kwargs,
+            ):
+
+        bader = Bader(
+            charge_grid=charge_grid,
+            total_charge_grid=total_charge_grid,
+            reference_grid=reference_grid,
+            **kwargs,
+        )
         self._bader = bader
 
         super().__init__(
@@ -130,8 +119,6 @@ class CriticalPoints(BaseAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
-
-        self._persistence_tol = persistence_tol
 
     @property
     def bader(self) -> Bader:
