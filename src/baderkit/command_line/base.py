@@ -173,7 +173,7 @@ def run(
         help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
     ),
     method: Method = typer.Option(
-        Method.weight,
+        Method.default,
         "--method",
         "-m",
         help="The method to use for separating bader basins",
@@ -561,7 +561,7 @@ def badelf(
         case_sensitive=False,
     ),
     bader_method: Method = typer.Option(
-        Method.weight,
+        Method.default,
         "--bader-method",
         "-bm",
         help="The method to use for bader portions of the algorithm",
@@ -657,7 +657,7 @@ def label(
         help="The path to the total charge file",
     ),
     method: Method = typer.Option(
-        Method.weight,
+        Method.default,
         "--method",
         "-m",
         help="The bader method to use for partitioning the ELF",

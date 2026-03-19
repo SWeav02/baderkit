@@ -4,11 +4,11 @@ from numba import njit, prange
 
 
 @njit(cache=True, inline="always")
-def frac2cart_numba(frac2cart, i, j, k):
+def matrix_numba(matrix, i, j, k):
     # I think this may be faster than using the standard matrix mult for some reason
-    ci = i * frac2cart[0][0] + j * frac2cart[1][0] + k * frac2cart[2][0]
-    cj = i * frac2cart[0][1] + j * frac2cart[1][1] + k * frac2cart[2][1]
-    ck = i * frac2cart[0][2] + j * frac2cart[1][2] + k * frac2cart[2][2]
+    ci = i * matrix[0][0] + j * matrix[1][0] + k * matrix[2][0]
+    cj = i * matrix[0][1] + j * matrix[1][1] + k * matrix[2][1]
+    ck = i * matrix[0][2] + j * matrix[1][2] + k * matrix[2][2]
     return ci, cj, ck
 
 
@@ -16,7 +16,7 @@ def frac2cart_numba(frac2cart, i, j, k):
 def get_atom_nearest_neighbors(
     atom_frac_coords,
     atom_cart_coords,
-    frac2cart,
+    matrix,
 ):
 
     # create arrays to store results
@@ -37,7 +37,7 @@ def get_atom_nearest_neighbors(
                     tj = fj + sj
                     tk = fk + sk
                     # convert to cartestian coord
-                    ci, cj, ck = frac2cart_numba(frac2cart, ti, tj, tk)
+                    ci, cj, ck = matrix_numba(matrix, ti, tj, tk)
                     # compare distance to each neighbor
                     for j, (nci, ncj, nck) in enumerate(atom_cart_coords):
                         # skip if this is the current coord
@@ -61,7 +61,7 @@ def get_dists_to_atoms(
     frac_coord,
     atom_frac_coords,
     atom_cart_coords,
-    frac2cart,
+    matrix,
 ):
     num_atoms = len(atom_cart_coords)
 
@@ -80,7 +80,7 @@ def get_dists_to_atoms(
                 tj = fj + sj
                 tk = fk + sk
                 # convert to cartesian
-                ci, cj, ck = frac2cart_numba(frac2cart, ti, tj, tk)
+                ci, cj, ck = matrix_numba(matrix, ti, tj, tk)
                 trans_cart_coords[trans_idx] = (ci, cj, ck)
                 trans_idx += 1
 
@@ -105,11 +105,11 @@ def get_dists_to_atoms(
 
 
 @njit(cache=True)
-def check_covalent(
+def is_along_bond(
     feature_frac_coord,
     atom_frac_coords,
     atom_cart_coords,
-    frac2cart,
+    matrix,
     min_covalent_angle,
 ):
 
@@ -134,7 +134,7 @@ def check_covalent(
                 tj = fj + sj
                 tk = fk + sk
                 # convert to cartesian
-                ci, cj, ck = frac2cart_numba(frac2cart, ti, tj, tk)
+                ci, cj, ck = matrix_numba(matrix, ti, tj, tk)
                 # calculate distance to each atom
                 for i, (ai, aj, ak) in enumerate(atom_cart_coords):
                     di = ai - ci
@@ -192,25 +192,25 @@ def check_covalent(
 
 
 @njit(parallel=True, cache=True)
-def check_all_covalent(
+def is_along_bond_all(
     feature_frac_coords,
     atom_frac_coords,
     atom_cart_coords,
-    frac2cart,
+    matrix,
     min_covalent_angle,
 ):
     # create an array to store if each feature is covalent
-    covalent_features = np.zeros(len(feature_frac_coords), dtype=np.bool_)
+    features_along_bond = np.zeros(len(feature_frac_coords), dtype=np.bool_)
     atom_neighs = np.empty((len(feature_frac_coords), 2), dtype=np.uint16)
     for i in prange(len(feature_frac_coords)):
         feature_frac_coord = feature_frac_coords[i]
-        in_tolerance, atom0, atom1 = check_covalent(
+        in_tolerance, atom0, atom1 = is_along_bond(
             feature_frac_coord,
             atom_frac_coords,
             atom_cart_coords,
-            frac2cart,
+            matrix,
             min_covalent_angle,
         )
-        covalent_features[i] = in_tolerance
+        features_along_bond[i] = in_tolerance
         atom_neighs[i] = (atom0, atom1)
-    return covalent_features, atom_neighs
+    return features_along_bond, atom_neighs

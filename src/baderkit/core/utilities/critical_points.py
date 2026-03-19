@@ -362,10 +362,7 @@ def get_canonical_saddle_connections(
             use_minima,
         )
         saddle_connections[idx, 0] = lower
-        try:
-            saddle_connections[idx, 1] = higher
-        except:
-            breakpoint()
+        saddle_connections[idx, 1] = higher
         saddle_connections[idx, 2] = lower_shift
         saddle_connections[idx, 3] = higher_shift
     return saddle_connections

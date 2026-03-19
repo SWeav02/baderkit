@@ -131,9 +131,9 @@ class NeargridWeightMethod(MethodBase):
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1
-        dtype = get_lowest_uint(len(self.extrema_vox) + 1)
+        dtype = get_lowest_uint(len(self.extrema_vox))
         labels = labels.reshape(shape).astype(dtype)
-        breakpoint()
+        vacuum_label -= 1
         # condense images
         images = self.condense_images(images)
         images = images.reshape(shape)

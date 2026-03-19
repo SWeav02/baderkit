@@ -89,6 +89,8 @@ class NeargridMethod(MethodBase):
         logging.info("Starting Edge Refinement")
 
         # shift indices to start at 1
+        labels += 1
+
         # Now we refine the edges with the neargrid method
         # Get our edges, not including edges on the vacuum.
         vacuum_label = len(self.extrema_vox) + 1

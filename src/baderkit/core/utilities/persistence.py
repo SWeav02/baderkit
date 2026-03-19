@@ -772,15 +772,11 @@ def group_by_persistence(
     num_added = 1
     while num_added > 0:
         num_added = 0
-        print(num_added)
         for saddle_idx in range(num_saddles):
 
             ext1, ext2, image1, image2 = basin_connections[saddle_idx]
-            try:
-                root1, shift1 = find_root_with_shift1(unions, images, ext1)
-                root2, shift2 = find_root_with_shift1(unions, images, ext2)
-            except:
-                breakpoint()
+            root1, shift1 = find_root_with_shift1(unions, images, ext1)
+            root2, shift2 = find_root_with_shift1(unions, images, ext2)
 
             # skip if this saddle does not involve the current root
             # NOTE: connections should be ordered by value ahead of time
