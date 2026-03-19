@@ -25,7 +25,7 @@ from baderkit.core.utilities.union_find import find_root, union
 ###############################################################################
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def classify_critical_point(H):
     eigvals = np.linalg.eigvalsh(H)
 
@@ -44,7 +44,7 @@ def classify_critical_point(H):
     return -1
 
 
-# @njit(cache=True, fastmath=True)
+# # @njit(cache=True, fastmath=True)
 # def compute_signature(H, eig_rel_tol):
 #     evals, _ = np.linalg.eigh(H)
 
@@ -60,7 +60,7 @@ def classify_critical_point(H):
 
 
 #     return n_neg, n_flat
-@njit(cache=True)
+# @njit(cache=True)
 def compute_signature(H, eig_rel_tol):
 
     evals = np.linalg.eigvalsh(H)
@@ -78,7 +78,7 @@ def compute_signature(H, eig_rel_tol):
     return n_neg, n_flat
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def is_ongrid_saddle(
     data,
     i,
@@ -113,7 +113,7 @@ def is_ongrid_saddle(
     return True
 
 
-@njit(fastmath=True, cache=True)
+# @njit(fastmath=True, cache=True)
 def is_ongrid_newton_crit(
     coord,
     data,
@@ -236,7 +236,7 @@ def is_ongrid_newton_crit(
 ###############################################################################
 
 
-@njit(inline="always", cache=True)
+# @njit(inline="always", cache=True)
 def get_extrema_saddle_connections(
     i,
     j,
@@ -301,7 +301,7 @@ def get_extrema_saddle_connections(
     return max_val, max_val, max_val, max_val
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_single_point_saddles(
     connection_values,
     connection_indices,
@@ -328,7 +328,7 @@ def get_single_point_saddles(
     return best_vals, best_indices
 
 
-@njit(cache=True, parallel=True)
+# @njit(cache=True, parallel=True)
 def get_canonical_saddle_connections(
     saddle_coords,
     data,
@@ -368,7 +368,7 @@ def get_canonical_saddle_connections(
     return saddle_connections
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_saddles_from_basins(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -416,7 +416,7 @@ def get_saddles_from_basins(
     return saddle_coords, saddle_connections
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def remove_false_saddles(
     saddle_coords,
     labels: NDArray[np.int64],
@@ -483,7 +483,7 @@ def remove_false_saddles(
     return saddle_coords, saddle_connections
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def remove_adjacent_saddles(refined_vox, shape):
     unions = np.arange(len(refined_vox))
     # combine any that refined to be adjacent
@@ -512,7 +512,7 @@ def remove_adjacent_saddles(refined_vox, shape):
 ###############################################################################
 
 
-@njit(cache=True, fastmath=True, inline="always")
+# @njit(cache=True, fastmath=True, inline="always")
 def clamp_step(dx, max_step):
     step_norm = get_norm(dx[0], dx[1], dx[2])
     if step_norm < 1e-8:
@@ -525,12 +525,12 @@ def clamp_step(dx, max_step):
     return dx, True
 
 
-@njit(cache=True, fastmath=True, inline="always")
+# @njit(cache=True, fastmath=True, inline="always")
 def outside_voxel(coord, vmin, vmax):
     return np.any(coord < vmin) or np.any(coord > vmax)
 
 
-@njit(cache=True, inline="always")
+# @njit(cache=True, inline="always")
 def flat_aware_newton_step(
     g,
     H,
@@ -549,7 +549,7 @@ def flat_aware_newton_step(
     return dx
 
 
-@njit(cache=True, inline="always")
+# @njit(cache=True, inline="always")
 def targeted_newton_step(
     g,
     H,
@@ -585,7 +585,7 @@ def targeted_newton_step(
     return dx
 
 
-@njit(cache=True, fastmath=True)
+# @njit(cache=True, fastmath=True)
 def newton_refine(
     coord,
     data,
@@ -636,7 +636,7 @@ def newton_refine(
     return coord, converged, morse_index
 
 
-@njit(cache=True, fastmath=True)
+# @njit(cache=True, fastmath=True)
 def newton_refine_in_voxel(
     coord,
     data,
@@ -695,7 +695,7 @@ def newton_refine_in_voxel(
     return coord, converged, morse_index
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def refine_critical_points(
     critical_coords,
     data,
@@ -738,7 +738,7 @@ def refine_critical_points(
     return refined_coords, successes
 
 
-# @njit(fastmath=True)
+# # @njit(fastmath=True)
 # def newton_refine_critical(
 #     point,
 #     data,
@@ -940,7 +940,7 @@ def refine_critical_points(
 #     return i, j, k, success, grad_norm_final, evals_final
 
 
-# @njit(parallel=True, cache=True)
+# # @njit(parallel=True, cache=True)
 # def refine_critical_points(
 #     points,
 #     data,
@@ -979,7 +979,7 @@ def refine_critical_points(
 #     return refined_points, refined_status
 
 
-# @njit(parallel=True, cache=True)
+# # @njit(parallel=True, cache=True)
 # def refine_extrema(
 #     extrema_coords,
 #     data,
@@ -1019,7 +1019,7 @@ def refine_critical_points(
 ###############################################################################
 
 
-@njit(fastmath=True, cache=True)
+# @njit(fastmath=True, cache=True)
 def refine_frac_extrema_parabolic(grid, frac_coords, lattice, use_minima=False):
     """
     Numerically stable refinement of a local maximum or minimum on a 3D periodic grid.
@@ -1176,7 +1176,7 @@ def refine_frac_extrema_parabolic(grid, frac_coords, lattice, use_minima=False):
     return refined_frac, refined_value
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def refine_extrema_parabolic(
     extrema_coords,
     extrema_groups,

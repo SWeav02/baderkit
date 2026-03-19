@@ -35,7 +35,7 @@ from baderkit.core.utilities.union_find import (
 # key_type = UniTuple(int64, 3)
 # value_type = int64
 
-# @njit(cache=True)
+# # @njit(cache=True)
 # def unique_and_inverse_axis0(arr):
 #     n = arr.shape[0]
 #     arr64 = arr.astype(np.int64)
@@ -70,7 +70,7 @@ from baderkit.core.utilities.union_find import (
 #     return unique_arr, inverse
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     eps = 1e-12
     # get larger and smaller diffs
@@ -96,7 +96,7 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     return persistence_score
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def grow_arrays(neighbors, values, conn_coords, neigh_coords):
     n, m = neighbors.shape
     new_m = m * 2
@@ -114,7 +114,7 @@ def grow_arrays(neighbors, values, conn_coords, neigh_coords):
     return new_neighbors, new_values, new_conn_coords, new_neigh_coords
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_shift(coord):
     shift = np.empty(3, dtype=np.int8)
     if coord[0] < 0:
@@ -132,7 +132,7 @@ def get_shift(coord):
     return shift
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def union_by_persistence(
     neighbors,
     values,
@@ -273,7 +273,7 @@ def union_by_persistence(
     return labels
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_approx_saddle_val(
     p0,
     p1,
@@ -327,7 +327,7 @@ def get_approx_saddle_val(
     return conn_val
 
 
-# @njit(parallel=True, cache=True)
+# # @njit(parallel=True, cache=True)
 # def group_by_low_approx_persistence(
 #     data,
 #     labels,
@@ -432,7 +432,7 @@ def get_approx_saddle_val(
 #     return labels, images
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def group_by_low_approx_persistence(
     data,
     labels,
@@ -468,12 +468,9 @@ def group_by_low_approx_persistence(
             # skip neighbors with less extreme values
             neigh_ext_value = extrema_values[neigh_ext_idx]
             if (
-                use_minima
-                and neigh_ext_value > ext_value
-                or not use_minima
-                and neigh_ext_value < ext_value
-                or neigh_ext_value == ext_value
-                and neigh_ext_idx > ext_idx
+                use_minima and neigh_ext_value > ext_value
+                or not use_minima and neigh_ext_value < ext_value
+                or neigh_ext_value == ext_value and neigh_ext_idx > ext_idx
             ):
                 continue
 
@@ -551,7 +548,7 @@ def group_by_low_approx_persistence(
     return labels, images
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def group_by_refinement(
     labels,
     images,
@@ -643,7 +640,7 @@ def group_by_refinement(
     return labels, images, refined_vox, root_labels
 
 
-@njit(cache=True)
+# # @njit(cache=True)
 def init_by_approx_persistence(
     data,
     labels,
@@ -746,7 +743,7 @@ def init_by_approx_persistence(
     )
 
 
-@njit(cache=True)
+# # @njit(cache=True)
 def group_by_persistence(
     data,
     extrema_vox,
@@ -775,13 +772,15 @@ def group_by_persistence(
     num_added = 1
     while num_added > 0:
         num_added = 0
-
+        print(num_added)
         for saddle_idx in range(num_saddles):
 
             ext1, ext2, image1, image2 = basin_connections[saddle_idx]
-
-            root1, shift1 = find_root_with_shift1(unions, images, ext1)
-            root2, shift2 = find_root_with_shift1(unions, images, ext2)
+            try:
+                root1, shift1 = find_root_with_shift1(unions, images, ext1)
+                root2, shift2 = find_root_with_shift1(unions, images, ext2)
+            except:
+                breakpoint()
 
             # skip if this saddle does not involve the current root
             # NOTE: connections should be ordered by value ahead of time
@@ -844,7 +843,7 @@ def group_by_persistence(
     return unions, images
 
 
-@njit(cache=True, parallel=True)
+# @njit(cache=True, parallel=True)
 def get_persistence_cutoffs(data, groups, use_minima, group_vals, max_dist=5):
     persistence_cutoffs = np.full(len(groups), np.inf, dtype=np.float64)
     shape = np.array(data.shape)
@@ -901,7 +900,7 @@ def get_persistence_cutoffs(data, groups, use_minima, group_vals, max_dist=5):
     return persistence_cutoffs
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_persistence_groups(
     labels,
     data,

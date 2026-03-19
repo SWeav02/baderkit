@@ -18,7 +18,7 @@ from baderkit.core.utilities.union_find import find_root
 ###############################################################################
 
 
-@njit(cache=True, inline="always")
+# @njit(cache=True, inline="always")
 def get_best_neighbor(
     data: NDArray[np.float64],
     i: np.int64,
@@ -98,7 +98,7 @@ def get_best_neighbor(
     )
 
 
-@njit(cache=True, inline="always")
+# @njit(cache=True, inline="always")
 def get_best_neighbor_with_shift(
     data: NDArray[np.float64],
     i: np.int64,
@@ -185,11 +185,11 @@ def get_best_neighbor_with_shift(
 ###############################################################################
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_edges(
     labeled_array: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
-    vacuum_mask: NDArray[np.bool_],
+    vacuum_label: np.int64,
 ):
     """
     In a 3D array of labeled voxels, finds the voxels that neighbor at
@@ -201,8 +201,8 @@ def get_edges(
         A 3D array where each entry represents the basin label of the point.
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
-    vacuum_mask : NDArray[np.bool_]
-        A 3D array representing the location of the vacuum
+    vacuum_label : NDArray[np.bool_]
+        The value representing the vacuum or unassigned points
 
     Returns
     -------
@@ -219,10 +219,11 @@ def get_edges(
         for j in range(ny):
             for k in range(nz):
                 # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
                 # get this voxels label
                 label = labeled_array[i, j, k]
+                if label == vacuum_label:
+                    continue
+                
                 # iterate over the neighboring voxels
                 for si, sj, sk in neighbor_transforms:
                     # wrap points
@@ -233,18 +234,18 @@ def get_edges(
                     # Note this in our edge array and break
                     # NOTE: we also check that the neighbor is not part of the
                     # vacuum
-                    if neigh_label != label and not vacuum_mask[ii, jj, kk]:
+                    if neigh_label != label and neigh_label != vacuum_label:
                         edges[i, j, k] = True
                         break
     return edges
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_edges_w_images(
     labeled_array: NDArray[np.int64],
     images: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
-    vacuum_mask: NDArray[np.bool_],
+    vacuum_label: np.int64,
 ):
     """
     In a 3D array of labeled voxels, finds the voxels that neighbor at
@@ -259,8 +260,8 @@ def get_edges_w_images(
         the point belongs to
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
-    vacuum_mask : NDArray[np.bool_]
-        A 3D array representing the location of the vacuum
+    vacuum_label : NDArray[np.bool_]
+        The value representing the vacuum or unassigned points
 
     Returns
     -------
@@ -278,10 +279,11 @@ def get_edges_w_images(
         for j in range(ny):
             for k in range(nz):
                 # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
                 # get this voxels label and image
                 label = labeled_array[i, j, k]
+                if label == vacuum_label:
+                    continue
+                
                 image = images[i, j, k]
                 # iterate over the neighboring voxels
                 for si, sj, sk in neighbor_transforms:
@@ -289,11 +291,11 @@ def get_edges_w_images(
                     ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
                         i + si, j + sj, k + sk, nx, ny, nz
                     )
+                    neigh_label = labeled_array[ii, jj, kk]
                     # skip vacuum neighs
-                    if vacuum_mask[ii, jj, kk]:
+                    if neigh_label == vacuum_label:
                         continue
                     # get neighbors label and image
-                    neigh_label = labeled_array[ii, jj, kk]
                     neigh_image = images[ii, jj, kk]
                     if neigh_label != label:
                         edges[i, j, k] = True
@@ -311,12 +313,12 @@ def get_edges_w_images(
     return edges
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_edges_w_flat_images(
     labeled_array: NDArray[np.int64],
     images: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
-    vacuum_mask: NDArray[np.bool_],
+    vacuum_label: np.int64,
 ):
     """
     In a 3D array of labeled voxels, finds the voxels that neighbor at
@@ -331,8 +333,8 @@ def get_edges_w_flat_images(
         the point belongs to
     neighbor_transforms : NDArray[np.int64]
         The transformations from each voxel to its neighbors.
-    vacuum_mask : NDArray[np.bool_]
-        A 3D array representing the location of the vacuum
+    vacuum_label : NDArray[np.bool_]
+        The value representing the vacuum or unassigned points
 
     Returns
     -------
@@ -351,10 +353,11 @@ def get_edges_w_flat_images(
         for j in range(ny):
             for k in range(nz):
                 # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
-                # get this voxels label and image
                 label = labeled_array[i, j, k]
+                if label == vacuum_label:
+                    continue
+                
+                # get this voxels label and image
                 flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
                 mi, mj, mk = images[flat_idx]
                 image = IMAGE_TO_INT[mi, mj, mk]
@@ -365,7 +368,8 @@ def get_edges_w_flat_images(
                         i + si, j + sj, k + sk, nx, ny, nz
                     )
                     # skip vacuum neighs
-                    if vacuum_mask[ii, jj, kk]:
+                    neigh_label = labeled_array[ii, jj, kk]
+                    if neigh_label == vacuum_label:
                         continue
                     # get neighbors label and image
                     neigh_label = labeled_array[ii, jj, kk]
@@ -386,7 +390,7 @@ def get_edges_w_flat_images(
     return edges
 
 
-@njit(inline="always", cache=True)
+# @njit(inline="always", cache=True)
 def get_differing_neighs(
     i,
     j,
@@ -397,10 +401,12 @@ def get_differing_neighs(
     labels,
     images,
     neighbor_transforms,
-    vacuum_mask,
+    vacuum_label,
 ):
     # get the label at this point
     label0 = labels[i, j, k]
+    if label0 == vacuum_label:
+        return 0
     image0 = images[i, j, k]
 
     # initialize potential alternative labels
@@ -425,11 +431,11 @@ def get_differing_neighs(
         )
 
         # skip points in the vacuum
-        if vacuum_mask[ii, jj, kk]:
+        neigh_label = labels[ii, jj, kk]
+        if neigh_label == vacuum_label:
             continue
 
         # get the label and image of this neighbor
-        neigh_label = labels[ii, jj, kk]
         neigh_image = images[ii, jj, kk]
 
         # update image to be relative to the current points transformation
@@ -457,12 +463,12 @@ def get_differing_neighs(
     return unique
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_basin_edges(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
-    vacuum_mask: NDArray[np.bool_],
+    vacuum_label: np.int64,
 ):
     nx, ny, nz = labels.shape
     # create 3D array to store edges
@@ -472,10 +478,6 @@ def get_basin_edges(
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
-
                 # check if this point has 0, 1, or 2 neighbors with different
                 # labels
                 num_neighs = get_differing_neighs(
@@ -488,7 +490,7 @@ def get_basin_edges(
                     labels,
                     images,
                     neighbor_transforms,
-                    vacuum_mask,
+                    vacuum_label,
                 )
 
                 if num_neighs == 0:
@@ -504,7 +506,7 @@ def get_basin_edges(
     return edges
 
 
-@njit(inline="always", cache=True)
+# @njit(inline="always", cache=True)
 def get_differing_neighs_thin(
     i,
     j,
@@ -516,11 +518,14 @@ def get_differing_neighs_thin(
     labels,
     images,
     neighbor_transforms,
-    vacuum_mask,
+    vacuum_label,
     use_minima,
 ):
 
     label0 = labels[i, j, k]
+    if label0 == vacuum_label:
+        return 0
+    
     image0 = images[i, j, k]
     value0 = data[i, j, k]
 
@@ -533,8 +538,9 @@ def get_differing_neighs_thin(
         ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
             i + si, j + sj, k + sk, nx, ny, nz
         )
-
-        if vacuum_mask[ii, jj, kk]:
+        
+        neigh_label = labels[ii, jj, kk]
+        if neigh_label == vacuum_label:
             continue
 
         val = data[ii, jj, kk]
@@ -545,8 +551,6 @@ def get_differing_neighs_thin(
         else:
             if val < value0:
                 continue
-
-        neigh_label = labels[ii, jj, kk]
 
         if ssi == 0 and ssj == 0 and ssk == 0:
             neigh_image = images[ii, jj, kk]
@@ -572,14 +576,14 @@ def get_differing_neighs_thin(
     return unique
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_thin_basin_edges(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
     use_minima: bool,
-    vacuum_mask: NDArray[np.bool_],
+    vacuum_label: NDArray[np.bool_],
 ):
     nx, ny, nz = labels.shape
     # create 3D array to store edges
@@ -589,10 +593,6 @@ def get_thin_basin_edges(
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
-
                 # check if this point has 0, 1, or 2 neighbors with different
                 # labels
                 num_neighs = get_differing_neighs_thin(
@@ -606,7 +606,7 @@ def get_thin_basin_edges(
                     labels,
                     images,
                     neighbor_transforms,
-                    vacuum_mask,
+                    vacuum_label,
                     use_minima,
                 )
 
@@ -628,7 +628,7 @@ def get_thin_basin_edges(
 ###############################################################################
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_manifold_labels(
     maxima_labels: NDArray[np.int64],
     minima_labels: NDArray[np.int64],
@@ -637,7 +637,7 @@ def get_manifold_labels(
     maxima_groups: list[NDArray],
     minima_groups: list[NDArray],
     neighbor_transforms: NDArray[np.int64],
-    vacuum_mask: NDArray[np.bool_],
+    vacuum_label: NDArray[np.bool_],
 ):
     """
     Takes the 3-manifolds of maxima and minima and determines the rough locations
@@ -672,9 +672,6 @@ def get_manifold_labels(
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
 
                 # if this voxel is part of a minimum or maximum, continue
                 if edges[i, j, k] == 0 or edges[i, j, k] == 3:
@@ -692,7 +689,7 @@ def get_manifold_labels(
                     maxima_labels,
                     maxima_images,
                     neighbor_transforms,
-                    vacuum_mask,
+                    vacuum_label,
                 )
                 opp_num_neighs = get_differing_neighs(
                     i,
@@ -704,7 +701,7 @@ def get_manifold_labels(
                     minima_labels,
                     minima_images,
                     neighbor_transforms,
-                    vacuum_mask,
+                    vacuum_label,
                 )
 
                 if num_neighs == 1 and opp_num_neighs > 1:
@@ -732,7 +729,7 @@ def get_manifold_labels(
     return edges
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_manifold_labels_thin(
     data: NDArray[np.float64],
     maxima_labels: NDArray[np.int64],
@@ -742,7 +739,7 @@ def get_manifold_labels_thin(
     maxima_groups: list[NDArray],
     minima_groups: list[NDArray],
     neighbor_transforms: NDArray[np.int64],
-    vacuum_mask: NDArray[np.bool_],
+    vacuum_label: np.int64,
 ):
     """
     Takes the 3-manifolds of maxima and minima and determines the rough locations
@@ -777,9 +774,6 @@ def get_manifold_labels_thin(
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
 
                 # if this voxel is part of a minimum or maximum, continue
                 if edges[i, j, k] == 0 or edges[i, j, k] == 3:
@@ -798,7 +792,7 @@ def get_manifold_labels_thin(
                     maxima_labels,
                     maxima_images,
                     neighbor_transforms,
-                    vacuum_mask,
+                    vacuum_label,
                     use_minima=False,
                 )
                 opp_num_neighs = get_differing_neighs_thin(
@@ -812,7 +806,7 @@ def get_manifold_labels_thin(
                     minima_labels,
                     minima_images,
                     neighbor_transforms,
-                    vacuum_mask,
+                    vacuum_label,
                     use_minima=True,
                 )
 
@@ -846,12 +840,11 @@ def get_manifold_labels_thin(
 ###############################################################################
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_neighboring_basin_surface_area(
     labeled_array: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
     neighbor_areas: NDArray[np.float64],
-    vacuum_mask: NDArray[np.bool_],
     label_num: int,
 ):
     """
@@ -866,8 +859,6 @@ def get_neighboring_basin_surface_area(
         The transformations from each voxel to its neighbors.
     neighbor_areas : NDArray[np.int64]
         The surface area of each neighbor at the corresponding transform.
-    vacuum_mask : NDArray[np.bool_]
-        A 3D array representing the location of the vacuum
     label_num : int,
         The total number of labels
 
@@ -890,10 +881,10 @@ def get_neighboring_basin_surface_area(
         for j in range(ny):
             for k in range(nz):
                 # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
-                # get this voxels label
                 label = labeled_array[i, j, k]
+                if label == label_num:
+                    continue
+
                 # iterate over the neighboring voxels
                 for (si, sj, sk), area in zip(neighbor_transforms, neighbor_areas):
                     # wrap points
@@ -908,7 +899,7 @@ def get_neighboring_basin_surface_area(
     return connection_counts
 
 
-@njit(fastmath=True, cache=True)
+# @njit(fastmath=True, cache=True)
 def get_basin_charges_and_volumes(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
@@ -943,12 +934,12 @@ def get_basin_charges_and_volumes(
     return charges, volumes, vacuum_charge, vacuum_volume
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_basin_min_and_max(
     data,
     labels,
     num_basins,
-    vacuum_mask,
+    vacuum_label,
 ):
     nx, ny, nz = data.shape
     basin_min = np.full(num_basins, np.inf, dtype=np.float64)
@@ -958,9 +949,9 @@ def get_basin_min_and_max(
         for j in range(ny):
             for k in range(nz):
                 # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
                 basin = labels[i, j, k]
+                if basin == vacuum_label:
+                    continue
                 value = data[i, j, k]
                 if value > basin_max[basin]:
                     basin_max[basin] = value
@@ -969,7 +960,7 @@ def get_basin_min_and_max(
     return basin_min, basin_max
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_min_avg_surface_dists(
     labels,
     frac_coords,
@@ -1027,7 +1018,7 @@ def get_min_avg_surface_dists(
 #############################################################################
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def get_extrema(
     data: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
@@ -1083,7 +1074,7 @@ def get_extrema(
     return extrema
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def reorder_labels(
     labels,
     data,
@@ -1135,26 +1126,26 @@ def reorder_labels(
     return labels, np.sort(final_roots)
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def update_labels_and_images(
     labels,
     images,
     label_map,
     image_map,
-    vacuum_mask,
+    vacuum_label,
 ):
     nx, ny, nz = labels.shape
-    vacuum_label = len(np.unique(label_map))
+    new_vacuum_label = len(np.unique(label_map))
 
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                # if this voxel is part of the vacuum, relable and continue
-                if vacuum_mask[i, j, k]:
-                    labels[i, j, k] = vacuum_label
-                    continue
                 # get current label
                 label = labels[i, j, k]
+                if label == vacuum_label:
+                    labels[i, j, k] = new_vacuum_label
+                    continue
+                
                 # get the current shift
                 shift = INT_TO_IMAGE[images[i, j, k]]
                 # get the shift from this maxima to its root
@@ -1168,23 +1159,23 @@ def update_labels_and_images(
     return labels, images
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def update_images(
     labels,
     images,
     image_map,
     important_mask,
-    vacuum_mask,
+    vacuum_label,
 ):
     nx, ny, nz = labels.shape
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
                 # get current label
                 label = labels[i, j, k]
+                if label == vacuum_label:
+                    continue
+                
                 if not important_mask[label]:
                     continue
                 # get the current shift

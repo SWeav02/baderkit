@@ -93,6 +93,9 @@ class Bader(BaseAnalysis):
         "maxima_vox",
         "maxima_charge_values",
         "maxima_ref_values",
+        "maxima_betti_groups",
+        "maxima_betti_cutoffs",
+        "maxima_betti_numbers",
         "basin_charges",
         "basin_volumes",
         "basin_min_surface_distances",
@@ -107,9 +110,10 @@ class Bader(BaseAnalysis):
         "minima_vox",
         "minima_charge_values",
         "minima_ref_values",
-    ]
-
-    _saddle_results = [
+        "minima_betti_groups",
+        "minima_betti_cutoffs",
+        "minima_betti_numbers",
+        # saddle props
         "saddle1_frac",
         "saddle1_cart",
         "saddle1_vox",
@@ -468,43 +472,91 @@ class Bader(BaseAnalysis):
         if self._ongrid_maxima_groups is None:
             self._run_bader()
         return self._ongrid_maxima_groups
-
+    
     @property
-    def maxima_persistence_values(self) -> NDArray[int]:
+    def maxima_betti_groups(self) -> list[NDArray[np.int64]]:
         """
 
         Returns
         -------
-        NDArray[int]
-            Each maxima may have been combined with several voxelated maxima
-            (see ongrid_maxima_groups). For each maxima group, this  is the
-            lowest value at which all of the maxima in the group are topologically
-            connected if one takes the all voxels at or above that value
+        TYPE
+            A list of Nx3 arrays where each array represents the grid indices of voxels
+            that are within each maximas persistence threshold.
+
         """
-        if self._maxima_persistence_values is None:
+        # TODO: Update this to be the exact value at which each group has its
+        # betti number
+        
+        if self._maxima_betti_groups is None:
+            tol = max(self.maxima_persistence_tol, 0)
+            # self._run_maxima_bader()
             # get groups
-            tol = max(self.persistence_tol, 0)
             maxima_groups = self.ongrid_maxima_groups
             maxima_values = self.maxima_ref_values
             # get the lowest value that the maximum would connect to with the
             # current persistence tol
             persistence_values = []
-            for group, max_val in zip(maxima_groups, maxima_values):
+            for group, min_val in zip(maxima_groups, maxima_values):
                 group_vals = self.reference_grid.total[
                     group[:, 0],
                     group[:, 1],
                     group[:, 2],
                 ]
-                valid_mask = ((max_val - group_vals) / group_vals) - 1e-12 <= tol
-                best_val = group_vals[valid_mask].min()
-
+                valid_mask = ((group_vals - min_val) / group_vals) - 1e-12 <= tol
+                best_val = group_vals[valid_mask].max()
                 # get lowest possible persistence below this value
-                # (max_val - val) / val < persistence_tol
+                # (val - max_val) / val < persistence_tol
                 # --> val = max_val / (1+persistence_tol)
-                persistence_values.append(best_val / (1 + self.persistence_tol))
+                persistence_values.append(best_val / (1 - self.maxima_persistence_tol))
+            persistence_values = np.array(persistence_values)
+            
+            self._maxima_betti_groups = get_persistence_groups(
+                labels=self.maxima_basin_labels,
+                data=self.reference_grid.total,
+                persistence_cutoffs=persistence_values,
+                extrema_vox=self.maxima_vox,
+                use_minima=False,
+            )
+        return self._maxima_betti_groups
+    
+    @property
+    def maxima_betti_cutoffs(self) -> NDArray[np.float64]:
+        """
 
-            self._maxima_persistence_values = np.array(persistence_values)
-        return self._maxima_persistence_values
+        Returns
+        -------
+        NDArray[np.float64]
+            The highest value at which each maximum retains its betti number.
+            Below this value, the maximum's basin fractures into smaller basins.
+            These basins are combined based on the persistence cutoff and are
+            generally artifacts of the grid rather than significant features.
+
+        """
+        
+        if self._maxima_betti_cutoffs is None:
+            self._get_betti_numbers(False)
+        return self._maxima_betti_cutoffs
+
+    @property
+    def maxima_betti_numbers(self):
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The betti number of each maximum. Basins are combined based on the
+            persistence cutoff and may form shapes that are not well represented
+            by a point. We currently force extrema to be one of the following:
+                - point: (1, 0, 0)
+                - ring: (1, 1, 0)
+                - cage: (1, 0, 1)
+            Many other topologies are possible, but are unrealistic for extrema
+            found in the charge density or localization functions (ELF, ELI-D, etc.)
+
+        """
+        if self._maxima_betti_numbers is None:
+            self._get_betti_numbers(False)
+        return self._maxima_betti_numbers
 
     @property
     def basin_charges(self) -> NDArray[float]:
@@ -606,7 +658,7 @@ class Bader(BaseAnalysis):
             self._basin_edges = get_edges_w_images(
                 labeled_array=self.maxima_basin_labels,
                 images=self.maxima_basin_images,
-                vacuum_mask=np.zeros(self.maxima_basin_labels.shape, dtype=np.bool_),
+                vacuum_label=len(self.maxima_frac),
                 neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
         return self._basin_edges
@@ -636,7 +688,6 @@ class Bader(BaseAnalysis):
                 labeled_array=self.maxima_basin_labels,
                 neighbor_transforms=neighbor_transforms,
                 neighbor_areas=neighbor_areas,
-                vacuum_mask=self.vacuum_mask,
                 label_num=len(self.maxima_frac),
             )
         return self._basin_contact_surface_areas.round(8)
@@ -797,21 +848,21 @@ class Bader(BaseAnalysis):
         if self._ongrid_minima_groups is None:
             self._run_minima_bader()
         return self._ongrid_minima_groups
-
+    
     @property
-    def minima_persistence_values(self) -> NDArray[int]:
+    def minima_betti_groups(self) -> list[NDArray[np.int64]]:
         """
 
         Returns
         -------
-        NDArray[int]
-            Each minima may have been combined with several voxelated minima
-            (see ongrid_minima_groups). For each minima group, this  is the
-            highest value at which all of the minima in the group are topologically
-            connected if one takes the all voxels at or below that value
+        TYPE
+            A list of Nx3 arrays where each array represents the grid indices of voxels
+            that are within each minimas persistence threshold.
+
         """
-        if self._minima_persistence_values is None:
-            tol = max(self.persistence_tol, 0)
+        
+        if self._minima_betti_groups is None:
+            tol = max(self.minima_persistence_tol, 0)
             # self._run_minima_bader()
             # get groups
             minima_groups = self.ongrid_minima_groups
@@ -830,10 +881,91 @@ class Bader(BaseAnalysis):
                 # get lowest possible persistence below this value
                 # (val - max_val) / val < persistence_tol
                 # --> val = max_val / (1+persistence_tol)
-                persistence_values.append(best_val / (1 - self.persistence_tol))
+                persistence_values.append(best_val / (1 - self.minima_persistence_tol))
+            persistence_values = np.array(persistence_values)
+            
+            self._minima_betti_groups = get_persistence_groups(
+                labels=self.minima_basin_labels,
+                data=self.reference_grid.total,
+                persistence_cutoffs=persistence_values,
+                extrema_vox=self.minima_vox,
+                use_minima=True,
+            )
+        return self._minima_betti_groups
+    
+    @property
+    def minima_betti_cutoffs(self) -> NDArray[np.float64]:
+        """
 
-            self._minima_persistence_values = np.array(persistence_values)
-        return self._minima_persistence_values
+        Returns
+        -------
+        NDArray[np.float64]
+            The lowest value at which each minimum retains its betti number.
+            Above this value, the minimum's basin fractures into smaller basins.
+            These basins are combined based on the persistence cutoff and are
+            generally artifacts of the grid rather than significant features.
+
+        """
+        
+        if self._minima_betti_cutoffs is None:
+            self._get_betti_numbers(True)
+        return self._minima_betti_cutoffs
+
+    @property
+    def minima_betti_numbers(self):
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The betti number of each minimum. Basins are combined based on the
+            persistence cutoff and may form shapes that are not well represented
+            by a point. We currently force extrema to be one of the following:
+                - point: (1, 0, 0)
+                - ring: (1, 1, 0)
+                - cage: (1, 0, 1)
+            Many other topologies are possible, but are unrealistic for extrema
+            found in the charge density or localization functions (ELF, ELI-D, etc.)
+
+        """
+        if self._minima_betti_numbers is None:
+            self._get_betti_numbers(True)
+        return self._minima_betti_numbers
+
+    @property
+    def minima_persistence_tol(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            It is common for false maxima to be found using only nearest neighbor
+            points. To deal with this we combine pairs of basins that have low
+            topological persistence.
+
+            The persistence score is calculated as:
+
+                score = (connection_value - higher_minimum) / connection_value
+
+
+        """
+        return self._minima_persistence_tol
+
+    @minima_persistence_tol.setter
+    def minima_persistence_tol(self, value: str | Method):
+        self._minima_persistence_tol = value
+        # reset atom properties
+        self._reset_properties(
+            exclude_properties=[
+                "vacuum_mask",
+                "num_vacuum",
+                "vacuum_charge",
+                "vacuum_volume",
+                "structure",
+            ]
+        )
+        
+    
 
     ###########################################################################
     # Saddle Properties
@@ -1092,7 +1224,7 @@ class Bader(BaseAnalysis):
             self._atom_edges = get_edges_w_images(
                 labeled_array=self.atom_labels,
                 images=self.maxima_basin_images,
-                vacuum_mask=np.zeros(self.atom_labels.shape, dtype=np.bool_),
+                vacuum_label=len(self.structure),
                 neighbor_transforms=self.reference_grid.point_neighbor_transforms[0],
             )
         return self._atom_edges
@@ -1122,7 +1254,6 @@ class Bader(BaseAnalysis):
                 labeled_array=self.atom_labels,
                 neighbor_transforms=neighbor_transforms,
                 neighbor_areas=neighbor_areas,
-                vacuum_mask=self.vacuum_mask,
                 label_num=len(self.structure),
             )
         return self._atom_contact_surface_areas.round(8)
@@ -1421,6 +1552,46 @@ class Bader(BaseAnalysis):
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0, 2)}")
 
+    def get_oxidation_from_potcar(self, potcar_path: Path = "POTCAR"):
+        """
+        Calculates the oxidation state of each atom from the provided POTCAR
+        file.
+
+        Parameters
+        ----------
+        potcar_path : Path, optional
+            The path to the POTCAR to calculate oxidation states from. The default is "POTCAR".
+
+        Returns
+        -------
+        NDArray
+            The oxidation state of each atom in the structure.
+
+        """
+        # convert to path
+        potcar_path = Path(potcar_path)
+        if not potcar_path.exists():
+            logging.warning(
+                "No POTCAR file found in the requested directory. Oxidation states cannot be calculated"
+            )
+            return
+        # load
+        with warnings.catch_warnings(record=True):
+            potcars = Potcar.from_file(potcar_path)
+        nelectron_data = {}
+        # the result is a list because there can be multiple element potcars
+        # in the file (e.g. for NaCl, POTCAR = POTCAR_Na + POTCAR_Cl)
+        for potcar in potcars:
+            nelectron_data.update({potcar.element: potcar.nelectrons})
+        # calculate oxidation states
+        oxi_state_data = []
+        for site, site_charge in zip(self.structure, self.atom_charges):
+            element_str = site.specie.name
+            oxi_state = nelectron_data[element_str] - site_charge
+            oxi_state_data.append(oxi_state)
+
+        return np.array(oxi_state_data)
+
     def get_persistence_groups(self):
         """
         Gets the groups of voxels for each maximum and minimum that are within
@@ -1459,9 +1630,8 @@ class Bader(BaseAnalysis):
 
     def get_betti_numbers(
         self,
-        return_values: bool = False,
-        return_groups: bool = False,
-    ) -> tuple:
+        use_minima: bool,
+    ):
         """
         The approximate betti numbers for an maxima and minima persistence
         groups. This is obtained by scanning through a persistence group's
@@ -1474,72 +1644,37 @@ class Bader(BaseAnalysis):
 
         Parameters
         ----------
-        return_values : bool, optional
-            Whether or not to return the values at which the resulting betti
-            numbers exist. The default is False.
-        return_groups : bool, optional
-            Whether or not to return the voxel coordinates that result in the
-            returned betti numbers. The default is False.
-
-        Returns
-        -------
-        tuple
-            The betti numbers for maxima and minima. If return_values
-            is selected, the values at which the extrema form these betti numbers
-            will be appended. If return_gorups is selected, the voxels making up
-            these betti shapes are appended.
+        use_minima : bool
+            Whether to calculate betti numbers for maxima or for minima
 
         """
+        
+        if use_minima:
+            extrema_groups = self.minima_betti_groups
+            base_extrema = self.minima_vox
+            
+        else:
+            extrema_groups = self.maxima_betti_groups
+            base_extrema = self.maxima_vox
 
-        maxima_groups, minima_groups = self.get_persistence_groups()
-        base_maxima = self.maxima_vox
-        maxima_base_vals = self.reference_grid.total[
-            base_maxima[:, 0], base_maxima[:, 1], base_maxima[:, 2]
+
+        extrema_base_vals = self.reference_grid.total[
+            base_extrema[:, 0], base_extrema[:, 1], base_extrema[:, 2]
         ]
-        maxima_betti_numbers, maxima_betti_vals = get_all_betti_numbers_scanning(
-            maxima_groups,
-            maxima_base_vals,
+        extrema_betti_numbers, extrema_betti_vals = get_all_betti_numbers_scanning(
+            extrema_groups,
+            extrema_base_vals,
             self.reference_grid.total,
             use_minima=False,
         )
-
-        base_minima = self.minima_vox
-        minima_base_vals = self.reference_grid.total[
-            base_minima[:, 0], base_minima[:, 1], base_minima[:, 2]
-        ]
-        minima_betti_numbers, minima_betti_vals = get_all_betti_numbers_scanning(
-            minima_groups,
-            minima_base_vals,
-            self.reference_grid.total,
-            use_minima=True,
-        )
-
-        results = [maxima_betti_numbers, minima_betti_numbers]
-
-        if return_values:
-            results.append(maxima_betti_vals)
-            results.append(minima_betti_vals)
-
-        if return_groups:
-            maxima_groups = get_persistence_groups(
-                labels=self.maxima_basin_labels,
-                data=self.reference_grid.total,
-                persistence_cutoffs=maxima_betti_vals,
-                extrema_vox=self.maxima_vox,
-                use_minima=False,
-            )
-
-            minima_groups = get_persistence_groups(
-                labels=self.minima_basin_labels,
-                data=self.reference_grid.total,
-                persistence_cutoffs=minima_betti_vals,
-                extrema_vox=self.minima_vox,
-                use_minima=True,
-            )
-            results.append(maxima_groups)
-            results.append(minima_groups)
-
-        return tuple(results)
+        
+        if use_minima:
+            self._minima_betti_cutoffs = extrema_betti_vals
+            self._minima_betti_numbers = extrema_betti_numbers
+        else:
+            self._maxima_betti_cutoffs = extrema_betti_vals
+            self._maxima_betti_numbers = extrema_betti_numbers
+            
 
     def _get_atom_surface_distances(self):
         """

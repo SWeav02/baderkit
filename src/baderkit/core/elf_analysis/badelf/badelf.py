@@ -881,7 +881,7 @@ class Badelf:
         edges = get_edges(
             labeled_array=self.atom_labels,
             neighbor_transforms=neigh_transforms,
-            vacuum_mask=self.atom_labels < len(self.electride_structure),
+            vacuum_label=-1,
         )
 
         self._min_surface_distances, self._avg_surface_distances = (

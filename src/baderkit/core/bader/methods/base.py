@@ -191,6 +191,7 @@ class MethodBase:
         best_connections, best_coords, best_vals, best_cart = (
             self._compute_best_saddles(all_connections, all_coords, all_vals)
         )
+        breakpoint()
         t1 = time.time()
         logging.info("Saddle Location Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -207,6 +208,7 @@ class MethodBase:
             use_minima=self.use_minima,
             matrix=self.reference_grid.matrix,
         )
+
         # update labels/images
         self._build_final_extrema(extrema_roots, root_transforms)
 
@@ -598,8 +600,8 @@ class MethodBase:
             labels=labels,
             images=images,
             neighbor_transforms=neighbor_transforms,
-            vacuum_mask=self.vacuum_mask,
             use_minima=self.use_minima,
+            vacuum_label=len(self.extrema_vox),
         )
 
         # get possible saddles
@@ -696,14 +698,14 @@ class MethodBase:
         self._volumes = np.bincount(
             root_map, weights=self.volumes, minlength=len(final_extrema)
         )
-
+        breakpoint()
         # update final labels and images
         self._labels, self._images = update_labels_and_images(
             labels=self.labels,
             images=self.images,
             label_map=root_map,
             image_map=root_transforms,
-            vacuum_mask=self.vacuum_mask,
+            vacuum_label=len(self.extrema_vox),
         )
 
         # get final ongrid extrema groups

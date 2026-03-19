@@ -12,7 +12,7 @@ from baderkit.core.utilities.basic import wrap_point
 ###############################################################################
 
 
-@njit(inline="always", cache=True, fastmath=True)
+# @njit(inline="always", cache=True, fastmath=True)
 def interp_nearest(i, j, k, data, is_frac=True):
     nx, ny, nz = data.shape
     if is_frac:
@@ -32,7 +32,7 @@ def interp_nearest(i, j, k, data, is_frac=True):
 ###############################################################################
 # Linear interpolation
 ###############################################################################
-@njit(inline="always", cache=True, fastmath=True)
+# @njit(inline="always", cache=True, fastmath=True)
 def interp_linear(i, j, k, data, is_frac=True):
     nx, ny, nz = data.shape
 
@@ -83,7 +83,7 @@ def interp_linear(i, j, k, data, is_frac=True):
 ###############################################################################
 
 
-@njit(cache=True, inline="always", fastmath=True)
+# @njit(cache=True, inline="always", fastmath=True)
 def cubic_bspline_weights(di, dj, dk):
     weights = np.empty((3, 4), dtype=np.float64)
     for d_idx, d in enumerate((di, dj, dk)):
@@ -100,7 +100,7 @@ def cubic_bspline_weights(di, dj, dk):
     return weights
 
 
-@njit(cache=True, fastmath=True)
+# @njit(cache=True, fastmath=True)
 def interp_spline(i, j, k, data, is_frac=True):
     nx, ny, nz = data.shape
 
@@ -151,7 +151,7 @@ def interp_spline(i, j, k, data, is_frac=True):
 ###############################################################################
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def interpolate_point(
     point,
     method,
@@ -169,7 +169,7 @@ def interpolate_point(
     return value
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def interpolate_points(points, method, data, is_frac=True):
     out = np.empty(len(points))
     if method == "nearest":
@@ -188,7 +188,7 @@ def interpolate_points(points, method, data, is_frac=True):
     return out
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def linear_slice(
     data,
     p1: NDArray[float],
@@ -211,7 +211,7 @@ def linear_slice(
 ###############################################################################
 
 
-@njit(fastmath=True)
+# @njit(fastmath=True)
 def spline_grad(i, j, k, data, h=0.25, is_frac=False):
     """
     Gradient of spline-interpolated scalar field
@@ -245,7 +245,7 @@ def spline_grad(i, j, k, data, h=0.25, is_frac=False):
     return gx, gy, gz
 
 
-@njit(fastmath=True)
+# @njit(fastmath=True)
 def spline_hess(i, j, k, data, h=0.25, is_frac=False):
     """
     Hessian of spline-interpolated scalar field
@@ -320,7 +320,7 @@ def spline_hess(i, j, k, data, h=0.25, is_frac=False):
     return H
 
 
-@njit(fastmath=True)
+# @njit(fastmath=True)
 def spline_grad_and_hess(coord, data, h=0.25):
     """
     Compute both gradient and Hessian of a spline-interpolated scalar field
@@ -389,7 +389,7 @@ def spline_grad_and_hess(coord, data, h=0.25):
     return np.array((gx, gy, gz), dtype=np.float64), H
 
 
-@njit(fastmath=True)
+# @njit(fastmath=True)
 def spline_grad_cart(i, j, k, data, dir2car, h=0.25, is_frac=False):
     nx, ny, nz = data.shape
 
@@ -409,7 +409,7 @@ def spline_grad_cart(i, j, k, data, dir2car, h=0.25, is_frac=False):
     return gx, gy, gz
 
 
-@njit(fastmath=True)
+# @njit(fastmath=True)
 def spline_hess_cart(i, j, k, data, dir2car, h=0.25, is_frac=False):
 
     # get hessian in grid coords
