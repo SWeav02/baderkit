@@ -191,7 +191,7 @@ class MethodBase:
         best_connections, best_coords, best_vals, best_cart = (
             self._compute_best_saddles(all_connections, all_coords, all_vals)
         )
-        breakpoint()
+
         t1 = time.time()
         logging.info("Saddle Location Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -698,7 +698,7 @@ class MethodBase:
         self._volumes = np.bincount(
             root_map, weights=self.volumes, minlength=len(final_extrema)
         )
-        breakpoint()
+
         # update final labels and images
         self._labels, self._images = update_labels_and_images(
             labels=self.labels,

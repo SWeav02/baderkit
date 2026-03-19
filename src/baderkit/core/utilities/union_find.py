@@ -7,7 +7,7 @@ from numba import njit, prange
 ###############################################################################
 # Root Finding Methods
 ###############################################################################
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def find_root(parent, x):
     """Find root with partial path compression"""
     while x != parent[x]:
@@ -16,7 +16,7 @@ def find_root(parent, x):
     return x
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def find_root_no_compression(parent, x):
     """Find root with no path compression. Parallel friendly."""
     while x != parent[x]:
@@ -24,7 +24,7 @@ def find_root_no_compression(parent, x):
     return x
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def find_root_with_shift(parent, offset_x, offset_y, offset_z, x):
     """Find root with partial compression and accumulate offset for periodic cycle counting"""
     # local aliasing to avoid repeated global lookups
@@ -58,7 +58,7 @@ def find_root_with_shift(parent, offset_x, offset_y, offset_z, x):
     return y, cx, cy, cz
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def find_root_with_shift1(parent, offset, x):
     """Find root with partial compression and accumulate offset for periodic cycle counting"""
     # local aliasing to avoid repeated global lookups
@@ -86,7 +86,7 @@ def find_root_with_shift1(parent, offset, x):
     return y, offset_new
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def find_root_with_shift_no_compression(parent, offset_x, offset_y, offset_z, x):
     """Find root and offset with no compression/accumulation. Parallel friendly"""
     cx = 0
@@ -101,7 +101,7 @@ def find_root_with_shift_no_compression(parent, offset_x, offset_y, offset_z, x)
     return x, cx, cy, cz
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def find_root_with_shift_no_compression1(parent, offset, x):
     """Find root and offset with no compression/accumulation. Parallel friendly"""
     shift = np.zeros(3, dtype=np.int8)
@@ -117,7 +117,7 @@ def find_root_with_shift_no_compression1(parent, offset, x):
 ###############################################################################
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def union_w_roots(parents, x, y, root_mask):
     """Create union between two points and update a root mask"""
     rx = find_root(parents, x)
@@ -131,7 +131,7 @@ def union_w_roots(parents, x, y, root_mask):
         root_mask[ry] = True
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def union(parents, x, y):
     """Create union between two points"""
     rx = find_root(parents, x)
@@ -140,7 +140,7 @@ def union(parents, x, y):
     parents[rx] = ry
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def bulk_union(parent, xs, ys):
     """Create union between many points"""
     for i in range(len(xs)):
@@ -148,7 +148,7 @@ def bulk_union(parent, xs, ys):
     return parent
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def union_with_shift(
     root_mask, parent, offset_x, offset_y, offset_z, size, a, b, si, sj, sk
 ):
@@ -193,7 +193,7 @@ def union_with_shift(
             root_mask[rb] = False
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def union_with_shift1(parent, offset, a, b, shift):
     """Create union between two points and accumulate shift needed to calculate cycles around periodic boundaries"""
     ra, shifta = find_root_with_shift1(parent, offset, a)
@@ -212,7 +212,7 @@ def union_with_shift1(parent, offset, a, b, shift):
 ###############################################################################
 # Compression Methods
 ###############################################################################
-# @njit(cache=True, parallel=True, inline="always")
+@njit(cache=True, parallel=True, inline="always")
 def compress_roots(parents):
     """Fully compress all paths to roots in parallel"""
     new_parents = np.empty_like(parents, dtype=parents.dtype)

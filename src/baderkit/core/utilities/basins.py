@@ -18,7 +18,7 @@ from baderkit.core.utilities.union_find import find_root
 ###############################################################################
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def get_best_neighbor(
     data: NDArray[np.float64],
     i: np.int64,
@@ -98,7 +98,7 @@ def get_best_neighbor(
     )
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def get_best_neighbor_with_shift(
     data: NDArray[np.float64],
     i: np.int64,
@@ -185,7 +185,7 @@ def get_best_neighbor_with_shift(
 ###############################################################################
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_edges(
     labeled_array: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
@@ -223,7 +223,7 @@ def get_edges(
                 label = labeled_array[i, j, k]
                 if label == vacuum_label:
                     continue
-                
+
                 # iterate over the neighboring voxels
                 for si, sj, sk in neighbor_transforms:
                     # wrap points
@@ -240,7 +240,7 @@ def get_edges(
     return edges
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_edges_w_images(
     labeled_array: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -283,7 +283,7 @@ def get_edges_w_images(
                 label = labeled_array[i, j, k]
                 if label == vacuum_label:
                     continue
-                
+
                 image = images[i, j, k]
                 # iterate over the neighboring voxels
                 for si, sj, sk in neighbor_transforms:
@@ -313,7 +313,7 @@ def get_edges_w_images(
     return edges
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_edges_w_flat_images(
     labeled_array: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -356,7 +356,7 @@ def get_edges_w_flat_images(
                 label = labeled_array[i, j, k]
                 if label == vacuum_label:
                     continue
-                
+
                 # get this voxels label and image
                 flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
                 mi, mj, mk = images[flat_idx]
@@ -390,7 +390,7 @@ def get_edges_w_flat_images(
     return edges
 
 
-# @njit(inline="always", cache=True)
+@njit(inline="always", cache=True)
 def get_differing_neighs(
     i,
     j,
@@ -463,7 +463,7 @@ def get_differing_neighs(
     return unique
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_basin_edges(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -506,7 +506,7 @@ def get_basin_edges(
     return edges
 
 
-# @njit(inline="always", cache=True)
+@njit(inline="always", cache=True)
 def get_differing_neighs_thin(
     i,
     j,
@@ -525,7 +525,7 @@ def get_differing_neighs_thin(
     label0 = labels[i, j, k]
     if label0 == vacuum_label:
         return 0
-    
+
     image0 = images[i, j, k]
     value0 = data[i, j, k]
 
@@ -538,7 +538,7 @@ def get_differing_neighs_thin(
         ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
             i + si, j + sj, k + sk, nx, ny, nz
         )
-        
+
         neigh_label = labels[ii, jj, kk]
         if neigh_label == vacuum_label:
             continue
@@ -576,7 +576,7 @@ def get_differing_neighs_thin(
     return unique
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_thin_basin_edges(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
@@ -628,7 +628,7 @@ def get_thin_basin_edges(
 ###############################################################################
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_manifold_labels(
     maxima_labels: NDArray[np.int64],
     minima_labels: NDArray[np.int64],
@@ -637,7 +637,8 @@ def get_manifold_labels(
     maxima_groups: list[NDArray],
     minima_groups: list[NDArray],
     neighbor_transforms: NDArray[np.int64],
-    vacuum_label: NDArray[np.bool_],
+    maxima_vacuum_label: int,
+    minima_vacuum_label: int,
 ):
     """
     Takes the 3-manifolds of maxima and minima and determines the rough locations
@@ -689,7 +690,7 @@ def get_manifold_labels(
                     maxima_labels,
                     maxima_images,
                     neighbor_transforms,
-                    vacuum_label,
+                    maxima_vacuum_label,
                 )
                 opp_num_neighs = get_differing_neighs(
                     i,
@@ -701,7 +702,7 @@ def get_manifold_labels(
                     minima_labels,
                     minima_images,
                     neighbor_transforms,
-                    vacuum_label,
+                    minima_vacuum_label+1,# include vacuum edges
                 )
 
                 if num_neighs == 1 and opp_num_neighs > 1:
@@ -729,7 +730,7 @@ def get_manifold_labels(
     return edges
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_manifold_labels_thin(
     data: NDArray[np.float64],
     maxima_labels: NDArray[np.int64],
@@ -739,7 +740,8 @@ def get_manifold_labels_thin(
     maxima_groups: list[NDArray],
     minima_groups: list[NDArray],
     neighbor_transforms: NDArray[np.int64],
-    vacuum_label: np.int64,
+    maxima_vacuum_label: int,
+    minima_vacuum_label: int,
 ):
     """
     Takes the 3-manifolds of maxima and minima and determines the rough locations
@@ -792,7 +794,7 @@ def get_manifold_labels_thin(
                     maxima_labels,
                     maxima_images,
                     neighbor_transforms,
-                    vacuum_label,
+                    maxima_vacuum_label,
                     use_minima=False,
                 )
                 opp_num_neighs = get_differing_neighs_thin(
@@ -806,8 +808,8 @@ def get_manifold_labels_thin(
                     minima_labels,
                     minima_images,
                     neighbor_transforms,
-                    vacuum_label,
-                    use_minima=True,
+                    minima_vacuum_label,
+                    use_minima=True+1,# include vacuum edges
                 )
 
                 if num_neighs == 1 and opp_num_neighs > 1:
@@ -840,7 +842,7 @@ def get_manifold_labels_thin(
 ###############################################################################
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_neighboring_basin_surface_area(
     labeled_array: NDArray[np.int64],
     neighbor_transforms: NDArray[np.int64],
@@ -899,7 +901,7 @@ def get_neighboring_basin_surface_area(
     return connection_counts
 
 
-# @njit(fastmath=True, cache=True)
+@njit(fastmath=True, cache=True)
 def get_basin_charges_and_volumes(
     data: NDArray[np.float64],
     labels: NDArray[np.int64],
@@ -934,7 +936,7 @@ def get_basin_charges_and_volumes(
     return charges, volumes, vacuum_charge, vacuum_volume
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_basin_min_and_max(
     data,
     labels,
@@ -960,7 +962,7 @@ def get_basin_min_and_max(
     return basin_min, basin_max
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_min_avg_surface_dists(
     labels,
     frac_coords,
@@ -1018,7 +1020,7 @@ def get_min_avg_surface_dists(
 #############################################################################
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_extrema(
     data: NDArray[np.float64],
     neighbor_transforms: NDArray[np.int64],
@@ -1074,7 +1076,7 @@ def get_extrema(
     return extrema
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def reorder_labels(
     labels,
     data,
@@ -1126,7 +1128,7 @@ def reorder_labels(
     return labels, np.sort(final_roots)
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def update_labels_and_images(
     labels,
     images,
@@ -1145,7 +1147,7 @@ def update_labels_and_images(
                 if label == vacuum_label:
                     labels[i, j, k] = new_vacuum_label
                     continue
-                
+
                 # get the current shift
                 shift = INT_TO_IMAGE[images[i, j, k]]
                 # get the shift from this maxima to its root
@@ -1159,7 +1161,7 @@ def update_labels_and_images(
     return labels, images
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def update_images(
     labels,
     images,
@@ -1175,7 +1177,7 @@ def update_images(
                 label = labels[i, j, k]
                 if label == vacuum_label:
                     continue
-                
+
                 if not important_mask[label]:
                     continue
                 # get the current shift

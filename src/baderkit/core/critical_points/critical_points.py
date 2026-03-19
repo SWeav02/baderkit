@@ -12,10 +12,7 @@ from baderkit.core.toolkit import Grid
 from baderkit.core.utilities.basic import merge_frac_coords_weighted
 from baderkit.core.utilities.basins import get_manifold_labels
 from baderkit.core.utilities.transforms import INT_TO_IMAGE
-
-from .saddle_connections import (
-    get_saddle_saddle_connections,
-)
+from baderkit.core.utilities.critical_points import get_saddle_saddle_connections
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="CriticalPoints")
@@ -161,7 +158,8 @@ class CriticalPoints(BaseAnalysis):
                 minima_images=self.bader.minima_basin_images,
                 minima_groups=self.minima_persistence_groups,
                 neighbor_transforms=neighbor_transforms,
-                vacuum_mask=self.bader.vacuum_mask,
+                maxima_vacuum_label=len(self.bader.maxima_frac),
+                minima_vacuum_label=len(self.bader.minima_frac),
             )
 
         return self._manifold_labels

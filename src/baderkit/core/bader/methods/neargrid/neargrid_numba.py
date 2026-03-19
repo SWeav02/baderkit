@@ -490,6 +490,7 @@ def refine_fast_neargrid(
         # NOTE: this reassignment count may not be perfectly accurate if any race
         # conditions occur due to the parallelization
         reassignments = 0
+        failed = False
         for vox_idx in prange(len(refinement_indices)):
             i, j, k = refinement_indices[vox_idx]
             flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
@@ -508,8 +509,11 @@ def refine_fast_neargrid(
             # create a list to store the path
             path = []
             # start climbing
-            while True:
-                # check if we've hit an extrema or a vacuum in minima mode
+            n = 0
+            max_loops = 10000
+            while n < max_loops:
+                n += 1
+                # check if we've hit an extrema (or a vacuum in minima mode)
                 if extrema_mask[ii, jj, kk] or labels[ii, jj, kk] == vacuum_label:
                     # remove the point from the refinement list
                     refinement_mask[i, j, k] = False
@@ -594,6 +598,9 @@ def refine_fast_neargrid(
                 wi += si
                 wj += sj
                 wk += sk
+            if n == max_loops:
+                failed = True
+        assert not failed
         print(f"{reassignments} values changed")
 
     return labels, images

@@ -89,22 +89,21 @@ class NeargridMethod(MethodBase):
         logging.info("Starting Edge Refinement")
 
         # shift indices to start at 1
-        labels += 1
-
         # Now we refine the edges with the neargrid method
         # Get our edges, not including edges on the vacuum.
+        vacuum_label = len(self.extrema_vox) + 1
         refinement_mask = get_edges_w_flat_images(
             labeled_array=labels,
             images=images,
             neighbor_transforms=neighbor_transforms,
-            vacuum_mask=self.vacuum_mask,
+            vacuum_label=vacuum_label,
         )
-
+        vacuum_mask = labels == vacuum_label
         # remove extrema from refinement
         refinement_mask[self.extrema_mask] = False
         # note these labels and the vacuum should not be reassigned again in future cycles
-        labels[refinement_mask | self.vacuum_mask] = -labels[
-            refinement_mask | self.vacuum_mask
+        labels[refinement_mask & vacuum_mask] = -labels[
+            refinement_mask & vacuum_mask
         ]
         labels, images = refine_fast_neargrid(
             data=reference_data,
@@ -115,13 +114,13 @@ class NeargridMethod(MethodBase):
             gradients=gradients,
             neighbor_dists=neighbor_dists,
             neighbor_transforms=neighbor_transforms,
-            vacuum_label=-(len(self.extrema_vox) + 1),
+            vacuum_label=-vacuum_label,
             use_minima=self.use_minima,
         )
         # switch negative labels back to positive and subtract by 1 to get to
         # correct indices
         labels = np.abs(labels) - 1
-        dtype = get_lowest_uint(len(self.extrema_vox) + 1)
+        dtype = get_lowest_uint(len(self.extrema_vox))
         labels = labels.reshape(shape).astype(dtype)
 
         # condense images

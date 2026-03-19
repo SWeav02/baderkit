@@ -5,7 +5,7 @@ import logging
 import numpy as np
 
 from baderkit.core.bader.methods.base import MethodBase
-from baderkit.core.utilities.basic import coords_to_flat
+from baderkit.core.utilities.basic import coords_to_flat, get_lowest_uint
 
 from .weight_numba import (  # reduce_charge_volume,; get_labels,
     get_weight_assignments,
@@ -93,8 +93,12 @@ class WeightMethod(MethodBase):
 
         # reconstruct a 3D array with our labels
         labels = labels.reshape(shape)
-        # update vacuum mask
-        self.vacuum_mask = labels == np.iinfo(labels.dtype).max - 1
+        # update unassigned labels
+        unassigned_mask = labels == np.iinfo(labels.dtype).max - 1
+        vacuum_label = len(self.extrema_vox)
+        dtype = get_lowest_uint(vacuum_label)
+        labels[unassigned_mask] = vacuum_label
+
 
         # adjust charges from vasp convention
         charges /= shape.prod()
@@ -105,12 +109,12 @@ class WeightMethod(MethodBase):
         images = images.reshape(shape)
 
         # set results
-        self._labels = labels
+        self._labels = labels.astype(dtype)
         self._images = images
         self._charges = charges
         self._volumes = volumes
         self._vacuum_charge = (
-            self.charge_grid.total[self.vacuum_mask].sum() / shape.prod()
+            self.charge_grid.total[unassigned_mask].sum() / shape.prod()
         )
         self._vacuum_volume = (
             (self.num_vacuum / reference_grid.ngridpts)

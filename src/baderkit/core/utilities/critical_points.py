@@ -25,7 +25,7 @@ from baderkit.core.utilities.union_find import find_root, union
 ###############################################################################
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def classify_critical_point(H):
     eigvals = np.linalg.eigvalsh(H)
 
@@ -44,7 +44,7 @@ def classify_critical_point(H):
     return -1
 
 
-# # @njit(cache=True, fastmath=True)
+# @njit(cache=True, fastmath=True)
 # def compute_signature(H, eig_rel_tol):
 #     evals, _ = np.linalg.eigh(H)
 
@@ -60,7 +60,7 @@ def classify_critical_point(H):
 
 
 #     return n_neg, n_flat
-# @njit(cache=True)
+@njit(cache=True)
 def compute_signature(H, eig_rel_tol):
 
     evals = np.linalg.eigvalsh(H)
@@ -78,7 +78,7 @@ def compute_signature(H, eig_rel_tol):
     return n_neg, n_flat
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def is_ongrid_saddle(
     data,
     i,
@@ -113,7 +113,7 @@ def is_ongrid_saddle(
     return True
 
 
-# @njit(fastmath=True, cache=True)
+@njit(fastmath=True, cache=True)
 def is_ongrid_newton_crit(
     coord,
     data,
@@ -236,7 +236,7 @@ def is_ongrid_newton_crit(
 ###############################################################################
 
 
-# @njit(inline="always", cache=True)
+@njit(inline="always", cache=True)
 def get_extrema_saddle_connections(
     i,
     j,
@@ -301,7 +301,7 @@ def get_extrema_saddle_connections(
     return max_val, max_val, max_val, max_val
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_single_point_saddles(
     connection_values,
     connection_indices,
@@ -328,7 +328,7 @@ def get_single_point_saddles(
     return best_vals, best_indices
 
 
-# @njit(cache=True, parallel=True)
+@njit(cache=True, parallel=True)
 def get_canonical_saddle_connections(
     saddle_coords,
     data,
@@ -362,13 +362,16 @@ def get_canonical_saddle_connections(
             use_minima,
         )
         saddle_connections[idx, 0] = lower
-        saddle_connections[idx, 1] = higher
+        try:
+            saddle_connections[idx, 1] = higher
+        except:
+            breakpoint()
         saddle_connections[idx, 2] = lower_shift
         saddle_connections[idx, 3] = higher_shift
     return saddle_connections
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def get_saddles_from_basins(
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
@@ -416,7 +419,7 @@ def get_saddles_from_basins(
     return saddle_coords, saddle_connections
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def remove_false_saddles(
     saddle_coords,
     labels: NDArray[np.int64],
@@ -483,7 +486,7 @@ def remove_false_saddles(
     return saddle_coords, saddle_connections
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def remove_adjacent_saddles(refined_vox, shape):
     unions = np.arange(len(refined_vox))
     # combine any that refined to be adjacent
@@ -506,13 +509,134 @@ def remove_adjacent_saddles(refined_vox, shape):
     important = np.where(roots == np.arange(len(refined_vox)))[0]
     return important
 
+@njit(cache=True)
+def get_saddle_saddle_connections(
+    saddle1_coords,
+    saddle2_coords,
+    neighbor_transforms: NDArray[np.int64],
+    edge_mask: NDArray[np.uint8],
+):
+    nx, ny, nz = edge_mask.shape
+
+    # get the number of possible edges
+    num_edges = len(np.where(np.isin(edge_mask, (1, 2, 6)))[0])
+    num_edges += len(saddle1_coords) + len(saddle2_coords)
+
+    # create an empty queue for storing which points are next
+    queue = np.empty((num_edges, 3), dtype=np.uint32)
+
+    # create arrays to store flood filled labels
+    max_val = np.iinfo(np.int32).max
+    flood_labels = np.full_like(edge_mask, max_val, dtype=np.int32)
+    flood_images = np.full_like(edge_mask, 13, dtype=np.uint8)
+
+    # seed saddles
+    saddle_idx = 0
+    saddle1_idx = 1
+    saddle2_idx = -1
+    for i, j, k in saddle1_coords:
+        flood_labels[i, j, k] = saddle1_idx
+        queue[saddle_idx] = (i, j, k)
+        saddle1_idx += 1
+        saddle_idx += 1
+    for i, j, k in saddle2_coords:
+        flood_labels[i, j, k] = saddle2_idx
+        queue[saddle_idx] = (i, j, k)
+        saddle2_idx -= 1
+        saddle_idx += 1
+
+    # create lists to store connections
+    connections = []
+    connection_coords = []
+    queue_start = 0
+    queue_end = saddle_idx
+
+    while queue_start != queue_end:
+        next_end = queue_end
+        for edge_idx in range(queue_start, queue_end):
+            i, j, k = queue[edge_idx]
+            # get label and image
+            label = flood_labels[i, j, k]
+            mi, mj, mk = INT_TO_IMAGE[flood_images[i, j, k]]
+
+            # iterate over each neighbor. if unlabeled, assign it the same label
+            # if labeled, note a new connection
+            for trans, (si, sj, sk) in enumerate(neighbor_transforms):
+                # get the neighbor
+                ii, jj, kk, ssi, ssj, ssk = wrap_point_w_shift(
+                    i + si, j + sj, k + sk, nx, ny, nz
+                )
+                # skip points that can't be part of our connections
+                if not edge_mask[ii, jj, kk] in (1, 2, 6):
+                    continue
+
+                # get the label of the neighbor
+                neigh_label = flood_labels[ii, jj, kk]
+
+                # get total image of the current path
+                mi1 = mi + ssi
+                mj1 = mj + ssj
+                mk1 = mk + ssk
+
+                shift = IMAGE_TO_INT[mi1, mj1, mk1]
+
+                # if unlabeled, label immediately
+                if neigh_label == max_val:
+                    flood_labels[ii, jj, kk] = label
+                    flood_images[ii, jj, kk] = shift
+                    queue[next_end] = (ii, jj, kk)
+                    next_end += 1
+                # skip points that are both the same type of saddle
+                elif (
+                    (neigh_label < 0 and label < 0)
+                    or (neigh_label > 0 and label > 0)
+                    or (neigh_label == label)
+                ):
+                    continue
+
+                else:
+                    # this point belongs to a different saddle
+                    # get this points image
+                    ni, nj, nk = INT_TO_IMAGE[flood_images[ii, jj, kk]]
+                    bi = mi1 - ni
+                    bj = mj1 - nj
+                    bk = mk1 - nk
+
+                    # order from saddle1 to saddle2
+                    if label > 0 and neigh_label < 0:
+                        best_image = IMAGE_TO_INT[bi, bj, bk]
+                        lower = abs(label) - 1
+                        upper = abs(neigh_label) - 1
+
+                    elif label < 0 and neigh_label > 0:
+                        best_image = IMAGE_TO_INT[-bi, -bj, -bk]
+                        lower = abs(neigh_label) - 1
+                        upper = abs(label) - 1
+                    else:
+                        # we should never have the same label or two labels
+                        # with the same sign
+                        continue
+
+                    connections.append(
+                        (
+                            lower,
+                            upper,
+                            best_image,
+                        )
+                    )
+                    # add coord
+                    connection_coords.append(queue[edge_idx])
+        queue_start = queue_end
+        queue_end = next_end
+
+    return connections, connection_coords
 
 ###############################################################################
 # Newton Refinement
 ###############################################################################
 
 
-# @njit(cache=True, fastmath=True, inline="always")
+@njit(cache=True, fastmath=True, inline="always")
 def clamp_step(dx, max_step):
     step_norm = get_norm(dx[0], dx[1], dx[2])
     if step_norm < 1e-8:
@@ -525,12 +649,12 @@ def clamp_step(dx, max_step):
     return dx, True
 
 
-# @njit(cache=True, fastmath=True, inline="always")
+@njit(cache=True, fastmath=True, inline="always")
 def outside_voxel(coord, vmin, vmax):
     return np.any(coord < vmin) or np.any(coord > vmax)
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def flat_aware_newton_step(
     g,
     H,
@@ -549,7 +673,7 @@ def flat_aware_newton_step(
     return dx
 
 
-# @njit(cache=True, inline="always")
+@njit(cache=True, inline="always")
 def targeted_newton_step(
     g,
     H,
@@ -585,7 +709,7 @@ def targeted_newton_step(
     return dx
 
 
-# @njit(cache=True, fastmath=True)
+@njit(cache=True, fastmath=True)
 def newton_refine(
     coord,
     data,
@@ -636,7 +760,7 @@ def newton_refine(
     return coord, converged, morse_index
 
 
-# @njit(cache=True, fastmath=True)
+@njit(cache=True, fastmath=True)
 def newton_refine_in_voxel(
     coord,
     data,
@@ -695,7 +819,7 @@ def newton_refine_in_voxel(
     return coord, converged, morse_index
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def refine_critical_points(
     critical_coords,
     data,
@@ -738,7 +862,7 @@ def refine_critical_points(
     return refined_coords, successes
 
 
-# # @njit(fastmath=True)
+# @njit(fastmath=True)
 # def newton_refine_critical(
 #     point,
 #     data,
@@ -940,7 +1064,7 @@ def refine_critical_points(
 #     return i, j, k, success, grad_norm_final, evals_final
 
 
-# # @njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 # def refine_critical_points(
 #     points,
 #     data,
@@ -979,7 +1103,7 @@ def refine_critical_points(
 #     return refined_points, refined_status
 
 
-# # @njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 # def refine_extrema(
 #     extrema_coords,
 #     data,
@@ -1019,7 +1143,7 @@ def refine_critical_points(
 ###############################################################################
 
 
-# @njit(fastmath=True, cache=True)
+@njit(fastmath=True, cache=True)
 def refine_frac_extrema_parabolic(grid, frac_coords, lattice, use_minima=False):
     """
     Numerically stable refinement of a local maximum or minimum on a 3D periodic grid.
@@ -1176,7 +1300,7 @@ def refine_frac_extrema_parabolic(grid, frac_coords, lattice, use_minima=False):
     return refined_frac, refined_value
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def refine_extrema_parabolic(
     extrema_coords,
     extrema_groups,
