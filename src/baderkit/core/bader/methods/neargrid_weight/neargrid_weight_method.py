@@ -89,7 +89,7 @@ class NeargridWeightMethod(MethodBase):
         # Find roots
         logging.info("Finding Roots")
         labels, images = self.get_roots(labels, images)
-
+        
         # reconstruct a 3D array with our labels. make sure our data type can
         # include negative values so that we can mark points needing refinement
         dtype = get_lowest_int(len(self.extrema_vox) + 1)
@@ -134,6 +134,7 @@ class NeargridWeightMethod(MethodBase):
         dtype = get_lowest_uint(len(self.extrema_vox))
         labels = labels.reshape(shape).astype(dtype)
         vacuum_label -= 1
+
         # condense images
         images = self.condense_images(images)
         images = images.reshape(shape)
