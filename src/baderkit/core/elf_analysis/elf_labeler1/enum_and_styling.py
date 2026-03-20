@@ -14,13 +14,13 @@ class classproperty(property):
 
 class FeatureType(str, Enum):
     unknown = "unknown"
-    ionic = "unshared bond"
-    ionic_shell = "unshared shell"
+    ionic = "ionic bond"
+    ionic_shell = "ionic shell"
     core = "core"
-    covalent = "covalent"
-    metallic = "metallic"
+    covalent = "covalent bond"
+    metallic = "metallic bond"
     lone_pair = "lone-pair"
-    multi_centered = "multi-centered"
+    multi_centered = "multi-centered bond"
     electride = "electride"
     nna = "non-nuclear attractor"
 

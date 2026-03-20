@@ -1500,7 +1500,10 @@ class Bader(BaseAnalysis):
         basin_atoms = np.insert(basin_atoms, len(basin_atoms), len(structure))
 
         # Atom labels per grid point
-        atom_labels = basin_atoms[self.maxima_basin_labels]
+        try:
+            atom_labels = basin_atoms[self.maxima_basin_labels]
+        except:
+            breakpoint()
 
         # remove vacuum pointer in basin atoms
         basin_atoms = basin_atoms[:-1]

@@ -705,7 +705,7 @@ class MethodBase:
             images=self.images,
             label_map=root_map,
             image_map=root_transforms,
-            vacuum_label=len(self.extrema_vox),
+            new_vacuum_label=len(self.charges),
         )
 
         # get final ongrid extrema groups

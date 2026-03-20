@@ -1134,10 +1134,10 @@ def update_labels_and_images(
     images,
     label_map,
     image_map,
-    vacuum_label,
+    new_vacuum_label,
 ):
     nx, ny, nz = labels.shape
-    new_vacuum_label = len(np.unique(label_map))
+    vacuum_label = len(label_map)
 
     for i in prange(nx):
         for j in range(ny):
