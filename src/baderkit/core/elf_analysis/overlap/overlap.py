@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 from baderkit.core.bader.bader import Bader
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Grid
-from .overlap_numba import get_overlaps
+from .overlap_numba import get_overlaps, get_atom_access_sets
 from baderkit.core.utilities.coord_env import is_along_bond_all
 
 
@@ -21,14 +21,19 @@ class BasinOverlap(BaseAnalysis):
     
     _reset_props = [
         "atomicities",
-        "overlap_counts",
+        "overlap_charge_table",
         "overlap_labels",
-        "local_overlap_fractions",
+        "bond_fractions",
         "core_basins",
         "shared_basins",
         "along_bond",
         "attractor_shapes",
         "polarization_indexes",
+        "atom_core_populations",
+        "atom_valence_populations",
+        "atom_access_sets",
+        "atom_charge_claims",
+        
     ]
 
     def __init__(
@@ -142,6 +147,9 @@ class BasinOverlap(BaseAnalysis):
         """
         return self.qtaim_bader.maxima_frac
     
+    ###########################################################################
+    # Properties
+    ###########################################################################
     @property
     def along_bond(self):
         if self._along_bond is None:
@@ -153,10 +161,6 @@ class BasinOverlap(BaseAnalysis):
                 min_covalent_angle=self.min_covalent_angle,
             )
         return self._along_bond
-    
-    ###########################################################################
-    # Properties related to overlap
-    ###########################################################################
 
     @property
     def atomicities(self) -> NDArray[np.int64]:
@@ -174,41 +178,42 @@ class BasinOverlap(BaseAnalysis):
         if self._atomicities is None:
             # The number of atoms contributing to each label is the number of
             # non-zero entries in each row of our overlap_matrix
-            self._atomicities = np.array([len(i) for i in self.local_overlap_fractions])
+            self._atomicities = np.array([len(i) for i in self.bond_fractions])
         return self._atomicities
                
     @property
-    def overlap_counts(self) -> NDArray[np.int64]:
+    def overlap_charge_table(self) -> NDArray[np.int64]:
         """
 
         Returns
         -------
         NDArray[np.int64]
-            An Nx3 array where the columns represent the qtaim basin, local basin,
-            and number of overlapping grid points respectively.
+            An Nx4 array where each row represents a single overlap basin. The
+            columns represent the atom index, atom image, local basin index
+            and the integrated charge in the basin.
 
         """
-        if self._overlap_counts is None:
+        if self._overlap_charge_table is None:
             self._get_overlap()
-        return self._overlap_counts
+        return self._overlap_charge_table
 
     @property
-    def local_overlap_fractions(self) -> list[NDArray[np.float64]]:
+    def bond_fractions(self) -> list[NDArray[np.float64]]:
         """
 
         Returns
         -------
         list[NDArray[np.float64]]
             A list with the same length as the number of local basins. Each entry
-            is an Nx2 array where N is the number of overlapping qtaim basins
-            and each entry is the qtaim basin index and fraction of charge in the
-            overlapping basin respectively. For valence basins, this is equivalent 
-            to the fraction of the bond belonging to each overlapping atom.
+            is an Nx3 array where N is the number of overlapping qtaim basins
+            and each entry is the qtaim atom index, the qtaim atom's periodic
+            image (relative to the local basin's maximum), and the fraction of 
+            charge in the overlapping basin respectively. 
 
         """
-        if self._local_overlap_fractions is None:
+        if self._bond_fractions is None:
             self._get_overlap()
-        return self._local_overlap_fractions
+        return self._bond_fractions
     
     @property
     def core_basins(self) -> NDArray[int]:
@@ -219,7 +224,8 @@ class BasinOverlap(BaseAnalysis):
         NDArray[int]
             An array with an entry for each local basin corresponding to the
             index of the atom this basin is a core of. If the basin is not a
-            core, the value is -1.
+            core, the value is -1. Note that for pseudopotential codes, atoms
+            will often not have a core basin in the ELF.
 
         """
         
@@ -234,9 +240,9 @@ class BasinOverlap(BaseAnalysis):
         Returns
         -------
         NDArray[bool]
-            An array with an entry for each local basin that is True for basins
-            that are shared between multiple atoms. This is basically all basins
-            that are not part of the atom core or lone-pairs
+            An array with an entry for each local basin. True for basins that
+            have significant sharing between multiple atoms. This is basically 
+            all basins that are not part of the atom core or lone-pairs
 
         """
         
@@ -263,6 +269,16 @@ class BasinOverlap(BaseAnalysis):
     
     @property
     def attractor_shapes(self) -> NDArray[str]:
+        """
+
+        Returns
+        -------
+        NDArray[str]
+            The shape of the attractor (maximum) for each basin in the local
+            grid. Typically these are points but may form rings or cages in
+            high symmetry environments..
+
+        """
         if self._attractor_shapes is None:
             betti_nums = self.local_bader.maxima_betti_numbers
             shapes = []
@@ -279,19 +295,17 @@ class BasinOverlap(BaseAnalysis):
         return self._attractor_shapes
     
     @property
-    def valence_basins(self) -> NDArray[bool]:
-        if self._valence_basins is None:
-            pass
-        return self._valence_basins
-    
-    @property
     def polarization_indexes(self) -> NDArray[np.float64]:
         """
-        Measure of polarization of a localized basin as defined here:
-        10.1007/s002140100268
+        Measure of polarization of a localized basin as defined by S. Raub and
+        G. Jansen: 10.1007/s002140100268
         
-        For bonds with more than two intersecting atoms, the two largest 
-        fractions are used for the calculation.
+        A value of 0 indicates fully non-polar while a value of 1 indicates
+        fully polar. Anything between is a polar-covalent bond.
+        
+        As this measure was originally only designed for bonds between two
+        atoms, the two largest fractions are used for the calculation even
+        when there are other significant bond fractions.
 
         Returns
         -------
@@ -302,7 +316,7 @@ class BasinOverlap(BaseAnalysis):
         if self._polarization_indexes is None:
             polarization_indexes = []
             # loop over the atoms and fractions in each basin
-            for atom_fracs in self.local_overlap_fractions:
+            for atom_fracs in self.bond_fractions:
                 # if we have only one overlapped atom, this is a fully polarized
                 # bond
                 if len(atom_fracs) <= 1:
@@ -319,15 +333,81 @@ class BasinOverlap(BaseAnalysis):
                 
         return self._polarization_indexes
     
-    # TODO: 
-        # move core basin finding to this class
-        # get atoms with access to each basin
-        # get atom access sets
-        # access electron number and valence electron number
-        # charge claim/average bond fraction of each atom
-        # connection index (atomic?)
-        # nearest neighbor sharing?
-        # figure out bond polarity metric that works for multi-centered bonds
+    @property
+    def atom_core_populations(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The total charge assigned to core basins for each atom.
+            
+            WARNING: for pseudopotential codes this will often be 0 and meaningless
+
+        """
+        if self._atom_core_populations is None:
+            core_charges = np.zeros(len(self.qtaim_bader.structure))
+            for feature_idx in range(len(self.local_maxima_frac)):
+                # skip shared basins
+                if self.core_basins == -1:
+                    continue
+                # otherwise, assign the charge to the dominant atom
+                atom = int(self.bond_fractions[feature_idx][:,0])
+                core_charges[atom] += self.local_bader.basin_charges[feature_idx]
+            self._atom_core_populations = core_charges / self.reference_grid.ngridpts
+        return self._atom_core_populations
+    
+    @property
+    def atom_valence_populations(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The total valence charge for each atom. For example, in NaCl this
+            should be approximately 0 and 8 respectively.
+            
+            WARNING: for pseudopotential codes this may be incorrect depending
+            on the pseudopotential used.
+
+        """
+        if self._atom_valence_populations is None:
+            self._atom_valence_populations = self.qtaim_bader.atom_charges - self.atom_core_populations
+        return self._atom_valence_populations
+    
+    @property
+    def atom_access_sets(self) -> list[NDArray[int]]:
+        """
+
+        Returns
+        -------
+        list[NDArray[int]]
+            The local valence basins that border each atoms core. This is the
+            total number of electrons the atom theoretically has access to.
+
+        """
+        if self._atom_access_sets is None:
+            self._get_access_sets()
+        return self._atom_access_sets
+    
+    @property
+    def atom_charge_claims(self) -> list[NDArray[float]]:
+        """
+
+        Returns
+        -------
+        list[NDArray[float]]
+            A list of Nx2 arrays where each list entry represents a qtaim atom.
+            Each array represents the charge claims for that atoms access set.
+            The first column is the atom index that has a claim to part of the
+            set and the second column is the fractional charge claim of that set.
+            The total accessessible charge can be obtained from the atom_access_sets
+            property and the integrated charge of each local basin.
+
+        """
+        if self._atom_charge_claims is None:
+            self._get_access_sets()
+        return self._atom_charge_claims
 
     @property
     def overlap_labels(self) -> NDArray[np.int64]:
@@ -346,11 +426,19 @@ class BasinOverlap(BaseAnalysis):
             self._get_overlap()
         return self._overlap_labels
 
+    def _get_access_sets(self):
+        self._atom_access_sets, self._atom_charge_claims = get_atom_access_sets(
+            overlap_charge_table=self.overlap_charge_table, 
+            local_basin_charges=self.local_bader.basin_charges,
+            core_basins=self.core_basins,
+            num_atoms=len(self.qtaim_maxima_frac), 
+            num_local=len(self.local_maxima_frac),
+            )
 
     def _get_overlap(self):
         (
-        self._overlap_counts, 
-        self._local_overlap_fractions, 
+        self._overlap_charge_table, 
+        self._bond_fractions, 
         self._overlap_labels,
         ) = get_overlaps(
             atom_labels=self.qtaim_bader.atom_labels,  # Bader Atoms
@@ -376,12 +464,12 @@ class BasinOverlap(BaseAnalysis):
             # we will need to determine between them later
             if self.polarization_indexes[feature_idx] >= 1.0 - tol:
                 if not (shape == "point" and self.local_bader.basin_atom_dists[feature_idx] > 0.1):
-                    cores[feature_idx] = int(self.local_overlap_fractions[feature_idx][:,0])
+                    cores[feature_idx] = int(self.bond_fractions[feature_idx][:,0])
             
             # label atoms that have bonds
             if self.along_bond[feature_idx]:
                 # mark the two most dominant atoms as bonded
-                atoms = self.local_overlap_fractions[feature_idx][:2,0].astype(int)
+                atoms = self.bond_fractions[feature_idx][:2,0].astype(int)
                 bonded_atoms[atoms] = True
                 shared[feature_idx] = True
         
@@ -393,7 +481,7 @@ class BasinOverlap(BaseAnalysis):
                 continue
             
             # check if the most dominant atom is bonded
-            atom = int(self.local_overlap_fractions[feature_idx][0,0])
+            atom = int(self.bond_fractions[feature_idx][0,0])
             # if the atom isn't bonded, this must be part of an ionic shell
             if not bonded_atoms[atom]:
                 shared[feature_idx] = True

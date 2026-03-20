@@ -147,13 +147,21 @@ def get_overlaps(
     overlap_indices = np.argwhere(overlap_counts>0)
     counts = np.empty(len(overlap_indices), dtype=np.int64)
     
-    # reduce to important
+    # reduce to important and get total atom overlap charges (remove images)
+    atom_counts = np.empty((len(overlap_indices), 4), dtype=np.float64)
     for idx in prange(len(overlap_indices)):
         pair_idx, local_idx = overlap_indices[idx]
         # get the counts
-        counts[idx] = overlap_counts[pair_idx, local_idx]
+        count = overlap_counts[pair_idx, local_idx]
+        counts[idx] = count
         # overwrite overlap counts with this pairs index
         overlap_counts[pair_idx, local_idx] = idx
+        # save total count
+        atom_idx, atom_image = label_image_pairs[pair_idx]
+        atom_counts[idx,0] = float(atom_idx)
+        atom_counts[idx,1] = float(atom_image)
+        atom_counts[idx,2] = float(local_idx)
+        atom_counts[idx,3] = float(count)
     overlap_counts = overlap_counts.astype(np.int64)
         
     # get overlap fractions for each basin/atom
@@ -199,8 +207,62 @@ def get_overlaps(
                 # update the label
                 overlap_labels[i,j,k] = union_label
 
-    return np.column_stack((overlap_indices, counts)), local_frac, overlap_labels
+    return atom_counts, local_frac, overlap_labels
 
+@njit(parallel=True, cache=True)
+def get_atom_access_sets(
+        overlap_charge_table, 
+        local_basin_charges,
+        core_basins,
+        num_atoms, 
+        num_local,
+        tol = 0.001,
+        ):
+    access_sets = []
+    charge_claims = []
+    for i in range(num_atoms):
+        access_sets.append(np.empty((0),dtype=np.int64))
+        charge_claims.append(np.empty((0,0), dtype=np.float64))
+    for i in prange(num_atoms):
+        set_mask = np.zeros(num_local, dtype=np.bool_)
+        # first we find the access set for this atom
+        for atom_idx, _, local_idx, charge in overlap_charge_table:
+            local_idx = int(local_idx)
+            # if this is a different atom, a core basin, or already part of
+            # our set, we skip
+            if atom_idx != i or core_basins[local_idx]!=-1 or set_mask[local_idx]:
+                continue
+            set_mask[local_idx] = True
+        local_set = np.where(set_mask)[0]
+        access_sets[i] = local_set
+        
+        # now found what portion of the accessible charge is held by each atom
+        # in the system.
+        atom_claims = np.zeros(num_atoms, dtype=np.float64)
+        for atom_idx, _, local_idx, charge in overlap_charge_table:
+            if set_mask[int(local_idx)]:
+                atom_claims[int(atom_idx)] += charge
+        
+        # get all atoms with claims
+        atoms = np.where(atom_claims>0)[0]
+        atom_claims = atom_claims[atoms]
+        
+        # normalize to get fractional claims
+        atom_claims /= atom_claims.sum()
+        
+        # remove atoms with very small claims
+        large_set = np.where(atom_claims > tol)[0]
+        atoms = atoms[large_set]
+        atom_claims = atom_claims[large_set]
+        charge_claims[i] = np.column_stack((atoms.astype(np.float64), atom_claims))
+        
+    return access_sets, charge_claims
+
+# TODO:
+    # add images into this as well
+    # calculate connection index
+    # calculate nearest neighbor sharing
+    # test with total charge densities
 
 # @njit(cache=True)
 # def szudzik_pair(a: int, b: int):
