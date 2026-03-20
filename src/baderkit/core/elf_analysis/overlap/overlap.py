@@ -6,7 +6,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from baderkit.core.bader.bader import Bader
-from baderkit.core.bader.methods import Method
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Grid
 from .overlap_numba import get_overlaps
@@ -26,10 +25,9 @@ class BasinOverlap(BaseAnalysis):
         "overlap_labels",
         "local_overlap_fractions",
         "core_basins",
-        # "qtaim_overlap_fractions",
+        "shared_basins",
         "along_bond",
         "attractor_shapes",
-        "valence_basins",
         "polarization_indexes",
     ]
 
@@ -39,11 +37,12 @@ class BasinOverlap(BaseAnalysis):
         reference_grid: Grid,
         total_charge_grid: Grid | None = None,
         nna_cutoff: float = 1.0,
-        method: str | Method = Method.neargrid,
+        min_covalent_angle: float = 135,
         polarization_cutoff: float = 0.5,
         **kwargs,
     ):
-        self.polarization_cutoff = polarization_cutoff
+        self._polarization_cutoff = polarization_cutoff
+        self._min_covalent_angle = min_covalent_angle
         
         # create bader objects
         self.qtaim_bader = Bader(
@@ -51,7 +50,6 @@ class BasinOverlap(BaseAnalysis):
             total_charge_grid=total_charge_grid,
             reference_grid=total_charge_grid,
             nna_cutoff=nna_cutoff,
-            method=method,
             **kwargs,
         )
         
@@ -59,7 +57,6 @@ class BasinOverlap(BaseAnalysis):
             charge_grid=charge_grid,
             total_charge_grid=total_charge_grid,
             reference_grid=reference_grid,
-            method=method,
             **kwargs,
         )
 
@@ -69,14 +66,31 @@ class BasinOverlap(BaseAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
+
+    ###########################################################################
+    # Settings
+    ###########################################################################
+    @property
+    def min_covalent_angle(self) -> float:
+        return self._min_covalent_angle
+    
+    @min_covalent_angle.setter
+    def min_covalent_angle(self, value: float):
+        self._min_covalent_angle = value
+        self._reset_properties(
+            include_properties=[
+                "core_basins",
+                "along_bond",
+                ], 
+            )
         
     @property
-    def max_covalent_polarization(self) -> float:
-        return self._max_covalent_polarization
+    def polarization_cutoff(self) -> float:
+        return self._polarization_cutoff
     
-    @max_covalent_polarization.setter
-    def max_covalent_polarization(self, value: float):
-        self._max_covalent_polarization = value
+    @polarization_cutoff.setter
+    def polarization_cutoff(self, value: float):
+        self._polarization_cutoff = value
         self._reset_properties(
             include_properties=[
                 "valence_basins",
@@ -132,7 +146,7 @@ class BasinOverlap(BaseAnalysis):
     def along_bond(self):
         if self._along_bond is None:
             self._along_bond, _ = is_along_bond_all(
-                feature_frac_coords=self.maxima_frac,
+                feature_frac_coords=self.local_maxima_frac,
                 atom_frac_coords=self.structure.frac_coords,
                 atom_cart_coords=self.structure.cart_coords,
                 matrix=self.reference_grid.matrix,
@@ -197,20 +211,38 @@ class BasinOverlap(BaseAnalysis):
         return self._local_overlap_fractions
     
     @property
-    def core_basins(self) -> NDArray[bool]:
+    def core_basins(self) -> NDArray[int]:
         """
 
         Returns
         -------
-        NDArray[bool]
-            An array with an entry for each local basin that is True for basins
-            that are part of the valence of the system and False for atom cores.
+        NDArray[int]
+            An array with an entry for each local basin corresponding to the
+            index of the atom this basin is a core of. If the basin is not a
+            core, the value is -1.
 
         """
         
         if self._core_basins is None:
             self._assign_cores()
         return self._core_basins
+    
+    @property
+    def shared_basins(self) -> NDArray[bool]:
+        """
+
+        Returns
+        -------
+        NDArray[bool]
+            An array with an entry for each local basin that is True for basins
+            that are shared between multiple atoms. This is basically all basins
+            that are not part of the atom core or lone-pairs
+
+        """
+        
+        if self._shared_basins is None:
+            self._assign_cores()
+        return self._shared_basins
     
     # @property
     # def qtaim_overlap_fractions(self) -> list[NDArray[np.float64]]:
@@ -275,11 +307,14 @@ class BasinOverlap(BaseAnalysis):
                 # bond
                 if len(atom_fracs) <= 1:
                     polarization_indexes.append(1.0)
+                    continue
                 # get fracs. These are already sorted from high to low
-                fracs = atom_fracs[:,1]
+                fracs = atom_fracs[:,2]
+
                 # calculate polarization index
                 polarization_indexes.append((fracs[0] - fracs[1])/(fracs[0] + fracs[1]))
-            self._polarization_indexes = np.array(polarization_indexes, dtype=np.float64)
+            
+            self._polarization_indexes = np.array(polarization_indexes, dtype=np.float64).round(4)
                 
                 
         return self._polarization_indexes
@@ -315,7 +350,6 @@ class BasinOverlap(BaseAnalysis):
     def _get_overlap(self):
         (
         self._overlap_counts, 
-        self._qtaim_overlap_fractions, 
         self._local_overlap_fractions, 
         self._overlap_labels,
         ) = get_overlaps(
@@ -330,48 +364,50 @@ class BasinOverlap(BaseAnalysis):
             local_frac=self.local_maxima_frac
         )
     
-    def _assign_cores(self, tol=0.05):
+    def _assign_cores(self, tol=0.02):
         # create tracker for which basins are part of each atoms core
         cores = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
+        shared = np.zeros(len(self.local_maxima_frac), dtype=np.bool_)
         bonded_atoms = np.zeros(len(self.structure), dtype=bool)
         for feature_idx in range(len(self.local_maxima_frac)):
             shape = self.attractor_shapes[feature_idx]
-            # get the two most dominant atoms as bonded
-            atoms = self.local_overlap_fractions[feature_idx][:2,0].astype(int)
             # basins that are fully polar are cores, unless they are a point
             # far from the atom center. These may be cores or lone-pairs and
             # we will need to determine between them later
             if self.polarization_indexes[feature_idx] >= 1.0 - tol:
-                if not (shape == "point" and self.elf_bader.basin_atom_dists[feature_idx] > 0.1):
-                    cores[feature_idx] = int(atoms[0])
+                if not (shape == "point" and self.local_bader.basin_atom_dists[feature_idx] > 0.1):
+                    cores[feature_idx] = int(self.local_overlap_fractions[feature_idx][:,0])
             
             # label atoms that have bonds
             if self.along_bond[feature_idx]:
                 # mark the two most dominant atoms as bonded
                 atoms = self.local_overlap_fractions[feature_idx][:2,0].astype(int)
                 bonded_atoms[atoms] = True
+                shared[feature_idx] = True
         
         for feature_idx in range(len(self.local_maxima_frac)):
             shape = self.attractor_shapes[feature_idx]
             # skip non-polarized features
             if self.polarization_indexes[feature_idx] < self.polarization_cutoff:
+                shared[feature_idx] = True
                 continue
             
             # check if the most dominant atom is bonded
-            atom = int(self.local_overlap_fractions[feature_idx][[0,0]])
+            atom = int(self.local_overlap_fractions[feature_idx][0,0])
             # if the atom isn't bonded, this must be part of an ionic shell
             if not bonded_atoms[atom]:
+                shared[feature_idx] = True
                 continue
             
             # if the atom is bonded, and this is a point far from the atoms center,
             # it is a lone-pair
-            if shape != "cage" and self.elf_bader.basin_atom_dists[feature_idx] > 0.1:
+            if shape != "cage" and self.local_bader.basin_atom_dists[feature_idx] > 0.1:
                 continue
             
             # otherwise, this is a core
             cores[feature_idx] = True
             
-
+        self._shared_basins = shared
         self._core_basins = cores
             
             

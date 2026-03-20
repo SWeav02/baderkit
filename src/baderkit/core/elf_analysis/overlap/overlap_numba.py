@@ -173,8 +173,9 @@ def get_overlaps(
         # get portion
         fracs = count / count.sum()
         # remove fracs below cutoff
-        low_fracs = np.where(fracs < tol)[0]
-        fracs = fracs[low_fracs]
+        high_fracs = np.where(fracs > tol)[0]
+        fracs = fracs[high_fracs]
+        charge_basin_image = charge_basin_image[high_fracs]
         # sort from high to low
         sorted_indices = np.flip(np.argsort(fracs))
         local_frac[idx] = np.column_stack((charge_basin_image[sorted_indices], fracs[sorted_indices]))

@@ -82,7 +82,6 @@ class BaseAnalysis(ABC):
         vacuum_tol: float | bool = 1.0e-3,
         **kwargs,
     ):
-
         self._charge_grid = charge_grid
 
         # if no total charge is provided, use the base charge grid

@@ -40,7 +40,7 @@ class ElfLabeler(BaseAnalysis):
         self.overlap = BasinOverlap(
             charge_grid=charge_grid,
             total_charge_grid=total_charge_grid,
-            reference_grid=total_charge_grid,
+            reference_grid=reference_grid,
             **kwargs,
         )
         
@@ -120,15 +120,7 @@ class ElfLabeler(BaseAnalysis):
     
     @property
     def along_bond(self):
-        if self._along_bond is None:
-            self._along_bond, _ = is_along_bond_all(
-                feature_frac_coords=self.maxima_frac,
-                atom_frac_coords=self.structure.frac_coords,
-                atom_cart_coords=self.structure.cart_coords,
-                matrix=self.reference_grid.matrix,
-                min_covalent_angle=self.min_covalent_angle,
-            )
-        return self._along_bond
+        return self.overlap.along_bond
     
     @property
     def heavily_polarized(self):
@@ -162,90 +154,38 @@ class ElfLabeler(BaseAnalysis):
                 ring -> core?
                 cage -> core
         """
-        # check whether each basin is along a bond
-        
+
         # create a list to store types
         types = []
         for feature_idx in range(len(self.maxima_frac)):
-            is_shared = self.overlap.shared_local_basins[feature_idx]
-            if is_shared:
-                types.append(self._label_unshared(feature_idx))
+            shape = self.overlap.attractor_shapes[feature_idx]
+            # check for core
+            is_core = self.overlap.core_basins[feature_idx] != -1
+            if is_core:
+                types.append(FeatureType.core)
+                continue
+            # check for lone-pair
+            if not self.overlap.shared_basins[feature_idx]:
+                types.append(FeatureType.lone_pair)
+                continue
+            
+            along_bond = self.along_bond[feature_idx]
+            heavily_polarized = self.heavily_polarized[feature_idx]
+            
+            # check for ionic/covalent bond
+            if not shape == "cage" and along_bond:
+                if heavily_polarized:
+                    types.append(FeatureType.ionic)
+                else:
+                    types.append(FeatureType.covalent)
+            
+            # check for ionic shells and nnas
             else:
-                types.append(self._label_shared(feature_idx))
-                
-        # some feature types require information on other basins. First, we
-        # need which atoms have bonds
-        bonded_atoms = np.zeros(len(self.structure), dtype=np.bool)
-        for feature_idx in range(len(self.maxima_frac)):
-            # skip types that aren't bonds
-            if not types[feature_idx].is_bonding:
-                continue
-            if types[feature_idx] != FeatureType.unknown:
-                continue
-            atoms = self.overlap.local_overlap_fractions[feature_idx][:,0].astype(int)
-            bonded_atoms[atoms] = True
-        # now we label ionic shells or lone-pairs that are highly polarized
-        types[feature_idx] = self._label_polar_shared(feature_idx, bonded_atoms)
-        
+                if heavily_polarized:
+                    types.append(FeatureType.ionic_shell)
+                else:
+                    types.append(FeatureType.nna)
         self._basin_types = types
-
-    def _label_unshared(self, feature_idx: int):
-        shape = self.attractor_shapes[feature_idx]
-        # if we have a ring or cage, this is a core basin
-        if (
-            shape == "ring" 
-            or shape == "cage"
-            or self.elf_bader.basin_atom_dists[feature_idx] < 0.1
-            ):
-            return FeatureType.core
-        # otherwise, we have a point basin far from the core, indicating a
-        # lone-pair
-        return FeatureType.lone_pair
-    
-    def _label_shared(self, feature_idx: int):
-        shape = self.attractor_shapes[feature_idx]
-        # if we have a cage, this must be a shell with donated electrons that
-        # are well separated from neighbors. Also, if the maximum is at the
-        # center of an atom, this is a shell
-        if shape == "cage" or self.elf_bader.basin_atom_dists[feature_idx] < 0.1:
-            return FeatureType.ionic_shell
-        
-        # check if this is a highly polarized basin
-        heavily_polarized = self.heavily_polarized[feature_idx]
-        # check if this basin is situated along a bond
-        if self.along_bond[feature_idx]:
-            if heavily_polarized:
-                return FeatureType.ionic
-            else:
-                return FeatureType.covalent
-        
-        # other features require info on all features
-        if heavily_polarized:
-            return FeatureType.nna
-        else:
-            return FeatureType.unknown
-            
-    def _label_polar_shared(self, feature_idx: int, bonded_atoms: NDArray[bool]):
-        # get dominant atom
-        contained_atoms = self.overlap.local_overlap_fractions[feature_idx]
-        atoms = contained_atoms[:,0]
-        fractions = contained_atoms[:,1]
-        atom = atoms[np.argmax(fractions)]
-        # if this atom has other bonds, this is a lone-pair thats part of a
-        # vsepr structure
-        if bonded_atoms[int(atom)]:
-            return FeatureType.lone_pair
-        # otherwise we have an ionic shell that is polar enough to not be along
-        # atomic bonds
-        else:
-            return FeatureType.ionic_shell
-            
-                
-            
-    
-    #properties:
-        # labeled basins
-        # radii
         
     def to_dict(self):
         pass
