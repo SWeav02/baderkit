@@ -32,7 +32,7 @@ def version():
     import baderkit
 
     print(f"Installed version: v{baderkit.__version__}")
-    
+
 
 @baderkit_app.command()
 def download_examples(
@@ -53,8 +53,8 @@ def download_examples(
     Downloads a zipped file with examples of various applications.
     """
     import logging
-    import urllib.request
     import sys
+    import urllib.request
     from pathlib import Path
 
     def reporthook(blocknum, blocksize, totalsize):
@@ -121,8 +121,7 @@ def download_examples(
 
     else:
         logging.info(f"Downloaded files to {output_path}")
-        
-    
+
 
 class PrintOptions(str, Enum):
     all_atoms = "all_atoms"
