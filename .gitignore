@@ -4,3 +4,4 @@ src/baderkit.egg-info
 src/baderkit/trame
 build
 ~/sync_files.py
+scratch.py
