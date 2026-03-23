@@ -32,7 +32,97 @@ def version():
     import baderkit
 
     print(f"Installed version: v{baderkit.__version__}")
+    
 
+@baderkit_app.command()
+def download_examples(
+    output_path: Path = typer.Option(
+        Path("baderkit_examples"),
+        "--output-path",
+        "-o",
+        help="The directory to write the example files to",
+    ),
+    unzip: bool = typer.Option(
+        False,
+        "--unzip",
+        "-z",
+        help="Unzip after download and delete the zip file.",
+    ),
+):
+    """
+    Downloads a zipped file with examples of various applications.
+    """
+    import logging
+    import urllib.request
+    import sys
+    from pathlib import Path
+
+    def reporthook(blocknum, blocksize, totalsize):
+        readsofar = blocknum * blocksize
+        if totalsize > 0:
+            percent = readsofar * 1e2 / totalsize
+            sys.stdout.write(f"\rDownloading... {percent:5.1f}%")
+            sys.stdout.flush()
+
+    base_url = "https://github.com/SWeav02/baderkit/releases/download/0.9.0/"
+    files = ["H2O", "Ag", "B", "Ca2N", "NaCl"]
+
+    output_path = Path(output_path)
+
+    # --------------------
+    # Download step
+    # --------------------
+    for file in files:
+        path = output_path / file
+        zip_path = path.with_suffix(".zip")
+
+        # Skip download if either already exists
+        if path.exists():
+            logging.info(f"{path} already exists, skipping download")
+            continue
+
+        if zip_path.exists():
+            logging.info(f"{zip_path.name} already exists, skipping download")
+            continue
+
+        logging.info(f"Downloading {zip_path.name}...")
+        url = base_url + file + ".zip"
+
+        zip_path.parent.mkdir(parents=True, exist_ok=True)
+        urllib.request.urlretrieve(url, zip_path, reporthook)
+        print()  # newline after progress bar
+
+    # --------------------
+    # Unzip step
+    # --------------------
+    if unzip:
+        import zipfile
+
+        for file in files:
+            path = output_path / file
+            zip_path = path.with_suffix(".zip")
+
+            # Skip if already unzipped
+            if path.exists():
+                logging.info(f"{path} already unzipped, skipping")
+                continue
+
+            # Skip if zip missing
+            if not zip_path.exists():
+                logging.info(f"{zip_path.name} not found, skipping unzip")
+                continue
+
+            logging.info(f"Unzipping {zip_path.name}...")
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                zf.extractall(path)
+
+            logging.info(f"Removing {zip_path.name}...")
+            zip_path.unlink()
+
+    else:
+        logging.info(f"Downloaded files to {output_path}")
+        
+    
 
 class PrintOptions(str, Enum):
     all_atoms = "all_atoms"

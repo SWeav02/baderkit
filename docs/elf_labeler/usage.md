@@ -7,7 +7,7 @@ The first step of the BadELF algorithm is to determine whether there are bare el
 
 While it was originally conceived to support the BadELF algorithm, the current ElfLabeler class can be used as a general tool for analyzing the ELF, providing considerably more information on each ELF feature than the Badelf class.
 
-Examples of `CHGCAR` and `ELFCAR` files for the electride used in this tutorial can be found in this [Google Drive folder](https://drive.google.com/drive/folders/1h2VWpDsAi5LqX_c0PJeRPOhhofDS9AWb?usp=drive_link).
+Examples of `CHGCAR` and `ELFCAR` files for the Ca2N electride used in this tutorial can be found [here](https://github.com/SWeav02/baderkit/releases/tag/0.9.0 ).
 
 ## Basic Use
 
@@ -77,7 +77,7 @@ The `ElfLabeler` can be run through the command line interface or through Python
                             INFO     Finished labeling ELF
         ```
     
-    A summary of all properties will be written to `elf_labeler.json`. See [here](https://drive.google.com/drive/folders/1h2VWpDsAi5LqX_c0PJeRPOhhofDS9AWb?usp=drive_link) for an example.
+    A summary of all properties will be written to `elf_labeler.json`. See our [example files](https://github.com/SWeav02/baderkit/releases/tag/0.9.0 ). for an example.
 
 === "Python"
     
