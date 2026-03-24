@@ -14,7 +14,7 @@ than the original code.
 BaderKit can be used through the command line interface or through
 Python script. This page covers only the most simple use case of running Bader charge analysis on a VASP `CHGCAR` or Gaussian `cube` file. For more advance usage, see our [API reference](/baderkit/api_reference/core/bader) and [Examples](/baderkit/examples) pages.
 
-The example `CHGCAR` file used in this tutorial can be found in this [Google Drive folder](https://drive.google.com/drive/folders/1cOuYv6SN4EJgJNTy7jJbh8Gn3Un0ZZp4?usp=drive_link).
+The files used in this tutorial can be downloaded [here](https://github.com/SWeav02/baderkit/releases/tag/0.9.0).
 
 
 === "Command Line"
@@ -58,7 +58,7 @@ The example `CHGCAR` file used in this tutorial can be found in this [Google Dri
                         INFO     Time: 0.01
     ```
     
-    A summary of all properties will be written to `bader.json`. See [here](https://drive.google.com/file/d/1NoxtsBNq5n7dgzPfeNX7uu6sOBHJk28n/view?usp=drive_link) for an example.
+    A summary of all properties will be written to `bader.json`. See the Ag system in our [example files](https://github.com/SWeav02/baderkit/releases/tag/0.9.0 ).
     
     Additional arguments and options such as those for printing output files or using different 
     algorithms can be viewed by running the help command.

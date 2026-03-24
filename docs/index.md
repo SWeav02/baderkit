@@ -60,3 +60,13 @@ BaderKit is a python package providing tools for calculating atomic charges usin
         This is kept as optional as the GUI requires significantly more dependencies
         than the base app. Unfortunately, this means conda cannot
         be used, as it does not allow for optional dependencies.
+        
+## Example Files
+
+A set of example files can be downloaded [here](https://github.com/SWeav02/baderkit/releases/edit/0.9.0 ).
+
+Alternatively, the files can be downloaded through the command line as follows. Note that this will download all examples which are ~0.75 GB and ~3.25 GB when unzipped.
+
+```bash
+baderkit download-examples
+```

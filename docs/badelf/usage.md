@@ -8,7 +8,7 @@ BadELF can be run through the command line interface or through Python script. C
 
 By default, BadELF uses the 'zero-flux' algorithm which separates all ELF basins at zero-flux surfaces, following traditional ELF charge analysis. The original [badelf](../methods/#__tabbed_1_3) algorithm also incorporates voronoi-like planes and may be more appropriate in some systems.
 
-Examples of `CHGCAR` and `ELFCAR` files for the electride used in this tutorial can be found in this [Google Drive folder](https://drive.google.com/drive/folders/1h2VWpDsAi5LqX_c0PJeRPOhhofDS9AWb?usp=drive_link).
+Examples of `CHGCAR` and `ELFCAR` files for the Ca2N electride used in this tutorial can be found [here](https://github.com/SWeav02/baderkit/releases/tag/0.9.0 ).
 
 === "Command Line"
 
@@ -86,7 +86,7 @@ Examples of `CHGCAR` and `ELFCAR` files for the electride used in this tutorial 
     100%|███████████████████████████████████████████████████████████████████████████████████████████████| 15/15 [00:00<00:00, 54.06it/s]
     ```
     
-    A summary of all properties will be written to `badelf.json`. See [here](https://drive.google.com/drive/folders/1h2VWpDsAi5LqX_c0PJeRPOhhofDS9AWb?usp=drive_link) for an example.
+    A summary of all properties will be written to `badelf.json`. See our [example files](https://github.com/SWeav02/baderkit/releases/tag/0.9.0 ). for an example.
     
     Additional arguments and options such as those for printing output files or using different 
     algorithms can be viewed by running the help command.

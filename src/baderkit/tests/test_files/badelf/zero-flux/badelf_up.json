@@ -31,7 +31,7 @@
         0.6736902216
     ],
     "volumes": [
-        9.8060779736,
+        9.8060779735,
         9.8060779736,
         24.1204215347,
         28.0969456235
@@ -58,7 +58,7 @@
     "electrides_per_formula": 0.6736902216,
     "electrides_per_reduced_formula": 0.6736902216,
     "total_electron_number": 12.6976461268,
-    "total_volume": 71.8295231054,
+    "total_volume": 71.8295231053,
     "spin_system": "up",
     "vacuum_charge": 0.0,
     "vacuum_volume": 0.0

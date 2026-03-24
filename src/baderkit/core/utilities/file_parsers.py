@@ -107,7 +107,7 @@ def infer_significant_figures(values, max_figs=20, sample_size=1000):
     return max_figs
 
 
-def detect_format(filename: str | Path):
+def detect_volume_format(filename: str | Path):
     filename = Path(filename)
     source_format = None
 
@@ -662,3 +662,178 @@ def write_cube(
             # join 6 entries per line, then join lines and add final newline
             rows = ("".join(formatted[i : i + 6]) for i in range(0, len(formatted), 6))
             file.write("\n".join(rows) + "\n")
+
+
+###############################################################################
+# Pseudopotential Parsers
+###############################################################################
+
+import re
+from pathlib import Path
+
+
+def detect_pp_format(text):
+    if "<UPF" in text:
+        return "UPF_xml"
+    elif "<PP_HEADER" in text:
+        return "UPF_old"
+    elif "<paw_dataset" in text:
+        return "paw_xml"
+    elif "TITEL" in text:
+        return "POTCAR"
+    else:
+        return "UNKNOWN"
+
+
+def parse_paw_xml(file):
+    from pymatgen.io.abinit import PseudoParser
+
+    pseudo = PseudoParser().parse(str(file.resolve()))
+    return {pseudo.element: pseudo.Z_val}
+
+
+# ----------------------
+# current UPF (xml-like)
+# ----------------------
+def parse_upf_xml(text):
+    results = {}
+
+    # get header sections
+    blocks = re.findall(r"<PP_HEADER(.*?)/>", text, re.DOTALL)
+
+    for block in blocks:
+        entry = re.split(r'["=\s]+', text)
+        try:
+            idx = entry.index("z_valence") + 1
+            z_val = float(entry[idx])
+            idx = entry.index("element") + 1
+            element = entry[idx]
+            results[element] = z_val
+        except:
+            continue
+
+    return results
+
+
+# ----------------------
+# UPF (can support multi if concatenated)
+# ----------------------
+def parse_upf_old(text):
+    results = {}
+
+    # get header sections
+    blocks = re.findall(r"<PP_HEADER>(.*?)</PP_HEADER>", text, re.DOTALL)
+
+    for block in blocks:
+        lines = block.splitlines()
+        element = None
+        z_val = None
+        for line in lines:
+            if "Element" in line:
+                element = line.split()[0]
+                continue
+            if "Z valence" in line:
+                z_val = float(line.split()[0])
+                continue
+        if z_val is not None and element is not None:
+            results[element] = z_val
+
+    return results
+
+
+# ----------------------
+# POTCAR (multi-element aware)
+# ----------------------
+def parse_potcar(text):
+    results = {}
+
+    # Split datasets
+    blocks = re.split(r"End of Dataset", text)
+
+    for block in blocks:
+        if not block.strip():
+            continue
+
+        element = None
+        z_val = None
+
+        for line in block.splitlines():
+            if "TITEL" in line:
+                # Example: TITEL  = PAW_PBE Si 05Jan2001
+                try:
+                    parts = line.split()
+                    idx = parts.index("TITEL")
+                    element = re.match(r"[A-Z][a-z]?", parts[idx + 3]).group(0)
+                except:
+                    pass
+
+            elif "ZVAL" in line:
+                try:
+                    # split line and find where ZVAL is
+                    parts = line.split()
+                    idx = parts.index("ZVAL")
+                    z_val = float(parts[idx + 2])
+                except:
+                    pass
+
+        if element is not None and z_val is not None:
+            results[element] = z_val
+
+    return results
+
+
+# ----------------------
+# Unified loader
+# ----------------------
+def load_pseudo(paths: list | str | Path | dict | None | bool):
+    # if no path, return None
+    if paths is None:
+        # search the current directory for pseudopotentials
+        directory = Path(".")
+        paths = []
+        for file in directory.iterdir():
+            # skip directories
+            if file.is_dir():
+                continue
+            if any(i in file.name for i in ("POTCAR", "UPF", "upf", "xml")):
+                paths.append(file)
+        if not paths:
+            return None
+
+    # if False, the user requests a full electron calculation
+    if paths is False:
+        return False
+
+    # if dict, this is already the desired valence counts and we can return
+    if isinstance(paths, dict):
+        return paths
+
+    if isinstance(paths, Path) or isinstance(paths, str):
+        # we only have one path
+        paths = [paths]
+
+    pps = {}
+    for path in paths:
+        path = Path(path)
+        if not path.exists():
+            logging.warning(f"No pseudopotential file found at {path}.")
+            continue
+
+        with open(path) as f:
+            text = f.read()
+
+        fmt = detect_pp_format(text)
+        if fmt == "paw_xml":
+            # feed path instead of text
+            pps.update(parse_paw_xml(path))
+        elif fmt == "UPF_xml":
+            pps.update(parse_upf_xml(text))
+        elif fmt == "UPF_old":
+            pps.update(parse_upf_old(text))
+        elif fmt == "POTCAR":
+            pps.update(parse_potcar(text))
+        else:
+            logging.warning(
+                f"Pseudopotential format in file {path} could not be recognized."
+            )
+    return pps

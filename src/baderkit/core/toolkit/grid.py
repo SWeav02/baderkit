@@ -22,7 +22,7 @@ from baderkit.core.toolkit.structure import Structure
 from baderkit.core.utilities.basic import get_transforms_in_radius
 from baderkit.core.utilities.file_parsers import (
     Format,
-    detect_format,
+    detect_volume_format,
     infer_significant_figures,
     read_cube,
     read_vasp,
@@ -1532,12 +1532,14 @@ class Grid(VolumetricData):
 
         if format is None:
             # guess format from file
-            format = detect_format(grid_file)
+            format = detect_volume_format(grid_file)
 
+        # make sure format is a Format enum
+        format = Format(format)
         # make sure format is an available option
         assert (
             format in Format
-        ), "Invalid provided format '{format}'. Options are: {[i.value for i in Format]}"
+        ), f"Invalid provided format '{format}'. Options are: {[i.value for i in Format]}"
 
         # get the reading method corresponding to this output format
         method_name = format.reader

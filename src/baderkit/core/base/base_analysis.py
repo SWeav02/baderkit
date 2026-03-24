@@ -3,7 +3,7 @@
 import copy
 import json
 import logging
-from abc import ABC, abstractclassmethod
+from abc import ABC
 from pathlib import Path
 from typing import Literal, TypeVar
 
@@ -11,13 +11,20 @@ import numpy as np
 from numpy.typing import NDArray
 
 from baderkit.core.toolkit import Grid, Structure
-from baderkit.core.utilities.file_parsers import Format
+from baderkit.core.utilities.file_parsers import Format, load_pseudo
 
 # # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="BaseAnalysis")
 
 # TODO:
 # - Add handling of non-nuclear attractors (e.g. those in Li metal)
+
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if hasattr(obj, "tolist"):
+            return obj.tolist()
+        return super().default(obj)
 
 
 class BaseAnalysis(ABC):
@@ -38,6 +45,12 @@ class BaseAnalysis(ABC):
         should typically only be set when partitioning functions other than the
         charge density (e.g. ELI-D, ELF, etc.).If None, defaults to the
         total_charge_grid.
+    valence_counts : dict | None | False, optional
+        A dictionary where each key is an atomic species in the system and each
+        value is the number of valence electrons used in the pseudo potential.
+        This is used for methods that calculate oxidation states.
+        For all electron calculations, this can be set to False to automatically
+        calculate based on atomic numbers.
     vacuum_tol : float | bool, optional
         If a float is provided, this is the value below which a point will
         be considered part of the vacuum. If a bool is provided, no vacuum
@@ -53,12 +66,19 @@ class BaseAnalysis(ABC):
         "structure",
     ]
     _reset_props = []
+    _base_method_kwargs = [
+        "vacuum_tol",
+    ]
+    _method_kwargs = []
+
+    _summary_props = []
 
     def __init__(
         self,
         charge_grid: Grid,
         total_charge_grid: Grid | None = None,
         reference_grid: Grid | None = None,
+        valence_counts: dict | None = None,
         vacuum_tol: float | bool = 1.0e-3,
         **kwargs,
     ):
@@ -83,6 +103,13 @@ class BaseAnalysis(ABC):
 
         self._total_charge_grid = total_charge_grid
         self._reference_grid = reference_grid
+
+        if valence_counts is False:
+            valence_counts = {}
+            # The user requests a full electron calculation
+            for site in charge_grid.structure:
+                valence_counts[site.specie.symbol] = getattr(site.specie, "number", 0)
+        self._valence_counts = valence_counts
 
         # check if the total charge grid has values below 0
         if vacuum_tol is not False:
@@ -199,6 +226,24 @@ class BaseAnalysis(ABC):
         self._reset_properties()
 
     @property
+    def valence_counts(self) -> dict | None:
+        """
+
+        Returns
+        -------
+        dict | None
+            A dictionary where each key is an atomic species in the system and each
+            value is the number of valence electrons used in the pseudo potential.
+            This is used for methods that calculate oxidation states.
+
+        """
+        return self._valence_counts
+
+    @valence_counts.setter
+    def valence_counts(self, value: dict):
+        self._valence_counts = value
+
+    @property
     def vacuum_tol(self) -> float | bool:
         """
 
@@ -298,9 +343,6 @@ class BaseAnalysis(ABC):
     def from_vasp(
         cls,
         charge_filename: Path | str = "CHGCAR",
-        total_charge_filename: Path | None | str = None,
-        reference_filename: Path | None | str = None,
-        total_only: bool = True,
         **kwargs,
     ) -> Self:
         """
@@ -319,6 +361,12 @@ class BaseAnalysis(ABC):
         reference_filename : Path | None | str, optional
             The path to CHGCAR like file that will be used for partitioning.
             If None, the total charge file will be used for partitioning.
+        pseudopotential_filename : Path | None | str | dict, optional
+            The path to the POTCAR used for calculating oxidation states. Alternatively,
+            a dictionary representing the valence counts of each atom in the system
+            where each entry is the species symbol and each value is the number
+            of electrons used for that species in the calculation. If None,
+            any properties relying on valence counts will not be calculated.
         total_only: bool
             If true, only the first set of data in each file will be read. This
             increases speed and reduced memory usage as the other data is typically
@@ -333,35 +381,10 @@ class BaseAnalysis(ABC):
             A BaseAnalysis class object.
 
         """
-        charge_grid = Grid.from_vasp(charge_filename, total_only=total_only)
-
-        if total_charge_filename is None:
-            total_charge_grid = None
-        else:
-            total_charge_grid = Grid.from_vasp(
-                total_charge_filename, total_only=total_only
-            )
-
-        if reference_filename is None:
-            reference_grid = None
-        else:
-            reference_grid = Grid.from_vasp(reference_filename, total_only=total_only)
-
-        return cls(
-            charge_grid=charge_grid,
-            total_charge_grid=total_charge_grid,
-            reference_grid=reference_grid,
-            **kwargs,
-        )
+        return cls.from_dynamic(charge_filename, format="vasp", **kwargs)
 
     @classmethod
-    def from_cube(
-        cls,
-        charge_filename: Path | str,
-        total_charge_filename: Path | None | str = None,
-        reference_filename: Path | None | str = None,
-        **kwargs,
-    ) -> Self:
+    def from_cube(cls, **kwargs) -> Self:
         """
         Creates a Bader class object from .cube files.
 
@@ -369,7 +392,6 @@ class BaseAnalysis(ABC):
         ----------
         charge_filename : Path | str, optional
             The path to the .cube like file that will be used for integrating charge.
-            The default is "CHGCAR".
         total_charge_filename : Grid | None, optional
             The path to the .cube like file used for determining vacuum regions
             in the system. For pseudopotential codes this represents the total
@@ -387,22 +409,7 @@ class BaseAnalysis(ABC):
             A BaseAnalysis class object.
 
         """
-        charge_grid = Grid.from_cube(charge_filename)
-        if total_charge_filename is None:
-            total_charge_grid = None
-        else:
-            total_charge_grid = Grid.from_cube(total_charge_filename)
-        if reference_filename is None:
-            reference_grid = None
-        else:
-            reference_grid = Grid.from_cube(reference_filename)
-
-        return cls(
-            charge_grid=charge_grid,
-            total_charge_grid=total_charge_grid,
-            reference_grid=reference_grid,
-            **kwargs,
-        )
+        return cls.from_dynamic(format="cube", **kwargs)
 
     @classmethod
     def from_dynamic(
@@ -411,6 +418,7 @@ class BaseAnalysis(ABC):
         total_charge_filename: Path | None | str = None,
         reference_filename: Path | None | str = None,
         format: Literal["vasp", "cube", None] = None,
+        pseudopotential_filename: Path | None | str | bool = None,
         total_only: bool = True,
         **kwargs,
     ) -> Self:
@@ -432,6 +440,12 @@ class BaseAnalysis(ABC):
         reference_filename : Path | None | str, optional
             The path to the file that will be used for partitioning.
             If None, defaults to the total charge grid.
+        pseudopotential_filename : Path | None | str | dict, optional
+            The path to the POTCAR used for calculating oxidation states. Alternatively,
+            a dictionary representing the valence counts of each atom in the system
+            where each entry is the species symbol and each value is the number
+            of electrons used for that species in the calculation. If None,
+            any properties relying on valence counts will not be calculated.
         format : Literal["vasp", "cube", None], optional
             The format of the grids to read in. If None, the formats will be
             guessed from the file names.
@@ -466,10 +480,13 @@ class BaseAnalysis(ABC):
                 reference_filename, format=format, total_only=total_only
             )
 
+        valence_counts = load_pseudo(pseudopotential_filename)
+
         return cls(
             charge_grid=charge_grid,
             total_charge_grid=total_charge_grid,
             reference_grid=reference_grid,
+            valence_counts=valence_counts,
             **kwargs,
         )
 
@@ -488,18 +505,47 @@ class BaseAnalysis(ABC):
     # Summary Methods
     ###########################################################################
 
-    @abstractclassmethod
-    def to_dict(
+    def to_dict(self) -> dict:
+        """
+
+        Gets a summary dictionary of the analysis.
+
+        """
+
+        results = {}
+        results["method_kwargs"] = self._to_dict(
+            self._base_method_kwargs + self._method_kwargs
+        )
+        for i in self._summary_props:
+            results[i] = self._to_dict(getattr(self, f"_{i}"))
+
+        return results
+
+    def _to_dict(
         self,
-        use_json: bool = True,
-    ) -> dict:
+        props: list[str],
+    ):
         """
+        A helper function to pull a list of properties into a dictionary for
+        summary. This is expected to be used in most methods.
 
-        Gets a summary dictionary of the analysis. Must be overwritten.
+        Parameters
+        ----------
+        props : list[str]
+            A list of strings representing the names of class properties to
+            add to the results.
+
+        Returns
+        -------
+        results : dict
+            A dictionary of results matching the requested properties. Entries
+            that are not found return as None.
 
         """
-
-        raise NotImplementedError()
+        results = {}
+        for prop in props:
+            results[prop] = getattr(self, prop, None)
+        return results
 
     def to_json(self, **kwargs) -> str:
         """
@@ -517,7 +563,7 @@ class BaseAnalysis(ABC):
             A JSON string representation of the BadELF results.
 
         """
-        return json.dumps(self.to_dict(use_json=True, **kwargs))
+        return json.dumps(self.to_dict(use_json=True, **kwargs), cls=NumpyEncoder)
 
     def write_json(self, filepath: Path | str, **kwargs) -> None:
         """
@@ -533,7 +579,7 @@ class BaseAnalysis(ABC):
         """
         filepath = Path(filepath)
         with open(filepath, "w") as json_file:
-            json.dump(self.to_dict(use_json=True, **kwargs), json_file, indent=4)
+            json.dump(self.to_dict(**kwargs), json_file, cls=NumpyEncoder, indent=4)
 
     ###########################################################################
     # Volume Writing Methods
