@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1392.967 284.422">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: url(#radial-gradient);
+      }
+
+      .cls-2 {
+        fill: #34997a;
+      }
+
+      .cls-3 {
+        fill: #371046;
+      }
+
+      .cls-4 {
+        fill: #451e56;
+      }
+    </style>
+    <radialGradient id="radial-gradient" cx="1022.73" cy="-293.288" fx="1022.73" fy="-293.288" r="58.16" gradientTransform="translate(1726.82 -861.587) rotate(135) scale(.989)" gradientUnits="userSpaceOnUse">
+      <stop offset=".183" stop-color="#fff369"/>
+      <stop offset=".283" stop-color="#fdf269"/>
+      <stop offset=".319" stop-color="#f6f069"/>
+      <stop offset=".345" stop-color="#eaec6a"/>
+      <stop offset=".366" stop-color="#d9e76b"/>
+      <stop offset=".384" stop-color="#c3e16d"/>
+      <stop offset=".399" stop-color="#a8d96f"/>
+      <stop offset=".414" stop-color="#87cf72"/>
+      <stop offset=".426" stop-color="#62c475"/>
+      <stop offset=".438" stop-color="#39b878"/>
+      <stop offset=".439" stop-color="#35b779"/>
+      <stop offset=".448" stop-color="#38b27b"/>
+      <stop offset=".582" stop-color="#63759b"/>
+      <stop offset=".646" stop-color="#745da8"/>
+      <stop offset=".742" stop-color="#634489"/>
+      <stop offset=".878" stop-color="#4e2564"/>
+      <stop offset=".949" stop-color="#461a56"/>
+    </radialGradient>
+  </defs>
+  <g>
+    <path class="cls-4" d="M0,284.422V85.61h64.061v198.812H0ZM74.206,284.422v-39.702h47.539v-42.399h-47.539v-34.608h47.539v-42.398h-47.539v-39.703h74.352l38.553,39.703v40.451l-19.276,19.926,19.276,19.926v39.104l-38.553,39.702h-74.352Z"/>
+    <path class="cls-4" d="M235.519,284.422l-25.798-26.219v-39.852l25.798-26.519h68.119v27.567h-33.045v27.866h33.045v17.529l-19.131,19.626h-48.988ZM313.783,284.422v-119.406h-91.164v-19.776l19.276-19.926h96.092l38.407,39.702v119.406h-62.611Z"/>
+    <path class="cls-4" d="M438.572,284.422l-34.64-35.807v-87.495l34.64-35.807h60.293v39.702h-30.871v82.251h30.871v21.424l-15.219,15.731h-45.074ZM509.011,284.422V64.636h64.061v219.786h-64.061Z"/>
+    <path class="cls-4" d="M639.887,284.422l-38.408-39.702v-79.704l38.408-39.702h25.653v159.108h-25.653ZM675.686,220.599v-27.717h33.77v-27.866h-33.77v-39.702h54.35l38.408,39.702v55.583h-92.758ZM675.686,284.422v-37.155h86.091v17.229l-19.132,19.926h-66.959Z"/>
+    <path class="cls-4" d="M794.677,284.422V125.314h64.061v159.108h-64.061ZM896.276,203.669v-38.653h-27.247v-17.38l21.45-22.322h38.842l31.161,37.155v41.2h-64.206Z"/>
+    <path class="cls-2" d="M981.062,284.422V85.61h64.062v198.812h-64.062ZM1054.979,256.256v-96.634l44.93-74.012h66.67l-111.6,170.646ZM1100.343,284.422l-21.74-46.294,37.973-58.88,53.046,105.174h-69.278Z"/>
+    <path class="cls-2" d="M1184.696,284.422V125.314h64.206v159.108h-64.206Z"/>
+    <path class="cls-2" d="M1322.819,284.422l-38.553-39.702v-79.704h-12.754v-39.702h12.754v-17.229l64.061-22.474v159.109h42.321v39.702h-67.829ZM1358.472,165.016v-39.702h34.495v39.702h-34.495Z"/>
+  </g>
+  <g>
+    <polygon class="cls-1" points="1168.367 58.565 1216.799 0 1265.231 58.565 1216.799 117.13 1168.367 58.565"/>
+    <circle class="cls-3" cx="1216.799" cy="58.565" r="23.397"/>
+  </g>
+</svg>
