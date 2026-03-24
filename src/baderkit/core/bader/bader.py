@@ -639,7 +639,7 @@ class Bader(BaseAnalysis):
                 vacuum_mask=self.vacuum_mask,
                 label_num=len(self.maxima_frac),
             )
-        return self._basin_contact_surface_areas
+        return self._basin_contact_surface_areas.round(8)
 
     @property
     def basin_surface_areas(self) -> NDArray[np.float64]:
@@ -660,7 +660,7 @@ class Bader(BaseAnalysis):
             contact_surfaces = self.basin_contact_surface_areas
             # sum across axis 0 to get the total
             self._basin_surface_areas = np.sum(contact_surfaces, axis=1)
-        return self._basin_surface_areas
+        return self._basin_surface_areas.round(8)
 
     ###########################################################################
     # Minima Basin Properties
@@ -1125,7 +1125,7 @@ class Bader(BaseAnalysis):
                 vacuum_mask=self.vacuum_mask,
                 label_num=len(self.structure),
             )
-        return self._atom_contact_surface_areas
+        return self._atom_contact_surface_areas.round(8)
 
     @property
     def atom_surface_areas(self) -> NDArray[np.float64]:
@@ -1146,7 +1146,7 @@ class Bader(BaseAnalysis):
             contact_surfaces = self.atom_contact_surface_areas
             # sum across axis 0 to get the total
             self._atom_surface_areas = np.sum(contact_surfaces, axis=1)
-        return self._atom_surface_areas
+        return self._atom_surface_areas.round(8)
 
     @property
     def oxidation_states(self) -> NDArray[np.float64]:
