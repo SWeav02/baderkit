@@ -12,7 +12,7 @@ BaderKit is a python package providing tools for calculating atomic charges usin
 
 === "conda (recommended)"
     If you haven't already, install a conda environment manager such as [Anaconda](https://www.anaconda.com/download).
-    
+
     1. Create a conda environment using the following command in your terminal.
     Replace `my_env` with whatever name you prefer.
     ```bash
@@ -36,7 +36,7 @@ BaderKit is a python package providing tools for calculating atomic charges usin
     [Anaconda](https://www.anaconda.com/download) or [venv](https://docs.python.org/3/library/venv.html)
     to keep your Python work environments isolated. If you don't want to,
     you can still use pip so long as Python is installed.
-    
+
     1. Install BaderKit with the following command in your terminal.
     ```bash
     pip install baderkit
@@ -45,25 +45,25 @@ BaderKit is a python package providing tools for calculating atomic charges usin
     ```bash
     baderkit --help
     ```
-        
+
 === "GUI App (Optional)"
 
     In addition to the core package, there is an optional GUI feature which allows
     for easy viewing and plotting of results. This requires extra dependencies which
     can be installed through pip.
-    
+
     ```bash
     pip install baderkit[gui]
     ```
-    
+
     !!! Note
         This is kept as optional as the GUI requires significantly more dependencies
         than the base app. Unfortunately, this means conda cannot
         be used, as it does not allow for optional dependencies.
-        
+
 ## Example Files
 
-A set of example files can be downloaded [here](https://github.com/SWeav02/baderkit/releases/edit/0.9.0 ).
+A set of example files can be downloaded [here](https://github.com/SWeav02/baderkit/releases/tag/0.9.0 ).
 
 Alternatively, the files can be downloaded through the command line as follows. Note that this will download all examples which are ~0.75 GB and ~3.25 GB when unzipped.
 
