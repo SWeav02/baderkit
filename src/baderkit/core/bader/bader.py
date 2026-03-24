@@ -162,8 +162,6 @@ class Bader(BaseAnalysis):
     )
     _summary_props = [
         "maxima_results",
-        "minima_results",
-        "saddle_results",
         "atom_results",
     ]
 
@@ -853,7 +851,7 @@ class Bader(BaseAnalysis):
         """
         if self._saddle1_vox is None:
             self._run_minima_bader()
-        return self._saddle1_vox
+        return self._saddle1_vox.round(10)
 
     @property
     def saddle1_frac(self) -> NDArray[int]:
@@ -867,7 +865,7 @@ class Bader(BaseAnalysis):
         """
         if self._saddle1_frac is None:
             self._run_minima_bader()
-        return self._saddle1_frac
+        return self._saddle1_frac.round(10)
 
     @property
     def saddle1_cart(self) -> NDArray[int]:
@@ -881,7 +879,7 @@ class Bader(BaseAnalysis):
         """
         if self._saddle1_cart is None:
             self._saddle1_cart = self.reference_grid.frac_to_cart(self._saddle1_frac)
-        return self._saddle1_cart
+        return self._saddle1_cart.round(10)
 
     @property
     def saddle2_vox(self) -> NDArray[int]:
@@ -895,7 +893,7 @@ class Bader(BaseAnalysis):
         """
         if self._saddle2_vox is None:
             self._run_maxima_bader()
-        return self._saddle2_vox
+        return self._saddle2_vox.round(10)
 
     @property
     def saddle2_frac(self) -> NDArray[int]:
@@ -909,7 +907,7 @@ class Bader(BaseAnalysis):
         """
         if self._saddle2_frac is None:
             self._run_maxima_bader()
-        return self._saddle2_frac
+        return self._saddle2_frac.round(10)
 
     @property
     def saddle2_cart(self) -> NDArray[int]:
@@ -923,7 +921,7 @@ class Bader(BaseAnalysis):
         """
         if self._saddle2_cart is None:
             self._saddle2_cart = self.reference_grid.frac_to_cart(self._saddle2_frac)
-        return self._saddle1_cart
+        return self._saddle2_cart.round(10)
 
     @property
     def saddle1_ref_values(self) -> NDArray[float]:
@@ -1883,3 +1881,19 @@ class Bader(BaseAnalysis):
                     f"{val:<{col_widths[col]}}" for col, val in row.items()
                 )
                 f.write(line + "\n")
+
+    def to_dict(self, include_minima: bool = False) -> dict:
+        """
+        Converts the Bader object to a dictionary.
+
+        Returns
+        -------
+        dict
+            A dictionary representation of the Bader object.
+
+        """
+        results = super().to_dict()
+        if include_minima:
+            results["minima_results"] = self._to_dict(self._minima_results)
+            results["saddle_results"] = self._to_dict(self._saddle_results)
+        return results
