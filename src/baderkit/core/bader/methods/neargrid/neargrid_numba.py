@@ -513,8 +513,14 @@ def refine_fast_neargrid(
                 if extrema_mask[ii, jj, kk] or labels[ii, jj, kk] == vacuum_label:
                     # remove the point from the refinement list
                     refinement_mask[i, j, k] = False
-                    # We've hit a maximum.
+                    # We've hit a maximum. Get its label and image
                     current_label = abs(labels[ii, jj, kk])
+                    current_idx = coords_to_flat(ii, jj, kk, ny_nz, nz)
+                    maxima_image = images[current_idx]
+                    # update the image for this point
+                    wi += maxima_image[0]
+                    wj += maxima_image[1]
+                    wk += maxima_image[2]
                     current_image = IMAGE_TO_INT[wi, wj, wk]
                     # Check if this is a reassignment
                     if label != current_label or image != current_image:
