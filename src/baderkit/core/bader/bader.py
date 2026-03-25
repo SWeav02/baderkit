@@ -113,6 +113,9 @@ class Bader(BaseAnalysis):
         "minima_betti_groups",
         "minima_betti_cutoffs",
         "minima_betti_numbers",
+        ]
+
+    _saddle_results = [
         # saddle props
         "saddle1_frac",
         "saddle1_cart",
@@ -173,7 +176,7 @@ class Bader(BaseAnalysis):
         self,
         method: str | Method = Method.default,
         nna_cutoff: float | bool = False,
-        persistence_tol: float = 0.01,
+        persistence_tol: float = 0.1,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -472,7 +475,7 @@ class Bader(BaseAnalysis):
         if self._ongrid_maxima_groups is None:
             self._run_bader()
         return self._ongrid_maxima_groups
-    
+
     @property
     def maxima_betti_groups(self) -> list[NDArray[np.int64]]:
         """
@@ -486,30 +489,29 @@ class Bader(BaseAnalysis):
         """
         # TODO: Update this to be the exact value at which each group has its
         # betti number
-        
+
         if self._maxima_betti_groups is None:
-            tol = max(self.maxima_persistence_tol, 0)
-            # self._run_maxima_bader()
+            tol = max(self.persistence_tol, 0)
             # get groups
             maxima_groups = self.ongrid_maxima_groups
             maxima_values = self.maxima_ref_values
             # get the lowest value that the maximum would connect to with the
             # current persistence tol
             persistence_values = []
-            for group, min_val in zip(maxima_groups, maxima_values):
+            for group, max_val in zip(maxima_groups, maxima_values):
                 group_vals = self.reference_grid.total[
                     group[:, 0],
                     group[:, 1],
                     group[:, 2],
                 ]
-                valid_mask = ((group_vals - min_val) / group_vals) - 1e-12 <= tol
-                best_val = group_vals[valid_mask].max()
+                valid_mask = (abs(max_val - group_vals) / group_vals) - 1e-12 <= tol
+                best_val = group_vals[valid_mask].min()
                 # get lowest possible persistence below this value
-                # (val - max_val) / val < persistence_tol
+                # (max_val - val) / val < persistence_tol
                 # --> val = max_val / (1+persistence_tol)
-                persistence_values.append(best_val / (1 - self.maxima_persistence_tol))
+                persistence_values.append(best_val / (1 + self.persistence_tol))
             persistence_values = np.array(persistence_values)
-            
+
             self._maxima_betti_groups = get_persistence_groups(
                 labels=self.maxima_basin_labels,
                 data=self.reference_grid.total,
@@ -518,7 +520,7 @@ class Bader(BaseAnalysis):
                 use_minima=False,
             )
         return self._maxima_betti_groups
-    
+
     @property
     def maxima_betti_cutoffs(self) -> NDArray[np.float64]:
         """
@@ -532,7 +534,7 @@ class Bader(BaseAnalysis):
             generally artifacts of the grid rather than significant features.
 
         """
-        
+
         if self._maxima_betti_cutoffs is None:
             self._get_betti_numbers(False)
         return self._maxima_betti_cutoffs
@@ -848,7 +850,7 @@ class Bader(BaseAnalysis):
         if self._ongrid_minima_groups is None:
             self._run_minima_bader()
         return self._ongrid_minima_groups
-    
+
     @property
     def minima_betti_groups(self) -> list[NDArray[np.int64]]:
         """
@@ -860,9 +862,9 @@ class Bader(BaseAnalysis):
             that are within each minimas persistence threshold.
 
         """
-        
+
         if self._minima_betti_groups is None:
-            tol = max(self.minima_persistence_tol, 0)
+            tol = max(self.persistence_tol, 0)
             # self._run_minima_bader()
             # get groups
             minima_groups = self.ongrid_minima_groups
@@ -881,9 +883,9 @@ class Bader(BaseAnalysis):
                 # get lowest possible persistence below this value
                 # (val - max_val) / val < persistence_tol
                 # --> val = max_val / (1+persistence_tol)
-                persistence_values.append(best_val / (1 - self.minima_persistence_tol))
+                persistence_values.append(best_val / (1 - self.persistence_tol))
             persistence_values = np.array(persistence_values)
-            
+
             self._minima_betti_groups = get_persistence_groups(
                 labels=self.minima_basin_labels,
                 data=self.reference_grid.total,
@@ -892,7 +894,7 @@ class Bader(BaseAnalysis):
                 use_minima=True,
             )
         return self._minima_betti_groups
-    
+
     @property
     def minima_betti_cutoffs(self) -> NDArray[np.float64]:
         """
@@ -906,7 +908,7 @@ class Bader(BaseAnalysis):
             generally artifacts of the grid rather than significant features.
 
         """
-        
+
         if self._minima_betti_cutoffs is None:
             self._get_betti_numbers(True)
         return self._minima_betti_cutoffs
@@ -933,7 +935,7 @@ class Bader(BaseAnalysis):
         return self._minima_betti_numbers
 
     @property
-    def minima_persistence_tol(self) -> float:
+    def persistence_tol(self) -> float:
         """
 
         Returns
@@ -949,11 +951,11 @@ class Bader(BaseAnalysis):
 
 
         """
-        return self._minima_persistence_tol
+        return self._persistence_tol
 
-    @minima_persistence_tol.setter
-    def minima_persistence_tol(self, value: str | Method):
-        self._minima_persistence_tol = value
+    @persistence_tol.setter
+    def persistence_tol(self, value: str | Method):
+        self._persistence_tol = value
         # reset atom properties
         self._reset_properties(
             exclude_properties=[
@@ -964,8 +966,8 @@ class Bader(BaseAnalysis):
                 "structure",
             ]
         )
-        
-    
+
+
 
     ###########################################################################
     # Saddle Properties
@@ -1555,46 +1557,6 @@ class Bader(BaseAnalysis):
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0, 2)}")
 
-    def get_oxidation_from_potcar(self, potcar_path: Path = "POTCAR"):
-        """
-        Calculates the oxidation state of each atom from the provided POTCAR
-        file.
-
-        Parameters
-        ----------
-        potcar_path : Path, optional
-            The path to the POTCAR to calculate oxidation states from. The default is "POTCAR".
-
-        Returns
-        -------
-        NDArray
-            The oxidation state of each atom in the structure.
-
-        """
-        # convert to path
-        potcar_path = Path(potcar_path)
-        if not potcar_path.exists():
-            logging.warning(
-                "No POTCAR file found in the requested directory. Oxidation states cannot be calculated"
-            )
-            return
-        # load
-        with warnings.catch_warnings(record=True):
-            potcars = Potcar.from_file(potcar_path)
-        nelectron_data = {}
-        # the result is a list because there can be multiple element potcars
-        # in the file (e.g. for NaCl, POTCAR = POTCAR_Na + POTCAR_Cl)
-        for potcar in potcars:
-            nelectron_data.update({potcar.element: potcar.nelectrons})
-        # calculate oxidation states
-        oxi_state_data = []
-        for site, site_charge in zip(self.structure, self.atom_charges):
-            element_str = site.specie.name
-            oxi_state = nelectron_data[element_str] - site_charge
-            oxi_state_data.append(oxi_state)
-
-        return np.array(oxi_state_data)
-
     def get_persistence_groups(self):
         """
         Gets the groups of voxels for each maximum and minimum that are within
@@ -1631,7 +1593,7 @@ class Bader(BaseAnalysis):
 
         return maxima_groups, minima_groups
 
-    def get_betti_numbers(
+    def _get_betti_numbers(
         self,
         use_minima: bool,
     ):
@@ -1651,11 +1613,11 @@ class Bader(BaseAnalysis):
             Whether to calculate betti numbers for maxima or for minima
 
         """
-        
+
         if use_minima:
             extrema_groups = self.minima_betti_groups
             base_extrema = self.minima_vox
-            
+
         else:
             extrema_groups = self.maxima_betti_groups
             base_extrema = self.maxima_vox
@@ -1668,16 +1630,16 @@ class Bader(BaseAnalysis):
             extrema_groups,
             extrema_base_vals,
             self.reference_grid.total,
-            use_minima=False,
+            use_minima=use_minima,
         )
-        
+
         if use_minima:
             self._minima_betti_cutoffs = extrema_betti_vals
             self._minima_betti_numbers = extrema_betti_numbers
         else:
             self._maxima_betti_cutoffs = extrema_betti_vals
             self._maxima_betti_numbers = extrema_betti_numbers
-            
+
 
     def _get_atom_surface_distances(self):
         """
