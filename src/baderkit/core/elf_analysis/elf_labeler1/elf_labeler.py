@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
 
 from pathlib import Path
+from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 
 from baderkit.core.base.base_analysis import BaseAnalysis
+from baderkit.core.bader.bader import Bader
 from baderkit.core.toolkit import Grid
 from baderkit.core.elf_analysis.overlap import BasinOverlap
-from baderkit.core.utilities.coord_env import is_along_bond_all
 
 from .enum_and_styling import FeatureType
 
+Self = TypeVar("Self", bound="ElfLabeler")
 
 class ElfLabeler(BaseAnalysis):
     """
@@ -26,28 +28,30 @@ class ElfLabeler(BaseAnalysis):
         "along_bond",
         "heavily_polarized",
         ]
+    
+    _summary_props = [
+        "basin_types",
+        "attractor_shapes",
+        "heavily_polarized",
+        ]
 
     def __init__(
         self,
         charge_grid: Grid,
         reference_grid: Grid,
         total_charge_grid: Grid | None = None,
-        min_covalent_angle: float = 135,
-        max_covalent_polarization: float = 0.5,
+        polarization_cutoff: float = 0.5,
         **kwargs,
     ):
         # create bader objects
-        self.overlap = BasinOverlap(
+        self._overlap: BasinOverlap = BasinOverlap(
             charge_grid=charge_grid,
             total_charge_grid=total_charge_grid,
             reference_grid=reference_grid,
             **kwargs,
         )
         
-        self.elf_bader = self.overlap.local_bader
-        
-        self._min_covalent_angle = min_covalent_angle
-        self._max_covalent_polarization = max_covalent_polarization
+        self._elf_bader = self.overlap.local_bader
 
         super().__init__(
             charge_grid=charge_grid,
@@ -56,40 +60,36 @@ class ElfLabeler(BaseAnalysis):
             **kwargs,
         )
         
+        self._polarization_cutoff = polarization_cutoff
+        
     ###########################################################################
     # Settings
     ###########################################################################
-    @property
-    def min_covalent_angle(self) -> float:
-        return self._min_covalent_angle
-    
-    @min_covalent_angle.setter
-    def min_covalent_angle(self, value: float):
-        self._min_covalent_angle = value
-        self._reset_properties(
-            include_properties=[
-                "basin_types",
-                "along_bond",
-                ], 
-            )
     
     @property
-    def max_covalent_polarization(self) -> float:
-        return self._max_covalent_polarization
-    
-    @max_covalent_polarization.setter
-    def max_covalent_polarization(self, value: float):
-        self._max_covalent_polarization = value
+    def polarization_cutoff(self) -> float:
+        return self._polarization_cutoff
+
+    @polarization_cutoff.setter
+    def polarization_cutoff(self, value: float):
+        self._polarization_cutoff = value
         self._reset_properties(
             include_properties=[
-                "basin_types",
                 "heavily_polarized",
-                ], 
+                "basin_types",
+                ],
             )
     
     ###########################################################################
     # Properties
     ###########################################################################
+    @property
+    def overlap(self) -> BasinOverlap:
+        return self._overlap
+    
+    @property
+    def elf_bader(self) -> Bader:
+        return self._elf_bader
      
     @property
     def maxima_frac(self) -> NDArray[np.float64]:
@@ -97,35 +97,18 @@ class ElfLabeler(BaseAnalysis):
     
     @property
     def attractor_shapes(self) -> NDArray[str]:
-        if self._attractor_shapes is None:
-            betti_nums = self.elf_bader.maxima_betti_numbers
-            shapes = []
-            for i,j,k in betti_nums:
-                if i == 1 and j == 0 and k == 0:
-                    shapes.append("point")
-                elif i == 1 and j == 1 and k == 0:
-                    shapes.append("ring")
-                elif i == 1 and j == 0 and k == 1:
-                    shapes.append("cage")
-                else:
-                    raise Exception("Unknown shape found for attractor. This is a bug!")
-            self._attractor_shapes = np.array(shapes)
-        return self._attractor_shapes
+        return self.overlap.attractor_shapes
     
     @property
     def basin_types(self) -> list[str]:
         if self._basin_types is None:
             self._label_basins()
-        return self._basin_types
-    
-    @property
-    def along_bond(self):
-        return self.overlap.along_bond
+        return [i.name for i in self._basin_types]
     
     @property
     def heavily_polarized(self):
         if self._heavily_polarized is None:
-            self._heavily_polarized = self.overlap.polarization_indexes > self.max_covalent_polarization
+            self._heavily_polarized = self.overlap.polarization_indexes > self.polarization_cutoff
         return self._heavily_polarized
     
     def _label_basins(self):
@@ -169,7 +152,7 @@ class ElfLabeler(BaseAnalysis):
                 types.append(FeatureType.lone_pair)
                 continue
             
-            along_bond = self.along_bond[feature_idx]
+            along_bond = self.overlap.along_bond[feature_idx]
             heavily_polarized = self.heavily_polarized[feature_idx]
             
             # check for ionic/covalent bond
@@ -184,11 +167,9 @@ class ElfLabeler(BaseAnalysis):
                 if heavily_polarized:
                     types.append(FeatureType.ionic_shell)
                 else:
+                    # breakpoint()
                     types.append(FeatureType.nna)
         self._basin_types = types
-        
-    def to_dict(self):
-        pass
 
     @classmethod
     def from_vasp(
@@ -196,7 +177,7 @@ class ElfLabeler(BaseAnalysis):
         charge_filename: Path | str = "CHGCAR",
         reference_filename: Path | str = "ELFCAR",
         **kwargs,
-    ):
+    ) -> Self:
         """
         Creates a Bader class object from VASP files.
 

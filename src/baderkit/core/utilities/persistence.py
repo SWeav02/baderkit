@@ -6,68 +6,20 @@ import numpy as np
 from numba import njit, prange
 
 from baderkit.core.utilities.basic import (
-    compute_wrap_offset,
     coords_to_flat,
     dist,
-    wrap_point,
-)
-from baderkit.core.utilities.basins import (
-    get_best_neighbor,
-    reorder_labels,
 )
 from baderkit.core.utilities.critical_points import refine_critical_points
 from baderkit.core.utilities.interpolation import linear_slice
 from baderkit.core.utilities.transforms import (
-    ALL_NEIGHBOR_TRANSFORMS,
     IMAGE_TO_INT,
     INT_TO_IMAGE,
-    get_transform_dists,
 )
 from baderkit.core.utilities.union_find import (
-    find_root_no_compression,
     find_root_with_shift1,
-    find_root_with_shift_no_compression1,
     union,
     union_with_shift1,
 )
-
-# Predefine types
-# key_type = UniTuple(int64, 3)
-# value_type = int64
-
-# @njit(cache=True)
-# def unique_and_inverse_axis0(arr):
-#     n = arr.shape[0]
-#     arr64 = arr.astype(np.int64)
-
-#     # Use the predeclared Numba types
-#     d = Dict.empty(key_type=key_type, value_type=value_type)
-
-#     inverse = np.empty(n, dtype=np.int64)
-#     unique = List.empty_list(key_type)
-
-#     next_idx = 0
-
-#     for i in range(n):
-#         key = (arr64[i, 0], arr64[i, 1], arr64[i, 2])
-
-#         if key in d:
-#             inverse[i] = d[key]
-#         else:
-#             d[key] = next_idx
-#             inverse[i] = next_idx
-#             unique.append(key)
-#             next_idx += 1
-
-#     unique_arr = np.empty((next_idx, 3), dtype=arr.dtype)
-
-#     for i in range(next_idx):
-#         row = unique[i]
-#         unique_arr[i, 0] = row[0]
-#         unique_arr[i, 1] = row[1]
-#         unique_arr[i, 2] = row[2]
-
-#     return unique_arr, inverse
 
 
 @njit(cache=True)
@@ -81,6 +33,7 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     p1_dist = dist(p1, p_conn)
     p2_dist = dist(p2, p_conn)
     distance = p1_dist + p2_dist
+    d2 = distance*distance
     if distance == 0:
         return 0.0
 
@@ -90,11 +43,10 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     ) / distance
 
     # get persistence score:
-    #   p = smaller_diff*dist / (average_value)
-    persistence_score = min(diff1, diff2) * distance / (abs(avg) + eps)
+    #   p = smaller_diff*dist^2 / (average_value)
+    persistence_score = min(diff1, diff2) * d2 / (abs(avg) + eps)
 
     return persistence_score
-
 
 @njit(cache=True)
 def grow_arrays(neighbors, values, conn_coords, neigh_coords):

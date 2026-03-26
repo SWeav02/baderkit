@@ -110,7 +110,7 @@ def is_along_bond(
     atom_frac_coords,
     atom_cart_coords,
     matrix,
-    min_covalent_angle,
+    min_bond_angle,
 ):
 
     # first we find the three closest neighbors to this point
@@ -185,7 +185,7 @@ def is_along_bond(
     theta = np.arccos(cos_theta)
 
     # If our angle is not above our tolerance, we return as not a covalent bond
-    if theta < min_covalent_angle:
+    if theta < min_bond_angle:
         return False, first_atom, second_atom
     else:
         return True, first_atom, second_atom
@@ -197,7 +197,7 @@ def is_along_bond_all(
     atom_frac_coords,
     atom_cart_coords,
     matrix,
-    min_covalent_angle,
+    min_bond_angle,
 ):
     # create an array to store if each feature is covalent
     features_along_bond = np.zeros(len(feature_frac_coords), dtype=np.bool_)
@@ -209,7 +209,7 @@ def is_along_bond_all(
             atom_frac_coords,
             atom_cart_coords,
             matrix,
-            min_covalent_angle,
+            min_bond_angle,
         )
         features_along_bond[i] = in_tolerance
         atom_neighs[i] = (atom0, atom1)

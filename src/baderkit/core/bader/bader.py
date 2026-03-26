@@ -16,6 +16,7 @@ from baderkit.core.utilities.basins import (
     get_edges_w_images,
     get_min_avg_surface_dists,
     get_neighboring_basin_surface_area,
+    update_labels_and_images
 )
 from baderkit.core.utilities.betti_numbers import (
     get_all_betti_numbers_scanning,
@@ -158,6 +159,7 @@ class Bader(BaseAnalysis):
         "atom_edges",
         # atom props
         "atom_labels",
+        "atom_images",
     ]
 
     _reset_props = (
@@ -176,7 +178,7 @@ class Bader(BaseAnalysis):
         self,
         method: str | Method = Method.default,
         nna_cutoff: float | bool = False,
-        persistence_tol: float = 0.1,
+        persistence_tol: float = 0.002,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -491,7 +493,8 @@ class Bader(BaseAnalysis):
         # betti number
 
         if self._maxima_betti_groups is None:
-            tol = max(self.persistence_tol, 0)
+            # use a relatively high tolerance
+            tol = 0.02
             # get groups
             maxima_groups = self.ongrid_maxima_groups
             maxima_values = self.maxima_ref_values
@@ -1154,6 +1157,51 @@ class Bader(BaseAnalysis):
         if self._atom_labels is None:
             self.run_atom_assignment()
         return self._atom_labels
+    
+    @property
+    def atom_images(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            a 3D array of the same shape as the reference grid with entries
+            representing which periodic neighbor each point is assigned to. For
+            example, a point may be assigned to atom 0, but following the gradient
+            leads to atom zero in the unit cell at (1, 0, 0). Images are represented
+            by integers to save memory and follow the values created by itertools:
+                0: [-1, -1, -1]
+                 1: [-1, -1,  0]
+                 2: [-1, -1,  1]
+                 3: [-1,  0, -1]
+                 4: [-1,  0,  0]
+                 5: [-1,  0,  1]
+                 6: [-1,  1, -1]
+                 7: [-1,  1,  0]
+                 8: [-1,  1,  1]
+                 9: [ 0, -1, -1]
+                10: [ 0, -1,  0]
+                11: [ 0, -1,  1]
+                12: [ 0,  0, -1]
+                13: [ 0,  0,  0]
+                14: [ 0,  0,  1]
+                15: [ 0,  1, -1]
+                16: [ 0,  1,  0]
+                17: [ 0,  1,  1]
+                18: [ 1, -1, -1]
+                19: [ 1, -1,  0]
+                20: [ 1, -1,  1]
+                21: [ 1,  0, -1]
+                22: [ 1,  0,  0]
+                23: [ 1,  0,  1]
+                24: [ 1,  1, -1]
+                25: [ 1,  1,  0]
+                26: [ 1,  1,  1]
+
+        """
+        if self._atom_images is None:
+            self.run_atom_assignment()
+        return self._atom_images
 
     @property
     def atom_charges(self) -> NDArray[float]:
@@ -1483,9 +1531,13 @@ class Bader(BaseAnalysis):
             # Basin→atom assignment & distances
             basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
             basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
-            return basin_atoms, basin_atom_dists
+            
+            # basin->atom shifts
+            atom_fracs = atoms[basin_atoms]
+            shifts = np.round(basins - atom_fracs).astype(int)
+            return basin_atoms, basin_atom_dists, shifts
 
-        basin_atoms, basin_atom_dists = get_atom_basins(atoms, basins)
+        basin_atoms, basin_atom_dists, shifts = get_atom_basins(atoms, basins)
 
         if nna_cutoff:
             # add dummy atoms at basin maxima far from atoms
@@ -1495,20 +1547,15 @@ class Bader(BaseAnalysis):
                     structure.append("X", coords)
             # recalculate distances
             atoms = structure.frac_coords
-            basin_atoms, basin_atom_dists = get_atom_basins(atoms, basins)
-
-        # vacuum is represented by an index one above the highest label. we add
-        # that to our basin atoms temporarily
-        basin_atoms = np.insert(basin_atoms, len(basin_atoms), len(structure))
-
-        # Atom labels per grid point
-        try:
-            atom_labels = basin_atoms[self.maxima_basin_labels]
-        except:
-            breakpoint()
-
-        # remove vacuum pointer in basin atoms
-        basin_atoms = basin_atoms[:-1]
+            basin_atoms, basin_atom_dists, shifts = get_atom_basins(atoms, basins)
+        
+        atom_labels, atom_images = update_labels_and_images(
+            labels=self.maxima_basin_labels.copy(),
+            images=self.maxima_basin_images.copy(),
+            label_map=basin_atoms,
+            image_map=shifts,
+            new_vacuum_label=len(structure),
+            )
 
         atom_charges = np.bincount(
             basin_atoms, weights=self.basin_charges, minlength=len(structure)
@@ -1519,6 +1566,7 @@ class Bader(BaseAnalysis):
 
         return (
             atom_labels,
+            atom_images,
             atom_charges,
             atom_volumes,
             basin_atoms,
@@ -1541,6 +1589,7 @@ class Bader(BaseAnalysis):
         # get basin assignments for this bader objects structure
         (
             atom_labels,
+            atom_images,
             atom_charges,
             atom_volumes,
             basin_atoms,
@@ -1551,6 +1600,7 @@ class Bader(BaseAnalysis):
         self._basin_atoms = basin_atoms
         self._basin_atom_dists = basin_atom_dists
         self._atom_labels = atom_labels
+        self._atom_images = atom_images
         self._atom_charges = atom_charges
         self._atom_volumes = atom_volumes
         logging.info("Atom Assignment Finished")
