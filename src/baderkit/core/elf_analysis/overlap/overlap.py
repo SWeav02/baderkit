@@ -48,6 +48,7 @@ class BasinOverlap(BaseAnalysis):
         "atom_charge_claims",
         "atom_connection_indices",
         "atom_connection_index_labels",
+        "atom_shell_groups",
     ]
     
     _summary_props = [
@@ -545,6 +546,32 @@ class BasinOverlap(BaseAnalysis):
         if self._atom_connection_index_labels is None:
             self._get_charge_claims()
         return self._atom_connection_index_labels
+    
+    @property
+    def atom_shell_groups(self) -> list[NDArray[int]]:
+        if self._atom_shell_groups is None:
+            # get atom shells
+            all_atom_shells, basin_dists = get_atom_shell_groups(
+                atom_local_groups=self.qtaim_overlap_groups,
+                atom_frac_coords=self.qtaim_maxima_frac,
+                local_frac_coords=self.local_maxima_frac,
+                matrix=self.reference_grid.matrix,
+                tol=0.2
+                    )
+            self._atom_shell_groups = all_atom_shells
+            self._atom_average_shell_dists = basin_dists
+            
+        return self._atom_shell_groups
+    
+    @property
+    def atom_average_shell_dists(self) -> list[NDArray[float]]:
+        if self._atom_average_shell_dists is None:
+            self.atom_shell_groups
+        return self._atom_average_shell_dists
+    
+###############################################################################
+# Methods to generate properties
+###############################################################################
 
     def _get_charge_claims(self):
         _, index, inverse = np.unique(self.qtaim_bader.structure.atomic_numbers, return_inverse=True, return_index=True)
@@ -623,18 +650,9 @@ class BasinOverlap(BaseAnalysis):
         cores = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         lone_pairs = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         shared = np.zeros(len(self.local_maxima_frac), dtype=np.bool_)
-
-        # get atom shells
-        all_atom_shells, basin_dists = get_atom_shell_groups(
-            atom_local_groups=self.qtaim_overlap_groups,
-            atom_frac_coords=self.qtaim_maxima_frac,
-            local_frac_coords=self.local_maxima_frac,
-            matrix=self.reference_grid.matrix,
-            tol=0.2
-                )
         
-        for atom_idx in range(len(all_atom_shells)):
-            atom_shells = all_atom_shells[atom_idx]
+        for atom_idx in range(len(self.atom_shell_groups)):
+            atom_shells = self.atom_shell_groups[atom_idx]
             local_overlap = self.qtaim_overlap_groups[atom_idx]
             for shell in atom_shells:
                 overlap_fracs = local_overlap[shell][:,2]

@@ -294,9 +294,9 @@ def get_atom_shell_groups(
             neigh_dists[local_idx] = np.linalg.norm(offset)
 
         # group by distance
-        basin_dists.append(neigh_dists)
         neigh_indices = np.argsort(neigh_dists)
         groups = []
+        average_dists = []
         current_val = neigh_dists[neigh_indices[0]]
         current_group = [neigh_indices[0]]
         for idx in neigh_indices[1:]:
@@ -306,12 +306,19 @@ def get_atom_shell_groups(
             if dist == 0 or diff:
                 current_group.append(idx)
             else:
+                # TODO: get actual labels rather than relative
                 group_array = np.array(current_group, dtype=np.int64)
+                group_dists = neigh_dists[group_array]
                 groups.append(group_array)
+                average_dists.append(np.average(group_dists))
                 current_group = [idx]
-        groups.append(np.array(current_group, dtype=np.int64))
+        current_group = np.array(current_group, dtype=np.int64)
+        groups.append(current_group)
+        group_dists = neigh_dists[current_group]
+        average_dists.append(np.average(group_dists))
 
         coord_groups.append(groups)
+        basin_dists.append(average_dists)
     return coord_groups, basin_dists
 
 @njit(parallel=True, cache=True)

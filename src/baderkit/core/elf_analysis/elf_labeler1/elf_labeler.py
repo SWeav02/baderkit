@@ -15,6 +15,13 @@ from .enum_and_styling import FeatureType
 
 Self = TypeVar("Self", bound="ElfLabeler")
 
+# TODO:
+    # 1. very small maxima in the charge density throw off the rest of the calculation.
+    # These need to be separated properly. Update persistence method to focus on
+    # the lower of the two maxima only
+    # 2. Compare distance of electrides and metals based on the distance past
+    # the core. Only compare for atoms that have a core.
+
 class ElfLabeler(BaseAnalysis):
     """
     A convenience class for calculating the overlap between basins calculated
@@ -167,7 +174,7 @@ class ElfLabeler(BaseAnalysis):
                 if heavily_polarized:
                     types.append(FeatureType.ionic_shell)
                 else:
-                    # breakpoint()
+                    breakpoint()
                     types.append(FeatureType.nna)
         self._basin_types = types
 
