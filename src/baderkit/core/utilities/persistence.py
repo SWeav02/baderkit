@@ -429,7 +429,7 @@ def group_by_low_approx_persistence(
     return labels, images, root_indices
 
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def group_by_refinement(
     labels,
     images,
@@ -583,7 +583,7 @@ def group_by_refinement(
     return labels, images, refined_vox[root_indices], roots, root_indices
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def init_by_approx_persistence(
     data,
     labels,
