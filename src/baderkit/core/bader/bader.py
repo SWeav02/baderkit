@@ -178,7 +178,7 @@ class Bader(BaseAnalysis):
         self,
         method: str | Method = Method.default,
         nna_cutoff: float | bool = False,
-        persistence_tol: float = 0.002,
+        persistence_tol: float = 0.001,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -1157,7 +1157,7 @@ class Bader(BaseAnalysis):
         if self._atom_labels is None:
             self.run_atom_assignment()
         return self._atom_labels
-    
+
     @property
     def atom_images(self) -> NDArray[int]:
         """
@@ -1531,7 +1531,7 @@ class Bader(BaseAnalysis):
             # Basin→atom assignment & distances
             basin_atoms = np.argmin(dists, axis=1)  # (N_basins,)
             basin_atom_dists = dists[np.arange(N_basins), basin_atoms]  # (N_basins,)
-            
+
             # basin->atom shifts
             atom_fracs = atoms[basin_atoms]
             shifts = np.round(basins - atom_fracs).astype(int)
@@ -1548,7 +1548,7 @@ class Bader(BaseAnalysis):
             # recalculate distances
             atoms = structure.frac_coords
             basin_atoms, basin_atom_dists, shifts = get_atom_basins(atoms, basins)
-        
+
         atom_labels, atom_images = update_labels_and_images(
             labels=self.maxima_basin_labels.copy(),
             images=self.maxima_basin_images.copy(),

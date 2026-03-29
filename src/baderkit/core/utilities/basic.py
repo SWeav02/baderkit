@@ -323,6 +323,60 @@ def get_transforms_in_radius(
     dists = dists[sorted_indices]
     return offsets, dists
 
+@njit(parallel=True)
+def get_transforms_in_voxels(
+    r: int,
+    nx,
+    ny,
+    nz,
+    lattice_matrix: NDArray,
+):
+    """
+    Generates all transforms within the voxel neighborhood
+
+    Parameters
+    ----------
+    r : int
+        The number of voxels away
+    nx : int
+        The number of grid points along the x lattice direction
+    ny : int
+        The number of grid points along the y lattice direction
+    nz : int
+        The number of grid points along the z lattice direction
+    lattice_matrix : NDArray
+        The row matrix representing the lattice.
+
+    Returns
+    -------
+    offsets : NDArray
+        The offsets up to the requested radius.
+    dists : NDArray
+        The distances up to the requested radius.
+
+    """
+    r = int(r)
+    shape = np.array((nx, ny, nz), dtype=np.int64)
+    num_trans = (r*2+1)**3 - 1
+
+    transforms = np.empty((num_trans, 3), dtype=np.int64)
+    dists = np.empty(num_trans, dtype=np.float64)
+
+    idx = 0
+    for i in range(-r, r+1):
+        for j in range(-r, r+1):
+            for k in range(-r, r+1):
+                if i == 0 and j == 0 and k == 0:
+                    continue
+                shift = np.array((i, j, k), dtype=np.int64)
+                frac = shift / shape
+                cart = frac @ lattice_matrix
+                dist = np.linalg.norm(cart)
+
+                transforms[idx] = shift
+                dists[idx] = dist
+                idx += 1
+    return transforms, dists
 
 @njit(cache=True)
 def compute_wrap_offset(point1, point2):

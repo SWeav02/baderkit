@@ -10,13 +10,14 @@ from numpy.typing import NDArray
 
 from baderkit.core.toolkit import Grid
 from baderkit.core.utilities.basic import get_lowest_uint
-from baderkit.core.utilities.basins import (  # combine_neigh_extrema,; get_neighboring_basin_connections_w_images,; get_edges_w_images,
+from baderkit.core.utilities.basins import (
     get_basin_charges_and_volumes,
     get_extrema,
     get_thin_basin_edges,
     update_labels_and_images,
 )
 from baderkit.core.utilities.critical_points import (
+    get_canonical_saddle_connections,
     get_saddles_from_basins,
     get_single_point_saddles,
     refine_critical_points,
@@ -188,7 +189,9 @@ class MethodBase:
         logging.info("Locating potential saddle points")
         t0 = time.time()
         all_connections, all_coords, all_vals = self._get_possible_saddle_connections()
-        best_connections, best_coords, best_vals, best_cart = (
+        self._saddle_connections = all_connections
+        self._saddle_vox = all_coords
+        best_connections, best_coords, best_vals = (
             self._compute_best_saddles(all_connections, all_coords, all_vals)
         )
 
@@ -196,18 +199,30 @@ class MethodBase:
         logging.info("Saddle Location Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
 
-        logging.info("Combining Low-Persistence Basins")
+        logging.info("Cleaning labels")
         t0 = time.time()
-        extrema_roots, root_transforms = group_by_persistence(
-            data=self.reference_grid.total,
-            extrema_vox=self.extrema_vox,
-            basin_connections=best_connections,
-            saddle_values=best_vals,
-            saddle_carts=best_cart,
-            persistence_tol=self.persistence_tol,
-            use_minima=self.use_minima,
-            matrix=self.reference_grid.matrix,
-        )
+        # extrema_values = self.reference_grid.total[
+        #     self.extrema_vox[:,0],
+        #     self.extrema_vox[:,1],
+        #     self.extrema_vox[:,2],
+        #     ]
+        # extrema_roots, root_transforms = group_by_persistence(
+        #     data=self.reference_grid.total,
+        #     extrema_vox=self.extrema_vox,
+        #     extrema_values=extrema_values,
+        #     saddle_connections=best_connections,
+        #     saddle_values=best_vals,
+        #     saddle_vox=best_coords,
+        #     persistence_tol=self.persistence_tol,
+        #     use_minima=self.use_minima,
+        #     matrix=self.reference_grid.matrix,
+        # )
+        extrema_roots = self.labels[
+            self.extrema_vox[:,0],
+            self.extrema_vox[:,1],
+            self.extrema_vox[:,2],
+            ]
+        root_transforms = np.full(len(extrema_roots), 13, dtype=np.int8)
 
         # update labels/images
         self._build_final_extrema(extrema_roots, root_transforms)
@@ -217,7 +232,7 @@ class MethodBase:
 
         saddle_type = 1 if self.use_minima else 2
         t1 = time.time()
-        logging.info(f"Reduced to {len(self.extrema_vox)} {extrema}")
+        logging.info("Cleaning complete")
         logging.info(f"Time: {round(t1-t0,2)}")
 
         results = {
@@ -644,9 +659,7 @@ class MethodBase:
         best_coords = coords[best_indices]
         best_connections = connections[best_indices]
 
-        best_cart = self.reference_grid.grid_to_cart(best_coords)
-
-        return best_connections, best_coords, best_vals, best_cart
+        return best_connections, best_coords, best_vals
 
     def _generate_voxel_groups(self):
         # get labels for all ongrid extrema
@@ -712,38 +725,38 @@ class MethodBase:
         self._generate_voxel_groups()
 
     def _update_saddles(self, all_coords):
+        canon_saddles = get_canonical_saddle_connections(
+            self.saddle_connections
+            )
+        unique_canon_saddles, canon_saddle_indices = np.unique(
+            canon_saddles, axis=0, return_inverse=True)
+
         # remove any possible saddles with large gradients
         saddle_vox, saddle_connections = remove_false_saddles(
-            all_coords,
+            saddle_coords=self.saddle_vox,
+            saddle_connections=self.saddle_connections,
+            canon_saddle_indices=canon_saddle_indices,
+            unique_canon_saddles=unique_canon_saddles,
             labels=self.labels,
             images=self.images,
             data=self.reference_grid.total,
+            extrema_vox=self.extrema_vox,
             matrix=self.reference_grid.matrix,
             use_minima=self.use_minima,
         )
 
-        # refine saddle positions
-        idx = 1 if self.use_minima else 2
-        refined_vox, successes = refine_critical_points(
-            critical_coords=saddle_vox,
-            data=self.reference_grid.total,
-            matrix=self.reference_grid.matrix,
-            target_index=idx,
-        )
-
-        successes = np.where(successes)[0]
-        refined_vox = refined_vox[successes]
-        saddle_vox = saddle_vox[successes]
-        saddle_connections = saddle_connections[successes]
-
+        shape = self.reference_grid.shape
+        rounded = np.round(saddle_vox).astype(np.int64) % shape
+        _, indices = np.unique(rounded, return_index=True, axis=0)
+        rounded = rounded[indices]
         # get important saddles
         important = remove_adjacent_saddles(
-            refined_vox,
+            rounded,
             self.reference_grid.shape,
         )
+        saddle_vox = rounded[important]
+        saddle_frac = saddle_vox / self.reference_grid.shape
 
-        refined_vox = refined_vox[important]
-        saddle_frac = refined_vox / self.reference_grid.shape
-        self._saddle_vox = saddle_vox[important]
+        self._saddle_vox = saddle_vox
         self._saddle_frac = saddle_frac
         self._saddle_connections = saddle_connections[important]
