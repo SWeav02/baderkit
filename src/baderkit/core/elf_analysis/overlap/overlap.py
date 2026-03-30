@@ -27,29 +27,6 @@ class BasinOverlap(BaseAnalysis):
     in the charge density and a localization density such as ELF.
 
     """
-
-    _reset_props = [
-        "atomicities",
-        "overlap_table",
-        "overlap_charges",
-        "overlap_volumes",
-        "overlap_labels",
-        "bond_fractions",
-        "qtaim_overlap_groups",
-        "core_basins",
-        "shared_basins",
-        "along_bond",
-        "attractor_shapes",
-        "polarization_indexes",
-        "atom_core_populations",
-        "atom_valence_populations",
-        "atom_access_sets",
-        "atom_access_electron_numbers",
-        "atom_charge_claims",
-        "atom_connection_indices",
-        "atom_connection_index_labels",
-        "atom_shell_groups",
-    ]
     
     _summary_props = [
         "atomicities",
@@ -60,11 +37,27 @@ class BasinOverlap(BaseAnalysis):
         "attractor_shapes",
         "polarization_indexes",
         "atom_core_populations",
+        "atom_core_volumes",
         "atom_valence_populations",
         "atom_charge_claims",
         "atom_connection_indices",
         "atom_connection_index_labels",
         ]
+
+    _reset_props = [
+        "overlap_table",
+        "overlap_charges",
+        "overlap_volumes",
+        "overlap_labels",
+        "volume_bond_fractions",
+        "qtaim_overlap_groups",
+        "along_bond",
+        "atom_access_sets",
+        "atom_access_electron_numbers",
+        "atom_shell_groups",
+    ] + _summary_props
+    
+
 
     def __init__(
         self,
@@ -283,6 +276,24 @@ class BasinOverlap(BaseAnalysis):
         if self._bond_fractions is None:
             self._get_overlap_fractions()
         return self._bond_fractions
+    
+    @property
+    def volume_bond_fractions(self) -> list[NDArray[np.float64]]:
+        """
+
+        Returns
+        -------
+        list[NDArray[np.float64]]
+            A list with the same length as the number of local basins. Each entry
+            is an Nx3 array where N is the number of overlapping qtaim basins
+            and each entry is the qtaim atom index, the qtaim atom's periodic
+            image (relative to the local basin's maximum), and the fractional
+            volume claim of the atom.
+
+        """
+        if self._volume_bond_fractions is None:
+            self._get_overlap_fractions()
+        return self._volume_bond_fractions
 
     @property
     def qtaim_overlap_groups(self) -> list[NDArray[np.float64]]:
@@ -426,6 +437,30 @@ class BasinOverlap(BaseAnalysis):
                 core_charges[atom] += self.local_bader.basin_charges[feature_idx]
             self._atom_core_populations = core_charges
         return self._atom_core_populations.round(6)
+    
+    @property
+    def atom_core_volumes(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The total volume assigned to core basins for each atom.
+
+            WARNING: for pseudopotential codes this will often be 0 and meaningless
+
+        """
+        if self._atom_core_volumes is None:
+            core_volumes = np.zeros(len(self.qtaim_bader.structure))
+            for feature_idx in range(len(self.local_maxima_frac)):
+                # skip shared basins
+                if self.core_basins[feature_idx] == -1:
+                    continue
+                # otherwise, assign the charge to the dominant atom
+                atom = int(self.bond_fractions[feature_idx][:,0])
+                core_volumes[atom] += self.local_bader.basin_volumes[feature_idx]
+            self._atom_core_volumes = core_volumes
+        return self._atom_core_volumes.round(6)
 
     @property
     def atom_valence_populations(self) -> NDArray[float]:
@@ -633,9 +668,10 @@ class BasinOverlap(BaseAnalysis):
             )
 
     def _get_overlap_fractions(self, tol=0.001):
-        self._bond_fractions, self._qtaim_overlap_groups = get_overlap_fractions(
+        self._bond_fractions, self._volume_bond_fractions, self._qtaim_overlap_groups = get_overlap_fractions(
             self.overlap_table,
             self.overlap_charges,
+            self.overlap_volumes,
             num_atoms=len(self.qtaim_maxima_frac),
             num_local=len(self.local_maxima_frac),
             tol=tol,

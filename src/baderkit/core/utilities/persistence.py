@@ -14,7 +14,7 @@ from baderkit.core.utilities.basic import (
 )
 from baderkit.core.utilities.critical_points import (
     refine_critical_points,
-    refine_critical_points_targeted,
+    # refine_critical_points_targeted,
     is_ongrid_newton_crit,
 
     )
@@ -41,7 +41,7 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     p1_dist = dist(p1, p_conn)
     p2_dist = dist(p2, p_conn)
     distance = p1_dist + p2_dist
-    d2 = distance * distance
+    # d2 = distance * distance
     if distance == 0:
         return 0.0
 
@@ -52,7 +52,7 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
 
     # get persistence score:
     #   p = smaller_diff*dist^2 / (average_value)
-    persistence_score = min(diff1, diff2) * d2 / (abs(avg) + eps)
+    persistence_score = min(diff1, diff2) * distance / (abs(avg) + eps)
 
     return persistence_score
 
@@ -416,17 +416,7 @@ def group_by_low_approx_persistence(
         labels[label] = root_label
         images[label] = image
 
-    # get reduced root indices
-    roots = np.empty(len(extrema_labels), dtype=labels.dtype)
-    for ext_idx in range(len(extrema_labels)):
-        label = extrema_labels[ext_idx]
-        root, shift = find_root_with_shift1(labels, images, label)
-        roots[ext_idx] = root
-        labels[label] = root
-        images[label] = shift
-    root_indices = np.where(roots == extrema_labels)[0]
-
-    return labels, images, root_indices
+    return labels, images
 
 
 @njit(parallel=True, cache=True)
@@ -441,23 +431,28 @@ def group_by_refinement(
     extrema_frac,
     use_minima,
     shape,
+    max_change,
 ):
     nx, ny, nz = shape
-    ny_nz = ny*nz
 
     # refine extrema
-    target_idx = 0 if use_minima else 3
+    if use_minima:
+        target_indices = (0, 10, 20)
+    else:
+        target_indices = (3, 11, 22)
+
     refined_vox, successes, ctypes = refine_critical_points(
         critical_coords=extrema_vox,
         data=data,
         matrix=matrix,
-        target_indices=(target_idx,),
-        max_change=1000,
+        target_indices=target_indices,
+        max_change=max_change,
         max_iter=100,
         grad_tol=0.00001,
         h=0.5,
-        eig_rel_tol=0.0001,
+        eig_rel_tol=0.001,
     )
+
     # combine successful indices that refined to the same point
     success_indices = np.where(successes)[0]
 
@@ -518,13 +513,26 @@ def group_by_refinement(
         neigh_label = extrema_labels[idx1]
         union_with_shift1(labels, images, label, neigh_label, shift)
 
-    # for unsuccessful refinements, we try to hill climb to a true extrema
+    return labels, images, refined_vox
+
+@njit(parallel=True, cache=True)
+def group_by_hill_climb(
+    labels,
+    images,
+    data,
+    matrix,
+    extrema_labels,
+    extrema_vox,
+    use_minima,
+):
+    nx, ny, nz = data.shape
+    ny_nz = ny*nz
+
+    # get transforms to 1st and 2nd neighbors
     transforms1, transform_dists1 = get_transforms_in_voxels(1, nx, ny, nz, matrix)
     transforms2, transform_dists2 = get_transforms_in_voxels(2, nx, ny, nz, matrix)
 
-    false_indices = np.where(successes==False)[0]
-    for idx in prange(len(false_indices)):
-        ext_idx = false_indices[idx]
+    for ext_idx in prange(len(extrema_vox)):
         # get initial coords
         i, j, k = extrema_vox[ext_idx]
         image = np.zeros(3, dtype=np.int8)
@@ -570,6 +578,14 @@ def group_by_refinement(
         neigh_label = coords_to_flat(i, j, k, ny_nz, nz)
         union_with_shift1(labels, images, label, neigh_label, image)
 
+    return labels, images
+
+@njit(cache=True)
+def update_extrema_roots(
+        extrema_labels,
+        labels,
+        images,
+        ):
     # get reduced root indices
     roots = np.empty(len(extrema_labels), dtype=labels.dtype)
     for ext_idx in range(len(extrema_labels)):
@@ -579,8 +595,7 @@ def group_by_refinement(
         labels[label] = root
         images[label] = shift
     root_indices = np.where(roots == extrema_labels)[0]
-
-    return labels, images, refined_vox[root_indices], roots, root_indices
+    return roots, root_indices
 
 
 @njit(cache=True)
@@ -626,7 +641,7 @@ def init_by_approx_persistence(
     # cubic interpolation and combining those that have no minimum/maximum between
     # them.
 
-    labels, images, root_indices = group_by_low_approx_persistence(
+    labels, images = group_by_low_approx_persistence(
         data,
         labels,
         images,
@@ -638,33 +653,69 @@ def init_by_approx_persistence(
         persistence_tol,
         matrix,
     )
-    root_values = extrema_values[root_indices]
-    root_labels = extrema_labels[root_indices]
-    root_vox = extrema_vox[root_indices]
-    root_frac = extrema_frac[root_indices]
+    roots, root_indices = update_extrema_roots(extrema_labels, labels, images)
+
     ###########################################################################
     # Refine positions
     ###########################################################################
-    labels, images, refined_vox, roots, root_indices = group_by_refinement(
+    labels, images, refined_vox_subset = group_by_refinement(
         labels,
         images,
         data,
         matrix,
-        root_labels,
-        root_vox,
-        root_values,
-        root_frac,
+        extrema_labels[root_indices],
+        extrema_vox[root_indices],
+        extrema_values[root_indices],
+        extrema_frac[root_indices],
         use_minima,
         shape,
+        max_change=max_cart_offset,
     )
-    final_root_vox = root_vox[root_indices]
-    final_refined_frac = np.round(refined_vox / shape, 6)
+    refined_vox = extrema_vox.copy()
+    refined_vox[root_indices] = refined_vox_subset
+    roots, root_indices = update_extrema_roots(extrema_labels, labels, images)
+
+    ###########################################################################
+    # Combine low-persistence extrema
+    ###########################################################################
+    # Combine by persistence again now that we've refined positions
+
+    labels, images = group_by_low_approx_persistence(
+        data,
+        labels,
+        images,
+        extrema_values[root_indices],
+        extrema_labels[root_indices],
+        refined_vox[root_indices],
+        max_cart_offset,
+        use_minima,
+        persistence_tol,
+        matrix,
+    )
+    roots, root_indices = update_extrema_roots(extrema_labels, labels, images)
+
+    ###########################################################################
+    # Attempt to hill climb remaining roots
+    ###########################################################################
+    
+    labels, images =  group_by_hill_climb(
+        labels,
+        images,
+        data,
+        matrix,
+        extrema_labels[root_indices],
+        extrema_vox[root_indices],
+        use_minima,
+    )
+    roots, root_indices = update_extrema_roots(extrema_labels, labels, images)
+    final_vox = extrema_vox[root_indices]
+    final_frac = np.round(refined_vox[root_indices]/shape, 6)
 
     return (
         labels,
         images,
-        final_root_vox,
-        final_refined_frac,
+        final_vox,
+        final_frac,
     )
 
 @njit(cache=True)

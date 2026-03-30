@@ -24,6 +24,7 @@ from baderkit.core.utilities.betti_numbers import (
 from baderkit.core.utilities.persistence import (
     get_persistence_groups,
 )
+from baderkit.core.utilities.transforms import IMAGE_TO_INT
 
 from .methods import Method
 
@@ -1549,6 +1550,8 @@ class Bader(BaseAnalysis):
             atoms = structure.frac_coords
             basin_atoms, basin_atom_dists, shifts = get_atom_basins(atoms, basins)
 
+        # convert shifts to integer representations and assing
+        shifts = IMAGE_TO_INT[shifts[:,0],shifts[:,1],shifts[:,2]]
         atom_labels, atom_images = update_labels_and_images(
             labels=self.maxima_basin_labels.copy(),
             images=self.maxima_basin_images.copy(),

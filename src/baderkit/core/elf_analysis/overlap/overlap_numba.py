@@ -164,13 +164,16 @@ def get_overlap_charge_volume(
 def get_basin_fractions(
     overlap_table,
     overlap_charges,
+    overlap_volumes,
     num_basins,
     tol,
         ):
     scratch = np.empty((0,0),dtype=np.float64)
-    basin_frac = []
+    basin_charge_frac = []
+    basin_volume_frac = []
     for i in range(num_basins):
-        basin_frac.append(scratch.copy())
+        basin_charge_frac.append(scratch.copy())
+        basin_volume_frac.append(scratch.copy())
 
     for idx in prange(num_basins):
         # get overlap basins that include this local basin
@@ -194,7 +197,8 @@ def get_basin_fractions(
         neighs = np.sort(neighs)
 
         # now get the total counts for each
-        counts = np.zeros(len(neighs), dtype=np.float64)
+        charge_counts = np.zeros(len(neighs), dtype=np.float64)
+        volume_counts = np.zeros(len(neighs), dtype=np.float64)
         for overlap_idx in indices:
             neigh_label, neigh_image, _, basin_image = overlap_table[overlap_idx]
             # shift to the label that is in the cell
@@ -202,12 +206,15 @@ def get_basin_fractions(
             image = IMAGE_TO_INT[mi,mj,mk]
             pair = int(szudzik_pair(neigh_label, image))
             pair_idx = np.searchsorted(neighs, pair)
-            counts[pair_idx] += overlap_charges[overlap_idx]
+            charge_counts[pair_idx] += overlap_charges[overlap_idx]
+            volume_counts[pair_idx] += overlap_volumes[overlap_idx]
 
-        fracs = counts / counts.sum()
+        charge_fracs = charge_counts / charge_counts.sum()
+        volume_fracs = volume_counts / volume_counts.sum()
         # remove fracs below cutoff
-        high_fracs = np.where(fracs > tol)[0]
-        fracs = fracs[high_fracs]
+        high_fracs = np.where((charge_fracs > tol) & (volume_fracs > tol))[0]
+        charge_fracs = charge_fracs[high_fracs]
+        volume_fracs = volume_fracs[high_fracs]
         neighs = neighs[high_fracs]
         # convert neighs from szudzik pairs
         neigh_pairs = np.empty((len(neighs),2), dtype=np.int64)
@@ -215,10 +222,15 @@ def get_basin_fractions(
             i, j = szudzik_reverse(neighs[neigh_idx])
             neigh_pairs[neigh_idx,0] = int(i)
             neigh_pairs[neigh_idx,1] = int(j)
-        # sort from high to low
-        sorted_indices = np.flip(np.argsort(fracs))
-        basin_frac[idx] = np.column_stack((neigh_pairs[sorted_indices], fracs[sorted_indices]))
-    return basin_frac
+        # sort from high to low and renormalize
+        sorted_indices = np.flip(np.argsort(charge_fracs))
+        charge_fracs = charge_fracs[sorted_indices] / charge_fracs.sum()
+        basin_charge_frac[idx] = np.column_stack((neigh_pairs[sorted_indices], charge_fracs))
+        # and again for volume fracs
+        sorted_indices = np.flip(np.argsort(volume_fracs))
+        volume_fracs = volume_fracs[sorted_indices] / volume_fracs.sum()
+        basin_volume_frac[idx] = np.column_stack((neigh_pairs[sorted_indices], volume_fracs))
+    return basin_charge_frac, basin_volume_frac
 
 @njit(parallel=True, cache=True)
 def get_qtaim_groups(
@@ -254,22 +266,24 @@ def get_qtaim_groups(
 def get_overlap_fractions(
     overlap_table,
     overlap_charges,
+    overlap_volumes,
     num_local,
     num_atoms,
     tol=0.001,
         ):
 
-    local_frac = get_basin_fractions(
+    local_charge_frac, local_volume_frac = get_basin_fractions(
         overlap_table,
         overlap_charges,
+        overlap_volumes,
         num_basins=num_local,
         tol=tol,
         )
     atom_groups = get_qtaim_groups(
-        local_fractions=local_frac,
+        local_fractions=local_charge_frac,
         num_atoms=num_atoms,
         )
-    return local_frac, atom_groups
+    return local_charge_frac, local_volume_frac, atom_groups
 
 @njit(cache=True)
 def get_atom_shell_groups(

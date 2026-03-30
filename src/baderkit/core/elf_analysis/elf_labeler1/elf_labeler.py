@@ -12,6 +12,7 @@ from baderkit.core.toolkit import Grid
 from baderkit.core.elf_analysis.overlap import BasinOverlap
 
 from .enum_and_styling import FeatureType
+from .elf_labeler_numba import get_core_dist_ratios
 
 Self = TypeVar("Self", bound="ElfLabeler")
 
@@ -29,18 +30,19 @@ class ElfLabeler(BaseAnalysis):
 
     """
     
-    _reset_props = [
-        "basin_types",
-        "attractor_shapes",
-        "along_bond",
-        "heavily_polarized",
-        ]
-    
     _summary_props = [
         "basin_types",
         "attractor_shapes",
         "heavily_polarized",
+        "nna_core_volume_ratios",
+        "nna_core_distance_ratios",
         ]
+    
+    _reset_props = [
+        "along_bond",
+        ] + _summary_props
+    
+
 
     def __init__(
         self,
@@ -51,7 +53,7 @@ class ElfLabeler(BaseAnalysis):
         **kwargs,
     ):
         # create bader objects
-        self._overlap: BasinOverlap = BasinOverlap(
+        self._overlap = BasinOverlap(
             charge_grid=charge_grid,
             total_charge_grid=total_charge_grid,
             reference_grid=reference_grid,
@@ -118,6 +120,42 @@ class ElfLabeler(BaseAnalysis):
             self._heavily_polarized = self.overlap.polarization_indexes > self.polarization_cutoff
         return self._heavily_polarized
     
+    @property
+    def nna_core_volume_ratios(self):
+        if self._nna_core_volume_ratios is None:
+            # get each atom's core volume
+            atom_core_volumes = self.overlap.atom_core_volumes
+            # get the nna indices
+            indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
+            local_volume_ratios = np.zeros(len(indices), dtype=np.float64)
+            for nna_idx, (local_idx) in enumerate(indices):
+                volume_fracs = self.overlap.volume_bond_fractions[local_idx]
+                # get the volume of this basin
+                local_volume = self.elf_bader.basin_volumes[local_idx]
+                # add the volume of each atom's core
+                core_volume = 0.0    
+                for atom_idx, _, atom_frac in volume_fracs:
+                    core_volume += atom_core_volumes[int(atom_idx)] * atom_frac
+                if core_volume == 0:
+                    continue
+                local_volume_ratios[nna_idx] = local_volume / core_volume
+            self._nna_core_volume_ratios = local_volume_ratios
+        return self._nna_core_volume_ratios
+    
+    @property
+    def nna_core_distance_ratios(self):
+        if self._nna_core_distance_ratios is None:
+            indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
+            self._nna_core_distance_ratios = get_core_dist_ratios(
+                labels=self.elf_bader.maxima_basin_labels,
+                basin_frac_coords=self.elf_bader.maxima_frac,
+                atom_frac_coords=self.elf_bader.structure.frac_coords,
+                nna_indices=indices,
+                core_basins=self.overlap.core_basins,
+                volume_bond_fracs=self.overlap.volume_bond_fractions,
+                    )
+        return self._nna_core_distance_ratios
+    
     def _label_basins(self):
         """
         Label scheme:
@@ -174,7 +212,6 @@ class ElfLabeler(BaseAnalysis):
                 if heavily_polarized:
                     types.append(FeatureType.ionic_shell)
                 else:
-                    breakpoint()
                     types.append(FeatureType.nna)
         self._basin_types = types
 

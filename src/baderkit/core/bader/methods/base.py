@@ -167,7 +167,7 @@ class MethodBase:
             persistence_tol=self.persistence_tol,
             use_minima=self.use_minima,
             matrix=self.reference_grid.matrix,
-            max_cart_offset=0.25,
+            max_cart_offset=0.5,
         )
         t1 = time.time()
 

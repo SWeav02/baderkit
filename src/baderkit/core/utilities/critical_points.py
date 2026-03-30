@@ -1188,47 +1188,47 @@ def newton_refine_targeted(
 
     return coord, converged, ctype
 
-@njit(parallel=True, cache=True)
-def refine_critical_points_targeted(
-    critical_coords,
-    data,
-    matrix,
-    target_index,
-    max_change=2.0,
-    max_iter=30,
-    grad_tol=1e-2,
-    h=0.5,
-    eig_rel_tol=1e-02,
-):
+# @njit(parallel=True, cache=True)
+# def refine_critical_points_targeted(
+#     critical_coords,
+#     data,
+#     matrix,
+#     target_index,
+#     max_change=2.0,
+#     max_iter=30,
+#     grad_tol=1e-2,
+#     h=0.5,
+#     eig_rel_tol=1e-02,
+# ):
 
-    G = matrix @ matrix.T
-    inv_G = np.linalg.inv(G)
+#     G = matrix @ matrix.T
+#     inv_G = np.linalg.inv(G)
 
-    # create arrays to store partial coordinates
-    refined_coords = np.empty_like(critical_coords, dtype=np.float64)
-    successes = np.zeros(len(critical_coords), dtype=np.bool_)
-    ctypes = np.empty(len(critical_coords), dtype=np.int64)
+#     # create arrays to store partial coordinates
+#     refined_coords = np.empty_like(critical_coords, dtype=np.float64)
+#     successes = np.zeros(len(critical_coords), dtype=np.bool_)
+#     ctypes = np.empty(len(critical_coords), dtype=np.int64)
 
-    for coord_idx in prange(len(critical_coords)):
-        coord = critical_coords[coord_idx]
-        # refine
-        new_coord, success, ctype = newton_refine_targeted(
-            coord,
-            data,
-            inv_G,
-            max_change,
-            max_iter,
-            grad_tol,
-            h,
-            eig_rel_tol,
-            target_index,
-        )
-        ctypes[coord_idx] = ctype
-        refined_coords[coord_idx] = new_coord
-        if success and ctype == target_index:
-            successes[coord_idx] = True
+#     for coord_idx in prange(len(critical_coords)):
+#         coord = critical_coords[coord_idx]
+#         # refine
+#         new_coord, success, ctype = newton_refine_targeted(
+#             coord,
+#             data,
+#             inv_G,
+#             max_change,
+#             max_iter,
+#             grad_tol,
+#             h,
+#             eig_rel_tol,
+#             target_index,
+#         )
+#         ctypes[coord_idx] = ctype
+#         refined_coords[coord_idx] = new_coord
+#         if success and ctype == target_index:
+#             successes[coord_idx] = True
 
-    return refined_coords, successes, ctypes
+#     return refined_coords, successes, ctypes
 
 @njit(parallel=True, cache=True)
 def refine_critical_points(
@@ -1236,12 +1236,21 @@ def refine_critical_points(
     data,
     matrix,
     target_indices,
-    max_change=2.0,
+    max_change=0.5, # in Ang
     max_iter=30,
     grad_tol=1e-2,
     h=0.5,
     eig_rel_tol=1e-02,
 ):
+    shape = np.array(data.shape, dtype=np.int64)
+    nx, ny, nz = shape
+    # convert max change to approximate number of voxels
+    a = np.linalg.norm(matrix[0])
+    b = np.linalg.norm(matrix[1])
+    c = np.linalg.norm(matrix[2])
+    max_vox = int(round(max((max_change/a)*nx, (max_change/b)*ny, (max_change/c)*nz)))
+    
+    
 
     G = matrix @ matrix.T
     inv_G = np.linalg.inv(G)
@@ -1258,16 +1267,22 @@ def refine_critical_points(
             coord,
             data,
             inv_G,
-            max_change,
+            max_vox,
             max_iter,
             grad_tol,
             h,
             eig_rel_tol,
         )
         ctypes[coord_idx] = ctype
-        refined_coords[coord_idx] = new_coord
-        if success and ctype in target_indices:
+        # calculate distance
+        initial_cart = (coord / shape) @ matrix
+        new_cart = (new_coord / shape) @ matrix
+        dist = np.linalg.norm(new_cart - initial_cart)
+        if success and ctype in target_indices and dist <= max_change:
             successes[coord_idx] = True
+            refined_coords[coord_idx] = new_coord
+        else:
+            refined_coords[coord_idx] = coord
 
     return refined_coords, successes, ctypes
 

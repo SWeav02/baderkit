@@ -1152,8 +1152,9 @@ def update_labels_and_images(
                 # get the shift from this maxima to its root
                 maxima_shift = image_map[label]
                 # update the image
-                si, sj, sk = shift + maxima_shift
+                si, sj, sk = shift + INT_TO_IMAGE[maxima_shift]
                 images[i, j, k] = IMAGE_TO_INT[si, sj, sk]
+
                 # update label
                 labels[i, j, k] = label_map[label]
 
