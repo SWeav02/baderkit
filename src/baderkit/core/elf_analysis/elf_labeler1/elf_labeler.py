@@ -36,6 +36,7 @@ class ElfLabeler(BaseAnalysis):
         "heavily_polarized",
         "nna_core_volume_ratios",
         "nna_core_distance_ratios",
+        "nna_core_distances",
         ]
     
     _reset_props = [
@@ -144,17 +145,33 @@ class ElfLabeler(BaseAnalysis):
     
     @property
     def nna_core_distance_ratios(self):
+        "nna frac / core frac"
         if self._nna_core_distance_ratios is None:
             indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-            self._nna_core_distance_ratios = get_core_dist_ratios(
+            self._nna_core_distance_ratios, self._nna_core_distances, self._nna_distance_ratios = get_core_dist_ratios(
                 labels=self.elf_bader.maxima_basin_labels,
                 basin_frac_coords=self.elf_bader.maxima_frac,
                 atom_frac_coords=self.elf_bader.structure.frac_coords,
+                matrix=self.reference_grid.matrix,
                 nna_indices=indices,
                 core_basins=self.overlap.core_basins,
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
                     )
         return self._nna_core_distance_ratios
+    
+    @property
+    def nna_distance_ratios(self):
+        "nna frac compared to total distance"
+        if self._nna_distance_ratios is None:
+            self.nna_core_distance_ratios
+        return self._nna_distance_ratios
+    
+    @property
+    def nna_core_distances(self):
+        "distance beyond atom core"
+        if self._nna_core_distances is None:
+            self.nna_core_distance_ratios
+        return self._nna_core_distances
     
     def _label_basins(self):
         """

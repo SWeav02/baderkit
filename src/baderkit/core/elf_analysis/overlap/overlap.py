@@ -173,8 +173,8 @@ class BasinOverlap(BaseAnalysis):
         if self._along_bond is None:
             self._along_bond, _ = is_along_bond_all(
                 feature_frac_coords=self.local_maxima_frac,
-                atom_frac_coords=self.structure.frac_coords,
-                atom_cart_coords=self.structure.cart_coords,
+                atom_frac_coords=self.reference_grid.structure.frac_coords,
+                atom_cart_coords=self.reference_grid.structure.cart_coords,
                 matrix=self.reference_grid.matrix,
                 min_bond_angle=self.min_bond_angle * math.pi / 180,
             )
@@ -477,7 +477,7 @@ class BasinOverlap(BaseAnalysis):
 
         """
         if self._atom_valence_populations is None:
-            self._atom_valence_populations = self.qtaim_bader.atom_charges - self.atom_core_populations
+            self._atom_valence_populations = self.qtaim_bader.atom_charges[:len(self.atom_core_populations)] - self.atom_core_populations
         return self._atom_valence_populations
 
     @property
