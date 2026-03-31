@@ -12,7 +12,7 @@ from baderkit.core.toolkit import Grid
 from baderkit.core.elf_analysis.overlap import BasinOverlap
 
 from .enum_and_styling import FeatureType
-from .elf_labeler_numba import get_core_dist_ratios
+from .elf_labeler_numba import get_core_dist_ratios, get_approx_coulomb_potential, get_zeff_nna
 
 Self = TypeVar("Self", bound="ElfLabeler")
 
@@ -37,6 +37,7 @@ class ElfLabeler(BaseAnalysis):
         "nna_core_volume_ratios",
         "nna_core_distance_ratios",
         "nna_core_distances",
+        "nna_coulombic_potentials",
         ]
     
     _reset_props = [
@@ -172,6 +173,34 @@ class ElfLabeler(BaseAnalysis):
         if self._nna_core_distances is None:
             self.nna_core_distance_ratios
         return self._nna_core_distances
+    
+    @property
+    def nna_coulombic_potentials(self):
+        "approximate potential between each point and the neighboring atoms"
+        if self._nna_coulombic_potentials is None:
+            # get nna indices
+            indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
+            # calculate Zeff for each atom.
+            zeff = get_zeff_nna(
+                atom_charges=self.overlap.qtaim_bader.atom_charges,
+                charge_bond_fracs=self.overlap.bond_fractions,
+                basin_charges=self.elf_bader.basin_charges,
+                nna_indices=indices,
+                )
+            pseudo_charges = np.array([self.valence_counts.get(i.specie.symbol, 0) for i in self.overlap.structure])
+            zeff = pseudo_charges - zeff
+           
+            self._nna_coulombic_potentials = get_approx_coulomb_potential(
+                zeff_charges=zeff,
+                basin_charges=self.elf_bader.basin_charges,
+                basin_frac_coords=self.elf_bader.maxima_frac,
+                atom_frac_coords=self.elf_bader.structure.frac_coords,
+                matrix=self.reference_grid.matrix,
+                nna_indices=indices,
+                core_basins=self.overlap.core_basins,
+                volume_bond_fracs=self.overlap.volume_bond_fractions,
+                    )
+        return self._nna_coulombic_potentials
     
     def _label_basins(self):
         """

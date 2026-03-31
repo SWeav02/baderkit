@@ -17,17 +17,20 @@ best_dists = []
 best_nna_fracs = []
 core_populations = []
 nna_populations = []
+coulomb = []
 
 for folder in path.iterdir():
     chgcar = folder / "CHGCAR"
     elf = folder / "ELFCAR"
     tot = folder / "CHGCAR_sum"
+    pot = folder / "POTCAR"
     elements.append(folder.name)
     labeler = ElfLabeler.from_vasp(
         charge_filename=chgcar,
         reference_filename=elf,
         total_charge_filename=tot,
-        persistence_tol=0.01
+        persistence_tol=0.01,
+        pseudopotential_filename = pot,
         )
     overlap: BasinOverlap = labeler.overlap
     bader = overlap.local_bader
@@ -42,6 +45,7 @@ for folder in path.iterdir():
     dist_ratios = labeler.nna_core_distance_ratios
     dists = labeler.nna_core_distances
     fracs = labeler.nna_distance_ratios
+    coul = labeler.nna_coulombic_potentials
     
     prominent_idx = np.argmax(nna_charges)
     
@@ -49,6 +53,7 @@ for folder in path.iterdir():
     best_dist_ratios.append(dist_ratios[prominent_idx])
     best_dists.append(dists[prominent_idx])
     best_nna_fracs.append(fracs[prominent_idx])
+    coulomb.append(coul[prominent_idx])
     
     nna_populations.append(nna_charges[prominent_idx])
 
@@ -60,8 +65,12 @@ best_nna_fracs = np.array(best_nna_fracs)
 
 core_populations = np.array(core_populations)
 nna_populations = np.array(nna_populations)
+coulomb = np.array(coulomb)
     
 indices = np.argsort(elements)
+
+print("Coulomb Potentials")
+print("\n".join([str(i) for i in coulomb[indices]]))
 
 print("Volume Ratios")
 print("\n".join([str(i) for i in best_vol_ratios[indices]]))

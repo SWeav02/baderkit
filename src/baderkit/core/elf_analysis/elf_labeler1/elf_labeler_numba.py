@@ -50,20 +50,21 @@ def get_core_dist_ratios(
             if idx == 0:
                 continue
             total_frac += frac
-            # get fraction of bond
-            bond_frac = idx / (len(label_line)-1)
-            ratio = (1-bond_frac)/bond_frac
+            # get fraction of bond belonging to the nna
+            atom_frac = idx / (len(label_line)-1)
+            nna_frac = 1-atom_frac
+            
             # add this neighbors portion of the ratio
-            weighted_ratio += ratio * frac
+            weighted_ratio += nna_frac * frac / atom_frac
             
             # add fraction making up bond
-            total_basin_frac += (1-bond_frac) * frac
+            total_basin_frac += nna_frac * frac
 
             # get distance beyond atom
             atom_cart_coords = atom_coords @ matrix
             dist = np.linalg.norm(atom_cart_coords - local_cart_coords)
             # add this neighbors portion of the fraction
-            weighted_dist += bond_frac * dist * frac
+            weighted_dist += nna_frac * dist * frac
         
         # adjust for any fractions that had no cores
         if total_frac == 0:
@@ -74,3 +75,67 @@ def get_core_dist_ratios(
         basin_dists[nna_idx] = weighted_dist * frac_mult
         basin_fracs[nna_idx] = total_basin_frac * frac_mult
     return basin_core_dist_ratios, basin_dists, basin_fracs
+           
+@njit(cache=True)
+def get_zeff_nna(
+    atom_charges,
+    charge_bond_fracs,
+    basin_charges,
+    nna_indices,
+        ):
+    
+    zeff = atom_charges.copy()
+    
+    for nna_idx in range(len(nna_indices)):
+        # skip cores
+        local_idx = nna_indices[nna_idx]
+        local_charge = basin_charges[local_idx]
+        for atom_idx, atom_image, frac in charge_bond_fracs[local_idx]:
+            zeff[int(atom_idx)] -= frac*local_charge
+    return zeff
+        
+@njit(cache=True, parallel=True)
+def get_approx_coulomb_potential(
+    zeff_charges,
+    basin_charges,
+    volume_bond_fracs,
+    basin_frac_coords,
+    atom_frac_coords,
+    matrix,
+    nna_indices,
+    core_basins,
+        ):
+    
+    basin_coulomb_attractions = np.zeros(len(nna_indices), dtype=np.float64)
+    
+    for nna_idx in prange(len(nna_indices)):
+        # skip cores
+        local_idx = nna_indices[nna_idx]
+        local_coords = basin_frac_coords[local_idx]
+        local_cart_coords = local_coords @ matrix
+        local_bond_frac = volume_bond_fracs[local_idx]
+        
+        local_charge = basin_charges[local_idx]
+        total_potential = 0.0
+        for atom_idx, atom_image, frac in local_bond_frac:
+            if atom_idx > len(atom_frac_coords):
+                # this is an nna in the charge density and we don't want to include
+                # it.
+                continue
+
+            # get effective charge of atom
+            atom_charge = zeff_charges[int(atom_idx)]
+            
+            # get distance to the atom
+            atom_coords = atom_frac_coords[int(atom_idx)] + INT_TO_IMAGE[int(atom_image)]
+            atom_cart_coords = atom_coords @ matrix
+            dist = np.linalg.norm(atom_cart_coords - local_cart_coords)
+            
+            # calculate coulomb potential
+            coulomb_pot = local_charge * atom_charge / (dist)
+            
+            total_potential += coulomb_pot
+
+        # update array
+        basin_coulomb_attractions[nna_idx] = total_potential
+    return basin_coulomb_attractions
