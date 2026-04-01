@@ -10,21 +10,27 @@ import numpy as np
 from pathlib import Path
 path = Path(".")
 
-elements = []
-best_vol_ratios = []
-best_dist_ratios = []
-best_dists = []
-best_nna_fracs = []
-core_populations = []
-nna_populations = []
-coulomb = []
+data_dict = {}
+
+
+nna_neigh_zeffs = {}
+nna_vol_ratios = {}
+nna_charges = {}
+nna_volumes = {}
+nna_dists = {}
+nna_fracs = {}
+
 
 for folder in path.iterdir():
+    if folder.name == "Tc":
+        continue
     chgcar = folder / "CHGCAR"
     elf = folder / "ELFCAR"
     tot = folder / "CHGCAR_sum"
     pot = folder / "POTCAR"
-    elements.append(folder.name)
+    element = folder.name
+    data_dict[element] = {}
+    
     labeler = ElfLabeler.from_vasp(
         charge_filename=chgcar,
         reference_filename=elf,
@@ -35,78 +41,115 @@ for folder in path.iterdir():
     overlap: BasinOverlap = labeler.overlap
     bader = overlap.local_bader
     
-    core_populations.append(overlap.atom_core_populations[0])
-    
     types = labeler.basin_types
+    
     nna_indices = np.array([i for i, j in enumerate(types) if j == "nna"])
-    nna_charges = overlap.local_bader.basin_charges[nna_indices]
+
+    data_dict[element]["nna_zeffs"] = labeler.neighbor_zeffs[nna_indices]
+    data_dict[element]["nna_veffs"] = labeler.neighbor_veffs[nna_indices]
+    data_dict[element]["nna_vol_ratios"] = labeler.core_volume_ratios[nna_indices]
+    data_dict[element]["nna_charges"] = overlap.local_bader.basin_charges[nna_indices]
+    data_dict[element]["nna_volumes"] = overlap.local_bader.basin_volumes[nna_indices]
+    data_dict[element]["nna_dists"] = labeler.nna_bond_dists
+    data_dict[element]["nna_fracs"] = labeler.nna_bond_fracs
+    data_dict[element]["nna_dist_beyond_atom"] = labeler.nna_bond_dists * labeler.nna_bond_fracs
+    data_dict[element]["nna_potential_energies"] = labeler.nna_potential_energies
     
-    volume_ratios = labeler.nna_core_volume_ratios
-    dist_ratios = labeler.nna_core_distance_ratios
-    dists = labeler.nna_core_distances
-    fracs = labeler.nna_distance_ratios
-    coul = labeler.nna_coulombic_potentials
-    
-    prominent_idx = np.argmax(nna_charges)
-    
-    best_vol_ratios.append(volume_ratios[prominent_idx])
-    best_dist_ratios.append(dist_ratios[prominent_idx])
-    best_dists.append(dists[prominent_idx])
-    best_nna_fracs.append(fracs[prominent_idx])
-    coulomb.append(coul[prominent_idx])
-    
-    nna_populations.append(nna_charges[prominent_idx])
+elements = [i for i in data_dict.keys()]
+alphabetical_elements = np.sort(elements)
 
+# plotting
+workfunctions = np.array([ # alphabetical
+    4.33,
+    2.87,
+    4.08,
+    4.46,
+    4.08,
+    5.22,
+    4.98,
+    4.71,
+    3.1,
+    4.05,
+    ])
 
-best_vol_ratios = np.array(best_vol_ratios)
-best_dist_ratios = np.array(best_dist_ratios)
-best_dists = np.array(best_dists)
-best_nna_fracs = np.array(best_nna_fracs)
+resistivities = np.array([
+    1.587,
+    3.11,
+    6.8,
+    4.85,
+    15.2,
+    9.78,
+    4.3,
+    7.1,
+    59.6,
+    38.8,
+    ])
 
-core_populations = np.array(core_populations)
-nna_populations = np.array(nna_populations)
-coulomb = np.array(coulomb)
-    
-indices = np.argsort(elements)
+workfunction_indices = np.argsort(workfunctions)
+sorted_workfunctions = workfunctions[workfunction_indices]
+sorted_elements = alphabetical_elements[workfunction_indices]
 
-print("Coulomb Potentials")
-print("\n".join([str(i) for i in coulomb[indices]]))
+res_indices = np.argsort(resistivities)
+sorted_res = resistivities[res_indices]
+sorted_elements_res = alphabetical_elements[res_indices]
 
-print("Volume Ratios")
-print("\n".join([str(i) for i in best_vol_ratios[indices]]))
-print("Distance Ratios")
-print("\n".join([str(i) for i in best_dist_ratios[indices]]))
-print("Distance Beyond Atom")
-print("\n".join([str(i) for i in best_dists[indices]]))
-print("NNA Distance Fraction")
-print("\n".join([str(i) for i in best_nna_fracs[indices]]))
-print("Core Populations")
-print("\n".join([str(i) for i in core_populations[indices]]))
-print("NNA Populations")
-print("\n".join([str(i) for i in nna_populations[indices]]))
-
-test_grid = overlap.reference_grid.copy()
-structure = labeler.reference_grid.structure.copy()
-fracs = overlap.local_maxima_frac
-for frac in fracs:
-    structure.append("x", frac)
-test_grid.structure = structure
-test_grid.write_vasp("ELFCAR_test")
-
-
-
-atom_frac = structure.frac_coords[0] + INT_TO_IMAGE[16]
-point_frac = np.array((0.5,0.5,0.5))
-
-line = overlap.reference_grid.linear_slice(atom_frac, point_frac)
-matrix = overlap.reference_grid.matrix
-dist = np.linalg.norm(atom_frac@matrix - point_frac@matrix)
-x = np.linspace(0, dist, len(line))
 import matplotlib.pyplot as plt
-plt.plot(x, line)
-# from baderkit.core import Structure
-# structure = Structure.from_file("POSCAR")
-# fracs = final_frac
-# for frac in fracs:
-#     structure.append("x", frac)
-# structure.to("POSCAR_test")
+
+x = []
+y = []
+y_std = []
+for workfunction, element in zip(sorted_workfunctions, sorted_elements):
+    # get x-axis
+    x.append(workfunction)
+    # get y-axis
+    dict_el = data_dict[element]
+    dists = dict_el["nna_dists"]
+    fracs = dict_el["nna_fracs"]
+    volumes = dict_el["nna_volumes"]
+    charges = dict_el["nna_charges"]
+    zeffs = dict_el["nna_zeffs"]
+    veffs = dict_el["nna_veffs"]
+    vol_ratios = dict_el["nna_vol_ratios"]
+    dist_beyond_atom = dict_el["nna_dist_beyond_atom"]
+    weighted_coulomb = dict_el["nna_potential_energies"]
+    
+    atom_rhos = zeffs / veffs
+    basin_rhos = charges / volumes
+    
+    charge_frac = charges / charges.sum()
+    volume_frac = volumes / volumes.sum()
+    nna_charge_total = charges.sum()
+    # rho_frac = (charges/volumes) / (charges/volumes).sum()
+    
+    # value = basin_rhos/(dist_beyond_atom) # best so far
+    value = weighted_coulomb
+
+    
+    y.append(np.sum(value*volume_frac))
+    
+    
+    # values = vol_ratios
+    # avg = np.mean(values)
+    # stddev = np.std(values)
+    # y.append(avg)
+    # y_std.append(stddev)
+
+plt.scatter(x, y)
+
+plt.xlabel("X")
+plt.ylabel("Y")
+plt.title(f"Workfunction vs. 1/dist")
+plt.show()
+
+# plt.errorbar(
+#     x, y,
+#     yerr=y_std,
+#     fmt='o',        # 'o' = circular markers (scatter style)
+#     capsize=4,      # little caps on error bars
+#     linestyle='none' # no connecting line
+# )
+
+# plt.xlabel("X")
+# plt.ylabel("Y")
+# plt.title(f"Resistivities vs. 1/dist")
+# plt.show()len(atom_zeffs)

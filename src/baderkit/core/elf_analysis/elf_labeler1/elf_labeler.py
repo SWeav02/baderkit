@@ -12,7 +12,13 @@ from baderkit.core.toolkit import Grid
 from baderkit.core.elf_analysis.overlap import BasinOverlap
 
 from .enum_and_styling import FeatureType
-from .elf_labeler_numba import get_core_dist_ratios, get_approx_coulomb_potential, get_zeff_nna
+from .elf_labeler_numba import (
+    get_core_dist_ratios, 
+    get_approx_coulomb_potential, 
+    get_zeff_nna,
+    get_basin_potential_energies,
+    get_core_gaussian_fit,
+    )
 
 Self = TypeVar("Self", bound="ElfLabeler")
 
@@ -34,10 +40,12 @@ class ElfLabeler(BaseAnalysis):
         "basin_types",
         "attractor_shapes",
         "heavily_polarized",
-        "nna_core_volume_ratios",
-        "nna_core_distance_ratios",
-        "nna_core_distances",
-        "nna_coulombic_potentials",
+        "core_volume_ratios",
+        "nna_bond_fracs",
+        "nna_bond_dists",
+        "neighbor_zeffs",
+        "neighbor_veffs",
+        "nna_potential_energies",
         ]
     
     _reset_props = [
@@ -123,33 +131,19 @@ class ElfLabeler(BaseAnalysis):
         return self._heavily_polarized
     
     @property
-    def nna_core_volume_ratios(self):
-        if self._nna_core_volume_ratios is None:
-            # get each atom's core volume
-            atom_core_volumes = self.overlap.atom_core_volumes
-            # get the nna indices
-            indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-            local_volume_ratios = np.zeros(len(indices), dtype=np.float64)
-            for nna_idx, (local_idx) in enumerate(indices):
-                volume_fracs = self.overlap.volume_bond_fractions[local_idx]
-                # get the volume of this basin
-                local_volume = self.elf_bader.basin_volumes[local_idx]
-                # add the volume of each atom's core
-                core_volume = 0.0    
-                for atom_idx, _, atom_frac in volume_fracs:
-                    core_volume += atom_core_volumes[int(atom_idx)] * atom_frac
-                if core_volume == 0:
-                    continue
-                local_volume_ratios[nna_idx] = local_volume / core_volume
-            self._nna_core_volume_ratios = local_volume_ratios
-        return self._nna_core_volume_ratios
+    def core_volume_ratios(self):
+        if self._core_volume_ratios is None:
+            veffs = self.neighbor_veffs
+            veffs[veffs==0] = 1
+            self._core_volume_ratios = self.overlap.local_bader.basin_volumes / veffs
+        return self._core_volume_ratios
     
     @property
-    def nna_core_distance_ratios(self):
-        "nna frac / core frac"
-        if self._nna_core_distance_ratios is None:
+    def nna_bond_fracs(self):
+        "weighted average of nna fracs of bond to nearest atoms"
+        if self._nna_bond_fracs is None:
             indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-            self._nna_core_distance_ratios, self._nna_core_distances, self._nna_distance_ratios = get_core_dist_ratios(
+            self._nna_bond_dists, self._nna_bond_fracs = get_core_dist_ratios(
                 labels=self.elf_bader.maxima_basin_labels,
                 basin_frac_coords=self.elf_bader.maxima_frac,
                 atom_frac_coords=self.elf_bader.structure.frac_coords,
@@ -158,49 +152,87 @@ class ElfLabeler(BaseAnalysis):
                 core_basins=self.overlap.core_basins,
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
                     )
-        return self._nna_core_distance_ratios
+        return self._nna_bond_fracs
     
     @property
-    def nna_distance_ratios(self):
+    def nna_bond_dists(self):
         "nna frac compared to total distance"
-        if self._nna_distance_ratios is None:
-            self.nna_core_distance_ratios
-        return self._nna_distance_ratios
+        if self._nna_bond_dists is None:
+            self.nna_bond_fracs
+        return self._nna_bond_dists
     
     @property
-    def nna_core_distances(self):
-        "distance beyond atom core"
-        if self._nna_core_distances is None:
-            self.nna_core_distance_ratios
-        return self._nna_core_distances
-    
-    @property
-    def nna_coulombic_potentials(self):
-        "approximate potential between each point and the neighboring atoms"
-        if self._nna_coulombic_potentials is None:
-            # get nna indices
-            indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-            # calculate Zeff for each atom.
-            zeff = get_zeff_nna(
-                atom_charges=self.overlap.qtaim_bader.atom_charges,
+    def nna_potential_energies(self):
+        "eV / electron"
+        if self._nna_potential_energies is None:
+            structure = self.reference_grid.structure
+            atom_frac_coords = structure.frac_coords
+            # get gaussian sigma fits and total electron charge for each atom in the system
+            atom_sigmas, electron_charges, basin_charges = get_core_gaussian_fit(
+                total_charge_data=self.total_charge_grid.total, 
+                atom_labels=self.overlap.qtaim_bader.atom_labels, 
+                atom_images=self.overlap.qtaim_bader.atom_images, 
+                basin_labels=self.elf_bader.maxima_basin_labels, 
+                core_mask=self.overlap.core_basins, 
+                atom_frac_coords=atom_frac_coords, 
+                matrix=self.reference_grid.matrix,
+                )
+            
+            nna_indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
+            
+            # get the charge at the nucleus
+            nuc_charges = np.array([i.specie.Z for i in structure], dtype=np.float64)
+            breakpoint()
+            
+            self._nna_potential_energies = get_basin_potential_energies(
+                basin_labels=self.elf_bader.maxima_basin_labels,
+                atom_frac_coords=self.reference_grid.structure.frac_coords,
+                matrix=self.reference_grid.matrix,
+                nna_indices=nna_indices,
                 charge_bond_fracs=self.overlap.bond_fractions,
+                total_charge_data=self.total_charge_grid.total, # should be total charge density
+                nuclei_charges=nuc_charges,
+                electron_charges=electron_charges,
+                atom_sigmas=atom_sigmas,
+                basin_electrons=basin_charges,
+                    )
+        return self._nna_potential_energies
+    
+    
+    @property
+    def neighbor_zeffs(self):
+        "effective charge on the atom core"
+        if self._neighbor_zeffs is None:
+            # calculate Zeff for each atom.
+            zeff, veff = get_zeff_nna(
+                atom_charges=self.overlap.qtaim_bader.atom_charges,
+                atom_volumes=self.overlap.qtaim_bader.atom_volumes,
+                charge_bond_fracs=self.overlap.bond_fractions,
+                volume_bond_fracs=self.overlap.volume_bond_fractions,
                 basin_charges=self.elf_bader.basin_charges,
-                nna_indices=indices,
+                basin_volumes=self.elf_bader.basin_volumes,
+                core_basins=self.overlap.core_basins,
                 )
             pseudo_charges = np.array([self.valence_counts.get(i.specie.symbol, 0) for i in self.overlap.structure])
             zeff = pseudo_charges - zeff
-           
-            self._nna_coulombic_potentials = get_approx_coulomb_potential(
+            zeff = zeff[:len(self.elf_bader.structure)]
+            veff = veff[:len(self.elf_bader.structure)]
+
+            self._neighbor_zeffs, self._neighbor_veffs = get_approx_coulomb_potential(
                 zeff_charges=zeff,
-                basin_charges=self.elf_bader.basin_charges,
-                basin_frac_coords=self.elf_bader.maxima_frac,
-                atom_frac_coords=self.elf_bader.structure.frac_coords,
-                matrix=self.reference_grid.matrix,
-                nna_indices=indices,
-                core_basins=self.overlap.core_basins,
+                zeff_volumes=veff,
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
+                charge_bond_fracs = self.overlap.bond_fractions,
+                core_basins=self.overlap.core_basins,
                     )
-        return self._nna_coulombic_potentials
+        return self._neighbor_zeffs
+    
+    @property
+    def neighbor_veffs(self):
+        "effective volume of the atom core"
+        if self._neighbor_veffs is None:
+            self.neighbor_zeffs
+        return self._neighbor_veffs
     
     def _label_basins(self):
         """
