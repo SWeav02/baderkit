@@ -2,6 +2,7 @@
 
 from numba import njit, prange, types
 from math import erf
+from scipy.special import erf as scipy_erf
 
 import numpy as np
 from numpy.typing import NDArray
@@ -9,161 +10,224 @@ from numpy.typing import NDArray
 from baderkit.core.utilities.transforms import INT_TO_IMAGE, IMAGE_TO_INT
 from baderkit.core.utilities.interpolation import linear_slice
 
-# @njit(cache=True)
-def get_core_gaussian_fit(
-    total_charge_data,
-    atom_labels,
-    atom_images,
+@njit(cache=True)
+def get_valence_potentials(
+    charge_data,
+    potential_data,
     basin_labels,
-    core_mask,
-    atom_frac_coords,
-    matrix,
+    num_basins,
         ):
-    shape = np.array(total_charge_data.shape, dtype=np.int64)
+    shape = np.array(charge_data.shape, dtype=np.int64)
     nx, ny, nz = shape
     num_points = nx*ny*nz
-    
-    num_atoms = len(atom_frac_coords)
-    num_basins = len(core_mask)
-    
-    atom_Q = np.zeros(num_atoms, dtype=np.float64)
-    atom_M2 = np.zeros(num_atoms, dtype=np.float64)
-    total_electrons = np.zeros(num_atoms, dtype=np.float64)
-    basin_electrons = np.zeros(len(core_mask), dtype=np.float64)
-    
+    basin_potentials = np.zeros(num_basins, dtype=np.float64)
+
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
-                atom_label = atom_labels[i,j,k]
-                basin_label = basin_labels[i,j,k]
-                # skip vacuum/dummy atoms
-                if atom_label >= num_atoms or basin_label >= num_basins:
+                label = basin_labels[i,j,k]
+                if label >= num_basins:
                     continue
-                # add charge
-                charge = total_charge_data[i,j,k] / num_points
-                total_electrons[atom_label] += charge
-                basin_electrons[basin_label] += charge
-                
-                # skip points that are not cores
-                if core_mask[basin_label] == -1:
+                # add potential in this voxel
+                # (e*num_points) * eV = eV * num_points
+                basin_potentials[label] += 0.5 * charge_data[i,j,k] * potential_data[i,j,k]
+    # get the weighted potential felt by this basin
+    basin_potentials /= num_points
+    return basin_potentials
+
+@njit(cache=True)
+def get_avg_potentials(
+    potential_data,
+    basin_labels,
+    num_basins,
+        ):
+    shape = np.array(potential_data.shape, dtype=np.int64)
+    nx, ny, nz = shape
+    basin_potentials = np.zeros(num_basins, dtype=np.float64)
+    basin_counts = np.zeros(num_basins, dtype=np.int64)
+
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                label = basin_labels[i,j,k]
+                if label >= num_basins:
                     continue
-                
-                # get coordinates
-                point_frac = np.array((i,j,k), dtype=np.float64) / shape
-                point_cart = point_frac @ matrix
-                
-                atom_frac = atom_frac_coords[atom_label] + INT_TO_IMAGE[atom_images[i,j,k]]
-                atom_cart = atom_frac @ matrix
-                
-                diff = point_cart - atom_cart
-                r2 = diff[0]**2 + diff[1]**2 + diff[2]**2
+                # add potential in this voxel
+                # (e*num_points) * eV = eV * num_points
+                basin_potentials[label] += potential_data[i,j,k]
+                basin_counts[label] += 1
+    # get the weighted potential felt by this basin
+    basin_potentials /= basin_counts
+    return basin_potentials
 
-                atom_Q[atom_label] += charge
-                atom_M2[atom_label] += charge*r2
-    atom_sigmas = np.zeros_like(atom_Q)
-    for a in range(num_atoms):
-        if atom_Q[a] > 1e-12:
-            atom_sigmas[a] = np.sqrt(atom_M2[a] / (3.0 * atom_Q[a]))
-        else:
-            atom_sigmas[a] = 0.0
-    total_electrons = total_electrons
-    basin_electrons = basin_electrons
-    return atom_sigmas, total_electrons, basin_electrons
-                
-                
 
-# @njit(cache=True, parallel=True)
-def get_basin_potential_energies(
+@njit(cache=True)
+def get_test(
+    potential_data,
+    charge_data,
+    elf_data,
     basin_labels,
     atom_frac_coords,
+    bond_fractions,
+    nna_mask,
     matrix,
-    nna_indices,
-    charge_bond_fracs,
-    total_charge_data,
-    atom_sigmas,
-    nuclei_charges,
-    electron_charges,
-    basin_electrons,
+    num_atoms
         ):
-    shape = np.array(total_charge_data.shape, dtype=np.int64)
-    nx, ny, nz = shape
-    
-
-    num_points = nx*ny*nz
-
-    # get the total potential for each basin
-    potential_energies = np.zeros(len(nna_indices), dtype=np.float64)
-
-    for nna_idx in prange(len(nna_indices)):
-        local_idx = nna_indices[nna_idx]
-        # update the atom oxidation states as if this basins were not part of it
-        charge_bond_frac = charge_bond_fracs[local_idx]
-        
-        local_charge = basin_electrons[local_idx]
-        # remove charge related to the current basin to prevent double counting
-        zeff = nuclei_charges.copy()
-        for atom_idx, _, frac in charge_bond_frac:
-            if atom_idx >= len(atom_frac_coords):
+    atom_coords = []
+    for basin, fracs in enumerate(bond_fractions):
+        coords = []
+        idx = 0
+        for _,(atom, image, frac) in enumerate(fracs):
+            # skip nnas in the charge density
+            if atom>=num_atoms:
                 continue
-            zeff[int(atom_idx)] -= frac*local_charge
-        
-        for i in range(nx):
-            for j in range(ny):
-                for k in range(nz):
-                    # get the basin this point belongs to
-                    basin_idx = basin_labels[i,j,k]
-                    # skip non-nna points
-                    if basin_idx != local_idx:
-                        continue
-                    
-                    point_charge = -total_charge_data[i,j,k] / num_points
-                    
-                    # get this points cart coords
-                    point_frac = np.array((i,j,k), dtype=np.float64) / shape
-                    point_cart = point_frac @ matrix
-                    
-                    potential = 0.0
-    
-                    for idx, (atom_idx, atom_image, _) in enumerate(charge_bond_frac):
+            frac_coord = atom_frac_coords[int(atom)] + INT_TO_IMAGE[int(image)]
+            cart_coord = frac_coord @ matrix
+            coords.append(cart_coord)
+        coords_array = np.empty((len(coords), 3), dtype=np.float64)
+        for idx, coord in enumerate(coords):
+            coords_array[idx] = coord
+        atom_coords.append(coords_array)
 
-                        # skip dummy atoms at nnas in the charge density
-                        if atom_idx >= len(atom_frac_coords):
-                            continue
-                        
-                        # get this atoms frac coord
-                        atom_idx = int(atom_idx)
-                        atom_frac = atom_frac_coords[atom_idx] + INT_TO_IMAGE[int(atom_image)]
+    num_basins = len(atom_coords)
 
-                        # calculate distance
-                        atom_cart = atom_frac @ matrix
-                        dist = np.linalg.norm(point_cart - atom_cart)
-                        
-                        # get effective nucleus charge
-                        Z = nuclei_charges[atom_idx]
-                        Q = zeff[atom_idx]
-                        sigma = atom_sigmas[atom_idx]
-                        
-                        # calculate contribution to the potential
-                        eps = 1e-8
-                        if dist < eps:
-                            V_nuc = Z / eps
-                            V_gauss = Q * np.sqrt(2.0/np.pi) / sigma
-                        else:
-                            inv_r = 1.0 / dist
-                            x = dist / (np.sqrt(2.0) * sigma)
-                            V_nuc = Z * inv_r
-                            V_gauss = Q * erf(x) * inv_r
-                        
-                        potential += V_nuc - V_gauss
-                        
-                    # add to the total potential energy for this basin
-                    potential_energies[nna_idx] += potential * point_charge
-        breakpoint()
 
-    # normalize
-    potential_energies *= 14.3996  # convert to potential in eV
-    
-    return potential_energies
+    shape = np.array(potential_data.shape, dtype=np.int64)
+    nx, ny, nz = shape
+    num_points = nx*ny*nz
+    test_vals = np.zeros(num_basins, dtype=np.float64)
+    test_norms = np.zeros(num_basins, dtype=np.float64)
+
+    for i in range(nx):
+        for j in range(ny):
+            for k in range(nz):
+                label = basin_labels[i,j,k]
+                if not nna_mask[label]:
+                    continue
+
+                coords = np.array((i,j,k),dtype=np.float64)/shape
+                cart = coords @ matrix
+                charge = charge_data[i,j,k]/num_points
+                elf = elf_data[i,j,k]
+                # elec_pot = potential_data[i,j,k]
+                for atom_cart in atom_coords[label]:
+                    dist = np.linalg.norm(cart-atom_cart)
+                    potential = elf/dist
+                    test_vals[label] += potential
+                    test_norms[label] += elf
+
+    test_norms[np.where(test_norms==0)[0]] = 1
+    # get the weighted potential felt by this basin
+    test_vals /= test_norms
+    return test_vals
+
+def solve_poisson(
+    data,
+    matrix,
+    nuclei_positions,
+    nuclei_charges,
+    sigma=0.1,
+):
+    """
+    Solve Poisson's equation on a periodic lattice using FFT.
+    Works for a general parallelepiped cell.
+
+    Assumes CHGCAR-style input:
+    - data initially stores (rho * Vcell)
+    - dividing by N gives electrons per voxel
+
+    Returns electrostatic potential in eV.
+    """
+
+    # --- Lattice vectors ---
+    a1, a2, a3 = matrix
+    nx, ny, nz = data.shape
+    N = nx * ny * nz
+
+    # --- Cell volume ---
+    volume = np.dot(a1, np.cross(a2, a3))
+
+    # --- Voxel volume ---
+    dV = volume / N
+
+    # --- Grid spacing (approx, for sigma safety only) ---
+    # dx = np.linalg.norm(a1) / nx
+    # dy = np.linalg.norm(a2) / ny
+    # dz = np.linalg.norm(a3) / nz
+    # sigma = max(sigma, 2.5 * max(dx, dy, dz))
+
+    # =========================
+    # Charge density (CORRECT)
+    # =========================
+
+    # CHGCAR → electrons per voxel → divide by voxel volume → e/Å^3
+    rho = (data / N) / dV
+
+    # --- Lattice transforms ---
+    A = matrix.T
+    Ainv = np.linalg.inv(A)
+
+    # --- Fractional grid ---
+    x = np.linspace(0, 1, nx, endpoint=False)
+    y = np.linspace(0, 1, ny, endpoint=False)
+    z = np.linspace(0, 1, nz, endpoint=False)
+
+    xg, yg, zg = np.meshgrid(x, y, z, indexing='ij')
+    r_frac = np.stack([xg, yg, zg], axis=-1)
+
+    # =========================
+    # Add Gaussian nuclei (CORRECT normalization)
+    # =========================
+    for q, R_cart in zip(nuclei_charges, nuclei_positions):
+
+        R_frac = Ainv @ R_cart
+
+        dr_frac = r_frac - R_frac
+        dr_frac -= np.round(dr_frac)
+
+        dr_cart = dr_frac @ matrix
+        r2 = np.sum(dr_cart**2, axis=-1)
+
+        gaussian = np.exp(-r2 / (2 * sigma**2))
+
+        # Normalize so integral = 1
+        gaussian /= gaussian.sum() * dV
+
+        # Add nuclear charge
+        rho -= q * gaussian
+
+    # =========================
+    # FFT solve
+    # =========================
+
+    rho_k = np.fft.fftn(rho)
+
+    # --- Reciprocal lattice ---
+    b1 = 2 * np.pi * np.cross(a2, a3) / volume
+    b2 = 2 * np.pi * np.cross(a3, a1) / volume
+    b3 = 2 * np.pi * np.cross(a1, a2) / volume
+
+    # --- Correct k-grid (integer harmonics) ---
+    hx = np.fft.fftfreq(nx, d=1.0 / nx)
+    hy = np.fft.fftfreq(ny, d=1.0 / ny)
+    hz = np.fft.fftfreq(nz, d=1.0 / nz)
+
+    hxg, hyg, hzg = np.meshgrid(hx, hy, hz, indexing='ij')
+    kvecs = hxg[..., None] * b1 + hyg[..., None] * b2 + hzg[..., None] * b3
+
+    k2 = np.sum(kvecs**2, axis=-1)
+    k2[0, 0, 0] = 1.0  # avoid division by zero
+
+    # --- Poisson equation in reciprocal space ---
+    phi_k = 4 * np.pi * rho_k / k2
+    phi_k[0, 0, 0] = 0.0  # zero-average potential
+
+    # --- Back transform ---
+    phi = np.fft.ifftn(phi_k).real
+
+    # --- Convert to eV ---
+    return phi * 14.3996
+
 
 @njit(cache=True, parallel=True)
 def get_core_dist_ratios(
@@ -175,10 +239,10 @@ def get_core_dist_ratios(
     core_basins,
     volume_bond_fracs,
         ):
-    
+
     basin_dists = np.zeros(len(nna_indices), dtype=np.float64)
     basin_fracs = np.zeros(len(nna_indices), dtype=np.float64)
-    
+
     for nna_idx in prange(len(nna_indices)):
         # skip cores
         local_idx = nna_indices[nna_idx]
@@ -187,7 +251,7 @@ def get_core_dist_ratios(
         local_bond_frac = volume_bond_fracs[local_idx]
         weighted_dist = 0.0
         total_basin_frac = 0.0
-        
+
         total_frac = 0.0
         for atom_idx, atom_image, frac in local_bond_frac:
             if atom_idx >= len(atom_frac_coords):
@@ -209,7 +273,7 @@ def get_core_dist_ratios(
             # get fraction of bond belonging to the nna
             atom_frac = idx / (len(label_line)-1)
             nna_frac = 1-atom_frac
-            
+
             # add fraction making up bond
             total_basin_frac += nna_frac * frac
 
@@ -218,7 +282,7 @@ def get_core_dist_ratios(
             dist = np.linalg.norm(atom_cart_coords - local_cart_coords)
             # add this neighbors portion of the fraction
             weighted_dist += dist * frac
-        
+
         # adjust for any fractions that had no cores
         if total_frac == 0:
             continue
@@ -227,7 +291,7 @@ def get_core_dist_ratios(
         basin_dists[nna_idx] = weighted_dist * frac_mult
         basin_fracs[nna_idx] = total_basin_frac * frac_mult
     return basin_dists, basin_fracs
-           
+
 @njit(cache=True)
 def get_zeff_nna(
     atom_charges,
@@ -238,22 +302,22 @@ def get_zeff_nna(
     basin_volumes,
     core_basins,
         ):
-    
+
     zeff = atom_charges.copy()
     veff = atom_volumes.copy()
-    
+
     for local_idx in range(len(core_basins)):
         # skip cores
         if core_basins[local_idx] != -1:
             continue
-        
+
         local_charge = basin_charges[local_idx]
         local_volume = basin_volumes[local_idx]
         for (atom_idx, atom_image, charge_frac), (_,_,volume_frac) in zip(charge_bond_fracs[local_idx], volume_bond_fracs[local_idx]):
             zeff[int(atom_idx)] -= charge_frac*local_charge
             veff[int(atom_idx)] -= volume_frac*local_volume
     return zeff, veff
-        
+
 @njit(cache=True, parallel=True)
 def get_approx_coulomb_potential(
     zeff_charges,
@@ -262,20 +326,20 @@ def get_approx_coulomb_potential(
     charge_bond_fracs,
     core_basins,
         ):
-    
+
     zeffs = np.zeros(len(core_basins), dtype=np.float64)
     veffs = np.zeros(len(core_basins), dtype=np.float64)
-    
+
     for local_idx in prange(len(core_basins)):
         # skip cores
         if core_basins[local_idx] != -1:
             continue
         volume_bond_frac = volume_bond_fracs[local_idx]
         charge_bond_frac = charge_bond_fracs[local_idx]
-        
+
         total_charge = 0.0
         total_volume = 0.0
-        
+
         total_charge_frac = 0.0
         total_volume_frac = 0.0
         for (atom_idx, atom_image, volume_frac), (_, _, charge_frac) in zip(volume_bond_frac, charge_bond_frac):
@@ -287,11 +351,11 @@ def get_approx_coulomb_potential(
             # get effective charge of atom
             atom_charge = zeff_charges[int(atom_idx)]
             atom_volume = zeff_volumes[int(atom_idx)]
-            
+
             # add fractional contribution
             total_charge += atom_charge * charge_frac
             total_charge_frac += charge_frac
-            
+
             total_volume += atom_volume * volume_frac
             total_volume_frac += volume_frac
 

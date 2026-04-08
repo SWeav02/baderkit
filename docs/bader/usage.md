@@ -1,10 +1,10 @@
 ## Introduction
 
-The `Bader` class reproduces the methods for Bader charge analysis available in the 
-[Henkelman group's](https://theory.cm.utexas.edu/henkelman/code/bader/) excellent 
+The `Bader` class reproduces the methods for Bader charge analysis available in the
+[Henkelman group's](https://theory.cm.utexas.edu/henkelman/code/bader/) excellent
 Fortran code within the Python ecosystem. It is built on
 top of the [PyMatGen](https://pymatgen.org/) package, allowing for
-easy extension to other projects. Under the hood, `Bader` runs on [Numba](https://numba.pydata.org/numba-doc/dev/index.html) 
+easy extension to other projects. Under the hood, `Bader` runs on [Numba](https://numba.pydata.org/numba-doc/dev/index.html)
 and [NumPy](https://numpy.org/doc/stable/index.html) to parallelize and vectorize
 calculations. This allows `Bader` to reach speeds [comparable or faster](../methods/#__tabbed_2_1)
 than the original code.
@@ -21,19 +21,19 @@ The files used in this tutorial can be downloaded [here](https://github.com/SWea
 
     1. Activate your environment with BaderKit installed. If you are not using an
     environment manager, skip to step 2.
-    
+
         ```bash
         conda activate my_env
         ```
-        
+
     2. Navigate to the directory with your charge density file.
-    
+
         ```bash
         cd /path/to/directory
         ```
-    
+
     3. Run the bader analysis. Replace 'chargefile' with the name of your file.
-    
+
         ```bash
         baderkit run chargefile
         ```
@@ -57,55 +57,55 @@ The files used in this tutorial can be downloaded [here](https://github.com/SWea
                         INFO     Atom Assignment Finished
                         INFO     Time: 0.01
     ```
-    
+
     A summary of all properties will be written to `bader.json`. See the Ag system in our [example files](https://github.com/SWeav02/baderkit/releases/tag/0.9.0 ).
-    
-    Additional arguments and options such as those for printing output files or using different 
+
+    Additional arguments and options such as those for printing output files or using different
     algorithms can be viewed by running the help command.
     ```bash
     baderkit run --help
     ```
 
 === "Python"
-    
+
     1. Import the `Bader` class.
-    
+
         ```python
         from baderkit.core import Bader
         ```
-    
+
     2. Use the `Bader` class' `from_dynamic` method to read a `CHGCAR` or `cube` file.
-    
+
         ```python
         # instantiate the class
         bader = Bader.from_dynamic("path/to/charge_file")
         ```
-    
+
     3. To run the analysis, we can call any class property. Try getting a complete summary in dictionary format.
         ```python
         results = bader.to_dict()
         ```
     You should see an output similar to this:
         ```bash
-        2026-03-10 11:33:36 INFO     Beginning Bader Algorithm Using 'weight' Method   
-        2026-03-10 11:33:37 INFO     Initializing Labels                               
-                            INFO     Initialization Complete                           
-                            INFO     Time: 0.29                                        
-                            INFO     Sorting Reference Data                            
-                            INFO     Assigning Charges and Volumes                     
-                            INFO     Combining Low-Persistence Basins                  
-                            INFO     Refining Maxima                                   
-        2026-03-10 11:33:38 INFO     Bader Algorithm Complete                          
-                            INFO     Time: 1.38                                        
-                            INFO     Assigning Atom Properties                         
-                            INFO     Atom Assignment Finished                          
-                            INFO     Time: 0.0 
+        2026-03-10 11:33:36 INFO     Beginning Bader Algorithm Using 'weight' Method
+        2026-03-10 11:33:37 INFO     Initializing Labels
+                            INFO     Initialization Complete
+                            INFO     Time: 0.29
+                            INFO     Sorting Reference Data
+                            INFO     Assigning Charges and Volumes
+                            INFO     Combining Low-Persistence Basins
+                            INFO     Refining Maxima
+        2026-03-10 11:33:38 INFO     Bader Algorithm Complete
+                            INFO     Time: 1.38
+                            INFO     Assigning Atom Properties
+                            INFO     Atom Assignment Finished
+                            INFO     Time: 0.0
         ```
-    
-    4. Now try getting an individual property. 
+
+    4. Now try getting an individual property.
         ```python
         atom_charges = bader.atom_charges # Total atom charges
-        basin_volumes = bader.basin_volumes # The volumes of each 
+        basin_volumes = bader.basin_volumes # The volumes of each
 
         print(atom_charges)
         print(basin_volumes)
@@ -116,20 +116,20 @@ The files used in this tutorial can be downloaded [here](https://github.com/SWea
         [17.36053278 17.36053278 17.36794633 17.36794633]
         ```
     For more details on each property, see the [API reference](../api_reference/core/bader/#src.baderkit.core.bader.Bader).
-    
+
     5. BaderKit also provides convenience methods for writing results to file. First,
     let's write a summary of the full analysis.
-    
+
         ```python
         bader.write_json("bader.json")
         ```
-    
+
     6. Now let's write the volume assigned to one of our atoms.
-    
+
         ```python
         bader.write_atom_volumes(atom_indices = [0])
         ```
-    
+
     !!! Tip
         After creating a `Bader` class object, it doesn't matter what order
         you call properties, summaries, or write methods in. BaderKit calculates
@@ -139,16 +139,16 @@ The files used in this tutorial can be downloaded [here](https://github.com/SWea
 
     1. Activate your environment with BaderKit installed. If you are not using an
     environment manager, skip to step 2.
-    
+
         ```bash
         conda activate my_env
         ```
-    
+
     2. Run the BaderKit GUI.
         ```bash
         baderkit gui
         ```
-        
+
         This will launch a new window:
         ![pyqt_app](/images/pyqt_screenshot.png)
 
@@ -172,7 +172,7 @@ VASP and other pseudopotential codes only include valence electrons in their cha
     ```bash
     baderkit run CHGCAR -tot CHGCAR_sum
     ```
-    
+
 === "Python"
     1. Import the Bader and Grid classes.
     ```python
@@ -207,3 +207,6 @@ By experience, Bader charge analysis typically requires only moderate calculatio
 For grid based software such as this, the most important parameter is the grid density. The exact required grid density will depend on the system and the selected algorithm (see [Methods](/baderkit/bader/methods/#__tabbed_2_2)), but we have found that a grid density of ~22 pts/Å along each lattice vector (~10000 pts / Å<sup>3</sup>) is fine enough in most cases.
 
 As always, when extremely accurate results are required, we recommend increasing the quality of each parameter until convergence is reached for your system.
+
+!!! Warning
+    For VASP users, we generally recommend avoiding the `addgrid` tag for Bader calculations. This tag can help with convergence, but often results in spurious fluctuations in the AECCAR2 file.

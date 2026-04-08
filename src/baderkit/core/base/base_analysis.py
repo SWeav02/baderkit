@@ -440,7 +440,7 @@ class BaseAnalysis(ABC):
             The path to the file that will be used for partitioning.
             If None, defaults to the total charge grid.
         pseudopotential_filename : Path | None | str | dict, optional
-            The path to the POTCAR used for calculating oxidation states. Alternatively,
+            The path to the pseudopotentials used for calculating oxidation states. Alternatively,
             a dictionary representing the valence counts of each atom in the system
             where each entry is the species symbol and each value is the number
             of electrons used for that species in the calculation. If None,

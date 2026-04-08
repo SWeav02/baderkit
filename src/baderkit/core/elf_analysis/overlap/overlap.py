@@ -27,7 +27,7 @@ class BasinOverlap(BaseAnalysis):
     in the charge density and a localization density such as ELF.
 
     """
-    
+
     _summary_props = [
         "atomicities",
         "bond_fractions",
@@ -56,7 +56,7 @@ class BasinOverlap(BaseAnalysis):
         "atom_access_electron_numbers",
         "atom_shell_groups",
     ] + _summary_props
-    
+
 
 
     def __init__(
@@ -113,7 +113,7 @@ class BasinOverlap(BaseAnalysis):
     ###########################################################################
     # Properties calculated by other classes
     ###########################################################################
-    
+
     @property
     def structure(self) -> Structure:
         """
@@ -276,7 +276,7 @@ class BasinOverlap(BaseAnalysis):
         if self._bond_fractions is None:
             self._get_overlap_fractions()
         return self._bond_fractions
-    
+
     @property
     def volume_bond_fractions(self) -> list[NDArray[np.float64]]:
         """
@@ -437,7 +437,7 @@ class BasinOverlap(BaseAnalysis):
                 core_charges[atom] += self.local_bader.basin_charges[feature_idx]
             self._atom_core_populations = core_charges
         return self._atom_core_populations.round(6)
-    
+
     @property
     def atom_core_volumes(self) -> NDArray[float]:
         """
@@ -505,7 +505,7 @@ class BasinOverlap(BaseAnalysis):
                 access_sets.append(access_set)
             self._atom_access_sets = access_sets
         return self._atom_access_sets
-    
+
     @property
     def atom_access_electron_numbers(self) -> NDArray[np.float64]:
         """
@@ -532,7 +532,7 @@ class BasinOverlap(BaseAnalysis):
             A list of Nx3 arrays where each list entry represents a qtaim atom.
             Each array represents the charge claims for that atoms access set.
             The first column is the index of the atom that has a claim to part of the
-            set, the second column is the periodic image of that atom, and the 
+            set, the second column is the periodic image of that atom, and the
             third column is the fractional charge claim the atom has to the set.
             The total accessessible charge can be obtained from the atom_access_sets
             property and the integrated charge of each local basin.
@@ -553,8 +553,8 @@ class BasinOverlap(BaseAnalysis):
             The connection index for each atom can be thought
             of as a condensed representation of all bonding for each atom. A
             value of 1 is non-polar while a value of 0 is polar.
-            
-            Our implementation differs slightly from what is described in Grin et. al. 
+
+            Our implementation differs slightly from what is described in Grin et. al.
             They suggest using the charge claims of each neighboring atom that
             has some charge claim in each atoms access set of basins. In reality,
             they sum the charge claims for symmetrically identical species, effectively
@@ -581,7 +581,7 @@ class BasinOverlap(BaseAnalysis):
         if self._atom_connection_index_labels is None:
             self._get_charge_claims()
         return self._atom_connection_index_labels
-    
+
     @property
     def atom_shell_groups(self) -> list[NDArray[int]]:
         if self._atom_shell_groups is None:
@@ -591,19 +591,19 @@ class BasinOverlap(BaseAnalysis):
                 atom_frac_coords=self.qtaim_maxima_frac,
                 local_frac_coords=self.local_maxima_frac,
                 matrix=self.reference_grid.matrix,
-                tol=0.2
+                tol=0.1
                     )
             self._atom_shell_groups = all_atom_shells
             self._atom_average_shell_dists = basin_dists
-            
+
         return self._atom_shell_groups
-    
+
     @property
     def atom_average_shell_dists(self) -> list[NDArray[float]]:
         if self._atom_average_shell_dists is None:
             self.atom_shell_groups
         return self._atom_average_shell_dists
-    
+
 ###############################################################################
 # Methods to generate properties
 ###############################################################################
@@ -612,11 +612,11 @@ class BasinOverlap(BaseAnalysis):
         _, index, inverse = np.unique(self.qtaim_bader.structure.atomic_numbers, return_inverse=True, return_index=True)
         order = np.argsort(index)
         equiv_species = order[inverse]
-        
+
         (
-            self._atom_charge_claims, 
-            self._atom_access_electron_numbers, 
-            self._atom_connection_indices, 
+            self._atom_charge_claims,
+            self._atom_access_electron_numbers,
+            self._atom_connection_indices,
             species_nums
             ) = get_atom_charge_claims(
             access_sets=self.atom_access_sets,
@@ -678,7 +678,7 @@ class BasinOverlap(BaseAnalysis):
             )
 
     def _assign_cores(
-            self, 
+            self,
             core_tol=0.01,
             lone_pair_tol=0.05,
             ):
@@ -686,7 +686,7 @@ class BasinOverlap(BaseAnalysis):
         cores = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         lone_pairs = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         shared = np.zeros(len(self.local_maxima_frac), dtype=np.bool_)
-        
+
         for atom_idx in range(len(self.atom_shell_groups)):
             atom_shells = self.atom_shell_groups[atom_idx]
             local_overlap = self.qtaim_overlap_groups[atom_idx]
@@ -698,7 +698,7 @@ class BasinOverlap(BaseAnalysis):
                 if np.all(overlap_fracs > 1.0 - core_tol):
                     cores[local_indices] = atom_idx
                     continue
-                
+
                 # if none of the basins are above our threshold for lone-pairs
                 # they must all be shared. If all of them are above the threshold
                 # we have highly ionic shared basins.
@@ -709,7 +709,7 @@ class BasinOverlap(BaseAnalysis):
                     or min_frac > 1.0 - lone_pair_tol
                     ):
                     continue
-                # otherwise, me may have a lone-pairs or shared basins. 
+                # otherwise, me may have a lone-pairs or shared basins.
                 # We only accept basins as lone-pairs if they have a significantly
                 # higher value than the other basins in this shell
                 # lone-pairs if there is also a basin that is significantly
