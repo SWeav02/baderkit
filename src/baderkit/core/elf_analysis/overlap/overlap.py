@@ -640,7 +640,7 @@ class BasinOverlap(BaseAnalysis):
                 atom_images=self.qtaim_bader.atom_images,
                 local_labels=self.local_bader.maxima_basin_labels,  # ELF basins
                 local_images=self.local_bader.maxima_basin_images,  # ELF basins
-                num_atoms=len(self.qtaim_maxima_frac),
+                num_atoms=len(self.reference_grid.structure),
                 num_local=len(self.local_maxima_frac),
                 )
         # sort lexographically
@@ -672,7 +672,7 @@ class BasinOverlap(BaseAnalysis):
             self.overlap_table,
             self.overlap_charges,
             self.overlap_volumes,
-            num_atoms=len(self.qtaim_maxima_frac),
+            num_atoms=len(self.reference_grid.structure),
             num_local=len(self.local_maxima_frac),
             tol=tol,
             )

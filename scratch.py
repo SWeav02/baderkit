@@ -5,6 +5,8 @@
 from baderkit.core.elf_analysis.overlap.overlap import BasinOverlap
 from baderkit.core.elf_analysis.elf_labeler1.elf_labeler import ElfLabeler
 from baderkit.core.utilities.transforms import INT_TO_REV_INT, INT_TO_IMAGE
+from baderkit.core.utilities.largest_dist import largest_empty_sphere
+from baderkit.core import Structure
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -34,53 +36,55 @@ for folder in path.iterdir():
     if not folder.is_dir():
         continue
 
-    subfolder = folder / "static_nospin"
+    subfolder = folder / "static_pbe"
     if not (subfolder / "CHGCAR_sum").exists():
         continue
 
 
-    subfolder = folder / "static_nospin"
     chgcar = subfolder / "CHGCAR"
     elf = subfolder / "ELFCAR"
     tot = subfolder / "CHGCAR_sum"
     loc = subfolder / "LOCPOT"
     pot = subfolder / "POTCAR"
+    struc = subfolder / "POSCAR"
 
     element = folder.name
     data_dict[element] = {}
     elements_w_results.append(element)
 
-    labeler = ElfLabeler.from_vasp(
-        charge_filename=chgcar,
-        reference_filename=elf,
-        total_charge_filename=tot,
-        persistence_tol=0.001,
-        # potential_filename=loc,
-        pseudopotential_filename = pot,
-        )
+    try:
+        labeler = ElfLabeler.from_vasp(
+            charge_filename=chgcar,
+            reference_filename=elf,
+            total_charge_filename=tot,
+            persistence_tol=0.001,
+            # potential_filename=loc,
+            pseudopotential_filename = pot,
+            )
+    except:
+        print(f"{subfolder.name} Failed")
+        continue
     overlap: BasinOverlap = labeler.overlap
     bader = overlap.local_bader
     types = labeler.basin_types
-    structure = labeler.reference_grid.structure
+    structure = Structure.from_file(struc)
 
     nna_indices = np.array([i for i, j in enumerate(types) if j == "nna"], dtype=np.int64)
 
-    data_dict[element]["nna_zeffs"] = labeler.neighbor_zeffs[nna_indices]
-    data_dict[element]["nna_veffs"] = labeler.neighbor_veffs[nna_indices]
-    data_dict[element]["nna_vol_ratios"] = labeler.core_volume_ratios[nna_indices]
     data_dict[element]["nna_charges"] = overlap.local_bader.basin_charges[nna_indices]
-    data_dict[element]["nna_volumes"] = overlap.local_bader.basin_volumes[nna_indices]
+    # data_dict[element]["nna_volumes"] = overlap.local_bader.basin_volumes[nna_indices]
     data_dict[element]["nna_dists"] = labeler.nna_bond_dists
-    data_dict[element]["nna_fracs"] = labeler.nna_bond_fracs
-    data_dict[element]["nna_dist_beyond_atom"] = labeler.nna_bond_dists * labeler.nna_bond_fracs
-    data_dict[element]["nna_potential_energies"] = labeler.nna_potential_energies
-    data_dict[element]["nna_potentials"] = labeler.nna_potentials
-    data_dict[element]["nna_avg_potentials"] = labeler.nna_avg_potentials
-    data_dict[element]["nna_charge_dens"] = labeler.nna_charge_densities
-    data_dict[element]["structure"] = structure
-    data_dict[element]["grid_shape"] = labeler.reference_grid.shape
+    # data_dict[element]["nna_dist_beyond_atom"] = labeler.nna_bond_dists * labeler.nna_bond_fracs
+    # data_dict[element]["nna_potential_energies"] = labeler.nna_potential_energies
+    # data_dict[element]["nna_potentials"] = labeler.nna_potentials
+    # data_dict[element]["nna_avg_potentials"] = labeler.nna_avg_potentials
+    # data_dict[element]["structure"] = structure
+    # data_dict[element]["grid_shape"] = labeler.reference_grid.shape
 
-    data_dict[element]["test"] = labeler.nna_test
+    lattice = structure.lattice.matrix
+    frac_coords = structure.frac_coords
+    data_dict[element]["vacancy_dist"],_ = largest_empty_sphere(lattice, frac_coords)
+
 
 elements_w_results = np.array(elements_w_results)
 
@@ -126,40 +130,32 @@ for idx in workfunction_indices:
     x.append(workfunction)
 
     dists = dict_el["nna_dists"]
-    fracs = dict_el["nna_fracs"]
-    volumes = dict_el["nna_volumes"]
+    # fracs = dict_el["nna_fracs"]
+    # volumes = dict_el["nna_volumes"]
     charges = dict_el["nna_charges"]
-    zeffs = dict_el["nna_zeffs"]
-    veffs = dict_el["nna_veffs"]
-    vol_ratios = dict_el["nna_vol_ratios"]
-    dist_beyond_atom = dict_el["nna_dist_beyond_atom"]
-    potential_energies = dict_el["nna_potential_energies"]
-    potentials = dict_el["nna_potentials"]
-    avg_potentials = dict_el["nna_avg_potentials"]
-    structure = dict_el["structure"]
-    test = dict_el["test"]
-    charge_dens = dict_el["nna_charge_dens"].copy()
-    shape = dict_el["grid_shape"]
+    # dist_beyond_atom = dict_el["nna_dist_beyond_atom"]
+    # potential_energies = dict_el["nna_potential_energies"]
+    # potentials = dict_el["nna_potentials"]
+    # avg_potentials = dict_el["nna_avg_potentials"]
+    # structure = dict_el["structure"]
+    # shape = dict_el["grid_shape"]
+    # vacancy_dist = dict_el["vacancy_dist"]
 
-    cell_vol = structure.volume / shape.prod()
-    charge_dens *= cell_vol
+    # cell_vol = structure.volume / shape.prod()
 
-    charge_ratios = charges / zeffs
-
-    atom_rhos = zeffs / veffs
-    basin_rhos = charges / volumes
+    # basin_rhos = charges / volumes
 
     charge_frac = charges / charges.sum()
-    volume_frac = volumes / volumes.sum()
-    nna_charge_total = charges.sum()
+    # volume_frac = volumes / volumes.sum()
+    # nna_charge_total = charges.sum()
 
-    # value = 1/dists # best
+    value = 1/dists # best
     # value = potential_energies/(charges*2) # most physical
     # value = potentials / dists # best with physical meaning
-    value = test
 
 
     y.append(np.sum(value*charge_frac))
+    # y.append(1/vacancy_dist)
 
 
     # y.append(np.sum(value)/charges.sum())

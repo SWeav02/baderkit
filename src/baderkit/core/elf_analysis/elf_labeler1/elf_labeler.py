@@ -14,6 +14,7 @@ from baderkit.core.elf_analysis.overlap import BasinOverlap
 from .enum_and_styling import FeatureType
 from .elf_labeler_numba import (
     get_core_dist_ratios,
+    get_core_dists,
     get_approx_coulomb_potential,
     get_zeff_nna,
     get_valence_potentials,
@@ -148,7 +149,7 @@ class ElfLabeler(BaseAnalysis):
         "weighted average of nna fracs of bond to nearest atoms"
         if self._nna_bond_fracs is None:
             indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-            self._nna_bond_dists, self._nna_bond_fracs = get_core_dist_ratios(
+            self._nna_bond_fracs = get_core_dist_ratios(
                 labels=self.elf_bader.maxima_basin_labels,
                 basin_frac_coords=self.elf_bader.maxima_frac,
                 atom_frac_coords=self.elf_bader.structure.frac_coords,
@@ -163,7 +164,16 @@ class ElfLabeler(BaseAnalysis):
     def nna_bond_dists(self):
         "nna frac compared to total distance"
         if self._nna_bond_dists is None:
-            self.nna_bond_fracs
+            indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
+            self._nna_bond_dists = get_core_dists(
+                labels=self.elf_bader.maxima_basin_labels,
+                basin_frac_coords=self.elf_bader.maxima_frac,
+                atom_frac_coords=self.elf_bader.structure.frac_coords,
+                matrix=self.reference_grid.matrix,
+                nna_indices=indices,
+                core_basins=self.overlap.core_basins,
+                volume_bond_fracs=self.overlap.volume_bond_fractions,
+                    )
         return self._nna_bond_dists
 
     @property
