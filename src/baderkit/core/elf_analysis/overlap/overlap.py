@@ -588,7 +588,7 @@ class BasinOverlap(BaseAnalysis):
             # get atom shells
             all_atom_shells, basin_dists = get_atom_shell_groups(
                 atom_local_groups=self.qtaim_overlap_groups,
-                atom_frac_coords=self.qtaim_maxima_frac,
+                atom_frac_coords=self.reference_grid.structure.frac_coords,
                 local_frac_coords=self.local_maxima_frac,
                 matrix=self.reference_grid.matrix,
                 tol=0.1
