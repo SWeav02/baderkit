@@ -551,7 +551,7 @@ def get_saddles_from_basins(
 
 #     return saddle_coords, saddle_connections
 
-# @njit(parallel=True, cache=True)
+@njit(parallel=True, cache=True)
 def remove_false_saddles(
     saddle_coords,
     saddle_connections,
@@ -591,9 +591,9 @@ def remove_false_saddles(
     r_voxel_cart2 = r_voxel_cart * r_voxel_cart
 
     if use_minima:
-        saddle_morses = (1, 11, 21, 22)
+        saddle_morses = np.array((1, 11, 21, 22), dtype=np.int64)
     else:
-        saddle_morses = (2, 10, 20, 21)
+        saddle_morses = np.array((2, 10, 20, 21), dtype=np.int64)
 
     for saddle_idx in prange(len(saddle_coords)):
         i, j, k = saddle_coords[saddle_idx]
@@ -615,7 +615,7 @@ def remove_false_saddles(
     possible_saddles = np.where(saddle_mask)[0]
     possible_coords = saddle_coords[possible_saddles]
     # try to refine for each type of saddle
-    refined_vox, successes, _ = refine_critical_points(
+    refined_vox, successes, ctypes = refine_critical_points(
         critical_coords=possible_coords,
         data=data,
         matrix=matrix,
@@ -626,13 +626,14 @@ def remove_false_saddles(
         h=0.5,
         eig_rel_tol=0.001,
     )
+
+    # correct_ctypes = np.isin(ctypes, saddle_morses)
     # The refinement seems to fail often in the ELF. This causes issues
     # later on, so I'm removing this for now. Eventually, I need a better
     # method as this results in far too many saddles.
-
-    # saddle_mask[possible_saddles] = successes
-
     # success_indices = np.where(successes)[0]
+
+    # success_indices = np.where(correct_ctypes)[0]
     # refined_vox = refined_vox[success_indices]
 
     # recalculate saddle connections
@@ -650,7 +651,7 @@ def remove_false_saddles(
 
     return refined_vox, saddle_connections
 
-# @njit(cache=True)
+@njit(cache=True)
 def remove_adjacent_saddles(refined_vox, shape):
     unions = np.arange(len(refined_vox))
     # combine any that refined to be adjacent

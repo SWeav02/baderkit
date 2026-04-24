@@ -393,7 +393,7 @@ class BasinOverlap(BaseAnalysis):
             depths = []
             for i in range(len(bader.maxima_frac)):
                 max_val = bader.maxima_ref_values[i]
-                indices = np.where(saddles==i)[0]
+                indices = np.where(((saddles[:,0]==i) | (saddles[:,1]==i)) & (saddle_vals < max_val))[0]
                 if len(indices) > 0:
                     best = max_val - np.max(saddle_vals[indices])
                 else:
