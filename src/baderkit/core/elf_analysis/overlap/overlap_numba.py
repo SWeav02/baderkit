@@ -20,7 +20,7 @@ def get_label_image_map(
             for k in range(nz):
                 label = labels[i,j,k]
                 # skip vacuum
-                if label == num_labels:
+                if label >= num_labels:
                     continue
 
                 # get the image
@@ -59,7 +59,7 @@ def get_unique_overlaps(
                 local_label = local_labels[i, j, k]
 
                 # skip vacuum
-                if atom_label == num_atoms or local_label == num_local:
+                if atom_label >= num_atoms or local_label >= num_local:
                     continue
 
                 atom_image = atom_images[i, j, k]
@@ -259,7 +259,7 @@ def get_qtaim_groups(
         for group_idx, entry in enumerate(group):
             group_array[group_idx] = entry
         atom_frac[idx] = group_array
-        
+
     return atom_frac
 
 @njit(cache=True)
@@ -349,11 +349,11 @@ def get_atom_charge_claims(
     charge_claims = []
     for i in range(num_atoms):
         charge_claims.append(np.empty((0,0), dtype=np.float64))
-    
+
     # create array for the access numbers
     access_numbers = np.empty(num_atoms, dtype=np.float64)
     species_nums = np.empty(num_atoms, dtype=np.float64)
-    
+
     # create array to store connection indices
     connection_indices = np.empty(num_atoms, dtype=np.float64)
 
@@ -361,7 +361,7 @@ def get_atom_charge_claims(
         # get the access set for this atom
         access_set = access_sets[idx]
         # create tracker for the total access number
-        access_num = 0.0          
+        access_num = 0.0
 
         # now find each atoms access claim
         atom_claims = np.zeros((num_atoms, 27), dtype=np.float64)
@@ -378,14 +378,14 @@ def get_atom_charge_claims(
                 mi, mj, mk = image + image1
                 actual_image = IMAGE_TO_INT[mi,mj,mk]
                 atom_claims[int(atom_idx), actual_image] += charge*frac
-        
+
         # reduce to only atoms with claims
         atoms = np.argwhere(atom_claims>0)
         flat_atom_claims = np.empty((len(atoms)), dtype=np.float64)
         for i, (x,y) in enumerate(atoms):
             flat_atom_claims[i] = atom_claims[x,y]
         atom_claims = flat_atom_claims
-        
+
         # normalize to access num
         atom_claims = atom_claims / access_num
         access_numbers[idx] = access_num
@@ -397,7 +397,7 @@ def get_atom_charge_claims(
 
         # calculate connection index. First we condense down to unique species
         species_claims = np.zeros(len(unique_species)+1, dtype=np.float64)
-        
+
         for i in range(len(atoms)):
             atom_idx, atom_image = atoms[i]
             frac = atom_claims[i]

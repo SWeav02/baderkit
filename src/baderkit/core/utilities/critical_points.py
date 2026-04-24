@@ -551,7 +551,7 @@ def get_saddles_from_basins(
 
 #     return saddle_coords, saddle_connections
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
 def remove_false_saddles(
     saddle_coords,
     saddle_connections,
@@ -650,7 +650,7 @@ def remove_false_saddles(
 
     return refined_vox, saddle_connections
 
-@njit(cache=True)
+# @njit(cache=True)
 def remove_adjacent_saddles(refined_vox, shape):
     unions = np.arange(len(refined_vox))
     # combine any that refined to be adjacent
