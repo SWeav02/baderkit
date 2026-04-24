@@ -626,11 +626,14 @@ def remove_false_saddles(
         h=0.5,
         eig_rel_tol=0.001,
     )
+    # The refinement seems to fail often in the ELF. This causes issues
+    # later on, so I'm removing this for now. Eventually, I need a better
+    # method as this results in far too many saddles.
 
-    saddle_mask[possible_saddles] = successes
+    # saddle_mask[possible_saddles] = successes
 
-    success_indices = np.where(successes)[0]
-    refined_vox = refined_vox[success_indices]
+    # success_indices = np.where(successes)[0]
+    # refined_vox = refined_vox[success_indices]
 
     # recalculate saddle connections
     rounded_vox = np.round(refined_vox).astype(np.int64) % np.array(data.shape, dtype=np.int64)
@@ -641,6 +644,9 @@ def remove_false_saddles(
         images=images,
         use_minima=use_minima,
     )
+    succeeded = np.where(saddle_connections[:,0]!=np.iinfo(np.int16).max)[0]
+    saddle_connections = saddle_connections[succeeded]
+    refined_vox = refined_vox[succeeded]
 
     return refined_vox, saddle_connections
 
@@ -1249,8 +1255,8 @@ def refine_critical_points(
     b = np.linalg.norm(matrix[1])
     c = np.linalg.norm(matrix[2])
     max_vox = int(round(max((max_change/a)*nx, (max_change/b)*ny, (max_change/c)*nz)))
-    
-    
+
+
 
     G = matrix @ matrix.T
     inv_G = np.linalg.inv(G)

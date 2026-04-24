@@ -35,6 +35,7 @@ class BasinOverlap(BaseAnalysis):
         "shared_basins",
         "along_bond",
         "attractor_shapes",
+        "attractor_depths",
         "polarization_indexes",
         "atom_core_populations",
         "atom_core_volumes",
@@ -374,6 +375,33 @@ class BasinOverlap(BaseAnalysis):
                     raise Exception("Unknown shape found for attractor. This is a bug!")
             self._attractor_shapes = np.array(shapes)
         return self._attractor_shapes
+
+    @property
+    def attractor_depths(self) -> NDArray[np.float64]:
+        """
+        Difference in value from the maximum to the first value an attractor
+        connects to another.
+
+        Returns
+        NDArray[np.float64]
+            The depth of each local basin
+        """
+        if self._attractor_depths is None:
+            bader = self.local_bader
+            saddles = bader.saddle2_connections[:,:2]
+            saddle_vals = bader.saddle2_ref_values
+            depths = []
+            for i in range(len(bader.maxima_frac)):
+                max_val = bader.maxima_ref_values[i]
+                indices = np.where(saddles==i)[0]
+                if len(indices) > 0:
+                    best = max_val - np.max(saddle_vals[indices])
+                else:
+                    best = None
+                depths.append(best)
+            self._attractor_depths = np.array(depths, dtype=np.float64)
+        return self._attractor_depths
+
 
     @property
     def polarization_indexes(self) -> NDArray[np.float64]:

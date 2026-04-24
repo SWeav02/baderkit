@@ -329,7 +329,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._maxima_basin_labels is None:
-            self._run_bader()
+            self._run_maxima_bader()
         return self._maxima_basin_labels
 
     @property
@@ -374,7 +374,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._maxima_basin_images is None:
-            self._run_bader()
+            self._run_maxima_bader()
         return self._maxima_basin_images
 
     @property
@@ -388,7 +388,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._maxima_vox is None:
-            self._run_bader()
+            self._run_maxima_bader()
         return self._maxima_vox
 
     @property
@@ -402,7 +402,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._maxima_frac is None:
-            self._run_bader()
+            self._run_maxima_bader()
         return self._maxima_frac
 
     @property
@@ -476,7 +476,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._ongrid_maxima_groups is None:
-            self._run_bader()
+            self._run_maxima_bader()
         return self._ongrid_maxima_groups
 
     @property
@@ -575,7 +575,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._basin_charges is None:
-            self._run_bader()
+            self._run_maxima_bader()
         return self._basin_charges.round(10)
 
     @property
@@ -589,7 +589,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._basin_volumes is None:
-            self._run_bader()
+            self._run_maxima_bader()
         return self._basin_volumes.round(10)
 
     @property
@@ -1110,10 +1110,9 @@ class Bader(BaseAnalysis):
         Returns
         -------
         NDArray[int]
-            An Nx3 array where the first two entries of each row represent
-            the two minima the corresponding saddle connects to and the
-            third entry represents the image the second minimum sits in.
-            The first minima sits inside the cell.
+            An Nx4 array where the first two entries of each row represent
+            the minima the saddle is connected to and the second two entries
+            represent the periodic image.
 
         """
         if self._saddle1_connections is None:
@@ -1127,10 +1126,9 @@ class Bader(BaseAnalysis):
         Returns
         -------
         NDArray[int]
-            An Nx3 array where the first two entries of each row represent
-            the two maxima the corresponding saddle connects to and the
-            third entry represents the image the second maximum sits in.
-            The first maxima sits inside the cell.
+            An Nx4 array where the first two entries of each row represent
+            the maxima the saddle is connected to and the second two entries
+            represent the periodic image.
 
         """
         if self._saddle2_connections is None:
@@ -1391,7 +1389,7 @@ class Bader(BaseAnalysis):
 
         return [i.value for i in Method]
 
-    def _run_bader(self) -> None:
+    def _run_maxima_bader(self) -> None:
         """
         Runs the entire Bader process and saves results to class variables.
 
