@@ -733,9 +733,14 @@ class MethodBase:
             data=self.reference_grid.total,
             matrix=self.reference_grid.matrix,
             target_indices=saddle_morses,
+            max_change=100,
+            max_iter=300,
+            grad_tol=5e-4,
+            h=0.5,
+            eig_rel_tol=1e-03,
         )
 
-        success_indices = np.where(successes)[0]
+        success_indices = np.where(successes & np.isin(ctypes, saddle_morses))[0]
         refined_coords = refined_coords[success_indices]
 
         shape = self.reference_grid.shape
