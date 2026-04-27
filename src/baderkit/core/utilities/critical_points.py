@@ -18,7 +18,215 @@ from baderkit.core.utilities.transforms import (
     IMAGE_TO_INT,
     INT_TO_IMAGE,
 )
-from baderkit.core.utilities.union_find import find_root, union
+from baderkit.core.utilities.union_find import find_root, union, union_w_roots
+
+###############################################################################
+# Ongrid saddle detection
+###############################################################################
+
+@njit(cache=True)
+def estimate_voxel_extremum_periodic(
+        data,
+        i, j, k,
+        lattice,
+        find_max=False,
+        ):
+    """
+    Estimate extremum (min or max) inside a skewed voxel centered at (i,j,k)
+    using center + 6 face neighbors, with periodic boundary conditions.
+
+    Parameters
+    ----------
+    data : 3D array
+        Scalar field
+    i, j, k : int
+        Grid indices of center point
+    lattice : (3,3) array
+        Lattice vectors (unused here, kept for API consistency)
+    find_max : bool
+        If True, estimate maximum instead of minimum
+
+    Returns
+    -------
+    val : float
+        Estimated extremum value inside voxel
+    """
+
+    nx, ny, nz = data.shape
+
+    # periodic indices
+    ip = (i + 1) % nx
+    im = (i - 1) % nx
+    jp = (j + 1) % ny
+    jm = (j - 1) % ny
+    kp = (k + 1) % nz
+    km = (k - 1) % nz
+
+    # optionally flip sign for maxima
+    sign = -1.0 if find_max else 1.0
+
+    # center + neighbors (with sign applied)
+    f0 = sign * data[i, j, k]
+
+    f_px = sign * data[ip, j, k]
+    f_nx = sign * data[im, j, k]
+
+    f_py = sign * data[i, jp, k]
+    f_ny = sign * data[i, jm, k]
+
+    f_pz = sign * data[i, j, kp]
+    f_nz = sign * data[i, j, km]
+
+    # second derivatives
+    d2x = f_px - 2.0 * f0 + f_nx
+    d2y = f_py - 2.0 * f0 + f_ny
+    d2z = f_pz - 2.0 * f0 + f_nz
+
+    # first derivatives
+    dx = 0.5 * (f_px - f_nx)
+    dy = 0.5 * (f_py - f_ny)
+    dz = 0.5 * (f_pz - f_nz)
+
+    # numerical safety
+    eps = 1e-12
+    if abs(d2x) < eps:
+        d2x = eps
+    if abs(d2y) < eps:
+        d2y = eps
+    if abs(d2z) < eps:
+        d2z = eps
+
+    # quadratic minimizer (works for both via sign trick)
+    alpha = -dx / d2x
+    beta  = -dy / d2y
+    gamma = -dz / d2z
+
+    # clamp to voxel
+    if alpha > 0.5:
+        alpha = 0.5
+    elif alpha < -0.5:
+        alpha = -0.5
+
+    if beta > 0.5:
+        beta = 0.5
+    elif beta < -0.5:
+        beta = -0.5
+
+    if gamma > 0.5:
+        gamma = 0.5
+    elif gamma < -0.5:
+        gamma = -0.5
+
+    # evaluate quadratic
+    val = (
+        f0
+        + dx * alpha + dy * beta + dz * gamma
+        + 0.5 * (d2x * alpha * alpha +
+                 d2y * beta  * beta  +
+                 d2z * gamma * gamma)
+    )
+
+    # flip sign back if we computed a max
+    return sign * val
+
+
+@njit(parallel=True, fastmath=True, cache=True)
+def edge_extrema_values(
+        data,
+        edge_mask,
+        lattice,
+        use_minima=True,
+        ):
+    """
+    Compute extremum values on masked voxels.
+
+    Parameters
+    ----------
+    data : 3D array
+    edge_mask : 3D bool array
+    lattice : (3,3)
+    use_minima : bool
+        If True -> minima, else maxima
+
+    Returns
+    -------
+    out : 3D array
+        Extremum values at masked points
+    """
+
+    nx, ny, nz = data.shape
+    out = np.zeros((nx, ny, nz), dtype=np.float64)
+
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if not edge_mask[i, j, k]:
+                    continue
+
+                out[i, j, k] = estimate_voxel_extremum_periodic(
+                    data,
+                    i, j, k,
+                    lattice,
+                    find_max=not use_minima,
+                )
+
+    return out
+
+@njit(parallel=True, cache=True)
+def find_ongrid_saddles(
+    surface_mins,
+    edge_mask,
+    transforms,
+    use_minima = False
+        ):
+    nx, ny, nz = edge_mask.shape
+    saddles = np.zeros((nx,ny,nz), dtype=np.bool_)
+
+    for i in prange(nx):
+        for j in range(ny):
+            for k in range(nz):
+                if not edge_mask[i,j,k]:
+                    continue
+
+                is_saddle = True
+                value = surface_mins[i,j,k]
+                for si, sj, sk in transforms:
+                    ni, nj, nk = wrap_point(i+si, j+sj, k+sk, nx, ny, nz)
+                    if not edge_mask[ni,nj,nk]:
+                        continue
+                    neigh_val = surface_mins[ni,nj,nk]
+                    if use_minima and neigh_val < value:
+                        is_saddle = False
+                        break
+                    elif not use_minima and neigh_val > value:
+                        is_saddle = False
+                        break
+                if is_saddle:
+                    saddles[i,j,k] = True
+    return saddles
+
+def find_potential_saddle_points(
+    data,
+    edge_mask,
+    lattice,
+    transforms,
+    use_minima = False
+        ):
+    surface_mins = edge_extrema_values(
+        data=data,
+        edge_mask=edge_mask,
+        lattice=lattice,
+        use_minima=use_minima
+        )
+    saddles = find_ongrid_saddles(
+        surface_mins=surface_mins,
+        edge_mask=edge_mask,
+        transforms=transforms,
+        use_minima=use_minima
+            )
+    return saddles
+
+
 
 ###############################################################################
 # Classifying Methods
@@ -554,13 +762,9 @@ def get_saddles_from_basins(
 @njit(parallel=True, cache=True)
 def remove_false_saddles(
     saddle_coords,
-    saddle_connections,
-    canon_saddle_indices,
-    unique_canon_saddles,
     labels: NDArray[np.int64],
     images: NDArray[np.int64],
     data: NDArray[np.float64],
-    extrema_vox,
     matrix,
     use_minima: bool = False,
 ):
@@ -569,51 +773,46 @@ def remove_false_saddles(
     # create trackers for saddles
     saddle_mask = np.ones(len(saddle_coords), dtype=np.bool_)
 
-    # get values at extrema points
-    num_extrema = len(extrema_vox)
-    extrema_values = np.empty(num_extrema, dtype=np.float64)
-    for idx, (i, j, k) in enumerate(extrema_vox):
-        extrema_values[idx] = data[i, j, k]
+    # # Metric tensors
+    # G = matrix @ matrix.T
+    # inv_G = np.linalg.inv(G)
+    # lam = np.linalg.eigvalsh(G)
 
-    # Metric tensors
-    G = matrix @ matrix.T
-    inv_G = np.linalg.inv(G)
-    lam = np.linalg.eigvalsh(G)
+    # lam_min = lam[0]
+    # lam_max = lam[2]
 
-    lam_min = lam[0]
-    lam_max = lam[2]
+    # frac_to_cart = np.sqrt(lam_max)
+    # H_frac_to_cart = 1.0 / lam_min
 
-    frac_to_cart = np.sqrt(lam_max)
-    H_frac_to_cart = 1.0 / lam_min
-
-    # Voxel radius in Cartesian
-    r_voxel_cart = 0.5 * frac_to_cart
-    r_voxel_cart2 = r_voxel_cart * r_voxel_cart
+    # # Voxel radius in Cartesian
+    # r_voxel_cart = 0.5 * frac_to_cart
+    # r_voxel_cart2 = r_voxel_cart * r_voxel_cart
 
     if use_minima:
         saddle_morses = np.array((1, 11, 21, 22), dtype=np.int64)
     else:
         saddle_morses = np.array((2, 10, 20, 21), dtype=np.int64)
 
-    for saddle_idx in prange(len(saddle_coords)):
-        i, j, k = saddle_coords[saddle_idx]
-        # check if a newton step would move outside the voxel and
-        # get morse index
-        morse_idx = is_ongrid_newton_crit(
-            (i, j, k),
-            data,
-            r_voxel_cart2,
-            inv_G,
-            H_frac_to_cart,
-        )
-        if not morse_idx in saddle_morses:
-            # this is not a saddle
-            saddle_mask[saddle_idx] = False
+    # for saddle_idx in prange(len(saddle_coords)):
+    #     i, j, k = saddle_coords[saddle_idx]
+    #     # check if a newton step would move outside the voxel and
+    #     # get morse index
+    #     morse_idx = is_ongrid_newton_crit(
+    #         (i, j, k),
+    #         data,
+    #         r_voxel_cart2,
+    #         inv_G,
+    #         H_frac_to_cart,
+    #     )
+    #     if not morse_idx in saddle_morses:
+    #         # this is not a saddle
+    #         saddle_mask[saddle_idx] = False
 
     # for remaining possible saddles, we perform a full newton refinement to
     # check if they're valid
-    possible_saddles = np.where(saddle_mask)[0]
-    possible_coords = saddle_coords[possible_saddles]
+    # possible_saddles = np.where(saddle_mask)[0]
+    # possible_coords = saddle_coords[possible_saddles]
+    possible_coords = saddle_coords
     # try to refine for each type of saddle
     refined_vox, successes, ctypes = refine_critical_points(
         critical_coords=possible_coords,

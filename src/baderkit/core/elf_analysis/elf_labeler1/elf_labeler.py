@@ -49,6 +49,7 @@ class ElfLabeler(BaseAnalysis):
         "neighbor_zeffs",
         "neighbor_veffs",
         "nna_potential_energies",
+        "nna_indices",
         ]
 
     _reset_props = [
@@ -129,6 +130,13 @@ class ElfLabeler(BaseAnalysis):
         if self._basin_types is None:
             self._label_basins()
         return [i.name for i in self._basin_types]
+
+    @property
+    def nna_indices(self) -> NDArray[int]:
+        if self._nna_indices is None:
+            self._nna_indices = np.array([i for i,j in enumerate(self.basin_types) if j == "nna"])
+        return self._nna_indices
+
 
     @property
     def heavily_polarized(self):

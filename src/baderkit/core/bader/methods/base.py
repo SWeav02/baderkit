@@ -23,6 +23,8 @@ from baderkit.core.utilities.critical_points import (
     refine_critical_points,
     remove_adjacent_saddles,
     remove_false_saddles,
+    find_potential_saddle_points,
+    get_saddle_connections,
 )
 from baderkit.core.utilities.persistence import (
     group_by_persistence,
@@ -184,39 +186,9 @@ class MethodBase:
         logging.info("Basin Assignment Complete")
         logging.info(f"Time: {round(t1-t0,2)}")
 
-        # Now we want to combine any remaining noisy extrema based on their
-        # persistence.
-        logging.info("Locating potential saddle points")
-        t0 = time.time()
-        all_connections, all_coords, all_vals = self._get_possible_saddle_connections()
-        self._saddle_connections = all_connections
-        self._saddle_vox = all_coords
-        best_connections, best_coords, best_vals = (
-            self._compute_best_saddles(all_connections, all_coords, all_vals)
-        )
-
-        t1 = time.time()
-        logging.info("Saddle Location Complete")
-        logging.info(f"Time: {round(t1-t0,2)}")
-
         logging.info("Cleaning labels")
         t0 = time.time()
-        # extrema_values = self.reference_grid.total[
-        #     self.extrema_vox[:,0],
-        #     self.extrema_vox[:,1],
-        #     self.extrema_vox[:,2],
-        #     ]
-        # extrema_roots, root_transforms = group_by_persistence(
-        #     data=self.reference_grid.total,
-        #     extrema_vox=self.extrema_vox,
-        #     extrema_values=extrema_values,
-        #     saddle_connections=best_connections,
-        #     saddle_values=best_vals,
-        #     saddle_vox=best_coords,
-        #     persistence_tol=self.persistence_tol,
-        #     use_minima=self.use_minima,
-        #     matrix=self.reference_grid.matrix,
-        # )
+
         extrema_roots = self.labels[
             self.extrema_vox[:,0],
             self.extrema_vox[:,1],
@@ -228,7 +200,7 @@ class MethodBase:
         self._build_final_extrema(extrema_roots, root_transforms)
 
         # update saddles
-        self._update_saddles(all_coords)
+        self._update_saddles()
 
         saddle_type = 1 if self.use_minima else 2
         t1 = time.time()
@@ -618,6 +590,7 @@ class MethodBase:
             use_minima=self.use_minima,
             vacuum_label=len(self.extrema_vox),
         )
+        self._edge_mask = edge_mask
 
         # get possible saddles
         saddle_vox, saddle_connections = get_saddles_from_basins(
@@ -724,29 +697,49 @@ class MethodBase:
         # get final ongrid extrema groups
         self._generate_voxel_groups()
 
-    def _update_saddles(self, all_coords):
-        canon_saddles = get_canonical_saddle_connections(
-            self.saddle_connections
-            )
-        unique_canon_saddles, canon_saddle_indices = np.unique(
-            canon_saddles, axis=0, return_inverse=True)
+    def _update_saddles(self):
 
-        # remove any possible saddles with large gradients
-        saddle_vox, saddle_connections = remove_false_saddles(
-            saddle_coords=self.saddle_vox,
-            saddle_connections=self.saddle_connections,
-            canon_saddle_indices=canon_saddle_indices,
-            unique_canon_saddles=unique_canon_saddles,
+        logging.info("Locating potential saddle points")
+        t0 = time.time()
+        transforms, _ = self.reference_grid.point_neighbor_transforms
+        edge_mask = get_thin_basin_edges(
+            data=self.reference_grid.total,
             labels=self.labels,
             images=self.images,
-            data=self.reference_grid.total,
-            extrema_vox=self.extrema_vox,
-            matrix=self.reference_grid.matrix,
+            neighbor_transforms=transforms,
             use_minima=self.use_minima,
+            vacuum_label=len(self.extrema_vox),
         )
 
+        # Get likely saddle mask
+        saddle_mask = find_potential_saddle_points(
+            data = self.reference_grid.total,
+            edge_mask = edge_mask,
+            lattice = self.reference_grid.matrix,
+            transforms = transforms,
+            use_minima = self.use_minima
+            )
+        saddle_vox = np.argwhere(saddle_mask)
+
+        if self.use_minima:
+            saddle_morses = np.array((1, 11, 21, 22), dtype=np.int64)
+        else:
+            saddle_morses = np.array((2, 10, 20, 21), dtype=np.int64)
+
+
+        # refine saddle positions
+        refined_coords, successes, ctypes = refine_critical_points(
+            critical_coords=saddle_vox,
+            data=self.reference_grid.total,
+            matrix=self.reference_grid.matrix,
+            target_indices=saddle_morses,
+        )
+
+        success_indices = np.where(successes)[0]
+        refined_coords = refined_coords[success_indices]
+
         shape = self.reference_grid.shape
-        rounded = np.round(saddle_vox).astype(np.int64) % shape
+        rounded = np.round(refined_coords).astype(np.int64) % shape
         _, indices = np.unique(rounded, return_index=True, axis=0)
         rounded = rounded[indices]
         # get important saddles
@@ -757,6 +750,18 @@ class MethodBase:
         saddle_vox = rounded[important]
         saddle_frac = saddle_vox / self.reference_grid.shape
 
+        saddle_connections = get_saddle_connections(
+            saddle_coords=saddle_vox,
+            data=self.reference_grid.total,
+            labels=self.labels,
+            images=self.images,
+            use_minima=self.use_minima,
+        )
+
         self._saddle_vox = saddle_vox
         self._saddle_frac = saddle_frac
-        self._saddle_connections = saddle_connections[important]
+        self._saddle_connections = saddle_connections
+
+        t1 = time.time()
+        logging.info("Saddle Location Complete")
+        logging.info(f"Time: {round(t1-t0,2)}")
