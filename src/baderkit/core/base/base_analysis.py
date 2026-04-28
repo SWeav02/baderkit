@@ -419,6 +419,7 @@ class BaseAnalysis(ABC):
         format: Literal["vasp", "cube", None] = None,
         pseudopotential_filename: Path | None | str | bool = None,
         total_only: bool = True,
+        valence_counts: dict | None = None,
         **kwargs,
     ) -> Self:
         """
@@ -478,8 +479,9 @@ class BaseAnalysis(ABC):
             reference_grid = Grid.from_dynamic(
                 reference_filename, format=format, total_only=total_only
             )
-
-        valence_counts = load_pseudo(pseudopotential_filename)
+        
+        if pseudopotential_filename and valence_counts is None:
+            valence_counts = load_pseudo(pseudopotential_filename)
 
         return cls(
             charge_grid=charge_grid,

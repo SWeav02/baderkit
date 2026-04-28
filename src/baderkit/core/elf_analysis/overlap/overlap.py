@@ -719,7 +719,9 @@ class BasinOverlap(BaseAnalysis):
             atom_shells = self.atom_shell_groups[atom_idx]
             local_overlap = self.qtaim_overlap_groups[atom_idx]
             for shell in atom_shells:
-                overlap_fracs = local_overlap[shell][:,2]
+                try:
+                    overlap_fracs = local_overlap[shell][:,2]
+                except: breakpoint()
                 local_indices = local_overlap[shell][:,0].astype(int)
                 # if all members of this shell are almost entirely owned by this
                 # atom, we have a core

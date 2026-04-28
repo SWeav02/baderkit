@@ -5,8 +5,7 @@
 from baderkit.core.elf_analysis.overlap.overlap import BasinOverlap
 from baderkit.core.elf_analysis.elf_labeler1.elf_labeler import ElfLabeler
 from baderkit.core.utilities.transforms import INT_TO_REV_INT, INT_TO_IMAGE
-from baderkit.core.utilities.largest_dist import largest_empty_sphere
-from baderkit.core import Structure
+from baderkit.core.utilities.total_density import create_total_chgcar
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -35,35 +34,31 @@ elements_w_results = []
 for folder in path.iterdir():
     if not folder.is_dir():
         continue
-
-    subfolder = folder / "static_pbe"
-    if not (subfolder / "CHGCAR_sum").exists():
-        continue
-
-
+    
+    subfolder = folder / "static_nospin"
     chgcar = subfolder / "CHGCAR"
     elf = subfolder / "ELFCAR"
-    tot = subfolder / "CHGCAR_sum"
+    tot = subfolder / "CHGCAR_total"
     loc = subfolder / "LOCPOT"
     pot = subfolder / "POTCAR"
     struc = subfolder / "POSCAR"
+
+    if not (subfolder / "CHGCAR_total").exists():
+        create_total_chgcar(chgcar, pot, tot)
+
 
     element = folder.name
     data_dict[element] = {}
     elements_w_results.append(element)
 
-    try:
-        labeler = ElfLabeler.from_vasp(
-            charge_filename=chgcar,
-            reference_filename=elf,
-            total_charge_filename=tot,
-            persistence_tol=0.001,
-            # potential_filename=loc,
-            pseudopotential_filename = pot,
-            )
-    except:
-        print(f"{subfolder.name} Failed")
-        continue
+    labeler = ElfLabeler.from_vasp(
+        charge_filename=chgcar,
+        reference_filename=elf,
+        persistence_tol=0.001,
+        potential_filename=loc,
+        pseudopotential_filename = pot,
+        valence_counts=False,
+        )
     overlap: BasinOverlap = labeler.overlap
     bader = overlap.local_bader
     types = labeler.basin_types
@@ -81,9 +76,7 @@ for folder in path.iterdir():
     # data_dict[element]["structure"] = structure
     # data_dict[element]["grid_shape"] = labeler.reference_grid.shape
 
-    lattice = structure.lattice.matrix
-    frac_coords = structure.frac_coords
-    data_dict[element]["vacancy_dist"],_ = largest_empty_sphere(lattice, frac_coords)
+    # data_dict[element]["test"] = labeler.nna_test
 
 
 elements_w_results = np.array(elements_w_results)
@@ -133,13 +126,16 @@ for idx in workfunction_indices:
     # fracs = dict_el["nna_fracs"]
     # volumes = dict_el["nna_volumes"]
     charges = dict_el["nna_charges"]
-    # dist_beyond_atom = dict_el["nna_dist_beyond_atom"]
-    # potential_energies = dict_el["nna_potential_energies"]
-    # potentials = dict_el["nna_potentials"]
-    # avg_potentials = dict_el["nna_avg_potentials"]
-    # structure = dict_el["structure"]
-    # shape = dict_el["grid_shape"]
-    # vacancy_dist = dict_el["vacancy_dist"]
+    zeffs = dict_el["nna_zeffs"]
+    veffs = dict_el["nna_veffs"]
+    vol_ratios = dict_el["nna_vol_ratios"]
+    dist_beyond_atom = dict_el["nna_dist_beyond_atom"]
+    potential_energies = dict_el["nna_potential_energies"]
+    potentials = dict_el["nna_potentials"]
+    avg_potentials = dict_el["nna_avg_potentials"]
+    structure = dict_el["structure"]
+    charge_dens = dict_el["nna_charge_dens"].copy()
+    shape = dict_el["grid_shape"]
 
     # cell_vol = structure.volume / shape.prod()
 
@@ -149,34 +145,36 @@ for idx in workfunction_indices:
     # volume_frac = volumes / volumes.sum()
     # nna_charge_total = charges.sum()
 
-    value = 1/dists # best
-    # value = potential_energies/(charges*2) # most physical
+    # value = 1/dists # best
+    # value = potential_energies/(charges) # most physical
+    # value = potential_energies
+    value = potentials*charges/volumes
     # value = potentials / dists # best with physical meaning
+    # value = test
 
 
-    y.append(np.sum(value*charge_frac))
-    # y.append(1/vacancy_dist)
+    # y.append(np.sum(value*charge_frac))
 
 
     # y.append(np.sum(value)/charges.sum())
 
-    # avg = np.mean(value)
-    # stddev = np.std(value)
-    # y.append(avg)
-    # y_std.append(stddev)
+    avg = np.mean(value)
+    stddev = np.std(value)
+    y.append(avg)
+    y_std.append(stddev)
 
 x = np.array(x)
 y = np.array(y)
 
 plt.scatter(x, y)
 
-# plt.errorbar(
-#     x, y,
-#     yerr=y_std,
-#     fmt='o',        # 'o' = circular markers (scatter style)
-#     capsize=4,      # little caps on error bars
-#     linestyle='none' # no connecting line
-# )
+plt.errorbar(
+    x, y,
+    yerr=y_std,
+    fmt='o',        # 'o' = circular markers (scatter style)
+    capsize=4,      # little caps on error bars
+    linestyle='none' # no connecting line
+)
 
 # Calculate line of best fit (degree 1 = linear)
 m, b = np.polyfit(x, y, 1)
@@ -200,8 +198,8 @@ plt.text(min(x), max(y), equation, fontsize=10, verticalalignment='top')
 plt.plot(x, m * x + b)
 
 plt.xlabel("Work Function (eV)")
-plt.ylabel("1/dist (1/A^3)")
-plt.title("Work Function vs. 1/dist")
+plt.ylabel("Electrostatic Potential Energy (eV/e-)")
+plt.title("Work Function vs. Electrostatic Potential Energy")
 # plt.savefig("work_function_vs_dist.png")
 plt.show()
 

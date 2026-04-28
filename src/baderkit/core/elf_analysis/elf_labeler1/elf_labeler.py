@@ -215,6 +215,7 @@ class ElfLabeler(BaseAnalysis):
                 basin_labels=self.elf_bader.maxima_basin_labels,
                 num_basins=len(self.elf_bader.maxima_frac),
                     )[nna_indices]
+
         return self._nna_potential_energies
 
     @property

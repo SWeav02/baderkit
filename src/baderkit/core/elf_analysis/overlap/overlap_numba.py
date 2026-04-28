@@ -299,6 +299,11 @@ def get_atom_shell_groups(
         atom_frac = atom_frac_coords[atom_idx]
         atom_cart = atom_frac @ matrix
         local_group = atom_local_groups[atom_idx]
+        # if there are no neighbors, this is a dummy atom with no ELF maximum
+        if len(local_group) == 0:
+            coord_groups.append([np.empty((0), dtype=np.int64)])
+            basin_dists.append([0.0][1:])
+            continue
         neigh_dists = np.zeros(len(local_group), dtype=np.float64)
         for local_idx, (label, image, _) in enumerate(local_group):
             image1 = INT_TO_IMAGE[int(image)]

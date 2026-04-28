@@ -28,6 +28,9 @@ def get_valence_potentials(
                 label = basin_labels[i,j,k]
                 if label >= num_basins:
                     continue
+                potential = potential_data[i,j,k]
+                if potential <= 0:
+                    continue
                 # add potential in this voxel
                 # (e*num_points) * eV = eV * num_points
                 basin_potentials[label] += 0.5 * charge_data[i,j,k] * potential_data[i,j,k]
@@ -227,7 +230,6 @@ def solve_poisson(
 
     # --- Convert to eV ---
     return phi * 14.3996
-
 
 @njit(cache=True, parallel=True)
 def get_core_dist_ratios(
