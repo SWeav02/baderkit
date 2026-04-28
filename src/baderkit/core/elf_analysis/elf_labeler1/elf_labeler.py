@@ -34,8 +34,9 @@ Self = TypeVar("Self", bound="ElfLabeler")
 
 class ElfLabeler(BaseAnalysis):
     """
-    A convenience class for calculating the overlap between basins calculated
-    in the charge density and a localization density such as ELF.
+    
+    A tool for labeling basins in a localization function (ELF, ELI-D, LOL, etc.)
+    as various chemical features.
 
     """
 

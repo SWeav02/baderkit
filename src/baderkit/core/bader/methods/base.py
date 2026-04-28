@@ -17,17 +17,14 @@ from baderkit.core.utilities.basins import (
     update_labels_and_images,
 )
 from baderkit.core.utilities.critical_points import (
-    get_canonical_saddle_connections,
     get_saddles_from_basins,
     get_single_point_saddles,
     refine_critical_points,
     remove_adjacent_saddles,
-    remove_false_saddles,
     find_potential_saddle_points,
     get_saddle_connections,
 )
 from baderkit.core.utilities.persistence import (
-    group_by_persistence,
     init_by_approx_persistence,
 )
 from baderkit.core.utilities.transforms import ALL_NEIGHBOR_TRANSFORMS
@@ -36,10 +33,8 @@ from baderkit.core.utilities.transforms import ALL_NEIGHBOR_TRANSFORMS
 Self = TypeVar("Self", bound="MethodBase")
 
 # TODO:
-# 2. allow for setting periodic boundaries
-# 3. get basins counting crossing boundaries as separate
-# 3. continue with critical point finder
-# 4. update bifurcation method
+# 1. allow for setting periodic boundaries
+# 2. update bifurcation method
 
 
 class MethodBase:
@@ -728,6 +723,8 @@ class MethodBase:
 
 
         # refine saddle positions
+        # NOTE: Theses settings seem to work well for the ELF. Charge density
+        # may need different values.
         refined_coords, successes, ctypes = refine_critical_points(
             critical_coords=saddle_vox,
             data=self.reference_grid.total,
