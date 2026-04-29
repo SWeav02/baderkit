@@ -15,22 +15,10 @@ from .enum_and_styling import FeatureType
 from .elf_labeler_numba import (
     get_core_dist_ratios,
     get_core_dists,
-    get_approx_coulomb_potential,
-    get_zeff_nna,
-    get_valence_potentials,
-    solve_poisson,
-    get_avg_potentials,
-    get_test
     )
 
 Self = TypeVar("Self", bound="ElfLabeler")
 
-# TODO:
-    # 1. very small maxima in the charge density throw off the rest of the calculation.
-    # These need to be separated properly. Update persistence method to focus on
-    # the lower of the two maxima only
-    # 2. Compare distance of electrides and metals based on the distance past
-    # the core. Only compare for atoms that have a core.
 
 class ElfLabeler(BaseAnalysis):
     """
@@ -44,18 +32,17 @@ class ElfLabeler(BaseAnalysis):
         "basin_types",
         "attractor_shapes",
         "heavily_polarized",
-        "core_volume_ratios",
         "nna_bond_fracs",
-        "nna_bond_dists",
-        "neighbor_zeffs",
-        "neighbor_veffs",
-        "nna_potential_energies",
+        "nna_neighbor_dists",
         "nna_indices",
+        "nna_formula",
+        "nnas_per_formula",
+        "nnas_per_reduced_formula",
+        
         ]
 
     _reset_props = [
         "along_bond",
-        "electrostatic_potential",
         ] + _summary_props
 
 
@@ -66,9 +53,34 @@ class ElfLabeler(BaseAnalysis):
         reference_grid: Grid,
         total_charge_grid: Grid | None = None,
         polarization_cutoff: float = 0.5,
-        potential_grid: Grid | None =  None,
         **kwargs,
     ):
+        """
+        Labels each basin in the ELF as various chemical features.
+
+        This class is designed only for single spin or total spin charge densities
+        and ELF. For spin-dependent systems, use the SpinElfLabeler instead.
+
+        Parameters
+        ----------
+        charge_grid : Grid
+            The charge density grid used for integrating charge.
+        reference_grid : Grid
+            The ELF grid used to partition volumes.
+        total_charge_grid : Grid, optional
+            The total charge density used for bader integrations and vacuum masks. If
+            not provided, the charge_grid will be used instead.
+        polarization_cutoff: float, optional
+            The degree of polarization used for determining shared vs. unshared
+            behavior in a basin. O is more non-polar and 1 is more polar. This
+            is calculated from the two atoms that contribute the most to each
+            ELF basin.
+
+        
+        **kwargs : dict
+            Keyword arguments to pass to the Bader class.
+
+        """
         # create bader objects
         self._overlap = BasinOverlap(
             charge_grid=charge_grid,
@@ -76,8 +88,7 @@ class ElfLabeler(BaseAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
-        self._potential_grid = potential_grid
-
+        
         self._elf_bader = self.overlap.local_bader
 
         super().__init__(
@@ -95,6 +106,17 @@ class ElfLabeler(BaseAnalysis):
 
     @property
     def polarization_cutoff(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The degree of polarization used for determining shared vs. unshared
+            behavior in a basin. O is more non-polar and 1 is more polar. This
+            is calculated from the two atoms that contribute the most to each
+            ELF basin.
+
+        """
         return self._polarization_cutoff
 
     @polarization_cutoff.setter
@@ -112,195 +134,199 @@ class ElfLabeler(BaseAnalysis):
     ###########################################################################
     @property
     def overlap(self) -> BasinOverlap:
+        """
+
+        Returns
+        -------
+        BasinOverlap
+            The BasinOverlap class used for QTAIM/ELF overlap calculations.
+
+        """
         return self._overlap
 
     @property
     def elf_bader(self) -> Bader:
+        """
+
+        Returns
+        -------
+        Bader
+            The Bader class used to partition the ELF.
+
+        """
+        
         return self._elf_bader
 
     @property
     def maxima_frac(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The fractional coordinates of each maximum in the ELF.
+
+        """
         return self.elf_bader.maxima_frac
 
     @property
     def attractor_shapes(self) -> NDArray[str]:
+        """
+
+        Returns
+        -------
+        NDArray[str]
+            The shape of the maxima in the ELF.
+
+        """
         return self.overlap.attractor_shapes
 
     @property
     def basin_types(self) -> list[str]:
+        """
+
+        Returns
+        -------
+        list[str]
+            The type of chemical feature each basin is a part of.
+
+        """
         if self._basin_types is None:
             self._label_basins()
-        return [i.name for i in self._basin_types]
+        return [i.value for i in self._basin_types]
 
     @property
     def nna_indices(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The indices of the basins in the structure that are assigned as
+            non-nuclear attractors.
+
+        """
         if self._nna_indices is None:
-            self._nna_indices = np.array([i for i,j in enumerate(self.basin_types) if j == "nna"])
+            self._nna_indices = np.array([i for i,j in enumerate(self.basin_types) if j == FeatureType.nna.value], dtype=np.int64)
         return self._nna_indices
 
 
     @property
-    def heavily_polarized(self):
+    def heavily_polarized(self) -> NDArray[bool]:
+        """
+
+        Returns
+        -------
+        NDArray[bool
+            A boolean array representing which ELF basins are considered heavily
+            polarized towards an atom. The results depend on the 'polarization_cutoff'
+            parameter.
+
+        """
         if self._heavily_polarized is None:
             self._heavily_polarized = self.overlap.polarization_indexes > self.polarization_cutoff
         return self._heavily_polarized
 
     @property
-    def core_volume_ratios(self):
-        if self._core_volume_ratios is None:
-            veffs = self.neighbor_veffs
-            veffs[veffs==0] = 1
-            self._core_volume_ratios = self.overlap.local_bader.basin_volumes / veffs
-        return self._core_volume_ratios
+    def nna_radii(self) -> NDArray[float]:
+        """
 
-    @property
-    def nna_bond_fracs(self):
-        "weighted average of nna fracs of bond to nearest atoms"
+        Returns
+        -------
+        NDArray[float]
+            The radius of each non-nuclear attractor calculated as a weighted
+            average of the radii between the NNA and the atoms that own some
+            portion of its charge.
+
+        """
+        
         if self._nna_bond_fracs is None:
-            indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-            self._nna_bond_fracs = get_core_dist_ratios(
+            fracs = get_core_dist_ratios(
                 labels=self.elf_bader.maxima_basin_labels,
                 basin_frac_coords=self.elf_bader.maxima_frac,
                 atom_frac_coords=self.elf_bader.structure.frac_coords,
                 matrix=self.reference_grid.matrix,
-                nna_indices=indices,
+                nna_indices=self.nna_indices,
                 core_basins=self.overlap.core_basins,
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
                     )
+            self._nna_bond_fracs = fracs * self.nna_neighbor_dists
         return self._nna_bond_fracs
 
     @property
-    def nna_bond_dists(self):
-        "nna frac compared to total distance"
-        if self._nna_bond_dists is None:
-            indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-            self._nna_bond_dists = get_core_dists(
+    def nna_neighbor_dists(self):
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The distance to the nearest neighbors of each non-nuclear attractor
+            calculated as a weighted average between the NNA and each atom that
+            owns some portion of its charge
+
+        """
+        if self._nna_neighbor_dists is None:
+            self._nna_neighbor_dists = get_core_dists(
                 labels=self.elf_bader.maxima_basin_labels,
                 basin_frac_coords=self.elf_bader.maxima_frac,
                 atom_frac_coords=self.elf_bader.structure.frac_coords,
                 matrix=self.reference_grid.matrix,
-                nna_indices=indices,
+                nna_indices=self.nna_indices,
                 core_basins=self.overlap.core_basins,
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
                     )
-        return self._nna_bond_dists
-
+        return self._nna_neighbor_dists
+    
     @property
-    def electrostatic_potential(self):
+    def nna_formula(self):
         """
-        Classical coulomb potential at each point in the system. This is calculated
-        by solving Poisson's equation using the valence charge grid with gaussian
-        smeared positive charges representing the nuclei.
+
+        Returns
+        -------
+        str
+            A string representation of the nna formula, rounding partial charge
+            to the nearest integer.
+
         """
-        if self._electrostatic_potential is None:
-            if self._potential_grid is not None:
-                self._electrostatic_potential = self._potential_grid.total
-            else:
-                charge_grid = self.charge_grid
-                self._electrostatic_potential = solve_poisson(
-                    data=charge_grid.total,
-                    matrix=charge_grid.matrix,
-                    nuclei_positions = charge_grid.structure.cart_coords,
-                    nuclei_charges = [self.valence_counts.get(i.specie.symbol, 0) for i in charge_grid.structure],
-                    sigma=0.01,
-                )
-        return self._electrostatic_potential
+        return f"{self.structure.formula} e{round(self.nnas_per_formula)}"
 
     @property
-    def nna_potential_energies(self):
-        if self._nna_potential_energies is None:
-            nna_indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-            self._nna_potential_energies = get_valence_potentials(
-                charge_data=self.charge_grid.total,
-                potential_data=self.electrostatic_potential,
-                basin_labels=self.elf_bader.maxima_basin_labels,
-                num_basins=len(self.elf_bader.maxima_frac),
-                    )[nna_indices]
+    def nnas_per_formula(self):
+        """
 
-        return self._nna_potential_energies
+        Returns
+        -------
+        float
+            The number of nna electrons for the full structure formula.
 
-    @property
-    def nna_avg_potentials(self):
-
-        nna_indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-        return get_avg_potentials(
-            potential_data=self.electrostatic_potential,
-            basin_labels=self.elf_bader.maxima_basin_labels,
-            num_basins=len(self.elf_bader.maxima_frac),
-                )[nna_indices]
+        """
+        if self._nnas_per_formula is None:
+            nnas_per_unit = 0
+            for charge, basin_type in zip(self.elf_bader.basin_charges, self.basin_types):
+                if basin_type == FeatureType.nna.value:
+                    nnas_per_unit += charge
+            self._nnas_per_formula = nnas_per_unit
+        return round(self._nnas_per_formula, 10)
 
     @property
-    def nna_potentials(self):
-        nna_indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-        nna_vox = np.round(self.maxima_frac * self.reference_grid.shape).astype(int) % self.reference_grid.shape
-        potentials = self.electrostatic_potential[
-            nna_vox[:,0],
-            nna_vox[:,1],
-            nna_vox[:,2],
-            ][nna_indices]
-        return potentials
+    def nnas_per_reduced_formula(self):
+        """
 
-    @property
-    def nna_test(self):
-        nna_indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-        nna_mask = np.zeros(len(self.basin_types), dtype=np.bool)
-        nna_mask[nna_indices] = True
-        return get_test(
-            potential_data=self.electrostatic_potential,
-            charge_data=self.charge_grid.total,
-            elf_data=self.reference_grid.total,
-            basin_labels=self.elf_bader.maxima_basin_labels,
-            atom_frac_coords=self.structure.frac_coords,
-            bond_fractions=self.overlap.bond_fractions,
-            nna_mask=nna_mask,
-            matrix=self.reference_grid.matrix,
-            num_atoms=len(self.reference_grid.structure),
-                )[nna_indices]
+        Returns
+        -------
+        float
+            The number of electrons in the reduced formula of the structure.
 
-    @property
-    def nna_charge_densities(self):
-        nna_indices = np.array([i for i, j in enumerate(self.basin_types) if j == "nna"], dtype=np.int64)
-        coords = np.round(self.maxima_frac * self.reference_grid.shape).astype(int)%self.reference_grid.shape
-        return self.charge_grid.total[
-            coords[:,0],
-            coords[:,1],
-            coords[:,2],
-            ][nna_indices]/self.reference_grid.ngridpts
-
-    @property
-    def neighbor_zeffs(self):
-        "effective charge on the atom core"
-        if self._neighbor_zeffs is None:
-            # calculate Zeff for each atom.
-            zeff, veff = get_zeff_nna(
-                atom_charges=self.overlap.qtaim_bader.atom_charges,
-                atom_volumes=self.overlap.qtaim_bader.atom_volumes,
-                charge_bond_fracs=self.overlap.bond_fractions,
-                volume_bond_fracs=self.overlap.volume_bond_fractions,
-                basin_charges=self.elf_bader.basin_charges,
-                basin_volumes=self.elf_bader.basin_volumes,
-                core_basins=self.overlap.core_basins,
-                )
-            pseudo_charges = np.array([self.valence_counts.get(i.specie.symbol, 0) for i in self.overlap.structure])
-            zeff = pseudo_charges - zeff
-            zeff = zeff[:len(self.elf_bader.structure)]
-            veff = veff[:len(self.elf_bader.structure)]
-
-            self._neighbor_zeffs, self._neighbor_veffs = get_approx_coulomb_potential(
-                zeff_charges=zeff,
-                zeff_volumes=veff,
-                volume_bond_fracs=self.overlap.volume_bond_fractions,
-                charge_bond_fracs = self.overlap.bond_fractions,
-                core_basins=self.overlap.core_basins,
-                    )
-        return self._neighbor_zeffs
-
-    @property
-    def neighbor_veffs(self):
-        "effective volume of the atom core"
-        if self._neighbor_veffs is None:
-            self.neighbor_zeffs
-        return self._neighbor_veffs
+        """
+        if self._nnas_per_reduced_formula is None:
+            (
+                _,
+                formula_reduction_factor,
+            ) = self.structure.composition.get_reduced_composition_and_factor()
+            self._nnas_per_reduced_formula = (
+                self.nnas_per_formula / formula_reduction_factor
+            )
+        return round(self._nnas_per_reduced_formula, 10)
 
     def _label_basins(self):
         """
@@ -315,7 +341,7 @@ class ElfLabeler(BaseAnalysis):
                         heavily shared:
                             small -> metallic bond
                             medium -> multi-center bond?
-                            large -> electride?
+                            large -> nna?
                         barely shared:
                             dominant atom has other bonds -> lone-pair
                             dominant atom has no bonds -> ionic shell
@@ -366,8 +392,6 @@ class ElfLabeler(BaseAnalysis):
         cls,
         charge_filename: Path | str = "CHGCAR",
         reference_filename: Path | str = "ELFCAR",
-        potential_filename: Path | str | None = None,
-        pseudopotential_filename: Path | str = "POTCAR",
         **kwargs,
     ) -> Self:
         """
@@ -385,17 +409,11 @@ class ElfLabeler(BaseAnalysis):
             in the system. For pseudopotential codes this represents the total
             electron density and should be provided whenever possible.
             If None, defaults to the charge_grid.
-        potential_filename : Path |  str | None, optional
-            The path to a LOCPOT like file containing the local electrostatic
-            potential. This should contain ONLY the ionic and hartree components
-            (LVHAR=True not LVTOT=True). If not provided, the local potential will
-            be approximated.
         pseudopotential_filename : Path |  str
             The path to the pseudopotentials used for calculating oxidation states. Alternatively,
             a dictionary representing the valence counts of each atom in the system
             where each entry is the species symbol and each value is the number
-            of electrons used for that species in the calculation. This must be
-            set for the ElfLabeler.
+            of electrons used for that species in the calculation.
         total_only: bool
             If true, only the first set of data in each file will be read. This
             increases speed and reduced memory usage as the other data is typically
@@ -410,15 +428,9 @@ class ElfLabeler(BaseAnalysis):
             A BaseAnalysis class object.
 
         """
-        if potential_filename is not None:
-            potential_grid = Grid.from_vasp(potential_filename)
-        else:
-            potential_grid = None
 
         return super().from_vasp(
             charge_filename=charge_filename,
             reference_filename=reference_filename,
-            potential_grid=potential_grid,
-            pseudopotential_filename=pseudopotential_filename,
             **kwargs
             )

@@ -25,12 +25,6 @@ from baderkit.core.utilities.voronoi import (
 
 Self = TypeVar("Self", bound="ElfRadii")
 
-# TODO:
-    # 1. very small maxima in the charge density throw off the rest of the calculation.
-    # These need to be separated properly. Update persistence method to focus on
-    # the lower of the two maxima only
-    # 2. Compare distance of electrides and metals based on the distance past
-    # the core. Only compare for atoms that have a core.
 
 class ElfRadii(BaseAnalysis):
     """
@@ -40,11 +34,19 @@ class ElfRadii(BaseAnalysis):
     """
 
     _summary_props = [
-        "bonding_basins",
+
         ]
 
     _reset_props = [
-        "bonding_structure",
+        "structure",
+        "local_basin_labels",
+        "label_atom_map",
+        "bonding_pairs",
+        "all_radii",
+        "atom_radii",
+        "bond_types",
+        "voronoi_planes",
+        
         ] + _summary_props
 
 
@@ -57,6 +59,7 @@ class ElfRadii(BaseAnalysis):
         include_nnas: bool = False,
         **kwargs,
     ):
+
         # create bader objects
         self._labeler = ElfLabeler(
             charge_grid=charge_grid,
@@ -88,45 +91,96 @@ class ElfRadii(BaseAnalysis):
         self._reset_properties()
 
     ###########################################################################
-    # Properties
+    # Helper Properties
     ###########################################################################
     @property
     def labeler(self) -> ElfLabeler:
         return self._labeler
     
-    @property
-    def bonding_basins(self) -> NDArray[int]:
-        if self._bonding_basins is None:
-            self._bonding_basins = np.array([i for i,j in self.labeler.basin_types if j in FeatureType.bonding], dtype=np.int64)
-        return self._bonding_basins
     
     @property
-    def bonding_structure(self) -> Structure:
-        if self._bonding_structure is None:
+    def structure(self) -> Structure:
+        if self._structure is None:
             structure = self.reference_grid.structure.copy()
-            frac_coords = self.labeler.maxima_frac[self.bonding_basins]
-            for frac in frac_coords:
-                structure.append("x", frac)
-            self._bonding_structure = structure
-        return self._bonding_structure
+            # add nnas if requested
+            if self.include_nnas:
+                frac_coords = self.labeler.maxima_frac[self.labeler.nna_indices]
+                for frac in frac_coords:
+                    structure.append("x", frac)
+            self._structure = structure
+        return self._structure
     
     @property
-    def bonding_basin_labels(self) -> NDArray[int]:
-        if self._bonding_basin_labels is None:
-            if self._include_nnas:
-                (
-                    atom_labels,
-                    atom_images,
-                    atom_charges,
-                    atom_volumes,
-                    basin_atoms,
-                    basin_atom_dists,
-                ) = self.labeler.elf_bader.assign_basins_to_structure(self.bonding_structure)
-                self._bonding_basin_labels = atom_labels
-            else:
-                self._bonding_basin_labels = self.labeler.elf_bader.atom_labels
-        return self._bonding_basin_labels
+    def local_basin_labels(self) -> NDArray[int]:
+        return self.labeler.elf_bader.maxima_basin_labels
     
+    @property
+    def label_atom_map(self) -> NDArray[int]:
+        if self._label_atom_map is None:
+            # get feature types
+            basin_types = self.labeler.basin_types
+            # get overlapping atoms
+            atom_fracs = self.labeler.overlap.bond_fractions
+            # get nna indices
+            nna_indices = self.labeler.nna_indices
+            
+            num_basins = len(basin_types)
+            
+            label_map = np.empty(num_basins, dtype=np.int64)
+            for idx,(basin_type, frac) in enumerate(zip(basin_types, atom_fracs)):
+                if len(frac) == 1 or basin_type in FeatureType.unshared:
+                    # get atoms index in structure
+                    label_map[idx] = int(frac[0,0])
+                elif self.include_nnas and basin_type == FeatureType.nna.value:
+                    # get nna index in structure
+                    label_map[idx] = np.searchsorted(nna_indices, idx) + len(self.reference_grid.structure)
+                else:
+                    # assign to value above possible structure lengths
+                    label_map[idx] = len(self.structure)
+            self._label_atom_map = label_map
+                    
+                    
+        return self._label_atom_map
+
+
+    ###########################################################################
+    # Radii Properties
+    ###########################################################################
+    @property
+    def bonding_pairs(self) -> (NDArray[int], NDArray[int]):
+        if self._bonding_pairs is None:
+            self._get_voronoi_radii()
+        return self._bonding_pairs
+    
+    @property
+    def all_radii(self) -> NDArray[float]:
+        if self._all_radii is None:
+            self._get_voronoi_radii()
+        return self._all_radii
+    
+    @property
+    def atom_radii(self) -> NDArray[float]:
+        if self._atom_radii is None:
+            all_radii = self.all_radii
+            atom_radii = np.empty(len(self.structure), dtype=np.float64)
+            site_indices = self.bonding_pairs[0][:,0]
+            for i in range(len(self.structure)):
+                idx = np.searchsorted(site_indices, i)
+                atom_radii[i] = all_radii[idx]
+            self._atom_radii = atom_radii
+        return self._atom_radii
+            
+    @property
+    def bond_types(self) -> NDArray[str]:
+        if self._bond_types is None:
+            self._get_voronoi_radii()
+        return np.where(self._bond_types, "covalent", "ionic")
+
+    @property
+    def voronoi_planes(self) -> (NDArray[float], NDArray[float]):
+        if self._voronoi_planes is None:
+            self._get_voronoi_radii()
+        return self._voronoi_planes
     
     ###########################################################################
     # Methods
@@ -140,27 +194,18 @@ class ElfRadii(BaseAnalysis):
         reversed_bonds,
     ):
 
-        # create a map of covalent labels
-        covalent_labels = np.zeros(len(self.feature_structure), dtype=np.bool_)
-        for symbol in self.covalent_symbols:
-            covalent_labels[
-                np.array(
-                    self.feature_structure.indices_from_symbol(symbol), dtype=np.int64
-                )
-            ] = True
-
         # calculate radii
         return get_all_atom_elf_radii(
             site_indices=site_indices,
             neigh_indices=neigh_indices,
-            site_frac_coords=self.feature_structure.frac_coords,
+            site_frac_coords=self.structure.frac_coords,
             neigh_frac_coords=neigh_frac_coords,
             neigh_dists=pair_dists,
             reversed_bonds=reversed_bonds,
-            data=self.cubic_coeffs,
-            feature_labels=self.feature_labels,
-            covalent_labels=covalent_labels,
-            equivalent_atoms=self.structure.equivalent_atoms,
+            data=self.reference_grid.cubic_spline_coeffs,
+            labels=self.local_basin_labels,
+            label_map = self.label_atom_map,
+            equivalent_atoms=self.structure.equivalent_atoms
         )
 
     def _get_neigh_info_from_pymatgen(self, neigh_info: list):
@@ -229,7 +274,7 @@ class ElfRadii(BaseAnalysis):
 
         return normals, b
 
-    def get_voronoi_radii(self):
+    def _get_voronoi_radii(self):
         """
         Calculates the voronoi planes making up the dividing polyhedra between
         atoms. Planes are placed at atom radii and include any that contribute to
@@ -356,7 +401,7 @@ class ElfRadii(BaseAnalysis):
             rotation_matrices=rotation_matrices,
             translation_vectors=translation_vectors,
             pair_dists=pair_dists,
-            shape=self.grid.shape,
+            shape=self.reference_grid.shape,
             tol=1,
         )
 
@@ -429,14 +474,11 @@ class ElfRadii(BaseAnalysis):
             upper = site_ranges[unique_idx + 1]
 
             current_halfspaces = halfspaces[lower:upper]
-            try:
-                halfspace = HalfspaceIntersection(
-                    current_halfspaces,
-                    self.structure.frac_coords[site_idx],
-                    incremental=False,
-                )
-            except:
-                breakpoint()
+            halfspace = HalfspaceIntersection(
+                current_halfspaces,
+                self.structure.frac_coords[site_idx],
+                incremental=False,
+            )
             vertices = halfspace.intersections
 
             # Get one plane for each unique bond with this atom at the center.
@@ -474,8 +516,8 @@ class ElfRadii(BaseAnalysis):
             fracs=fracs,
             rotation_matrices=rotation_matrices,
             translation_vectors=translation_vectors,
-            shape=self.grid.shape,
-            frac2cart=self.grid.matrix,
+            shape=self.reference_grid.shape,
+            frac2cart=self.reference_grid.matrix,
             tol=1,
         )
 
@@ -496,14 +538,65 @@ class ElfRadii(BaseAnalysis):
             raise Exception(
                 "Bond generation failed. This is a bug! Please report to our github: https://github.com/SWeav02/baderkit/issues"
             )
+            
+        # sort radii by site index and radius
+        sorted_indices = np.lexsort((radii, site_indices))
 
-        return (
-            site_indices,
-            neigh_indices,
-            neigh_coords,
-            radii,
-            pair_dists,
-            bond_types,
-            plane_points,
-            plane_vectors,
-        )
+        site_indices = site_indices[sorted_indices]
+        neigh_indices = neigh_indices[sorted_indices]
+        radii = radii[sorted_indices]
+        pair_dists = pair_dists[sorted_indices]
+        bond_types = bond_types[sorted_indices]
+        plane_points = plane_points[sorted_indices]
+        plane_vectors = plane_vectors[sorted_indices]
+        neigh_coords = neigh_coords[sorted_indices]
+        
+        
+        self._bonding_pairs = np.column_stack((site_indices, neigh_indices)), (neigh_coords // 1).astype(int)
+        self._pair_dists = pair_dists
+        self._all_radii = radii
+        self._bond_types = bond_types
+        self._voronoi_planes = plane_points, plane_vectors
+        
+    @classmethod
+    def from_vasp(
+        cls,
+        charge_filename: Path | str = "CHGCAR",
+        reference_filename: Path | str = "ELFCAR",
+        **kwargs,
+    ) -> Self:
+        """
+        Creates a Bader class object from VASP files.
+
+        Parameters
+        ----------
+        charge_filename : Path | str
+            The path to the CHGCAR like file that will be used for integrating charge.
+            The default is "CHGCAR".
+        reference_filename : Path |  str
+            The path to ELFCAR like file that will be used for partitioning.
+        total_charge_filename : Path |  str, optional
+            The path to the CHGCAR like file used for determining vacuum regions
+            in the system. For pseudopotential codes this represents the total
+            electron density and should be provided whenever possible.
+            If None, defaults to the charge_grid.
+        total_only: bool
+            If true, only the first set of data in each file will be read. This
+            increases speed and reduced memory usage as the other data is typically
+            not used.
+            Defaults to True.
+        **kwargs : dict
+            Keyword arguments to pass to the class.
+
+        Returns
+        -------
+        Self
+            A BaseAnalysis class object.
+
+        """
+        # this is just a wrapper to set the ELFCAR as a default
+        return super().from_vasp(
+            charge_filename=charge_filename,
+            reference_filename=reference_filename,
+            **kwargs
+            )
