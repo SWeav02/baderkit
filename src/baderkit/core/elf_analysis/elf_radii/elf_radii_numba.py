@@ -9,10 +9,10 @@ from numpy.typing import NDArray
 from baderkit.core.utilities.interpolation import interp_nearest, interp_spline
 
 
-# @njit(
-#     parallel=True,
-#     cache=True,
-# )
+@njit(
+    parallel=True,
+    cache=True,
+)
 def get_elf_radius(
     data,
     local_labels,
@@ -115,7 +115,7 @@ def get_elf_radius(
     covalent = False
     other_atoms = False
     site_idx = labels[0]
-    neigh_idx = labels[-1]
+    neigh_idx = labels[-1] % (num_atoms+1)
     for label in unique_labels:
         # note interatomic interactions
         label = label % (num_atoms+1)
@@ -258,74 +258,7 @@ def get_elf_radius(
 
     return bond_dist * bond_frac, bond_frac, covalent, False
 
-# @njit(cache=True)
-# def get_elf_radii(
-#     equivalent_atoms,
-#     data,
-#     labels,
-#     atom_frac_coords,
-#     neighbor_indices,
-#     neighbor_dists,
-#     neighbor_images,
-#     covalent_labels: NDArray,
-# ):
-#     # get the unique atoms we need to calculate radii for
-#     unique_atoms = np.unique(equivalent_atoms)
-
-#     # create array to store radii and their type
-#     atomic_radii = np.empty(len(atom_frac_coords), dtype=np.float64)
-#     bond_fracs = np.empty(len(atom_frac_coords), dtype=np.float64)
-#     radius_is_covalent = np.empty(len(atom_frac_coords), dtype=np.bool_)
-
-#     some_failed = False
-#     # get the radius for each atom. NOTE: We don't do this in parallel because
-#     # we want the interpolation to be done in parallel instead
-#     for unique_idx in prange(len(unique_atoms)):
-#         atom_idx = unique_atoms[unique_idx]
-#         atom_coords = atom_frac_coords[atom_idx]
-#         neigh_idx = neighbor_indices[atom_idx]
-#         bond_dist = neighbor_dists[atom_idx]
-#         neigh_image = neighbor_images[atom_idx]
-
-#         # get the neighbors frac coords
-#         neigh_coords = atom_frac_coords[neigh_idx] + neigh_image
-
-#         # get the radius for this atom
-#         radius, frac, is_covalent, failed = get_elf_radius(
-#             data,
-#             labels,
-#             atom_idx,
-#             atom_coords,
-#             neigh_coords,
-#             atom_frac_coords,
-#             covalent_labels,
-#             bond_dist,
-#         )
-#         if failed:
-#             some_failed = True
-
-#         atomic_radii[atom_idx] = radius
-#         bond_fracs[atom_idx] = frac
-#         radius_is_covalent[atom_idx] = is_covalent
-
-#     if some_failed:
-#         print(
-#             """At least one atoms radius could not be calculated. This is usually
-#               due to the atom having no core electrons, likely caused by the use
-#               of too small of a pseudopotential. The radius will default to 1/2 the bond length"""
-#         )
-
-#     # update values for equivalent atoms
-#     for atom_idx in prange(len(atomic_radii)):
-#         equiv_atom = equivalent_atoms[atom_idx]
-#         atomic_radii[atom_idx] = atomic_radii[equiv_atom]
-#         bond_fracs[atom_idx] = bond_fracs[equiv_atom]
-#         radius_is_covalent[atom_idx] = radius_is_covalent[equiv_atom]
-
-#     return atomic_radii, bond_fracs, radius_is_covalent
-
-
-# @njit(cache=True, parallel=True)
+@njit(cache=True, parallel=True)
 def get_all_atom_elf_radii(
     site_indices,
     neigh_indices,
@@ -342,7 +275,12 @@ def get_all_atom_elf_radii(
     # create array to store radii
     atomic_radii = np.empty(len(site_indices), dtype=np.float64)
     bond_fracs = np.empty(len(site_indices), dtype=np.float64)
-    radius_is_covalent = np.empty(len(site_indices), dtype=np.bool_)
+    radius_type = np.empty(len(site_indices), dtype=np.int64)
+    # radius types:
+        # 0 - ionic
+        # 1 - covalent
+        # 2 - metallic
+        # 3 - nonbonding
 
     some_failed = False
     # get the radius for each bond
@@ -355,7 +293,7 @@ def get_all_atom_elf_radii(
         if equivalent_atoms[site_idx] == equivalent_atoms[neigh_idx]:
             atomic_radii[pair_idx] = bond_dist * 0.5
             bond_fracs[pair_idx] = 0.5
-            radius_is_covalent[pair_idx] = True
+            radius_type[pair_idx] = 1
             continue
 
         site_frac = site_frac_coords[

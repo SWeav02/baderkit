@@ -34,19 +34,18 @@ class ElfRadii(BaseAnalysis):
     """
 
     _summary_props = [
-
+        "bonding_pairs",
+        "all_radii",
+        "atom_radii",
+        "all_bond_types",
+        "atom_bond_types",
         ]
 
     _reset_props = [
         "structure",
         "local_basin_labels",
         "label_atom_map",
-        "bonding_pairs",
-        "all_radii",
-        "atom_radii",
-        "bond_types",
         "voronoi_planes",
-        
         ] + _summary_props
 
 
@@ -162,19 +161,29 @@ class ElfRadii(BaseAnalysis):
     def atom_radii(self) -> NDArray[float]:
         if self._atom_radii is None:
             all_radii = self.all_radii
+            all_types = self.all_bond_types
             atom_radii = np.empty(len(self.structure), dtype=np.float64)
+            atom_bond_types = []
             site_indices = self.bonding_pairs[0][:,0]
             for i in range(len(self.structure)):
                 idx = np.searchsorted(site_indices, i)
                 atom_radii[i] = all_radii[idx]
+                atom_bond_types.append(all_types[idx])
             self._atom_radii = atom_radii
+            self._atom_bond_types = np.array(atom_bond_types)
         return self._atom_radii
+    
+    @property
+    def atom_bond_types(self) -> NDArray[str]:
+        if self._atom_bond_types is None:
+            self.atom_radii
+        return self._atom_bond_types
             
     @property
-    def bond_types(self) -> NDArray[str]:
-        if self._bond_types is None:
+    def all_bond_types(self) -> NDArray[str]:
+        if self._all_bond_types is None:
             self._get_voronoi_radii()
-        return np.where(self._bond_types, "covalent", "ionic")
+        return np.where(self._all_bond_types, "covalent", "ionic")
 
     @property
     def voronoi_planes(self) -> (NDArray[float], NDArray[float]):
@@ -290,7 +299,7 @@ class ElfRadii(BaseAnalysis):
             The fractional coordinates of each neighboring site.
         radii : NDArray[float]
             The radius from the central atom in each bond.
-        bond_types : NDArray[bool]
+        all_bond_types : NDArray[bool]
             The type of each bond, either True for covalent or False for ionic.
         plane_points : NDArray[float]
             A point on each partitioning plane. The point is also along the bond
@@ -424,7 +433,7 @@ class ElfRadii(BaseAnalysis):
             self.structure.frac_coords[unique_neigh_indices] + unique_neigh_images
         )
         # get radii for each unique bond
-        radii, fracs, bond_types = self._get_elf_radii_and_type(
+        radii, fracs, all_bond_types = self._get_elf_radii_and_type(
             unique_site_indices,
             unique_neigh_indices,
             unique_neigh_coords,
@@ -434,7 +443,7 @@ class ElfRadii(BaseAnalysis):
 
         # assign fractions back to each bond
         fracs = fracs[inverse]
-        bond_types = bond_types[inverse]
+        all_bond_types = all_bond_types[inverse]
         # reverse any that need it
         fracs[reversed_mask] = 1 - fracs[reversed_mask]
 
@@ -504,14 +513,14 @@ class ElfRadii(BaseAnalysis):
         neigh_coords = neigh_coords[important_plane_mask]
         pair_dists = pair_dists[important_plane_mask]
         fracs = fracs[important_plane_mask]
-        bond_types = bond_types[important_plane_mask]
+        all_bond_types = all_bond_types[important_plane_mask]
 
         # Generate all bonds using symmetry operations
         all_bonds = generate_symmetric_bonds(
             site_indices=site_indices,
             neigh_indices=neigh_indices,
             neigh_coords=neigh_coords,
-            bond_types=bond_types,
+            all_bond_types=all_bond_types,
             all_frac_coords=self.structure.frac_coords,
             fracs=fracs,
             rotation_matrices=rotation_matrices,
@@ -529,7 +538,7 @@ class ElfRadii(BaseAnalysis):
         neigh_indices = all_bonds[:, 1].astype(int)
         radii = all_bonds[:, 2]
         pair_dists = all_bonds[:, 3]
-        bond_types = all_bonds[:, 4].astype(bool)
+        all_bond_types = all_bonds[:, 4].astype(bool)
         plane_points = all_bonds[:, 5:8]
         plane_vectors = all_bonds[:, 8:11]
         neigh_coords = all_bonds[:, 11:]
@@ -546,7 +555,7 @@ class ElfRadii(BaseAnalysis):
         neigh_indices = neigh_indices[sorted_indices]
         radii = radii[sorted_indices]
         pair_dists = pair_dists[sorted_indices]
-        bond_types = bond_types[sorted_indices]
+        all_bond_types = all_bond_types[sorted_indices]
         plane_points = plane_points[sorted_indices]
         plane_vectors = plane_vectors[sorted_indices]
         neigh_coords = neigh_coords[sorted_indices]
@@ -555,7 +564,7 @@ class ElfRadii(BaseAnalysis):
         self._bonding_pairs = np.column_stack((site_indices, neigh_indices)), (neigh_coords // 1).astype(int)
         self._pair_dists = pair_dists
         self._all_radii = radii
-        self._bond_types = bond_types
+        self._all_bond_types = all_bond_types
         self._voronoi_planes = plane_points, plane_vectors
         
     @classmethod
