@@ -58,6 +58,40 @@ class ElfRadii(BaseAnalysis):
         include_nnas: bool = False,
         **kwargs,
     ):
+        """
+        Calculates the radius of each atom using a localization function
+        (e.g. ELF, ELI-D, LOL). Atom-neighbor pairs are chosen such that the
+        planes perpendicular to the bond, placed at the radius, form a weighted
+        voronoi surface. The method for determining the radius depends on the
+        bond type:
+
+            unshared    - The minimum point representing where the atoms are
+                          separated by a voronoi surface
+
+            shared      - The maximum point in the covalent/metallic shared basin
+                          that separates the two atoms
+
+            non-bonding - The maximum point in whatever atomic basins separate
+                          the atom pair. These are included only to complete the
+                          voronoi surface.
+
+        Parameters
+        ----------
+        charge_grid : Grid
+            The charge density grid used for integrating charge.
+        reference_grid : Grid
+            The ELF grid used to partition volumes.
+        total_charge_grid : Grid, optional
+            The total charge density used for bader integrations and vacuum masks. If
+            not provided, the charge_grid will be used instead.
+        include_nnas : bool, optional
+            Whether or not to treat non-nuclear attractors as quasi atoms. If
+            set to true, they will be included as central points for the generated
+            weighted voronoi surface and be given calculated radii.
+        **kwargs : dict
+            Keyword arguments to pass to the ElfLabeler class.
+
+        """
 
         # create bader objects
         self._labeler = ElfLabeler(
@@ -66,7 +100,7 @@ class ElfRadii(BaseAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
-        
+
         self._include_nnas = include_nnas
 
         super().__init__(
@@ -75,17 +109,27 @@ class ElfRadii(BaseAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
-        
+
     ###########################################################################
     # Settings
     ###########################################################################
 
     @property
-    def include_nnas(self) -> float:
+    def include_nnas(self) -> bool:
+        """
+
+        Returns
+        -------
+        bool
+            Whether or not to treat non-nuclear attractors as quasi atoms. If
+            set to true, they will be included as central points for the generated
+            weighted voronoi surface and be given calculated radii.
+
+        """
         return self._include_nnas
 
     @include_nnas.setter
-    def include_nnas(self, value: float):
+    def include_nnas(self, value: bool):
         self._include_nnas = value
         self._reset_properties()
 
@@ -94,11 +138,28 @@ class ElfRadii(BaseAnalysis):
     ###########################################################################
     @property
     def labeler(self) -> ElfLabeler:
+        """
+
+        Returns
+        -------
+        ElfLabeler
+            The ElfLabeler class used to determine the type of each bond.
+
+        """
         return self._labeler
-    
-    
+
     @property
     def structure(self) -> Structure:
+        """
+
+        Returns
+        -------
+        Structure
+            The Structure object used in the calculation. If include_nnas is
+            set to True, non-nuclear attractors will be appended to the original
+            structure as dummy-atoms.
+
+        """
         if self._structure is None:
             structure = self.reference_grid.structure.copy()
             # add nnas if requested
@@ -108,13 +169,31 @@ class ElfRadii(BaseAnalysis):
                     structure.append("x", frac)
             self._structure = structure
         return self._structure
-    
+
     @property
     def local_basin_labels(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The labeled grid assigning each grid point to a basin in the
+            localization function.
+
+        """
         return self.labeler.elf_bader.maxima_basin_labels
-    
+
     @property
     def label_atom_map(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            A 1D array connecting each local basin to its corresponding atom
+            or basin type. This is used internally to determine the bond types.
+
+        """
         if self._label_atom_map is None:
             # get feature types
             basin_types = self.labeler.basin_types
@@ -122,23 +201,32 @@ class ElfRadii(BaseAnalysis):
             atom_fracs = self.labeler.overlap.bond_fractions
             # get nna indices
             nna_indices = self.labeler.nna_indices
-            
+
             num_basins = len(basin_types)
-            
+
             label_map = np.empty(num_basins, dtype=np.int64)
             for idx,(basin_type, frac) in enumerate(zip(basin_types, atom_fracs)):
+                # point core/shell/lone-pairs to corresponding atom
                 if len(frac) == 1 or basin_type in FeatureType.unshared:
                     # get atoms index in structure
                     label_map[idx] = int(frac[0,0])
+                # point nnas to corresponding atom
                 elif self.include_nnas and basin_type == FeatureType.nna.value:
                     # get nna index in structure
                     label_map[idx] = np.searchsorted(nna_indices, idx) + len(self.reference_grid.structure)
+                # point covalent to len(structure) + 1
+                elif basin_type == FeatureType.covalent.value:
+                    label_map[idx] = len(self.structure) + 1
+                # point metallic to len(structure) + 2
+                elif basin_type in FeatureType.metal_like:
+                    label_map[idx] = len(self.structure) + 2
+                # point remainder to len(structure)
                 else:
                     # assign to value above possible structure lengths
                     label_map[idx] = len(self.structure)
             self._label_atom_map = label_map
-                    
-                    
+
+
         return self._label_atom_map
 
 
@@ -147,18 +235,47 @@ class ElfRadii(BaseAnalysis):
     ###########################################################################
     @property
     def bonding_pairs(self) -> (NDArray[int], NDArray[int]):
+        """
+
+        Returns
+        -------
+        (NDArray[int], NDArray[int])
+            A tuple where the first object is a Nx2 array representing the
+            site/neighbor atom indices involved in each bond and the second object
+            is a Nx3 array representing the periodic image the neighbor atom
+            sits in.
+
+        """
         if self._bonding_pairs is None:
             self._get_voronoi_radii()
         return self._bonding_pairs
-    
+
     @property
     def all_radii(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            A 1D array of length N where N is the total number of bonds found,
+            that lists all bond radii found in the system (in Å).
+
+        """
         if self._all_radii is None:
             self._get_voronoi_radii()
         return self._all_radii
-    
+
     @property
     def atom_radii(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            A 1D array of length M where M is the number of atoms in the system,
+            that lists the shortest bonding radius found for each atom in Å.
+
+        """
         if self._atom_radii is None:
             all_radii = self.all_radii
             all_types = self.all_bond_types
@@ -172,25 +289,66 @@ class ElfRadii(BaseAnalysis):
             self._atom_radii = atom_radii
             self._atom_bond_types = np.array(atom_bond_types)
         return self._atom_radii
-    
+
     @property
     def atom_bond_types(self) -> NDArray[str]:
+        """
+
+        Returns
+        -------
+        NDArray[str]
+            The primary bonding type for each atom. The options are determined
+            based on what types of basins are found along the bond.
+                ionic - No shared basins
+                covalent - Covelent basin
+                metallic - Metallic, nna, multi-centered etc.
+                non-bonding - Atomic basin belonging to either atom in the pair
+
+        """
         if self._atom_bond_types is None:
             self.atom_radii
         return self._atom_bond_types
-            
+
     @property
     def all_bond_types(self) -> NDArray[str]:
+        """
+
+        Returns
+        -------
+        NDArray[str]
+            The type of each bond in the system. The options are determined
+            based on what types of basins are found along the bond.
+                ionic - No shared basins
+                covalent - Covelent basin
+                metallic - Metallic, nna, multi-centered etc.
+                non-bonding - Atomic basin belonging to either atom in the pair
+
+        """
         if self._all_bond_types is None:
             self._get_voronoi_radii()
-        return np.where(self._all_bond_types, "covalent", "ionic")
+        mapping = np.array([
+            "ionic",
+            "covalent",
+            "metallic",
+            "non-bonding"
+            ])
+        return mapping[self._all_bond_types]
 
     @property
     def voronoi_planes(self) -> (NDArray[float], NDArray[float]):
+        """
+
+        Returns
+        -------
+        (NDArray[float], NDArray[float])
+            A tuple containing the plane points and normal vectors representing
+            the voronoi surface made by the bonds found in the system.
+
+        """
         if self._voronoi_planes is None:
             self._get_voronoi_radii()
         return self._voronoi_planes
-    
+
     ###########################################################################
     # Methods
     ###########################################################################
@@ -520,7 +678,7 @@ class ElfRadii(BaseAnalysis):
             site_indices=site_indices,
             neigh_indices=neigh_indices,
             neigh_coords=neigh_coords,
-            all_bond_types=all_bond_types,
+            bond_types=all_bond_types,
             all_frac_coords=self.structure.frac_coords,
             fracs=fracs,
             rotation_matrices=rotation_matrices,
@@ -538,7 +696,7 @@ class ElfRadii(BaseAnalysis):
         neigh_indices = all_bonds[:, 1].astype(int)
         radii = all_bonds[:, 2]
         pair_dists = all_bonds[:, 3]
-        all_bond_types = all_bonds[:, 4].astype(bool)
+        all_bond_types = all_bonds[:, 4].astype(int)
         plane_points = all_bonds[:, 5:8]
         plane_vectors = all_bonds[:, 8:11]
         neigh_coords = all_bonds[:, 11:]
@@ -547,7 +705,7 @@ class ElfRadii(BaseAnalysis):
             raise Exception(
                 "Bond generation failed. This is a bug! Please report to our github: https://github.com/SWeav02/baderkit/issues"
             )
-            
+
         # sort radii by site index and radius
         sorted_indices = np.lexsort((radii, site_indices))
 
@@ -559,14 +717,14 @@ class ElfRadii(BaseAnalysis):
         plane_points = plane_points[sorted_indices]
         plane_vectors = plane_vectors[sorted_indices]
         neigh_coords = neigh_coords[sorted_indices]
-        
-        
+
+
         self._bonding_pairs = np.column_stack((site_indices, neigh_indices)), (neigh_coords // 1).astype(int)
         self._pair_dists = pair_dists
         self._all_radii = radii
         self._all_bond_types = all_bond_types
         self._voronoi_planes = plane_points, plane_vectors
-        
+
     @classmethod
     def from_vasp(
         cls,

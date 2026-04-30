@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.bader.bader import Bader
-from baderkit.core.toolkit import Grid
+from baderkit.core.toolkit import Grid, Structure
 from baderkit.core.elf_analysis.overlap import BasinOverlap
 
 from .enum_and_styling import FeatureType
@@ -19,14 +19,17 @@ from .elf_labeler_numba import (
 
 Self = TypeVar("Self", bound="ElfLabeler")
 
+# TODO: Add useful write methods?
 
 class ElfLabeler(BaseAnalysis):
     """
-    
+
     A tool for labeling basins in a localization function (ELF, ELI-D, LOL, etc.)
     as various chemical features.
 
     """
+
+    spin_system = "total"
 
     _summary_props = [
         "basin_types",
@@ -38,10 +41,11 @@ class ElfLabeler(BaseAnalysis):
         "nna_formula",
         "nnas_per_formula",
         "nnas_per_reduced_formula",
-        
+        "label_structure",
         ]
 
     _reset_props = [
+        "nna_structure",
         "along_bond",
         ] + _summary_props
 
@@ -76,7 +80,7 @@ class ElfLabeler(BaseAnalysis):
             is calculated from the two atoms that contribute the most to each
             ELF basin.
 
-        
+
         **kwargs : dict
             Keyword arguments to pass to the Bader class.
 
@@ -88,7 +92,7 @@ class ElfLabeler(BaseAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
-        
+
         self._elf_bader = self.overlap.local_bader
 
         super().__init__(
@@ -133,6 +137,48 @@ class ElfLabeler(BaseAnalysis):
     # Properties
     ###########################################################################
     @property
+    def label_structure(self) -> Structure:
+        """
+
+        Returns
+        -------
+        Structure
+            A PyMatGen Structure object made of dummy atoms representing each
+            chemical feature found in the system.
+
+        """
+        if self._label_structure is None:
+            structure = self.structure.copy()
+            structure.remove_sites([i for i in range(len(structure))])
+            for basin_type, basin_frac in zip(self.basin_types, self.maxima_frac):
+                basin_type = FeatureType(basin_type)
+                structure.append(basin_type.dummy_species, basin_frac)
+            self._label_structure = structure
+        return self._label_structure
+
+    @property
+    def nna_structure(self) -> Structure:
+        """
+
+        Returns
+        -------
+        Structure
+            The original structure of the system with dummy atoms representing
+            non-nuclear attractors appended at the end. Useful when anlyzing
+            electride systems for example.
+
+        """
+        if self._nna_structure is None:
+            structure = self.structure.copy()
+            for idx in self.nna_indices:
+                basin_type = FeatureType(self.basin_types[idx])
+                basin_frac = self.maxima_frac[idx]
+                structure.append(basin_type.dummy_species, basin_frac)
+            self._nna_structure = structure
+        return self._nna_structure
+
+
+    @property
     def overlap(self) -> BasinOverlap:
         """
 
@@ -154,7 +200,7 @@ class ElfLabeler(BaseAnalysis):
             The Bader class used to partition the ELF.
 
         """
-        
+
         return self._elf_bader
 
     @property
@@ -239,7 +285,7 @@ class ElfLabeler(BaseAnalysis):
             portion of its charge.
 
         """
-        
+
         if self._nna_bond_fracs is None:
             fracs = get_core_dist_ratios(
                 labels=self.elf_bader.maxima_basin_labels,
@@ -276,7 +322,19 @@ class ElfLabeler(BaseAnalysis):
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
                     )
         return self._nna_neighbor_dists
-    
+
+    @property
+    def num_nnas(self) -> int:
+        """
+
+        Returns
+        -------
+        int
+            The number of non-nuclear attractor sites in the structure
+
+        """
+        return len(self.nna_structure) - len(self.structure)
+
     @property
     def nna_formula(self):
         """

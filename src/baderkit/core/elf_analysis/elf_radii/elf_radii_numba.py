@@ -58,6 +58,7 @@ def get_elf_radius(
 
     """
     num_atoms = len(all_frac_coords)
+    possible_vals = num_atoms + 3
 
     # get the number of points to interpolate
     num_points = int(round(bond_dist * line_res))
@@ -83,7 +84,7 @@ def get_elf_radius(
         if label >= num_atoms:
             labels[point_idx] = label
             continue
-        
+
         # For small cells its possible for this label to be incorrect.
         # In poarticular it may assign to a translation of the actual atom. To
         # test for this, we check if the vector from the point to the site is
@@ -91,7 +92,7 @@ def get_elf_radius(
         # fairly spherical (which is also an assumption of badelf itself).
         vec = all_frac_coords[label] - point
         if np.max(np.abs(vec)) > 0.5:
-            label += num_atoms+1
+            label += possible_vals
 
         labels[point_idx] = label
     # if label%(num_atoms+1) == 2:
@@ -104,7 +105,7 @@ def get_elf_radius(
     # The atom's nearest neighbor is a translation of itself. The radius
     # must always be halfway between the two and the bond must be covalent
     if len(unique_labels) == 1:
-        return bond_dist * 0.5, 0.5, True, False
+        return bond_dist * 0.5, 0.5, 1, False
 
     # SITUATION 2:
     # The bond passes through labels that are not the current site or neighbor.
@@ -112,27 +113,29 @@ def get_elf_radius(
     # another atom. In the later case, this probably isn't a valid radius and
     # we just return 0.5. In the former case, we return the maximum in the bond.
 
-    covalent = False
-    other_atoms = False
+    bond_type = 0 # default to ionic
     site_idx = labels[0]
-    neigh_idx = labels[-1] % (num_atoms+1)
+    neigh_idx = labels[-1] % possible_vals
     for label in unique_labels:
         # note interatomic interactions
-        label = label % (num_atoms+1)
-        if label >= num_atoms:
-            covalent = True
+        label = label % possible_vals
+        if label == num_atoms + 1:
+            bond_type = 1
             continue
-        
+        elif label == num_atoms + 2:
+            bond_type = 2
+            continue
+
         # note if a different atom is involved in the bond
         if label != site_idx and label != neigh_idx:
-            other_atoms = True
+            bond_type = 3
             break
     # if there are other atoms interacting with this bond, it is probably not
-    # valid.    
-    if other_atoms:
-        return bond_dist * 0.5, 0.5, True, False
-    
-    if covalent:
+    # valid. (nonbonding)
+    if bond_type == 3:
+        return bond_dist * 0.5, 0.5, 3, False
+
+    if bond_type:
         use_maximum = True
         # create placeholders for best maxima
         radius_index = -1
@@ -141,7 +144,7 @@ def get_elf_radius(
         midpoint = (len(values) - 1) / 2
         for i, (value, label) in enumerate(zip(values, labels)):
             # skip points that aren't part of the covalent bond
-            label = label % (num_atoms+1)
+            label = label % possible_vals
             if not label >= num_atoms:
                 continue
             # check if the point is a maximum
@@ -161,14 +164,14 @@ def get_elf_radius(
         # finds the minimum closest to the last label belonging to the atom along
         # this line
         if radius_index == -1:
-            covalent = False
+            bond_type = 0
 
     # SITUATION 3:
     # The atom is ionically bonded to its nearest neighbor. The radius is
     # at the first point that does not belong to this atom.
     # NOTE: If we have not labeled metals/electrides yet, this also captures
     # the situation where we treat metal features as separate from the atom
-    if not covalent:
+    if not bond_type:
         use_maximum = False
         midpoint = -1
         # find the first point that doesn't belong to the current atom
@@ -203,7 +206,7 @@ def get_elf_radius(
     # case we default to a radius halfway between the atoms which in many cases is
     # unreasonable
     if radius_index == -1 or radius_index == 0:
-        return bond_dist * 0.5, 0.5, True, True
+        return bond_dist * 0.5, 0.5, 3, True
 
     # Now we want to refine the radius. First, we get the coordinate of the
     # current radius
@@ -256,7 +259,7 @@ def get_elf_radius(
     # We now have a refined radius. Calculate the actual bond distance
     bond_frac = radius_index / (num_points - 1)
 
-    return bond_dist * bond_frac, bond_frac, covalent, False
+    return bond_dist * bond_frac, bond_frac, bond_type, False
 
 @njit(cache=True, parallel=True)
 def get_all_atom_elf_radii(
@@ -300,7 +303,7 @@ def get_all_atom_elf_radii(
             site_idx
         ]  # taken from structure to avoid larger array
         neigh_frac = neigh_frac_coords[pair_idx]
-        radius, frac, is_covalent, failed = get_elf_radius(
+        radius, frac, rad_type, failed = get_elf_radius(
             data,
             labels,
             site_idx,
@@ -317,7 +320,7 @@ def get_all_atom_elf_radii(
             frac = 1 - frac
         atomic_radii[pair_idx] = radius
         bond_fracs[pair_idx] = frac
-        radius_is_covalent[pair_idx] = is_covalent
+        radius_type[pair_idx] = rad_type
 
     if some_failed:
         print(
@@ -330,4 +333,4 @@ def get_all_atom_elf_radii(
         bond_fracs.min() >= 0.0 and bond_fracs.max() <= 1.0
     ), "Major failure while finding bond fraction"
 
-    return atomic_radii, bond_fracs, radius_is_covalent
+    return atomic_radii, bond_fracs, radius_type
