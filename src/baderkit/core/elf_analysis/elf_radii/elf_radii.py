@@ -204,7 +204,7 @@ class ElfRadii(BaseAnalysis):
 
             num_basins = len(basin_types)
 
-            label_map = np.empty(num_basins, dtype=np.int64)
+            label_map = np.empty(num_basins+1, dtype=np.int64)
             for idx,(basin_type, frac) in enumerate(zip(basin_types, atom_fracs)):
                 # point core/shell/lone-pairs to corresponding atom
                 if len(frac) == 1 or basin_type in FeatureType.unshared:
@@ -224,6 +224,8 @@ class ElfRadii(BaseAnalysis):
                 else:
                     # assign to value above possible structure lengths
                     label_map[idx] = len(self.structure)
+            # set vacuum map
+            label_map[-1] = len(self.structure) + 3
             self._label_atom_map = label_map
 
 
@@ -360,7 +362,7 @@ class ElfRadii(BaseAnalysis):
         pair_dists,
         reversed_bonds,
     ):
-
+        # breakpoint()
         # calculate radii
         return get_all_atom_elf_radii(
             site_indices=site_indices,
@@ -730,6 +732,7 @@ class ElfRadii(BaseAnalysis):
         cls,
         charge_filename: Path | str = "CHGCAR",
         reference_filename: Path | str = "ELFCAR",
+        pseudopotential_filename: Path | str = "POTCAR",
         **kwargs,
     ) -> Self:
         """

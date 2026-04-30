@@ -58,7 +58,7 @@ def get_elf_radius(
 
     """
     num_atoms = len(all_frac_coords)
-    possible_vals = num_atoms + 3
+    possible_vals = num_atoms + 4
 
     # get the number of points to interpolate
     num_points = int(round(bond_dist * line_res))
@@ -114,8 +114,10 @@ def get_elf_radius(
     # we just return 0.5. In the former case, we return the maximum in the bond.
 
     bond_type = 0 # default to ionic
-    site_idx = labels[0]
-    neigh_idx = labels[-1] % possible_vals
+    # get site index and neighbor index
+    non_vac = np.where(labels!=possible_vals-1)[0]
+    site_idx = labels[non_vac[0]]
+    neigh_idx = labels[non_vac[-1]] % possible_vals
     for label in unique_labels:
         # note interatomic interactions
         label = label % possible_vals
@@ -124,6 +126,9 @@ def get_elf_radius(
             continue
         elif label == num_atoms + 2:
             bond_type = 2
+            continue
+        elif label == num_atoms + 3:
+            # we have some vacuum. We treat it like an ionic system
             continue
 
         # note if a different atom is involved in the bond
@@ -142,7 +147,9 @@ def get_elf_radius(
         maxima_dist = 1.0e6
         # get local maxima that are covalent
         midpoint = (len(values) - 1) / 2
-        for i, (value, label) in enumerate(zip(values, labels)):
+        for i in non_vac:
+            value = values[i]
+            label = labels[i]
             # skip points that aren't part of the covalent bond
             label = label % possible_vals
             if not label >= num_atoms:
@@ -175,7 +182,8 @@ def get_elf_radius(
         use_maximum = False
         midpoint = -1
         # find the first point that doesn't belong to the current atom
-        for i, label in enumerate(labels):
+        for i in non_vac:
+            label = labels[i]
             # skip points with no label. Doesn't typically happen but might if
             # the ELF is very low around an atom center
             if label == -1:
@@ -186,7 +194,9 @@ def get_elf_radius(
         radius_index = -1
         # get the minimum along the line closest to this point
         minima_dist = 1.0e6
-        for i, (value, label) in enumerate(zip(values, labels)):
+        for i in non_vac:
+            value = values[i]
+            label = labels[i]
             # BUGFIX: We don't allow the first or last point to be considered
             # minima. If we allow that, the minimum will be refined to a point
             # outside the bond ranged.

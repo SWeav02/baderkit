@@ -450,6 +450,7 @@ class ElfLabeler(BaseAnalysis):
         cls,
         charge_filename: Path | str = "CHGCAR",
         reference_filename: Path | str = "ELFCAR",
+        pseudopotential_filename: Path | str = "POTCAR",
         **kwargs,
     ) -> Self:
         """
@@ -490,5 +491,6 @@ class ElfLabeler(BaseAnalysis):
         return super().from_vasp(
             charge_filename=charge_filename,
             reference_filename=reference_filename,
+            pseudopotential_filename=pseudopotential_filename,
             **kwargs
             )

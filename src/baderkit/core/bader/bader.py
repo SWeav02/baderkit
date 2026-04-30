@@ -1330,6 +1330,8 @@ class Bader(BaseAnalysis):
 
     @property
     def oxidation_states(self) -> NDArray[np.float64]:
+        if not self.valence_counts:
+            return None
         oxi_state_data = []
         for site, site_charge in zip(self.structure, self.atom_charges):
             element_str = site.specie.name

@@ -479,9 +479,11 @@ class BaseAnalysis(ABC):
             reference_grid = Grid.from_dynamic(
                 reference_filename, format=format, total_only=total_only
             )
-        
+
         if pseudopotential_filename and valence_counts is None:
             valence_counts = load_pseudo(pseudopotential_filename)
+        elif valence_counts is None:
+            valence_counts = {}
 
         return cls(
             charge_grid=charge_grid,

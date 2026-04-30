@@ -14,9 +14,9 @@ def get_in_partition_assignments(
     site_indices: NDArray,
     site_transforms: NDArray,
     plane_equations: NDArray,
-    vacuum_mask: NDArray,
+    exclude_mask: NDArray,
     min_plane_dist: float,
-    num_assignments: int,  # total possible regions with assigned charge/volume
+    max_val: int,  # total possible regions with assigned charge/volume
     lattice_matrix: NDArray,  # lattice matrix with row vectors
 ):
     nx, ny, nz = data.shape
@@ -28,8 +28,8 @@ def get_in_partition_assignments(
             grid2cart[i, j] = lattice_matrix[i, j] / data.shape[i]
 
     # create trackers for charge/volume
-    charges = np.zeros(num_assignments, dtype=np.float64)
-    volumes = np.zeros(num_assignments, dtype=np.float64)
+    charges = np.zeros(max_val, dtype=np.float64)
+    volumes = np.zeros(max_val, dtype=np.float64)
 
     ###########################################################################
     # Fully inside partitioning assignments
@@ -41,9 +41,8 @@ def get_in_partition_assignments(
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                # If this voxel was assigned before this stage, or it is part
-                # of the vacuum, we just continue
-                if labels[i, j, k] != -1 or vacuum_mask[i, j, k]:
+                # If this voxel is part of an nna or the vacuum we skip
+                if exclude_mask[i, j, k]:
                     continue
                 # create a tracker for which atom assignment we have
                 current_site = -1
@@ -97,7 +96,7 @@ def get_in_partition_assignments(
         for j in range(ny):
             for k in range(nz):
                 label = labels[i, j, k]
-                if label == -1:
+                if label == max_val:
                     continue
                 charges[label] += data[i, j, k]
                 volumes[label] += 1
@@ -108,18 +107,18 @@ def get_in_partition_assignments(
 def get_outside_partition_assignments(
     data,
     labels,
-    vacuum_mask,
+    exclude_mask,
     sphere_transforms,
     transform_dists,
     transform_breaks,
     charges,
     volumes,
-    max_label,  # use to ignore electrides/features
+    max_val,
 ):
     nx, ny, nz = data.shape
 
     # get unassigned points (exclude vacuum)
-    unassigned_indices = np.argwhere((labels == -1) & ~vacuum_mask)
+    unassigned_indices = np.argwhere((labels == max_val) & ~exclude_mask)
     num_unassigned = len(unassigned_indices)
 
     # create array to store site fractions. We only store up to a set number
@@ -131,7 +130,7 @@ def get_outside_partition_assignments(
     for point_idx in prange(num_unassigned):
         i, j, k = unassigned_indices[point_idx]
         # create an array to track assignment counts on each atom
-        site_counts = np.zeros(max_label, dtype=np.float64)
+        site_counts = np.zeros(max_val, dtype=np.float64)
         found_sites = []
         total_counts = 0.0
         # loop over transforms, iteratively increasing the sphere radius and checking
@@ -149,7 +148,7 @@ def get_outside_partition_assignments(
             nk = (k + sk) % nz
             label = labels[ni, nj, nk]
 
-            if label != -1 and label < max_label:
+            if label < max_val:
                 found = True
                 if site_counts[label] == 0.0:
                     found_sites.append(label)
@@ -283,14 +282,13 @@ def get_badelf_assignments(
     site_indices: NDArray,
     site_transforms: NDArray,
     plane_equations: NDArray,
-    vacuum_mask: NDArray,
+    exclude_mask: NDArray,
     min_plane_dist: float,
-    num_assignments: int,  # total possible regions with assigned charge/volume
     lattice_matrix: NDArray,  # lattice matrix with row vectors
     sphere_transforms,
     transform_dists,
     transform_breaks,
-    max_label,  # use to ignore electrides/features
+    max_val,
 ):
 
     # get assignments for voxels fully inside partitioning
@@ -300,9 +298,9 @@ def get_badelf_assignments(
         site_indices=site_indices,
         site_transforms=site_transforms,
         plane_equations=plane_equations,
-        vacuum_mask=vacuum_mask,
+        exclude_mask=exclude_mask,
         min_plane_dist=min_plane_dist,
-        num_assignments=num_assignments,  # total possible regions with assigned charge/volume
+        max_val=max_val,  # total possible regions with assigned charge/volume
         lattice_matrix=lattice_matrix,
     )
 
@@ -310,13 +308,13 @@ def get_badelf_assignments(
     labels, charges, volumes = get_outside_partition_assignments(
         data,
         labels,
-        vacuum_mask,
+        exclude_mask,
         sphere_transforms,
         transform_dists,
         transform_breaks,
         charges,
         volumes,
-        max_label,  # use to ignore electrides/features
+        max_val=max_val,
     )
 
     return labels, charges, volumes
