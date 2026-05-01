@@ -1,1 +1,1 @@
-::: src.baderkit.core.toolkit.grid.Grid
+::: src.baderkit.toolkit.grid.Grid

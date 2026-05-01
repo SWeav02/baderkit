@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
-# high level imports
-import importlib.metadata
+from importlib import metadata
 import logging
-
 from rich.logging import RichHandler
 
-__version__ = importlib.metadata.version("baderkit")
+# Version and Logging
+__version__ = metadata.version("baderkit")
 
 # Configure our logger to output timestamps with logs
 # Also changes the logging level to info
@@ -22,4 +21,12 @@ logging.basicConfig(
     ],
 )
 
-from .core.bader import Bader
+from .toolkit.structure import Structure
+from .toolkit.grid import Grid
+from .bader.bader import Bader
+
+
+# hide other imports
+__all__ = ["Bader", "Structure", "Grid"]
+def __dir__():
+    return __all__

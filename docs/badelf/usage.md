@@ -14,23 +14,23 @@ Examples of `CHGCAR` and `ELFCAR` files for the Ca2N electride used in this tuto
 
     1. Activate your environment with BaderKit installed. If you are not using an
     environment manager, skip to step 2.
-    
+
         ```bash
         conda activate my_env
         ```
-        
+
     2. Navigate to the directory with your charge density and ELF files.
-    
+
         ```bash
         cd /path/to/directory
         ```
-    
+
     3. Run the BadELF analysis. Replace 'chargefile' and 'elffile' with the names of your charge-density and ELF files.
-    
+
         ```bash
         baderkit badelf chargefile elffile
         ```
-    
+
     You should see an output similar to this:
 
     ```bash
@@ -85,81 +85,81 @@ Examples of `CHGCAR` and `ELFCAR` files for the Ca2N electride used in this tuto
                         INFO     Refining cutoff for dimension 0
     100%|███████████████████████████████████████████████████████████████████████████████████████████████| 15/15 [00:00<00:00, 54.06it/s]
     ```
-    
+
     A summary of all properties will be written to `badelf.json`. See our [example files](https://github.com/SWeav02/baderkit/releases/tag/0.9.0 ). for an example.
-    
-    Additional arguments and options such as those for printing output files or using different 
+
+    Additional arguments and options such as those for printing output files or using different
     algorithms can be viewed by running the help command.
     ```bash
     baderkit badelf --help
     ```
 
 === "Python"
-    
+
     1. Import the `Badelf` class.
-    
+
         ```python
-        from baderkit.core import Badelf
+        from baderkit.elf_analysis.badelf import Badelf
         ```
-    
+
     2. Use the `Badelf` class' `from_vasp` method to read a `CHGCAR` and `ELFCAR` file.
-    
+
         ```python
         # instantiate the class
         badelf = Badelf.from_vasp("path/to/chargefile", "path/to/elffile")
         ```
-    
+
     3. To run the analysis, we can call any class property. Try getting a complete summary in dictionary format.
         ```python
         results = badelf.to_dict()
         ```
     You should see an output similar to this:
-        ```bash   
-                            INFO     Beginning voxel assignment                        
-                            INFO     Beginning Bader Algorithm Using 'weight' Method   
-        2026-03-10 13:42:36 INFO     Initializing Labels                               
-                            INFO     Initialization Complete                           
-                            INFO     Time: 0.38                                        
-                            INFO     Sorting Reference Data                            
-                            INFO     Assigning Charges and Volumes                     
-                            INFO     Combining Low-Persistence Basins                  
-        2026-03-10 13:42:38 INFO     Refining Maxima                                   
-                            INFO     Bader Algorithm Complete                          
-                            INFO     Time: 3.08                                        
-                            INFO     Assigning Atom Properties                         
-                            INFO     Atom Assignment Finished                          
-                            INFO     Time: 0.0                                         
-                            INFO     Beginning ELF Analysis                            
-                            INFO     Locating Bifurcations                             
-        2026-03-10 13:42:39 INFO     Time: 0.68                                        
-                            INFO     Finding contained atoms                           
-                            INFO     Time: 0.7                                         
-                            INFO     Beginning Bader Algorithm Using 'weight' Method   
-        2026-03-10 13:42:40 INFO     Initializing Labels                               
-                            INFO     Initialization Complete                           
-                            INFO     Time: 0.08                                        
-                            INFO     Sorting Reference Data                            
-                            INFO     Assigning Charges and Volumes                     
-                            INFO     Combining Low-Persistence Basins                  
-        2026-03-10 13:42:41 INFO     Refining Maxima                                   
-                            INFO     Bader Algorithm Complete                          
-                            INFO     Time: 1.97                                        
-        2026-03-10 13:42:42 INFO     Marking atomic shells                             
-                            INFO     Marking covalent features                         
-                            INFO     Marking lone-pair features                        
-                            INFO     Calculating atomic radii                          
-                            INFO     Marking multi-centered and bare electron features 
-                            INFO     Finished labeling ELF                             
-                            INFO     Finished voxel assignment                         
-                            INFO     Finding electride dimensionality cutoffs          
-                            INFO     Calculating dimensionality at 0 ELF               
-                            INFO     Max electride dimensionality: 2                   
-                            INFO     Refining cutoff for dimension 1                   
+        ```bash
+                            INFO     Beginning voxel assignment
+                            INFO     Beginning Bader Algorithm Using 'weight' Method
+        2026-03-10 13:42:36 INFO     Initializing Labels
+                            INFO     Initialization Complete
+                            INFO     Time: 0.38
+                            INFO     Sorting Reference Data
+                            INFO     Assigning Charges and Volumes
+                            INFO     Combining Low-Persistence Basins
+        2026-03-10 13:42:38 INFO     Refining Maxima
+                            INFO     Bader Algorithm Complete
+                            INFO     Time: 3.08
+                            INFO     Assigning Atom Properties
+                            INFO     Atom Assignment Finished
+                            INFO     Time: 0.0
+                            INFO     Beginning ELF Analysis
+                            INFO     Locating Bifurcations
+        2026-03-10 13:42:39 INFO     Time: 0.68
+                            INFO     Finding contained atoms
+                            INFO     Time: 0.7
+                            INFO     Beginning Bader Algorithm Using 'weight' Method
+        2026-03-10 13:42:40 INFO     Initializing Labels
+                            INFO     Initialization Complete
+                            INFO     Time: 0.08
+                            INFO     Sorting Reference Data
+                            INFO     Assigning Charges and Volumes
+                            INFO     Combining Low-Persistence Basins
+        2026-03-10 13:42:41 INFO     Refining Maxima
+                            INFO     Bader Algorithm Complete
+                            INFO     Time: 1.97
+        2026-03-10 13:42:42 INFO     Marking atomic shells
+                            INFO     Marking covalent features
+                            INFO     Marking lone-pair features
+                            INFO     Calculating atomic radii
+                            INFO     Marking multi-centered and bare electron features
+                            INFO     Finished labeling ELF
+                            INFO     Finished voxel assignment
+                            INFO     Finding electride dimensionality cutoffs
+                            INFO     Calculating dimensionality at 0 ELF
+                            INFO     Max electride dimensionality: 2
+                            INFO     Refining cutoff for dimension 1
         100%|██████████| 15/15 [00:00<00:00, 55.09it/s]
-        2026-03-10 13:42:43 INFO     Refining cutoff for dimension 0                   
+        2026-03-10 13:42:43 INFO     Refining cutoff for dimension 0
         100%|██████████| 15/15 [00:00<00:00, 48.17it/s]
         ```
-    
+
     4. Now try getting individual properties. For more details on each property,
     see the [API reference](../api_reference/core/badelf).
         ```python
@@ -167,20 +167,20 @@ Examples of `CHGCAR` and `ELFCAR` files for the Ca2N electride used in this tuto
         atom_labels = badelf.atom_labels # Atom assignments for each point in the grid
         maxima_coords = badelf.basin_maxima_frac # Frac coordinates of each attractor
         ```
-    
+
     5. BaderKit also provides convenience methods for writing results to file. First,
     let's write a summary of the full analysis.
-    
+
         ```python
         badelf.write_json()
         ```
-    
+
     6. Now let's write the volume assigned to one of our atoms.
-    
+
         ```python
         badelf.write_atom_volumes(atom_indices = [0])
         ```
-    
+
     !!! Tip
         After creating a `Badelf` class object, it doesn't matter what order
         you call properties, summaries, or write methods in. BaderKit calculates
@@ -208,22 +208,22 @@ BaderKit provides a convenience class for performing `BadELF` on the spin-up and
     The results for each spin system are then written to separate files.
 
 === "Python"
-    
+
     1. Import the `SpinBadelf` class and read in your spin-dependent files.
-    
+
         ```python
-        from baderkit.core import SpinBadelf
+        from baderkit.elf_analysis import SpinBadelf
         # instantiate the class
         badelf = SpinBadelf.from_vasp("path/to/chargefile", "path/to/elffile")
         ```
-    
+
     2. Get the separate results for the spin-up and spin-down systems.
 
         ```python
         spin_up = badelf.badelf_up
         spin_down = badelf.badelf_down
         ```
-    
+
     3. View properties separately or combined.
 
         ```python
@@ -255,7 +255,7 @@ By default, VASP writes the CHGCAR and ELFCAR to different grid shapes (the "fin
 For BadELF alorithms involving planes (i.e. `badelf` and `voronelf`), results can change significantly with very small differences in atom position. VASP writes atomic positions in the CHGCAR and ELFCAR with limited precision, sometimes much lower than the values in the POSCAR/CONTCAR. To help with this, we provide an option to override the crystal structure when reading in the CHGCAR/ELFCAR:
 
 ```python
-from baderkit.core import Badelf
+from baderkit.elf_analysis import Badelf
 
 badelf = Badelf.from_vasp("path/to/chargefile", "path/to/elffile", poscar_file="path/to/poscar")
 ```

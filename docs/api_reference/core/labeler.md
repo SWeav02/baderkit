@@ -1,1 +1,1 @@
-::: src.baderkit.core.elf_analysis.elf_labeler.ElfLabeler
+::: src.baderkit.elf_analysis.elf_labeler.ElfLabeler

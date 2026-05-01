@@ -1,1 +1,1 @@
-::: src.baderkit.core.bader.Bader
+::: src.baderkit.bader.Bader

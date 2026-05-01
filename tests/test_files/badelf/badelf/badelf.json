@@ -1,0 +1,64 @@
+{
+    "method_kwargs": {
+        "version": "0.7.0",
+        "vacuum_tol": 0.001,
+        "partition_method": "badelf",
+        "include_nnas": false,
+        "polarization_cutoff": 0.5,
+        "min_bond_angle": 135,
+        "method": "neargrid-weight",
+        "nna_cutoff": 1.0,
+        "persistence_tol": 0.05
+    },
+    "atom_results": {
+        "atom_charges": [
+            8.5877787368,
+            8.5877768257,
+            6.8008653714,
+            0.7046256133,
+            0.0488458678,
+            0.0488458406,
+            0.0680958225,
+            0.0466676245,
+            0.0466676072,
+            0.0482951353,
+            0.0057676305,
+            0.0057676552
+        ],
+        "atom_volumes": [
+            14.0488238328,
+            14.0489901048,
+            16.8473486091,
+            14.640004086,
+            1.8656554722,
+            1.8656554722,
+            2.6784763604,
+            1.8035528637,
+            1.8035528637,
+            1.8541827012,
+            0.1866403696,
+            0.1866403696
+        ],
+        "oxidation_states": null,
+        "species": [
+            "Ca",
+            "Ca",
+            "N",
+            "Xmcu",
+            "Xmcd",
+            "Xmcd",
+            "Xmcd",
+            "Xmcd",
+            "Xmcd",
+            "Xmcd",
+            "Xmcd",
+            "Xmcd"
+        ]
+    },
+    "nna_results": {
+        "nna_dimensionality": 2,
+        "num_nnas": 9,
+        "nnas_per_formula": 1.0235787968999999,
+        "nnas_per_reduced_formula": 1.0235787969
+    }
+}

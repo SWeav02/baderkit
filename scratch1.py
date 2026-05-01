@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.interpolate import interp1d
-from baderkit.core import Grid
+from baderkit.toolkit import Grid
 import re
 
 # -----------------------------
@@ -51,11 +51,11 @@ def parse_paw_core_density(potcar_file):
         rho = None
         while i < len(lines):
             line = lines[i].strip()
-    
+
             # Element name
             if line.startswith("VRHFIN"):
                 element = line.split("=")[1].split()[0]
-    
+
             # Atomic number and valence from POMASS/ZVAL
             if "POMASS" in line:
                 m = re.search(r"ZVAL\s*=\s*([\d\.]+)", line)
@@ -63,12 +63,12 @@ def parse_paw_core_density(potcar_file):
                     ZVAL = float(m.group(1))
                 if element is not None:
                     try:
-                        from pymatgen.core.periodic_table import Element as pmgElement
+                        from pymatgen.periodic_table import Element as pmgElement
                         Z = pmgElement(element).Z
                     except:
                         Z = int(ZVAL + 10)  # fallback
-    
-                    
+
+
             if "grid" == line:
                 i += 1
                 r = []
@@ -79,8 +79,8 @@ def parse_paw_core_density(potcar_file):
                         break
                     i += 1
                 r = np.array(r)
-    
-    
+
+
             # Core charge-density (main, not partial)
             if "core charge-density" in line and "(partial)" not in line:
                 i += 1
@@ -92,18 +92,18 @@ def parse_paw_core_density(potcar_file):
                         break
                     i += 1
                 rho= np.array(rho)
-                
+
                 # normalize rho to correct Z
                 Z_core = Z-ZVAL
                 total_check = np.trapezoid(rho * r**2, r)
                 rho *= nx*ny*nz*Z_core/total_check
-    
+
                 core_data[element] = (r, rho)
                 if Z is not None and ZVAL is not None:
                     Z_dict[element] = Z
                     ZVAL_dict[element] = ZVAL
                 break
-    
+
             i += 1
 
     return core_data, Z_dict, ZVAL_dict
@@ -116,7 +116,7 @@ if not paw_core:
 # Interpolation
 # -----------------------------
 interp_core = {}
-for el, (r_arr, rho_arr) in paw_core.items():
+for el, (r_arr, rho_arr) in paw_items():
     interp_core[el] = interp1d(r_arr, rho_arr, bounds_error=False, fill_value=0.0)
 
 # -----------------------------

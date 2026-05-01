@@ -20,20 +20,20 @@ Bader analysis on the separate spin-up and spin-down systems by creating two
 === "Command Line"
     1. Split your file using the provided helper command. Replace 'chargefile'
     with your actual file path.
-    
+
         ```bash
         baderkit split chargefile
         ```
-    
+
     2. Run the bader analysis on the spin up system and copy it to avoid overwriting.
-    
+
         ```bash
         baderkit run chargefile_up
         mv bader.json bader_up.json
         ```
-    
+
     3. Run the bader analysis on the spin down system.
-    
+
         ```bash
         baderkit run chargefile_down
         mv bader.json bader_down.json
@@ -41,25 +41,25 @@ Bader analysis on the separate spin-up and spin-down systems by creating two
 
 === "Python"
     ```python
-    # import 
-    from baderkit.core import Bader, Grid
-    
+    # import
+    from baderkit import Bader, Grid
+
     # load the spin polarized charge grid. Make sure the `total_only` tag is set to
     # false to indicate that we want to load all sets of data.
     polarized_grid = Grid.from_vasp("CHGCAR", total_only=False)
-    
+
     # split the polarized grid to the spin up and spin down components
     grid_up, grid_down = polarized_grid.split_to_spin()
-    
+
     # create our Bader classes
     bader_up = Bader(grid_up)
     bader_down = Bader(grid_down)
-    
+
     # get results
     results_up = bader_up.to_dict()
     results_down = bader_down.to_dict()
     ```
-    
+
 
 !!! Tip
     This analysis can be run on results from softwares other than VASP as well.

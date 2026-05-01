@@ -71,7 +71,7 @@ The files used in this tutorial can be downloaded [here](https://github.com/SWea
     1. Import the `Bader` class.
 
         ```python
-        from baderkit.core import Bader
+        from baderkit import Bader
         ```
 
     2. Use the `Bader` class' `from_dynamic` method to read a `CHGCAR` or `cube` file.
@@ -115,7 +115,7 @@ The files used in this tutorial can be downloaded [here](https://github.com/SWea
         [18.99905303 18.99905303 19.00088048 19.00088048]
         [17.36053278 17.36053278 17.36794633 17.36794633]
         ```
-    For more details on each property, see the [API reference](../api_reference/core/bader/#src.baderkit.core.bader.Bader).
+    For more details on each property, see the [API reference](../api_reference/core/bader/#src.baderkit.bader.Bader).
 
     5. BaderKit also provides convenience methods for writing results to file. First,
     let's write a summary of the full analysis.
@@ -176,7 +176,7 @@ VASP and other pseudopotential codes only include valence electrons in their cha
 === "Python"
     1. Import the Bader and Grid classes.
     ```python
-    from baderkit.core import Bader, Grid
+    from baderkit import Bader, Grid
     ```
     2. Load the CHGCAR, AECCAR0 and AECCAR2
     ``` python

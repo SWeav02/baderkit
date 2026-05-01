@@ -90,7 +90,7 @@ repository = "https://github.com/SWeav02/baderkit"
 
 # Register command line interface
 [project.scripts]
-baderkit = "baderkit.command_line.base:baderkit_app"
+baderkit = "baderkit.ui.cli.base:baderkit_app"
 
 # -----------------------------------------------------------------------------
 

@@ -2,10 +2,9 @@
 # -*- coding: utf-8 -*-
 
 
-from baderkit.core.elf_analysis.overlap.overlap import BasinOverlap
-from baderkit.core.elf_analysis.elf_labeler1.elf_labeler import ElfLabeler
-from baderkit.core.utilities.transforms import INT_TO_REV_INT, INT_TO_IMAGE
-from baderkit.core.utilities.total_density import create_total_chgcar
+from baderkit.elf_analysis.overlap.overlap import BasinOverlap
+from baderkit.elf_analysis.elf_labeler1.elf_labeler import ElfLabeler
+from baderkit.global_numba.total_density import create_total_chgcar
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -34,7 +33,7 @@ elements_w_results = []
 for folder in path.iterdir():
     if not folder.is_dir():
         continue
-    
+
     subfolder = folder / "static_nospin"
     chgcar = subfolder / "CHGCAR"
     elf = subfolder / "ELFCAR"

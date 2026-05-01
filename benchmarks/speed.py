@@ -5,7 +5,7 @@ Tests the average speed of each bader method.
 
 import time
 
-from baderkit.core import Bader, Grid
+from baderkit import Bader, Grid
 
 grid = Grid.from_vasp("CHGCAR")
 try:

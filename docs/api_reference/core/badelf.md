@@ -1,1 +1,1 @@
-::: src.baderkit.core.elf_analysis.badelf.Badelf
+::: src.baderkit.elf_analysis.badelf.Badelf

@@ -17,19 +17,19 @@ The `ElfLabeler` can be run through the command line interface or through Python
 === "Command Line"
 
     1. Activate your environment with BaderKit installed. If you are not using an environment manager, skip to step 2.
-    
+
         ```bash
         conda activate my_env
         ```
-        
+
     2. Navigate to the directory with your charge density and ELF files.
-    
+
         ```bash
         cd /path/to/directory
         ```
-    
+
     3. Run the `ElfLabeler` analysis. Replace 'chargefile' and 'elffile' with the names of your charge-density and ELF files.
-    
+
         ```bash
         baderkit label chargefile elffile
         ```
@@ -76,80 +76,80 @@ The `ElfLabeler` can be run through the command line interface or through Python
         2026-03-10 13:45:14 INFO     Marking multi-centered and bare electron features
                             INFO     Finished labeling ELF
         ```
-    
+
     A summary of all properties will be written to `elf_labeler.json`. See our [example files](https://github.com/SWeav02/baderkit/releases/tag/0.9.0 ). for an example.
 
 === "Python"
-    
+
     1. Import the `ElfLabeler` class.
-    
+
         ```python
-        from baderkit.core import ElfLabeler
+        from baderkit.elf_analysis import ElfLabeler
         ```
-    
+
     2. Use the `ElfLabeler` class' `from_vasp` method to read a `CHGCAR` and `ELFCAR` file.
-    
+
         ```python
         # instantiate the class
         labeler = ElfLabeler.from_vasp("path/to/chargefile", "path/to/elffile")
         ```
-    
+
     3. To run the analysis, we can call any class property. Try getting a complete summary in dictionary format.
         ```python
         results = labeler.to_dict()
         ```
     You should see an output similar to this:
-        ```bash  
-        2026-03-10 13:47:41 INFO     Beginning Bader Algorithm Using 'weight' Method   
-                            INFO     Initializing Labels                               
-                            INFO     Initialization Complete                           
-                            INFO     Time: 0.09                                        
-                            INFO     Sorting Reference Data                            
-                            INFO     Assigning Charges and Volumes                     
-        2026-03-10 13:47:42 INFO     Combining Low-Persistence Basins                  
-        2026-03-10 13:47:43 INFO     Refining Maxima                                   
-                            INFO     Bader Algorithm Complete                          
-                            INFO     Time: 1.71                                        
-                            INFO     Assigning Atom Properties                         
-                            INFO     Atom Assignment Finished                          
-                            INFO     Time: 0.01                                        
-                            INFO     Beginning ELF Analysis                            
-                            INFO     Locating Bifurcations                             
-                            INFO     Time: 0.34                                        
-                            INFO     Finding contained atoms                           
-        2026-03-10 13:47:44 INFO     Time: 0.55                                        
-                            INFO     Beginning Bader Algorithm Using 'weight' Method   
-                            INFO     Initializing Labels                               
-                            INFO     Initialization Complete                           
-                            INFO     Time: 0.08                                        
-                            INFO     Sorting Reference Data                            
-                            INFO     Assigning Charges and Volumes                     
-                            INFO     Combining Low-Persistence Basins                  
-        2026-03-10 13:47:45 INFO     Refining Maxima                                   
-                            INFO     Bader Algorithm Complete                          
-                            INFO     Time: 1.69                                        
-                            INFO     Marking atomic shells                             
-                            INFO     Marking covalent features                         
-                            INFO     Marking lone-pair features                        
-                            INFO     Calculating atomic radii                          
-        2026-03-10 13:47:46 INFO     Marking multi-centered and bare electron features 
-                            INFO     Finished labeling ELF                             
+        ```bash
+        2026-03-10 13:47:41 INFO     Beginning Bader Algorithm Using 'weight' Method
+                            INFO     Initializing Labels
+                            INFO     Initialization Complete
+                            INFO     Time: 0.09
+                            INFO     Sorting Reference Data
+                            INFO     Assigning Charges and Volumes
+        2026-03-10 13:47:42 INFO     Combining Low-Persistence Basins
+        2026-03-10 13:47:43 INFO     Refining Maxima
+                            INFO     Bader Algorithm Complete
+                            INFO     Time: 1.71
+                            INFO     Assigning Atom Properties
+                            INFO     Atom Assignment Finished
+                            INFO     Time: 0.01
+                            INFO     Beginning ELF Analysis
+                            INFO     Locating Bifurcations
+                            INFO     Time: 0.34
+                            INFO     Finding contained atoms
+        2026-03-10 13:47:44 INFO     Time: 0.55
+                            INFO     Beginning Bader Algorithm Using 'weight' Method
+                            INFO     Initializing Labels
+                            INFO     Initialization Complete
+                            INFO     Time: 0.08
+                            INFO     Sorting Reference Data
+                            INFO     Assigning Charges and Volumes
+                            INFO     Combining Low-Persistence Basins
+        2026-03-10 13:47:45 INFO     Refining Maxima
+                            INFO     Bader Algorithm Complete
+                            INFO     Time: 1.69
+                            INFO     Marking atomic shells
+                            INFO     Marking covalent features
+                            INFO     Marking lone-pair features
+                            INFO     Calculating atomic radii
+        2026-03-10 13:47:46 INFO     Marking multi-centered and bare electron features
+                            INFO     Finished labeling ELF
         ```
-    
+
     4. Now try getting individual properties. For more details on each property, see the [API reference](../api_reference/core/labeler).
         ```python
         feature_types = labeler.feature_types
         feature_charges = labeler.feature_charges
         labeled_structure = labeler.labeled_structure
         ```
-    
+
     5. BaderKit also provides convenience methods for writing results to file. Let's write a summary of the full analysis, as well as a plot of the bifurcation graph.
-    
+
         ```python
         labeler.write_json()
         labeler.write_bifurcation_plot()
         ```
-    
+
     !!! Note
         The `ElfLabeler` uses the `Bader` class for partitioning. Any extra keyword arguments, such as the `method` parameter will be passed to the `Bader` class.
 
@@ -175,22 +175,22 @@ BaderKit provides a convenience class for using the `ElfLabeler` on the spin-up 
     The results for each spin system are then written to separate files.
 
 === "Python"
-    
+
     1. Import the `SpinElfLabeler` class and read in your spin-dependent files.
-    
+
         ```python
-        from baderkit.core import SpinElfLabeler
+        from baderkit.elf_analysis import SpinElfLabeler
         # instantiate the class
         labeler = SpinElfLabeler.from_vasp("path/to/chargefile", "path/to/elffile")
         ```
-    
+
     2. Get the separate results for the spin-up and spin-down systems.
 
         ```python
         spin_up = labeler.elf_labeler_up
         spin_down = labeler.elf_labeler_down
         ```
-    
+
     3. View properties separately or combined.
 
         ```python
@@ -218,7 +218,7 @@ Pymatgen limits what labels can be used for dummy atoms based on if they start w
 | Lone-Pair | "Lp" |
 | Metallic | "M" |
 | Bare Electron | "E" |
- 
+
 This structure can be written to a cif or POSCAR format with the `Structure.to()` method.
 
 ### Feature Properties
