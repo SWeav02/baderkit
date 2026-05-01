@@ -14,13 +14,13 @@ from pymatgen.analysis.local_env import CrystalNN
 
 from baderkit.core.base.base_analysis import BaseAnalysis
 
-from baderkit.core.elf_analysis.badelf.badelf_numba import (
+from .badelf_numba import (
     get_badelf_assignments,
 )
 
 from baderkit.core.bader import Bader
-from baderkit.core.elf_analysis.elf_labeler1.elf_labeler import ElfLabeler
-from baderkit.core.elf_analysis.elf_radii.elf_radii import ElfRadii
+from baderkit.core.elf_analysis import ElfLabeler
+from baderkit.core.elf_analysis import ElfRadii
 from baderkit.core.toolkit import Grid, Structure
 from baderkit.core.utilities.basins import (
     get_edges,

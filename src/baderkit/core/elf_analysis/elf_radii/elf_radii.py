@@ -10,9 +10,9 @@ from scipy.spatial import HalfspaceIntersection
 
 from baderkit.core.base.base_analysis import BaseAnalysis
 from baderkit.core.toolkit import Grid, Structure
-from baderkit.core.elf_analysis.elf_labeler1.elf_labeler import ElfLabeler
+from baderkit.core.elf_analysis import ElfLabeler
 
-from baderkit.core.elf_analysis.elf_labeler1.enum_and_styling import FeatureType
+from baderkit.core.elf_analysis.elf_labeler.enum_and_styling import FeatureType
 from .elf_radii_numba import (
     get_all_atom_elf_radii,
     )

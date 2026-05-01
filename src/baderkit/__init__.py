@@ -5,8 +5,6 @@ import logging
 
 from rich.logging import RichHandler
 
-from .core import Bader
-
 __version__ = importlib.metadata.version("baderkit")
 
 # Configure our logger to output timestamps with logs
@@ -23,3 +21,5 @@ logging.basicConfig(
         )
     ],
 )
+
+from .core.bader import Bader

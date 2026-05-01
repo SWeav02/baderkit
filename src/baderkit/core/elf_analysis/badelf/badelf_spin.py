@@ -9,8 +9,8 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from baderkit.core.base.base_analysis import BaseAnalysis
-from baderkit.core.elf_analysis.badelf.badelf import Badelf
-from baderkit.core.elf_analysis.elf_labeler1.elf_labeler_spin import SpinElfLabeler
+from baderkit.core.elf_analysis import Badelf
+from baderkit.core.elf_analysis import SpinElfLabeler
 from baderkit.core.toolkit import Grid, Structure
 
 Self = TypeVar("Self", bound="SpinBadelf")

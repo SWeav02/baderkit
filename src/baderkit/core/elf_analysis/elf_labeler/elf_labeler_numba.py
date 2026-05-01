@@ -1,124 +1,112 @@
 # -*- coding: utf-8 -*-
 
+from numba import njit, prange, types
+from math import erf
+from scipy.special import erf as scipy_erf
 
 import numpy as np
-from numba import njit, prange
 from numpy.typing import NDArray
 
-from baderkit.core.utilities.basic import wrap_point
+from baderkit.core.utilities.transforms import INT_TO_IMAGE
+from baderkit.core.utilities.interpolation import linear_slice
 
 
-@njit(parallel=True, cache=True)
-def get_feature_edges(
-    labeled_array: NDArray[np.int64],
-    feature_map: NDArray[np.int64],
-    neighbor_transforms: NDArray[np.int64],
-    vacuum_mask: NDArray[np.bool_],
-):
-    """
-    In a 3D array of labeled voxels, finds the voxels that neighbor at
-    least one voxel with a different label.
 
-    Parameters
-    ----------
-    labeled_array : NDArray[np.int64]
-        A 3D array where each entry represents the basin label of the point.
-    feature_map : NDArray[np.int64]
-        A 1D array mapping basin labels to feature labels
-    neighbor_transforms : NDArray[np.int64]
-        The transformations from each voxel to its neighbors.
-    vacuum_mask : NDArray[np.bool_]
-        A 3D array representing the location of the vacuum
-
-    Returns
-    -------
-    edges : NDArray[np.bool_]
-        A mask with the same shape as the input grid that is True at points
-        on basin edges.
-
-    """
-    nx, ny, nz = labeled_array.shape
-    # create 3D array to store edges
-    edges = np.zeros((nx, ny, nz), dtype=np.bool_)
-    # loop over each voxel in parallel
-    for i in prange(nx):
-        for j in range(ny):
-            for k in range(nz):
-                # if this voxel is part of the vacuum, continue
-                if vacuum_mask[i, j, k]:
-                    continue
-                # get this voxels feature
-                basin = labeled_array[i, j, k]
-                feature_label = feature_map[basin]
-                # iterate over the neighboring voxels
-                for si, sj, sk in neighbor_transforms:
-                    # wrap points
-                    ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
-                    # get neighbors feature label
-                    neigh_basin = labeled_array[ii, jj, kk]
-                    neigh_feature_label = feature_map[neigh_basin]
-                    # if any label is different, the current voxel is an edge.
-                    # Note this in our edge array and break
-                    # NOTE: we also check that the neighbor is not part of the
-                    # vacuum
-                    if (
-                        neigh_feature_label != feature_label
-                        and not vacuum_mask[ii, jj, kk]
-                    ):
-                        edges[i, j, k] = True
-                        break
-    return edges
-
-
-@njit(cache=True, fastmath=True)
-def get_min_avg_feat_surface_dists(
+@njit(cache=True, parallel=True)
+def get_core_dist_ratios(
     labels,
-    feature_map,
-    frac_coords,
-    edge_mask,
+    basin_frac_coords,
+    atom_frac_coords,
     matrix,
-    max_value,
-):
-    nx, ny, nz = labels.shape
-    # create array to store best dists, sums, and counts
-    dists = np.full(len(frac_coords), max_value, dtype=np.float64)
-    dist_sums = np.zeros(len(frac_coords), dtype=np.float64)
-    edge_totals = np.zeros(len(frac_coords), dtype=np.uint32)
-    for i in range(nx):
-        for j in range(ny):
-            for k in range(nz):
-                # skip outside edges
-                if not edge_mask[i, j, k]:
-                    continue
-                # get feature label at edge
-                feature_label = feature_map[labels[i, j, k]]
-                # add to our count
-                edge_totals[feature_label] += 1
-                # convert from voxel indices to frac
-                fi = i / nx
-                fj = j / ny
-                fk = k / nz
-                # calculate the distance to the appropriate frac coord
-                ni, nj, nk = frac_coords[feature_label]
-                # get differences between each index
-                di = ni - fi
-                dj = nj - fj
-                dk = nk - fk
-                # wrap at edges to be as close as possible
-                di -= round(di)
-                dj -= round(dj)
-                dk -= round(dk)
-                # convert to cartesian coordinates
-                ci = di * matrix[0, 0] + dj * matrix[1, 0] + dk * matrix[2, 0]
-                cj = di * matrix[0, 1] + dj * matrix[1, 1] + dk * matrix[2, 1]
-                ck = di * matrix[0, 2] + dj * matrix[1, 2] + dk * matrix[2, 2]
-                # calculate distance
-                dist = np.linalg.norm(np.array((ci, cj, ck), dtype=np.float64))
-                # add to our total
-                dist_sums[feature_label] += dist
-                # if this is the lowest distance, update radius
-                if dist < dists[feature_label]:
-                    dists[feature_label] = dist
-    # get average dists
-    average_dists = dist_sums / edge_totals
-    return dists, average_dists
+    nna_indices,
+    core_basins,
+    volume_bond_fracs,
+        ):
+
+    basin_fracs = np.zeros(len(nna_indices), dtype=np.float64)
+
+    for nna_idx in prange(len(nna_indices)):
+        # skip cores
+        local_idx = nna_indices[nna_idx]
+        local_coords = basin_frac_coords[local_idx]
+        local_bond_frac = volume_bond_fracs[local_idx]
+        total_basin_frac = 0.0
+
+        total_frac = 0.0
+        for atom_idx, atom_image, frac in local_bond_frac:
+            if atom_idx >= len(atom_frac_coords):
+                # this is an nna in the charge density and we don't want to include
+                # it.
+                continue
+            # TODO: Also skip anions?
+            atom_coords = atom_frac_coords[int(atom_idx)] + INT_TO_IMAGE[int(atom_image)]
+            # labels between the coords
+            label_line = linear_slice(labels, atom_coords, local_coords, method="nearest")
+            # get the last point that is part of the core
+            for idx, i in enumerate(label_line):
+                if core_basins[int(i)] == -1:
+                    break
+            # we found no core and we skip this point
+            if idx == 0:
+                continue
+            total_frac += frac
+            # get fraction of bond belonging to the nna
+            atom_frac = idx / (len(label_line)-1)
+            nna_frac = 1-atom_frac
+
+            # add fraction making up bond
+            total_basin_frac += nna_frac * frac
+
+        # adjust for any fractions that had no cores
+        if total_frac == 0:
+            continue
+        frac_mult = 1/total_frac
+        # update arrays
+        basin_fracs[nna_idx] = total_basin_frac * frac_mult
+
+    return basin_fracs
+
+@njit(cache=True, parallel=True)
+def get_core_dists(
+    labels,
+    basin_frac_coords,
+    atom_frac_coords,
+    matrix,
+    nna_indices,
+    core_basins,
+    volume_bond_fracs,
+        ):
+
+    basin_dists = np.zeros(len(nna_indices), dtype=np.float64)
+
+    for nna_idx in prange(len(nna_indices)):
+        # skip cores
+        local_idx = nna_indices[nna_idx]
+        local_coords = basin_frac_coords[local_idx]
+        local_cart_coords = local_coords @ matrix
+        local_bond_frac = volume_bond_fracs[local_idx]
+        weighted_dist = 0.0
+
+        total_frac = 0.0
+        for atom_idx, atom_image, frac in local_bond_frac:
+            if atom_idx >= len(atom_frac_coords):
+                # this is an nna in the charge density and we don't want to include
+                # it.
+                continue
+            atom_coords = atom_frac_coords[int(atom_idx)] + INT_TO_IMAGE[int(atom_image)]
+            total_frac += frac
+            # get distance to atom
+            atom_cart_coords = atom_coords @ matrix
+            dist = np.linalg.norm(atom_cart_coords - local_cart_coords)
+            # add this neighbors portion of the fraction
+            weighted_dist += dist * frac
+
+        # adjust for any fractions that had no cores
+        if total_frac == 0:
+            continue
+        frac_mult = 1/total_frac
+        # update arrays
+        basin_dists[nna_idx] = weighted_dist * frac_mult
+
+    return basin_dists
+
