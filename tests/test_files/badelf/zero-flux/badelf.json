@@ -1,6 +1,6 @@
 {
     "method_kwargs": {
-        "version": "0.7.0",
+        "version": "0.9.1",
         "vacuum_tol": 0.001,
         "partition_method": "zero-flux",
         "include_nnas": false,

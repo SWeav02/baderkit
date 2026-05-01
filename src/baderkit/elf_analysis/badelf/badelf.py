@@ -1216,6 +1216,8 @@ class Badelf(BaseAnalysis):
     def write_atom_volumes(
         self,
         atom_indices: NDArray,
+        filename: str | Path = "ELFCAR",
+        write_grid: str = "reference_grid",
         **kwargs,
     ):
         """
@@ -1233,8 +1235,9 @@ class Badelf(BaseAnalysis):
         for atom_index in atom_indices:
             # get a mask at the requested atoms
             mask = self.atom_labels == atom_index
-            kwargs["suffix"] = f"_a{atom_index}"
-            self._write_volume(volume_mask=mask, **kwargs)
+            if not "suffix" in kwargs.keys():
+                kwargs["suffix"] = f"_a{atom_index}"
+            self._write_volume(volume_mask=mask, write_grid=write_grid, filename=filename, **kwargs)
 
     def write_all_atom_volumes(
         self,
@@ -1255,6 +1258,8 @@ class Badelf(BaseAnalysis):
     def write_atom_volumes_sum(
         self,
         atom_indices: NDArray,
+        filename: str | Path = "ELFCAR",
+        write_grid: str = "reference_grid",
         **kwargs,
     ):
         """
@@ -1271,12 +1276,15 @@ class Badelf(BaseAnalysis):
 
         mask = np.isin(self.atom_labels, atom_indices)
         # write
-        kwargs["suffix"] = "_asum"
-        self._write_volume(volume_mask=mask, **kwargs)
+        if not "suffix" in kwargs.keys():
+            kwargs["suffix"] = "_asum"
+        self._write_volume(volume_mask=mask, write_grid=write_grid, filename=filename, **kwargs)
 
     def write_species_volume(
         self,
         species: str,
+        filename: str | Path = "ELFCAR",
+        write_grid: str = "reference_grid",
         **kwargs,
     ):
         """
@@ -1295,8 +1303,9 @@ class Badelf(BaseAnalysis):
 
         # Get mask where the grid belongs to requested species
         mask = np.isin(self.atom_labels, indices)
-        kwargs["suffix"] = f"_{species}"
-        self._write_volume(volume_mask=mask, **kwargs)
+        if not "suffix" in kwargs.keys():
+            kwargs["suffix"] = f"_{species}"
+        self._write_volume(volume_mask=mask, write_grid=write_grid, filename=filename, **kwargs)
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """

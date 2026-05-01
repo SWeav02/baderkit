@@ -95,7 +95,6 @@ class Bader(BaseAnalysis):
         "maxima_vox",
         "maxima_charge_values",
         "maxima_ref_values",
-        "maxima_betti_groups",
         "maxima_betti_cutoffs",
         "maxima_betti_numbers",
         "basin_charges",
@@ -112,7 +111,6 @@ class Bader(BaseAnalysis):
         "minima_vox",
         "minima_charge_values",
         "minima_ref_values",
-        "minima_betti_groups",
         "minima_betti_cutoffs",
         "minima_betti_numbers",
         ]
@@ -149,11 +147,13 @@ class Bader(BaseAnalysis):
         "maxima_basin_images",
         "ongrid_maxima_groups",
         "maxima_persistence_values",
+        "maxima_betti_groups",
         # minima properties
         "minima_basin_labels",
         "minima_basin_images",
         "ongrid_minima_groups",
         "minima_persistence_values",
+        "minima_betti_groups",
         # saddle props
         # edge props
         "basin_edges",

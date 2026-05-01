@@ -42,8 +42,8 @@ def test_writing_badelf(tmp_path):
     badelf.write_atom_tsv(tmp_path / "badelf_atoms.tsv")
 
     # Try writing results
-    badelf.badelf_up.write_atom_volumes([0], filename=tmp_path)
-    badelf.badelf_down.write_atom_volumes_sum([0], filename=tmp_path)
+    badelf.badelf_up.write_atom_volumes([0], filename=tmp_path / "ELFCAR")
+    badelf.badelf_down.write_atom_volumes_sum([0], filename=tmp_path / "ELFCAR")
 
     assert Path(tmp_path / "badelf.json").exists()
     assert Path(tmp_path / "badelf_atoms.tsv").exists()
@@ -95,7 +95,7 @@ def test_running_badelf_methods(tmp_path, method):
     #     atom_results_down = file.read()
 
     # make sure we find the electride site
-    assert badelf.num_nnas == 1
+    assert badelf.badelf_up.num_nnas == 1
 
     assert json_results == expected_json
     # assert json_results_up == expected_json_up

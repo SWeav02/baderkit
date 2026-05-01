@@ -456,6 +456,8 @@ class SpinBadelf(BaseAnalysis):
     def write_atom_volumes(
         self,
         atom_indices: NDArray,
+        filename: str | Path = "ELFCAR",
+        write_grid: str = "reference_grid",
         **kwargs,
     ):
         """
@@ -472,12 +474,15 @@ class SpinBadelf(BaseAnalysis):
 
         for atom_index in atom_indices:
             # get a mask at the requested atoms
-            up_mask = self.badelf_up.atom_labels == atom_index
-            down_mask = self.badelf_down.atom_labels == atom_index
-            kwargs["suffix"] = f"_a{atom_index}_up"
-            self._write_volume(volume_mask=up_mask, **kwargs)
-            kwargs["suffix"] = f"_a{atom_index}_down"
-            self._write_volume(volume_mask=down_mask, **kwargs)
+            self.badelf_up.write_atom_volumes(
+                atom_index,
+                suffix=f"_a{atom_index}_up"
+                )
+
+            self.badelf_down.write_atom_volumes(
+                atom_index,
+                suffix=f"_a{atom_index}_down"
+                )
 
     def write_all_atom_volumes(
         self,
@@ -498,6 +503,8 @@ class SpinBadelf(BaseAnalysis):
     def write_atom_volumes_sum(
         self,
         atom_indices: NDArray,
+        filename: str | Path = "ELFCAR",
+        write_grid: str = "reference_grid",
         **kwargs,
     ):
         """
@@ -511,18 +518,21 @@ class SpinBadelf(BaseAnalysis):
             The list of atom indices to sum and write
 
         """
-        # get a mask at the requested atoms
-        up_mask = np.isin(self.badelf_up.atom_labels, atom_indices)
-        down_mask = np.isin(self.badelf_down.atom_labels, atom_indices)
-        # write
-        kwargs["suffix"] = "_asum_up"
-        self._write_volume(volume_mask=up_mask, **kwargs)
-        kwargs["suffix"] = "_asum_down"
-        self._write_volume(volume_mask=down_mask, **kwargs)
+        self.badelf_up.write_atom_volumes_sum(
+            atom_indices,
+            suffix="_asum_up"
+            )
+
+        self.badelf_down.write_atom_volumes_sum(
+            atom_indices,
+            suffix="_asum_down"
+            )
 
     def write_species_volume(
         self,
         species: str,
+        filename: str | Path = "ELFCAR",
+        write_grid: str = "reference_grid",
         **kwargs,
     ):
         """
@@ -536,17 +546,15 @@ class SpinBadelf(BaseAnalysis):
 
         """
 
-        # add dummy atoms if desired
-        atom_indices = self.structure.indices_from_symbol(species)
+        self.badelf_up.write_species_volume(
+            species,
+            suffix=f"_{species}_up"
+            )
 
-        # get a mask at the requested atoms
-        up_mask = np.isin(self.badelf_up.atom_labels, atom_indices)
-        down_mask = np.isin(self.badelf_down.atom_labels, atom_indices)
-        # write
-        kwargs["suffix"] = f"_{species}_up"
-        self._write_volume(volume_mask=up_mask, **kwargs)
-        kwargs["suffix"] = f"_{species}_down"
-        self._write_volume(volume_mask=down_mask, **kwargs)
+        self.badelf_down.write_species_volume(
+            species,
+            suffix=f"_{species}_down"
+            )
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """

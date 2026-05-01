@@ -1,0 +1,50 @@
+{
+    "method_kwargs": {
+        "version": "0.9.1",
+        "vacuum_tol": 0.001,
+        "polarization_cutoff": 0.5,
+        "min_bond_angle": 135,
+        "method": "neargrid-weight",
+        "nna_cutoff": 1.0,
+        "persistence_tol": 0.05
+    },
+    "basin_results": {
+        "basin_types": [
+            "core",
+            "core",
+            "core",
+            "core",
+            "core",
+            "core",
+            "core",
+            "core",
+            "core",
+            "core",
+            "non-nuclear attractor",
+            "ionic shell",
+            "ionic shell",
+            "ionic shell",
+            "ionic shell",
+            "ionic shell",
+            "ionic shell",
+            "core",
+            "core",
+            "core",
+            "core",
+            "core",
+            "core",
+            "non-nuclear attractor",
+            "non-nuclear attractor",
+            "non-nuclear attractor",
+            "non-nuclear attractor",
+            "non-nuclear attractor",
+            "non-nuclear attractor",
+            "non-nuclear attractor",
+            "non-nuclear attractor"
+        ]
+    },
+    "nna_results": {
+        "nnas_per_formula": 0.9832735475000001,
+        "nnas_per_reduced_formula": 0.9832735475000001
+    }
+}

@@ -12,6 +12,7 @@ from baderkit._base_analysis import BaseAnalysis
 from baderkit.toolkit import Grid, Structure
 
 from .elf_labeler import ElfLabeler
+from .enum_and_styling import FeatureType
 
 Self = TypeVar("Self", bound="ElfLabeler")
 
@@ -403,3 +404,52 @@ class SpinElfLabeler(BaseAnalysis):
             total_only=total_only,
             **kwargs
             )
+
+    def write_features_by_type(
+        self,
+        basin_type: str | FeatureType,
+        filename: str | Path = "ELFCAR",
+        write_grid: str = "reference_grid",
+        **kwargs,
+    ):
+        """
+        Writes the charge density or reference file the requested
+        chemical features.
+
+        Parameters
+        ----------
+        basin_type : str | FeatureType
+            The type of feature to write, e.g. metallic, electride, etc.
+
+
+        """
+        basin_type = FeatureType(basin_type)
+        self.elf_labeler_up.write_features_by_type(
+            basin_type,
+            suffix=f"_{basin_type.dummy_species}_up",
+            **kwargs,
+            )
+        self.elf_labeler_down.write_features_by_type(
+            basin_type,
+            suffix=f"_{basin_type.dummy_species}_down",
+            **kwargs,
+            )
+
+    def write_all_features(
+        self,
+        **kwargs,
+    ):
+        """
+        Writes the charge density or reference file for all types
+        of chemical features in the system.
+
+        """
+        feature_types = []
+        for i in self.basin_types:
+            basin_type = FeatureType(i)
+            if basin_type not in feature_types:
+                feature_types.append(basin_type)
+                self.write_features_by_type(
+                    basin_type,
+                    **kwargs,
+                    )

@@ -607,7 +607,7 @@ def badelf(
         charge_filename=charge_file,
         total_charge_filename=total_charge_file,
         reference_filename=reference_file,
-        method=method,
+        partition_method=method,
         elf_labeler={"method": bader_method},
         # format=format,
     )
@@ -635,10 +635,8 @@ def badelf(
 
 
 class LabelerPrintOptions(str, Enum):
-    all_atoms = "all_feat"
-    sel_atoms = "sel_feat"
-    sum_atoms = "sum_feat"
-
+    all_atoms = "all"
+    sel_atoms = "sel"
 
 @baderkit_app.command(no_args_is_help=True)
 def label(
@@ -675,7 +673,7 @@ def label(
         None,
         "--print",
         "-p",
-        help="Optional printing of atom basins",
+        help="Optional printing of chemical feature volumes",
         case_sensitive=False,
     ),
     spin: bool = typer.Option(
@@ -686,7 +684,7 @@ def label(
     ),
     features: str = typer.Argument(
         default="",
-        help="The feature labels used for print method. Can be added at the end of the call. For example: `baderkit label CHGCAR ELFCAR -p sel_feat [metallic, electride]`",
+        help="The feature labels used for print method. Can be added at the end of the call. For example: `baderkit label CHGCAR ELFCAR -p sel_feat metallic`",
     ),
 ):
     """
@@ -709,20 +707,13 @@ def label(
     # write summary
     labeler.write_json("label.json")
 
-    labeler.labeled_structure.to("POSCAR_labeled", "POSCAR")
+    labeler.label_structure.to("POSCAR_labeled", "POSCAR")
 
     # convert indices from string to list
-    try:
-        features = [int(i) for i in features.strip("[] ").split(",")]
-    except:
-        features = [i.strip() for i in features.strip("[] ").split(",")]
-
     # write basins
     if features is None:
-        features = []
-    if print == "all_feat":
+        features = "unknown"
+    if print == "all":
         labeler.write_all_features()
-    elif print == "sel_feat":
-        labeler.write_features_by_type(included_types=features)
-    elif print == "sum_feat":
-        labeler.write_features_by_type_sum(included_types=features)
+    elif print == "sel":
+        labeler.write_features_by_type(features)

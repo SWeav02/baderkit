@@ -515,3 +515,49 @@ class ElfLabeler(BaseAnalysis):
             pseudopotential_filename=pseudopotential_filename,
             **kwargs
             )
+
+    def write_features_by_type(
+        self,
+        basin_type: str | FeatureType,
+        filename: str | Path = "ELFCAR",
+        write_grid: str = "reference_grid",
+        **kwargs,
+    ):
+        """
+        Writes the charge density or reference file the requested
+        chemical features.
+
+        Parameters
+        ----------
+        basin_type : str | FeatureType
+            The type of feature to write, e.g. metallic, electride, etc.
+
+        """
+        basin_type = FeatureType(basin_type)
+        indices = [i for i,j in enumerate(self.basin_types) if j == basin_type.value]
+
+        # get a mask at the requested feature
+        up_mask = np.isin(self.elf_bader.basin_labels, indices)
+        # write
+        if not "suffix" in kwargs.keys():
+            kwargs["suffix"] = f"_{basin_type.dummy_species}"
+        self._write_volume(volume_mask=up_mask, write_grid=write_grid, filename=filename, **kwargs)
+
+    def write_all_features(
+        self,
+        **kwargs,
+    ):
+        """
+        Writes the charge density or reference file for all types
+        of chemical features in the system.
+
+        """
+        feature_types = []
+        for i in self.basin_types:
+            basin_type = FeatureType(i)
+            if basin_type not in feature_types:
+                feature_types.append(basin_type)
+                self.write_features_by_type(
+                    basin_type,
+                    **kwargs,
+                    )

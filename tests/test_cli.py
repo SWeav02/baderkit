@@ -135,8 +135,8 @@ def test_labeler():
                 "ELFCAR",
                 "-s",
                 "-p",
-                "sel_feat",
-                "[metallic]",
+                "sel",
+                "metallic",
             ],
         )
         time.sleep(0)

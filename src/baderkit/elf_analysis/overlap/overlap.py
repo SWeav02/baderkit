@@ -26,6 +26,8 @@ class BasinOverlap(BaseAnalysis):
     A convenience class for calculating the overlap between basins calculated
     in the charge density and a localization density such as ELF.
 
+    Much of the core of this class is based on the work of [Wagner et. al.](https://pubs.acs.org/doi/10.1021/jp8022315#libraryItemId=18743367)
+
     """
 
     _method_kwargs = [
