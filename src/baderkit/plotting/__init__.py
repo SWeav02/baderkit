@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
 
-from .structure import StructurePlotter
-from .grid import GridPlotter
 from .bader import BaderPlotter
+from .grid import GridPlotter
+from .structure import StructurePlotter

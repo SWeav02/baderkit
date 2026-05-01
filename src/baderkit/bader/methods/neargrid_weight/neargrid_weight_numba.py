@@ -91,7 +91,7 @@ def get_edge_charges_volumes(
             # get neighbor and wrap around periodic boundary
             ii, jj, kk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
             # if this point is part of the vacuum, continue
-            label = labels[ii,jj,kk]
+            label = labels[ii, jj, kk]
             if label == vacuum_label:
                 continue
             # get the neighbors value

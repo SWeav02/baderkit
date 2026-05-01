@@ -113,9 +113,9 @@ def get_elf_radius(
     # another atom. In the later case, this probably isn't a valid radius and
     # we just return 0.5. In the former case, we return the maximum in the bond.
 
-    bond_type = 0 # default to ionic
+    bond_type = 0  # default to ionic
     # get site index and neighbor index
-    non_vac = np.where(labels!=possible_vals-1)[0]
+    non_vac = np.where(labels != possible_vals - 1)[0]
     site_idx = labels[non_vac[0]]
     neigh_idx = labels[non_vac[-1]] % possible_vals
     for label in unique_labels:
@@ -271,6 +271,7 @@ def get_elf_radius(
 
     return bond_dist * bond_frac, bond_frac, bond_type, False
 
+
 @njit(cache=True, parallel=True)
 def get_all_atom_elf_radii(
     site_indices,
@@ -290,10 +291,10 @@ def get_all_atom_elf_radii(
     bond_fracs = np.empty(len(site_indices), dtype=np.float64)
     radius_type = np.empty(len(site_indices), dtype=np.int64)
     # radius types:
-        # 0 - ionic
-        # 1 - covalent
-        # 2 - metallic
-        # 3 - nonbonding
+    # 0 - ionic
+    # 1 - covalent
+    # 2 - metallic
+    # 3 - nonbonding
 
     some_failed = False
     # get the radius for each bond

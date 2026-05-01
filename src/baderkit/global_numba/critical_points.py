@@ -24,13 +24,16 @@ from baderkit.global_numba.union_find import find_root, union, union_w_roots
 # Ongrid saddle detection
 ###############################################################################
 
+
 @njit(cache=True)
 def estimate_voxel_extremum_periodic(
-        data,
-        i, j, k,
-        lattice,
-        find_max=False,
-        ):
+    data,
+    i,
+    j,
+    k,
+    lattice,
+    find_max=False,
+):
     """
     Estimate extremum (min or max) inside a skewed voxel centered at (i,j,k)
     using center + 6 face neighbors, with periodic boundary conditions.
@@ -98,7 +101,7 @@ def estimate_voxel_extremum_periodic(
 
     # quadratic minimizer (works for both via sign trick)
     alpha = -dx / d2x
-    beta  = -dy / d2y
+    beta = -dy / d2y
     gamma = -dz / d2z
 
     # clamp to voxel
@@ -120,10 +123,10 @@ def estimate_voxel_extremum_periodic(
     # evaluate quadratic
     val = (
         f0
-        + dx * alpha + dy * beta + dz * gamma
-        + 0.5 * (d2x * alpha * alpha +
-                 d2y * beta  * beta  +
-                 d2z * gamma * gamma)
+        + dx * alpha
+        + dy * beta
+        + dz * gamma
+        + 0.5 * (d2x * alpha * alpha + d2y * beta * beta + d2z * gamma * gamma)
     )
 
     # flip sign back if we computed a max
@@ -132,11 +135,11 @@ def estimate_voxel_extremum_periodic(
 
 @njit(parallel=True, fastmath=True, cache=True)
 def edge_extrema_values(
-        data,
-        edge_mask,
-        lattice,
-        use_minima=True,
-        ):
+    data,
+    edge_mask,
+    lattice,
+    use_minima=True,
+):
     """
     Compute extremum values on masked voxels.
 
@@ -165,36 +168,34 @@ def edge_extrema_values(
 
                 out[i, j, k] = estimate_voxel_extremum_periodic(
                     data,
-                    i, j, k,
+                    i,
+                    j,
+                    k,
                     lattice,
                     find_max=not use_minima,
                 )
 
     return out
 
+
 @njit(parallel=True, cache=True)
-def find_ongrid_saddles(
-    surface_mins,
-    edge_mask,
-    transforms,
-    use_minima = False
-        ):
+def find_ongrid_saddles(surface_mins, edge_mask, transforms, use_minima=False):
     nx, ny, nz = edge_mask.shape
-    saddles = np.zeros((nx,ny,nz), dtype=np.bool_)
+    saddles = np.zeros((nx, ny, nz), dtype=np.bool_)
 
     for i in prange(nx):
         for j in range(ny):
             for k in range(nz):
-                if not edge_mask[i,j,k]:
+                if not edge_mask[i, j, k]:
                     continue
 
                 is_saddle = True
-                value = surface_mins[i,j,k]
+                value = surface_mins[i, j, k]
                 for si, sj, sk in transforms:
-                    ni, nj, nk = wrap_point(i+si, j+sj, k+sk, nx, ny, nz)
-                    if not edge_mask[ni,nj,nk]:
+                    ni, nj, nk = wrap_point(i + si, j + sj, k + sk, nx, ny, nz)
+                    if not edge_mask[ni, nj, nk]:
                         continue
-                    neigh_val = surface_mins[ni,nj,nk]
+                    neigh_val = surface_mins[ni, nj, nk]
                     if use_minima and neigh_val < value:
                         is_saddle = False
                         break
@@ -202,30 +203,23 @@ def find_ongrid_saddles(
                         is_saddle = False
                         break
                 if is_saddle:
-                    saddles[i,j,k] = True
+                    saddles[i, j, k] = True
     return saddles
 
+
 def find_potential_saddle_points(
-    data,
-    edge_mask,
-    lattice,
-    transforms,
-    use_minima = False
-        ):
+    data, edge_mask, lattice, transforms, use_minima=False
+):
     surface_mins = edge_extrema_values(
-        data=data,
-        edge_mask=edge_mask,
-        lattice=lattice,
-        use_minima=use_minima
-        )
+        data=data, edge_mask=edge_mask, lattice=lattice, use_minima=use_minima
+    )
     saddles = find_ongrid_saddles(
         surface_mins=surface_mins,
         edge_mask=edge_mask,
         transforms=transforms,
-        use_minima=use_minima
-            )
+        use_minima=use_minima,
+    )
     return saddles
-
 
 
 ###############################################################################
@@ -251,6 +245,7 @@ def classify_critical_point(H):
 
     return -1
 
+
 @njit(cache=True, inline="always")
 def compute_signature(evals, eig_rel_tol):
 
@@ -274,6 +269,7 @@ def compute_signature(evals, eig_rel_tol):
             morse += 1
 
     return morse, n_flat
+
 
 @njit(cache=True)
 def is_ongrid_saddle(
@@ -308,6 +304,7 @@ def is_ongrid_saddle(
                 return False
 
     return True
+
 
 @njit(fastmath=True, cache=True)
 def is_ongrid_newton_crit(
@@ -379,10 +376,7 @@ def is_ongrid_newton_crit(
     # -----------------------------
     # Scale-aware tolerance
     # -----------------------------
-    scale = (
-        abs(Hxx) + abs(Hyy) + abs(Hzz) +
-        2.0 * (abs(Hxy) + abs(Hxz) + abs(Hyz))
-    )
+    scale = abs(Hxx) + abs(Hyy) + abs(Hzz) + 2.0 * (abs(Hxy) + abs(Hxz) + abs(Hyz))
     tol = 1e-6 * scale + 1e-12
 
     # -----------------------------
@@ -616,13 +610,12 @@ def get_saddle_connections(
         saddle_connections[idx, 3] = higher_shift
     return saddle_connections
 
+
 @njit(cache=True, parallel=True)
-def get_canonical_saddle_connections(
-        saddle_connections
-        ):
+def get_canonical_saddle_connections(saddle_connections):
     num_saddles = len(saddle_connections)
 
-    canon_saddles = np.empty((num_saddles,3), dtype=np.int64)
+    canon_saddles = np.empty((num_saddles, 3), dtype=np.int64)
     for saddle_idx in prange(num_saddles):
         ext1, ext2, image1, image2 = saddle_connections[saddle_idx]
         if ext1 < ext2:
@@ -693,6 +686,7 @@ def get_saddles_from_basins(
 
     return saddle_coords, saddle_connections
 
+
 # @njit(parallel=True, cache=True)
 # def remove_false_saddles(
 #     saddle_coords,
@@ -758,6 +752,7 @@ def get_saddles_from_basins(
 #     saddle_connections = saddle_connections[true_saddles]
 
 #     return saddle_coords, saddle_connections
+
 
 @njit(parallel=True, cache=True)
 def remove_false_saddles(
@@ -836,7 +831,9 @@ def remove_false_saddles(
     # refined_vox = refined_vox[success_indices]
 
     # recalculate saddle connections
-    rounded_vox = np.round(refined_vox).astype(np.int64) % np.array(data.shape, dtype=np.int64)
+    rounded_vox = np.round(refined_vox).astype(np.int64) % np.array(
+        data.shape, dtype=np.int64
+    )
     saddle_connections = get_saddle_connections(
         rounded_vox,
         data,
@@ -844,11 +841,12 @@ def remove_false_saddles(
         images=images,
         use_minima=use_minima,
     )
-    succeeded = np.where(saddle_connections[:,0]!=np.iinfo(np.int16).max)[0]
+    succeeded = np.where(saddle_connections[:, 0] != np.iinfo(np.int16).max)[0]
     saddle_connections = saddle_connections[succeeded]
     refined_vox = refined_vox[succeeded]
 
     return refined_vox, saddle_connections
+
 
 @njit(cache=True)
 def remove_adjacent_saddles(refined_vox, shape):
@@ -872,6 +870,7 @@ def remove_adjacent_saddles(refined_vox, shape):
     important = np.where(roots == np.arange(len(refined_vox)))[0]
 
     return important
+
 
 @njit(cache=True)
 def get_saddle_saddle_connections(
@@ -995,6 +994,7 @@ def get_saddle_saddle_connections(
 
     return connections, connection_coords
 
+
 ###############################################################################
 # Newton Refinement
 ###############################################################################
@@ -1035,6 +1035,7 @@ def flat_aware_newton_step(
             dx += -(vecs[:, i] @ g) / evals[i] * vecs[:, i]
 
     return dx
+
 
 @njit(cache=True, inline="always")
 def targeted_newton_step(
@@ -1107,6 +1108,7 @@ def targeted_newton_step(
 
     return dx, flat_dirs, evals
 
+
 @njit(cache=True, inline="always")
 def newton_step_regularized(
     g,
@@ -1162,6 +1164,7 @@ def newton_step_regularized(
 
     return dx, flat_dirs, evals
 
+
 @njit(cache=True, fastmath=True)
 def newton_refine(
     coord,
@@ -1190,7 +1193,7 @@ def newton_refine(
         # -----------------------------
         g, H = spline_grad_and_hess(coord, data, h)
 
-        gnorm = np.sqrt(g[0]*g[0] + g[1]*g[1] + g[2]*g[2])
+        gnorm = np.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
 
         # -----------------------------
         # Newton step + spectrum (single eigensolve)
@@ -1277,6 +1280,7 @@ def newton_refine(
 
     return coord, converged, ctype
 
+
 @njit(cache=True, fastmath=True)
 def newton_refine_targeted(
     coord,
@@ -1306,7 +1310,7 @@ def newton_refine_targeted(
         # -----------------------------
         g, H = spline_grad_and_hess(coord, data, h)
 
-        gnorm = np.sqrt(g[0]*g[0] + g[1]*g[1] + g[2]*g[2])
+        gnorm = np.sqrt(g[0] * g[0] + g[1] * g[1] + g[2] * g[2])
 
         # -----------------------------
         # Newton step + spectrum (single eigensolve)
@@ -1394,6 +1398,7 @@ def newton_refine_targeted(
 
     return coord, converged, ctype
 
+
 # @njit(parallel=True, cache=True)
 # def refine_critical_points_targeted(
 #     critical_coords,
@@ -1436,13 +1441,14 @@ def newton_refine_targeted(
 
 #     return refined_coords, successes, ctypes
 
+
 @njit(parallel=True, cache=True)
 def refine_critical_points(
     critical_coords,
     data,
     matrix,
     target_indices,
-    max_change=0.5, # in Ang
+    max_change=0.5,  # in Ang
     max_iter=30,
     grad_tol=1e-2,
     h=0.5,
@@ -1454,9 +1460,9 @@ def refine_critical_points(
     a = np.linalg.norm(matrix[0])
     b = np.linalg.norm(matrix[1])
     c = np.linalg.norm(matrix[2])
-    max_vox = int(round(max((max_change/a)*nx, (max_change/b)*ny, (max_change/c)*nz)))
-
-
+    max_vox = int(
+        round(max((max_change / a) * nx, (max_change / b) * ny, (max_change / c) * nz))
+    )
 
     G = matrix @ matrix.T
     inv_G = np.linalg.inv(G)
@@ -1491,6 +1497,7 @@ def refine_critical_points(
             refined_coords[coord_idx] = coord
 
     return refined_coords, successes, ctypes
+
 
 ###############################################################################
 # Parabolic Fitting

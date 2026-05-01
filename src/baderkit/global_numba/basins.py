@@ -179,6 +179,7 @@ def get_best_neighbor_with_shift(
         np.array((bsi, bsj, bsk), dtype=np.int8),
     )
 
+
 ###############################################################################
 # Edge Finding Methods
 ###############################################################################
@@ -701,7 +702,7 @@ def get_manifold_labels(
                     minima_labels,
                     minima_images,
                     neighbor_transforms,
-                    minima_vacuum_label+1,# include vacuum edges
+                    minima_vacuum_label + 1,  # include vacuum edges
                 )
 
                 if num_neighs == 1 and opp_num_neighs > 1:
@@ -808,7 +809,7 @@ def get_manifold_labels_thin(
                     minima_images,
                     neighbor_transforms,
                     minima_vacuum_label,
-                    use_minima=True+1,# include vacuum edges
+                    use_minima=True + 1,  # include vacuum edges
                 )
 
                 if num_neighs == 1 and opp_num_neighs > 1:

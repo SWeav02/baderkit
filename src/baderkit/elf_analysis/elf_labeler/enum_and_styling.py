@@ -7,6 +7,7 @@ This file defines options for feature types
 import logging
 from enum import Enum
 
+
 class classproperty(property):
     def __get__(self, obj, cls):
         return self.fget(cls)
@@ -48,17 +49,12 @@ class FeatureType(str, Enum):
             cls.ionic_shell,
             cls.multi_centered,
             cls.electride,
-            cls.nna
+            cls.nna,
         ]
 
     @classproperty
     def metal_like(cls):
-        return [
-            cls.metallic,
-            cls.multi_centered,
-            cls.electride,
-            cls.nna
-        ]
+        return [cls.metallic, cls.multi_centered, cls.electride, cls.nna]
 
     @classproperty
     def bonding(cls):
@@ -69,22 +65,22 @@ class FeatureType(str, Enum):
             cls.ionic_shell,
             cls.multi_centered,
             cls.nna,
-            ]
+        ]
 
     @classproperty
     def _FEATURE_DUMMY_ATOMS(cls):
         return {
-        cls.unknown: "X",
-        cls.ionic: "Xs",
-        cls.ionic_shell: "Xs",
-        cls.core: "Xs",
-        cls.covalent: "Xc",
-        cls.metallic: "Xm",
-        cls.lone_pair: "Xlp",
-        cls.multi_centered: "Xmc",
-        cls.electride: "Xmc",
-        cls.nna: "Xmc",
-    }
+            cls.unknown: "X",
+            cls.ionic: "Xs",
+            cls.ionic_shell: "Xs",
+            cls.core: "Xs",
+            cls.covalent: "Xc",
+            cls.metallic: "Xm",
+            cls.lone_pair: "Xlp",
+            cls.multi_centered: "Xmc",
+            cls.electride: "Xmc",
+            cls.nna: "Xmc",
+        }
 
     @property
     def is_bonding(self):

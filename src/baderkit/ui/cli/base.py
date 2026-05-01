@@ -638,6 +638,7 @@ class LabelerPrintOptions(str, Enum):
     all_atoms = "all"
     sel_atoms = "sel"
 
+
 @baderkit_app.command(no_args_is_help=True)
 def label(
     charge_file: Path = typer.Argument(

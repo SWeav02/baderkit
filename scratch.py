@@ -2,14 +2,16 @@
 # -*- coding: utf-8 -*-
 
 
-from baderkit.elf_analysis.overlap.overlap import BasinOverlap
-from baderkit.elf_analysis.elf_labeler1.elf_labeler import ElfLabeler
-from baderkit.global_numba.total_density import create_total_chgcar
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 
-from pathlib import Path
+from baderkit.elf_analysis.elf_labeler1.elf_labeler import ElfLabeler
+from baderkit.elf_analysis.overlap.overlap import BasinOverlap
+from baderkit.global_numba.total_density import create_total_chgcar
+
 path = Path(".")
 
 element_df = pd.read_csv("workfunctions.csv")
@@ -45,7 +47,6 @@ for folder in path.iterdir():
     if not (subfolder / "CHGCAR_total").exists():
         create_total_chgcar(chgcar, pot, tot)
 
-
     element = folder.name
     data_dict[element] = {}
     elements_w_results.append(element)
@@ -55,15 +56,17 @@ for folder in path.iterdir():
         reference_filename=elf,
         persistence_tol=0.001,
         potential_filename=loc,
-        pseudopotential_filename = pot,
+        pseudopotential_filename=pot,
         valence_counts=False,
-        )
+    )
     overlap: BasinOverlap = labeler.overlap
     bader = overlap.local_bader
     types = labeler.basin_types
     structure = Structure.from_file(struc)
 
-    nna_indices = np.array([i for i, j in enumerate(types) if j == "nna"], dtype=np.int64)
+    nna_indices = np.array(
+        [i for i, j in enumerate(types) if j == "nna"], dtype=np.int64
+    )
 
     data_dict[element]["nna_charges"] = overlap.local_bader.basin_charges[nna_indices]
     # data_dict[element]["nna_volumes"] = overlap.local_bader.basin_volumes[nna_indices]
@@ -81,7 +84,7 @@ for folder in path.iterdir():
 elements_w_results = np.array(elements_w_results)
 
 # remove points without elements or without workfunction values
-has_wf = np.where((workfunctions!=np.nan) & np.isin(elements, elements_w_results))[0]
+has_wf = np.where((workfunctions != np.nan) & np.isin(elements, elements_w_results))[0]
 elements = elements[has_wf]
 workfunctions = workfunctions[has_wf]
 
@@ -91,7 +94,6 @@ sorted_elements = elements[workfunction_indices]
 
 for workfunction, element in zip(sorted_workfunctions, sorted_elements):
     data_dict[element]["workfunction"] = workfunction
-
 
 
 no_nnas = []
@@ -108,7 +110,6 @@ for idx in workfunction_indices:
     if dict_el is None:
         continue
     workfunction = dict_el["workfunction"]
-
 
     if len(dict_el["nna_dists"]) == 0:
         no_nnas.append(element)
@@ -147,13 +148,11 @@ for idx in workfunction_indices:
     # value = 1/dists # best
     # value = potential_energies/(charges) # most physical
     # value = potential_energies
-    value = potentials*charges/volumes
+    value = potentials * charges / volumes
     # value = potentials / dists # best with physical meaning
     # value = test
 
-
     # y.append(np.sum(value*charge_frac))
-
 
     # y.append(np.sum(value)/charges.sum())
 
@@ -168,11 +167,12 @@ y = np.array(y)
 plt.scatter(x, y)
 
 plt.errorbar(
-    x, y,
+    x,
+    y,
     yerr=y_std,
-    fmt='o',        # 'o' = circular markers (scatter style)
-    capsize=4,      # little caps on error bars
-    linestyle='none' # no connecting line
+    fmt="o",  # 'o' = circular markers (scatter style)
+    capsize=4,  # little caps on error bars
+    linestyle="none",  # no connecting line
 )
 
 # Calculate line of best fit (degree 1 = linear)
@@ -191,7 +191,7 @@ r2 = 1 - (ss_res / ss_tot)
 equation = f"y = {m:.2f}x + {b:.2f}\n$R^2$ = {r2:.3f}"
 
 # Add text to plot
-plt.text(min(x), max(y), equation, fontsize=10, verticalalignment='top')
+plt.text(min(x), max(y), equation, fontsize=10, verticalalignment="top")
 
 # Plot the line
 plt.plot(x, m * x + b)
@@ -203,5 +203,5 @@ plt.title("Work Function vs. Electrostatic Potential Energy")
 plt.show()
 
 # Problem elements:
-    # Be - high work function, low potential energy
-    # U - lower work function, high potential energy
+# Be - high work function, low potential energy
+# U - lower work function, high potential energy

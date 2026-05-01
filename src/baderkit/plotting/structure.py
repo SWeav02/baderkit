@@ -7,8 +7,8 @@ import pandas as pd
 import pyvista as pv
 from numpy.typing import NDArray
 
-from baderkit.toolkit.structure import Structure
 from baderkit.plotting.defaults import ATOM_COLORS
+from baderkit.toolkit.structure import Structure
 
 from .base import VtkPlotter
 

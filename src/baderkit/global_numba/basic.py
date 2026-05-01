@@ -306,6 +306,7 @@ def get_transforms_in_radius(
     dists = dists[sorted_indices]
     return offsets, dists
 
+
 @njit(parallel=True)
 def get_transforms_in_voxels(
     r: int,
@@ -340,15 +341,15 @@ def get_transforms_in_voxels(
     """
     r = int(r)
     shape = np.array((nx, ny, nz), dtype=np.int64)
-    num_trans = (r*2+1)**3 - 1
+    num_trans = (r * 2 + 1) ** 3 - 1
 
     transforms = np.empty((num_trans, 3), dtype=np.int64)
     dists = np.empty(num_trans, dtype=np.float64)
 
     idx = 0
-    for i in range(-r, r+1):
-        for j in range(-r, r+1):
-            for k in range(-r, r+1):
+    for i in range(-r, r + 1):
+        for j in range(-r, r + 1):
+            for k in range(-r, r + 1):
                 if i == 0 and j == 0 and k == 0:
                     continue
                 shift = np.array((i, j, k), dtype=np.int64)
@@ -360,6 +361,7 @@ def get_transforms_in_voxels(
                 dists[idx] = dist
                 idx += 1
     return transforms, dists
+
 
 @njit(cache=True)
 def compute_wrap_offset(point1, point2):

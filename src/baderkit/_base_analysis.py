@@ -4,15 +4,15 @@ import copy
 import json
 import logging
 from abc import ABC
+from importlib import metadata
 from pathlib import Path
 from typing import Literal, TypeVar
-from importlib import metadata
 
 import numpy as np
 from numpy.typing import NDArray
 
-from baderkit.toolkit import Grid, Structure
 from baderkit.global_numba.file_parsers import Format, load_pseudo
+from baderkit.toolkit import Grid, Structure
 
 # # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="BaseAnalysis")
@@ -512,12 +512,12 @@ class BaseAnalysis(ABC):
     ###########################################################################
 
     def _get_kwargs(self) -> dict:
-        method_kwargs = {
-            "version" : metadata.version("baderkit")
-            }
-        method_kwargs.update(self._to_dict(self._base_method_kwargs+self._method_kwargs))
+        method_kwargs = {"version": metadata.version("baderkit")}
+        method_kwargs.update(
+            self._to_dict(self._base_method_kwargs + self._method_kwargs)
+        )
         for i in self._sub_methods:
-            method = getattr(self,i)
+            method = getattr(self, i)
             method_kwargs.update(method._get_kwargs())
         return method_kwargs
 
@@ -528,9 +528,7 @@ class BaseAnalysis(ABC):
 
         """
 
-        results = {
-            "method_kwargs": self._get_kwargs()
-            }
+        results = {"method_kwargs": self._get_kwargs()}
 
         for i in self._summary_props:
             results[i] = self._to_dict(getattr(self, f"_{i}"))

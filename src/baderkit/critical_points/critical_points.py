@@ -6,13 +6,13 @@ import numpy as np
 from networkx import MultiDiGraph
 from numpy.typing import NDArray
 
-from baderkit.bader.bader import Bader
 from baderkit._base_analysis import BaseAnalysis
-from baderkit.toolkit import Grid
+from baderkit.bader.bader import Bader
 from baderkit.global_numba.basic import merge_frac_coords_weighted
 from baderkit.global_numba.basins import get_manifold_labels
-from baderkit.global_numba.transforms import INT_TO_IMAGE
 from baderkit.global_numba.critical_points import get_saddle_saddle_connections
+from baderkit.global_numba.transforms import INT_TO_IMAGE
+from baderkit.toolkit import Grid
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="CriticalPoints")
@@ -71,7 +71,7 @@ class CriticalPoints(BaseAnalysis):
         "minima_cart",
         "minima_values",
         "minima_group_types",
-        ]
+    ]
 
     _saddle1_results = [
         "saddle1_frac",
@@ -79,16 +79,15 @@ class CriticalPoints(BaseAnalysis):
         "saddle1_cart",
         "saddle1_values",
         "saddle1_group_types",
-        ]
+    ]
 
     _saddle2_results = [
         "saddle2_frac",
         "saddle2_vox",
         "saddle2_cart",
         "saddle2_values",
-
         "saddle2_group_types",
-        ]
+    ]
 
     _maxima_results = [
         "maxima_frac",
@@ -96,13 +95,13 @@ class CriticalPoints(BaseAnalysis):
         "maxima_cart",
         "maxima_values",
         "maxima_group_types",
-        ]
+    ]
 
     _connection_results = [
         "saddle1_minima_connections",
         "saddle2_maxima_connections",
         "saddle_saddle_connections",
-        ]
+    ]
 
     _nonsummary_results = [
         "minima_persistence_groups",
@@ -111,7 +110,7 @@ class CriticalPoints(BaseAnalysis):
         "maxima_persistence_groups",
         "manifold_labels",
         "morse_graph",
-        ]
+    ]
 
     _reset_props = (
         _minima_results
@@ -127,21 +126,18 @@ class CriticalPoints(BaseAnalysis):
         "saddle1_results",
         "saddle2_results",
         "maxima_results",
-        "connection_results"
-        ]
+        "connection_results",
+    ]
 
-    _sub_methods = [
-        "bader"
-        ]
-
+    _sub_methods = ["bader"]
 
     def __init__(
-            self,
-            charge_grid: Grid,
-            reference_grid: Grid | None = None,
-            total_charge_grid: Grid | None = None,
-            **kwargs,
-            ):
+        self,
+        charge_grid: Grid,
+        reference_grid: Grid | None = None,
+        total_charge_grid: Grid | None = None,
+        **kwargs,
+    ):
 
         bader = Bader(
             charge_grid=charge_grid,

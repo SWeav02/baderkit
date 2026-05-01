@@ -8,17 +8,15 @@ from numpy.typing import NDArray
 
 from baderkit.global_numba.basic import (
     coords_to_flat,
-    flat_to_coords,
     dist,
-    get_transforms_in_voxels
+    flat_to_coords,
+    get_transforms_in_voxels,
 )
-from baderkit.global_numba.critical_points import (
-    refine_critical_points,
-    # refine_critical_points_targeted,
-    is_ongrid_newton_crit,
-
-    )
 from baderkit.global_numba.basins import get_best_neighbor_with_shift
+from baderkit.global_numba.critical_points import (  # refine_critical_points_targeted,
+    is_ongrid_newton_crit,
+    refine_critical_points,
+)
 from baderkit.global_numba.interpolation import linear_slice
 from baderkit.global_numba.transforms import (
     IMAGE_TO_INT,
@@ -29,6 +27,7 @@ from baderkit.global_numba.union_find import (
     union,
     union_with_shift1,
 )
+
 
 @njit(cache=True)
 def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
@@ -55,6 +54,7 @@ def get_persistence_value(value1, value2, conn_value, p1, p2, p_conn):
     persistence_score = min(diff1, diff2) * distance / (abs(avg) + eps)
 
     return persistence_score
+
 
 @njit(cache=True)
 def grow_arrays(neighbors, values, conn_coords, neigh_coords):
@@ -233,6 +233,7 @@ def union_by_persistence(
 
     return labels
 
+
 @njit(cache=True)
 def get_approx_saddle_val(
     p0,
@@ -299,6 +300,7 @@ def get_approx_saddle_val(
 
     return conn_val, frac_pos
 
+
 @njit(cache=True)
 def group_by_low_approx_persistence(
     data,
@@ -336,9 +338,12 @@ def group_by_low_approx_persistence(
             # skip neighbors with less extreme values
             neigh_ext_value = extrema_values[neigh_ext_idx]
             if (
-                use_minima and neigh_ext_value > ext_value
-                or not use_minima and neigh_ext_value < ext_value
-                or neigh_ext_value == ext_value and neigh_ext_idx > ext_idx
+                use_minima
+                and neigh_ext_value > ext_value
+                or not use_minima
+                and neigh_ext_value < ext_value
+                or neigh_ext_value == ext_value
+                and neigh_ext_idx > ext_idx
             ):
                 continue
 
@@ -372,11 +377,16 @@ def group_by_low_approx_persistence(
             )
 
             # get voxel coordinate of saddle point
-            saddle_frac = ext_frac + ((wrapped_neigh_frac - ext_frac)*conn_frac)
+            saddle_frac = ext_frac + ((wrapped_neigh_frac - ext_frac) * conn_frac)
             saddle_vox = saddle_frac * shape
             # get persistence
             persistence_score = get_persistence_value(
-                ext_value, neigh_ext_value, conn_val, ext_vox, wrapped_neigh_vox, saddle_vox
+                ext_value,
+                neigh_ext_value,
+                conn_val,
+                ext_vox,
+                wrapped_neigh_vox,
+                saddle_vox,
             )
 
             # if our persistence is below our tolerance we add this saddle
@@ -515,6 +525,7 @@ def group_by_refinement(
 
     return labels, images, refined_vox
 
+
 @njit(parallel=True, cache=True)
 def group_by_hill_climb(
     labels,
@@ -526,7 +537,7 @@ def group_by_hill_climb(
     use_minima,
 ):
     nx, ny, nz = data.shape
-    ny_nz = ny*nz
+    ny_nz = ny * nz
 
     # get transforms to 1st and 2nd neighbors
     transforms1, transform_dists1 = get_transforms_in_voxels(1, nx, ny, nz, matrix)
@@ -580,12 +591,13 @@ def group_by_hill_climb(
 
     return labels, images
 
+
 @njit(cache=True)
 def update_extrema_roots(
-        extrema_labels,
-        labels,
-        images,
-        ):
+    extrema_labels,
+    labels,
+    images,
+):
     # get reduced root indices
     roots = np.empty(len(extrema_labels), dtype=labels.dtype)
     for ext_idx in range(len(extrema_labels)):
@@ -698,7 +710,7 @@ def init_by_approx_persistence(
     # Attempt to hill climb remaining roots
     ###########################################################################
 
-    labels, images =  group_by_hill_climb(
+    labels, images = group_by_hill_climb(
         labels,
         images,
         data,
@@ -709,7 +721,7 @@ def init_by_approx_persistence(
     )
     roots, root_indices = update_extrema_roots(extrema_labels, labels, images)
     final_vox = extrema_vox[root_indices]
-    final_frac = np.round(refined_vox[root_indices]/shape, 6)
+    final_frac = np.round(refined_vox[root_indices] / shape, 6)
 
     return (
         labels,
@@ -717,6 +729,7 @@ def init_by_approx_persistence(
         final_vox,
         final_frac,
     )
+
 
 @njit(cache=True)
 def group_by_persistence(
@@ -809,6 +822,7 @@ def group_by_persistence(
         images[ext_idx] = shift
 
     return unions, images
+
 
 @njit(cache=True, parallel=True)
 def get_persistence_cutoffs(data, groups, use_minima, group_vals, max_dist=5):

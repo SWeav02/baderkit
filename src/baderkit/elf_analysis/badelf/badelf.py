@@ -2,34 +2,33 @@
 
 import logging
 from pathlib import Path
-from typing import Literal
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
+from pymatgen.analysis.local_env import CrystalNN
 from scipy.ndimage import label
 from tqdm import tqdm
-from pymatgen.analysis.local_env import CrystalNN
 
 from baderkit._base_analysis import BaseAnalysis
-
-from .badelf_numba import (
-    get_badelf_assignments,
-)
-
 from baderkit.bader import Bader
 from baderkit.elf_analysis.elf_labeler.elf_labeler import ElfLabeler
 from baderkit.elf_analysis.elf_labeler.enum_and_styling import FeatureType
 from baderkit.elf_analysis.elf_radii.elf_radii import ElfRadii
-from baderkit.toolkit import Grid, Structure
 from baderkit.global_numba.basins import (
     get_edges,
     get_min_avg_surface_dists,
 )
 from baderkit.global_numba.voronoi import get_cell_wrapped_voronoi
+from baderkit.toolkit import Grid, Structure
+
+from .badelf_numba import (
+    get_badelf_assignments,
+)
 
 Self = TypeVar("Self", bound="Badelf")
+
 
 class Badelf(BaseAnalysis):
 
@@ -47,7 +46,7 @@ class Badelf(BaseAnalysis):
         "min_surface_distances",
         "avg_surface_distances",
         "maxima_elf_values",
-        ]
+    ]
 
     _nna_results = [
         "nna_dimensionality",
@@ -56,7 +55,7 @@ class Badelf(BaseAnalysis):
         "num_nnas",
         "nnas_per_formula",
         "nnas_per_reduced_formula",
-        ]
+    ]
 
     _nonsummary_results = [
         "nna_structure",
@@ -65,22 +64,16 @@ class Badelf(BaseAnalysis):
         "elf_radii",
         "labeler",
         "bader",
-        ]
+    ]
 
-    _reset_props = (
-        _atom_results
-        + _nna_results
-        + _nonsummary_results
-    )
+    _reset_props = _atom_results + _nna_results + _nonsummary_results
 
     _summary_props = [
         "atom_results",
         "nna_results",
-        ]
+    ]
 
-    _sub_methods = [
-        "elf_radii"
-        ]
+    _sub_methods = ["elf_radii"]
 
     def __init__(
         self,
@@ -303,7 +296,7 @@ class Badelf(BaseAnalysis):
                 charge_grid=self.charge_grid,
                 total_charge_grid=self.total_charge_grid,
                 reference_grid=self.reference_grid,
-                include_nnas = include_nnas,
+                include_nnas=include_nnas,
                 **self._kwargs,
             )
         return self._elf_radii
@@ -429,10 +422,9 @@ class Badelf(BaseAnalysis):
 
             # get bonding information
             bond_pairs = self.elf_radii.bonding_pairs
-            site_indices = bond_pairs[0][:,0]
+            site_indices = bond_pairs[0][:, 0]
             # neigh_indices = bond_pairs[:,1]
             plane_points, plane_vectors = self.elf_radii.voronoi_planes
-
 
             # we want to transform our planes to the 26 nearest neighbor cells
             # to ensure that we cover our unit cell.
@@ -456,7 +448,9 @@ class Badelf(BaseAnalysis):
             )
 
             # sort planes by site, transform, and volume.
-            combined_sort = np.column_stack((plane_atom_volumes, transforms, site_indices))
+            combined_sort = np.column_stack(
+                (plane_atom_volumes, transforms, site_indices)
+            )
             sorted_indices = np.lexsort(combined_sort.T)
             transforms = transforms[sorted_indices]
             plane_points = plane_points[sorted_indices]
@@ -670,7 +664,6 @@ class Badelf(BaseAnalysis):
 
         return round(self.atom_volumes.sum() + self.vacuum_volume, 10)
 
-
     ###########################################################################
     # Assignment methods
     ###########################################################################
@@ -730,9 +723,9 @@ class Badelf(BaseAnalysis):
             pauling_ens = np.nan_to_num(pauling_ens, nan=2.2)
 
         cnn = CrystalNN(
-            distance_cutoffs= None,
-            x_diff_weight= 0.0,
-            porous_adjustment= False,
+            distance_cutoffs=None,
+            x_diff_weight=0.0,
+            porous_adjustment=False,
         )
 
         for basin_idx in range(len(self.labeler.basin_types)):
@@ -849,7 +842,6 @@ class Badelf(BaseAnalysis):
 
         logging.info("Beginning voxel assignment")
 
-
         if self.partition_method == "zero-flux":
             # we are done here and can assign charges/volumes immediately
             self._atom_labels = None
@@ -863,14 +855,18 @@ class Badelf(BaseAnalysis):
             # get vacuum
             vacuum = basin_labels == num_basins
             # initialize badelf labels
-            labels = np.full(basin_labels.shape, structure_len, dtype=basin_labels.dtype)
+            labels = np.full(
+                basin_labels.shape, structure_len, dtype=basin_labels.dtype
+            )
 
             # create a mask at nna indices
             if self.partition_method == "badelf":
                 # create map from basin index to nna structure index
                 nna_indices = self.labeler.nna_indices
                 label_map = np.empty(len(self.labeler.maxima_frac), dtype=np.int64)
-                label_map[nna_indices] = np.arange(len(nna_indices)) + len(self.structure)
+                label_map[nna_indices] = np.arange(len(nna_indices)) + len(
+                    self.structure
+                )
 
                 # get labels at electride sites
                 electride_mask = np.isin(basin_labels, nna_indices)
@@ -912,7 +908,7 @@ class Badelf(BaseAnalysis):
                 sphere_transforms=sphere_transforms,
                 transform_dists=transform_dists,
                 transform_breaks=transform_breaks,
-                max_val=structure_len
+                max_val=structure_len,
             )
 
             # convert charges/volumes to correct units
@@ -1206,8 +1202,8 @@ class Badelf(BaseAnalysis):
             charge_filename=charge_filename,
             reference_filename=reference_filename,
             pseudopotential_filename=pseudopotential_filename,
-            **kwargs
-            )
+            **kwargs,
+        )
 
     ###########################################################################
     # Write Methods
@@ -1237,7 +1233,9 @@ class Badelf(BaseAnalysis):
             mask = self.atom_labels == atom_index
             if not "suffix" in kwargs.keys():
                 kwargs["suffix"] = f"_a{atom_index}"
-            self._write_volume(volume_mask=mask, write_grid=write_grid, filename=filename, **kwargs)
+            self._write_volume(
+                volume_mask=mask, write_grid=write_grid, filename=filename, **kwargs
+            )
 
     def write_all_atom_volumes(
         self,
@@ -1278,7 +1276,9 @@ class Badelf(BaseAnalysis):
         # write
         if not "suffix" in kwargs.keys():
             kwargs["suffix"] = "_asum"
-        self._write_volume(volume_mask=mask, write_grid=write_grid, filename=filename, **kwargs)
+        self._write_volume(
+            volume_mask=mask, write_grid=write_grid, filename=filename, **kwargs
+        )
 
     def write_species_volume(
         self,
@@ -1305,7 +1305,9 @@ class Badelf(BaseAnalysis):
         mask = np.isin(self.atom_labels, indices)
         if not "suffix" in kwargs.keys():
             kwargs["suffix"] = f"_{species}"
-        self._write_volume(volume_mask=mask, write_grid=write_grid, filename=filename, **kwargs)
+        self._write_volume(
+            volume_mask=mask, write_grid=write_grid, filename=filename, **kwargs
+        )
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """

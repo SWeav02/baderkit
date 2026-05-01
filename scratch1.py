@@ -1,7 +1,9 @@
+import re
+
 import numpy as np
 from scipy.interpolate import interp1d
+
 from baderkit.toolkit import Grid
-import re
 
 # -----------------------------
 # User inputs
@@ -26,14 +28,17 @@ y = np.linspace(0, 1, ny, endpoint=False)
 z = np.linspace(0, 1, nz, endpoint=False)
 X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
 frac_grid = np.stack([X, Y, Z], axis=-1)
-cart_grid = lattice.get_cartesian_coords(frac_grid.reshape(-1, 3)).reshape(nx, ny, nz, 3)
+cart_grid = lattice.get_cartesian_coords(frac_grid.reshape(-1, 3)).reshape(
+    nx, ny, nz, 3
+)
+
 
 # -----------------------------
 # Parse POTCAR core densities safely
 # -----------------------------
 def parse_paw_core_density(potcar_file):
     core_data = {}
-    Z_dict = {}     # atomic number
+    Z_dict = {}  # atomic number
     ZVAL_dict = {}  # valence electrons
 
     # read file
@@ -64,10 +69,10 @@ def parse_paw_core_density(potcar_file):
                 if element is not None:
                     try:
                         from pymatgen.periodic_table import Element as pmgElement
+
                         Z = pmgElement(element).Z
                     except:
                         Z = int(ZVAL + 10)  # fallback
-
 
             if "grid" == line:
                 i += 1
@@ -80,7 +85,6 @@ def parse_paw_core_density(potcar_file):
                     i += 1
                 r = np.array(r)
 
-
             # Core charge-density (main, not partial)
             if "core charge-density" in line and "(partial)" not in line:
                 i += 1
@@ -91,12 +95,12 @@ def parse_paw_core_density(potcar_file):
                     except ValueError:
                         break
                     i += 1
-                rho= np.array(rho)
+                rho = np.array(rho)
 
                 # normalize rho to correct Z
-                Z_core = Z-ZVAL
+                Z_core = Z - ZVAL
                 total_check = np.trapezoid(rho * r**2, r)
-                rho *= nx*ny*nz*Z_core/total_check
+                rho *= nx * ny * nz * Z_core / total_check
 
                 core_data[element] = (r, rho)
                 if Z is not None and ZVAL is not None:
@@ -107,6 +111,7 @@ def parse_paw_core_density(potcar_file):
             i += 1
 
     return core_data, Z_dict, ZVAL_dict
+
 
 paw_core, Z_dict, ZVAL_dict = parse_paw_core_density(POTCAR_FILE)
 if not paw_core:
@@ -150,7 +155,7 @@ for site in structure:
 
 # actual from 3D grid
 actual_core_electrons = core_grid.sum()
-core_grid *= expected_core_electrons*(nx*ny*nz) / actual_core_electrons
+core_grid *= expected_core_electrons * (nx * ny * nz) / actual_core_electrons
 
 # -----------------------------
 # Combine and write

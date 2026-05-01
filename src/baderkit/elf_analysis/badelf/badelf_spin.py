@@ -15,6 +15,7 @@ from baderkit.toolkit import Grid, Structure
 
 Self = TypeVar("Self", bound="SpinBadelf")
 
+
 class SpinBadelf(BaseAnalysis):
 
     spin_system = "combined"
@@ -24,35 +25,31 @@ class SpinBadelf(BaseAnalysis):
         "atom_volumes",
         "oxidation_states",
         "species",
-        ]
+    ]
 
     _nna_results = [
         "nna_dimensionality",
         "num_nnas",
         "nnas_per_formula",
         "nnas_per_reduced_formula",
-        ]
+    ]
 
     _nonsummary_results = [
         "nna_structure",
         "labeler",
-        ]
+    ]
 
-    _reset_props = (
-        _atom_results
-        + _nna_results
-        + _nonsummary_results
-    )
+    _reset_props = _atom_results + _nna_results + _nonsummary_results
 
     _summary_props = [
         "atom_results",
         "nna_results",
-        ]
+    ]
 
     _sub_methods = [
         "badelf_up",
         "badelf_down",
-        ]
+    ]
 
     def __init__(
         self,
@@ -446,8 +443,8 @@ class SpinBadelf(BaseAnalysis):
             reference_filename=reference_filename,
             pseudopotential_filename=pseudopotential_filename,
             total_only=total_only,
-            **kwargs
-            )
+            **kwargs,
+        )
 
     ###########################################################################
     # Write Methods
@@ -474,15 +471,11 @@ class SpinBadelf(BaseAnalysis):
 
         for atom_index in atom_indices:
             # get a mask at the requested atoms
-            self.badelf_up.write_atom_volumes(
-                atom_index,
-                suffix=f"_a{atom_index}_up"
-                )
+            self.badelf_up.write_atom_volumes([atom_index], suffix=f"_a{atom_index}_up")
 
             self.badelf_down.write_atom_volumes(
-                atom_index,
-                suffix=f"_a{atom_index}_down"
-                )
+                [atom_index], suffix=f"_a{atom_index}_down"
+            )
 
     def write_all_atom_volumes(
         self,
@@ -518,15 +511,9 @@ class SpinBadelf(BaseAnalysis):
             The list of atom indices to sum and write
 
         """
-        self.badelf_up.write_atom_volumes_sum(
-            atom_indices,
-            suffix="_asum_up"
-            )
+        self.badelf_up.write_atom_volumes_sum(atom_indices, suffix="_asum_up")
 
-        self.badelf_down.write_atom_volumes_sum(
-            atom_indices,
-            suffix="_asum_down"
-            )
+        self.badelf_down.write_atom_volumes_sum(atom_indices, suffix="_asum_down")
 
     def write_species_volume(
         self,
@@ -546,15 +533,9 @@ class SpinBadelf(BaseAnalysis):
 
         """
 
-        self.badelf_up.write_species_volume(
-            species,
-            suffix=f"_{species}_up"
-            )
+        self.badelf_up.write_species_volume(species, suffix=f"_{species}_up")
 
-        self.badelf_down.write_species_volume(
-            species,
-            suffix=f"_{species}_down"
-            )
+        self.badelf_down.write_species_volume(species, suffix=f"_{species}_down")
 
     def get_atom_results_dataframe(self) -> pd.DataFrame:
         """

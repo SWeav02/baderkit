@@ -11,12 +11,11 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from baderkit._base_analysis import BaseAnalysis
-from baderkit.toolkit import Structure
 from baderkit.global_numba.basins import (
     get_edges_w_images,
     get_min_avg_surface_dists,
     get_neighboring_basin_surface_area,
-    update_labels_and_images
+    update_labels_and_images,
 )
 from baderkit.global_numba.betti_numbers import (
     get_all_betti_numbers_scanning,
@@ -25,6 +24,7 @@ from baderkit.global_numba.persistence import (
     get_persistence_groups,
 )
 from baderkit.global_numba.transforms import IMAGE_TO_INT
+from baderkit.toolkit import Structure
 
 from .methods import Method
 
@@ -113,7 +113,7 @@ class Bader(BaseAnalysis):
         "minima_ref_values",
         "minima_betti_cutoffs",
         "minima_betti_numbers",
-        ]
+    ]
 
     _saddle_results = [
         # saddle props
@@ -971,8 +971,6 @@ class Bader(BaseAnalysis):
             ]
         )
 
-
-
     ###########################################################################
     # Saddle Properties
     ###########################################################################
@@ -1551,14 +1549,14 @@ class Bader(BaseAnalysis):
             basin_atoms, basin_atom_dists, shifts = get_atom_basins(atoms, basins)
 
         # convert shifts to integer representations and assing
-        shifts = IMAGE_TO_INT[shifts[:,0],shifts[:,1],shifts[:,2]]
+        shifts = IMAGE_TO_INT[shifts[:, 0], shifts[:, 1], shifts[:, 2]]
         atom_labels, atom_images = update_labels_and_images(
             labels=self.maxima_basin_labels.copy(),
             images=self.maxima_basin_images.copy(),
             label_map=basin_atoms,
             image_map=shifts,
             new_vacuum_label=len(structure),
-            )
+        )
 
         atom_charges = np.bincount(
             basin_atoms, weights=self.basin_charges, minlength=len(structure)
@@ -1675,7 +1673,6 @@ class Bader(BaseAnalysis):
             extrema_groups = self.maxima_betti_groups
             base_extrema = self.maxima_vox
 
-
         extrema_base_vals = self.reference_grid.total[
             base_extrema[:, 0], base_extrema[:, 1], base_extrema[:, 2]
         ]
@@ -1692,7 +1689,6 @@ class Bader(BaseAnalysis):
         else:
             self._maxima_betti_cutoffs = extrema_betti_vals
             self._maxima_betti_numbers = extrema_betti_numbers
-
 
     def _get_atom_surface_distances(self):
         """

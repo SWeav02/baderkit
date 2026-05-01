@@ -3,11 +3,12 @@
 import numpy as np
 from scipy.spatial import Voronoi, cKDTree
 
+
 def generate_supercell(frac_coords, lattice):
     """Generate 3x3x3 periodic images."""
-    shifts = np.array([[i, j, k] for i in [-1, 0, 1]
-                                 for j in [-1, 0, 1]
-                                 for k in [-1, 0, 1]])
+    shifts = np.array(
+        [[i, j, k] for i in [-1, 0, 1] for j in [-1, 0, 1] for k in [-1, 0, 1]]
+    )
 
     images = []
     for shift in shifts:

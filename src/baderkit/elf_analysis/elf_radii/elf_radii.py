@@ -9,19 +9,18 @@ from pymatgen.analysis.local_env import CrystalNN
 from scipy.spatial import HalfspaceIntersection
 
 from baderkit._base_analysis import BaseAnalysis
-from baderkit.toolkit import Grid, Structure
 from baderkit.elf_analysis.elf_labeler.elf_labeler import ElfLabeler
-
 from baderkit.elf_analysis.elf_labeler.enum_and_styling import FeatureType
-from .elf_radii_numba import (
-    get_all_atom_elf_radii,
-    )
 from baderkit.global_numba.voronoi import (
     generate_symmetric_bonds,
     get_canonical_bonds,
     get_planes_on_surface,
 )
+from baderkit.toolkit import Grid, Structure
 
+from .elf_radii_numba import (
+    get_all_atom_elf_radii,
+)
 
 Self = TypeVar("Self", bound="ElfRadii")
 
@@ -32,6 +31,7 @@ class ElfRadii(BaseAnalysis):
     (ELF, ELI-D, LOL, etc.).
 
     """
+
     _method_kwargs = [
         "include_nnas",
     ]
@@ -42,29 +42,22 @@ class ElfRadii(BaseAnalysis):
         "atom_radii",
         "all_bond_types",
         "atom_bond_types",
-        ]
+    ]
 
     _nonsummary_results = [
         "structure",
         "local_basin_labels",
         "label_atom_map",
         "voronoi_planes",
-        ]
+    ]
 
-    _reset_props = (
-        _radii_results
-        + _nonsummary_results
-    )
+    _reset_props = _radii_results + _nonsummary_results
 
     _summary_props = [
         "radii_results",
-        ]
+    ]
 
-    _sub_methods = [
-        "labeler"
-        ]
-
-
+    _sub_methods = ["labeler"]
 
     def __init__(
         self,
@@ -220,16 +213,18 @@ class ElfRadii(BaseAnalysis):
 
             num_basins = len(basin_types)
 
-            label_map = np.empty(num_basins+1, dtype=np.int64)
-            for idx,(basin_type, frac) in enumerate(zip(basin_types, atom_fracs)):
+            label_map = np.empty(num_basins + 1, dtype=np.int64)
+            for idx, (basin_type, frac) in enumerate(zip(basin_types, atom_fracs)):
                 # point core/shell/lone-pairs to corresponding atom
                 if len(frac) == 1 or basin_type in FeatureType.unshared:
                     # get atoms index in structure
-                    label_map[idx] = int(frac[0,0])
+                    label_map[idx] = int(frac[0, 0])
                 # point nnas to corresponding atom
                 elif self.include_nnas and basin_type == FeatureType.nna.value:
                     # get nna index in structure
-                    label_map[idx] = np.searchsorted(nna_indices, idx) + len(self.reference_grid.structure)
+                    label_map[idx] = np.searchsorted(nna_indices, idx) + len(
+                        self.reference_grid.structure
+                    )
                 # point covalent to len(structure) + 1
                 elif basin_type == FeatureType.covalent.value:
                     label_map[idx] = len(self.structure) + 1
@@ -244,9 +239,7 @@ class ElfRadii(BaseAnalysis):
             label_map[-1] = len(self.structure) + 3
             self._label_atom_map = label_map
 
-
         return self._label_atom_map
-
 
     ###########################################################################
     # Radii Properties
@@ -299,7 +292,7 @@ class ElfRadii(BaseAnalysis):
             all_types = self.all_bond_types
             atom_radii = np.empty(len(self.structure), dtype=np.float64)
             atom_bond_types = []
-            site_indices = self.bonding_pairs[0][:,0]
+            site_indices = self.bonding_pairs[0][:, 0]
             for i in range(len(self.structure)):
                 idx = np.searchsorted(site_indices, i)
                 atom_radii[i] = all_radii[idx]
@@ -344,12 +337,7 @@ class ElfRadii(BaseAnalysis):
         """
         if self._all_bond_types is None:
             self._get_voronoi_radii()
-        mapping = np.array([
-            "ionic",
-            "covalent",
-            "metallic",
-            "non-bonding"
-            ])
+        mapping = np.array(["ionic", "covalent", "metallic", "non-bonding"])
         return mapping[self._all_bond_types]
 
     @property
@@ -389,8 +377,8 @@ class ElfRadii(BaseAnalysis):
             reversed_bonds=reversed_bonds,
             data=self.reference_grid.cubic_spline_coeffs,
             labels=self.local_basin_labels,
-            label_map = self.label_atom_map,
-            equivalent_atoms=self.structure.equivalent_atoms
+            label_map=self.label_atom_map,
+            equivalent_atoms=self.structure.equivalent_atoms,
         )
 
     def _get_neigh_info_from_pymatgen(self, neigh_info: list):
@@ -736,8 +724,9 @@ class ElfRadii(BaseAnalysis):
         plane_vectors = plane_vectors[sorted_indices]
         neigh_coords = neigh_coords[sorted_indices]
 
-
-        self._bonding_pairs = np.column_stack((site_indices, neigh_indices)), (neigh_coords // 1).astype(int)
+        self._bonding_pairs = np.column_stack((site_indices, neigh_indices)), (
+            neigh_coords // 1
+        ).astype(int)
         self._pair_dists = pair_dists
         self._all_radii = radii
         self._all_bond_types = all_bond_types
@@ -784,5 +773,5 @@ class ElfRadii(BaseAnalysis):
         return super().from_vasp(
             charge_filename=charge_filename,
             reference_filename=reference_filename,
-            **kwargs
-            )
+            **kwargs,
+        )

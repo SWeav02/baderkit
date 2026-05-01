@@ -1,15 +1,14 @@
 # -*- coding: utf-8 -*-
 
-from numba import njit, prange, types
 from math import erf
-from scipy.special import erf as scipy_erf
 
 import numpy as np
+from numba import njit, prange, types
 from numpy.typing import NDArray
+from scipy.special import erf as scipy_erf
 
-from baderkit.global_numba.transforms import INT_TO_IMAGE
 from baderkit.global_numba.interpolation import linear_slice
-
+from baderkit.global_numba.transforms import INT_TO_IMAGE
 
 
 @njit(cache=True, parallel=True)
@@ -21,7 +20,7 @@ def get_core_dist_ratios(
     nna_indices,
     core_basins,
     volume_bond_fracs,
-        ):
+):
 
     basin_fracs = np.zeros(len(nna_indices), dtype=np.float64)
 
@@ -39,9 +38,13 @@ def get_core_dist_ratios(
                 # it.
                 continue
             # TODO: Also skip anions?
-            atom_coords = atom_frac_coords[int(atom_idx)] + INT_TO_IMAGE[int(atom_image)]
+            atom_coords = (
+                atom_frac_coords[int(atom_idx)] + INT_TO_IMAGE[int(atom_image)]
+            )
             # labels between the coords
-            label_line = linear_slice(labels, atom_coords, local_coords, method="nearest")
+            label_line = linear_slice(
+                labels, atom_coords, local_coords, method="nearest"
+            )
             # get the last point that is part of the core
             for idx, i in enumerate(label_line):
                 if core_basins[int(i)] == -1:
@@ -51,8 +54,8 @@ def get_core_dist_ratios(
                 continue
             total_frac += frac
             # get fraction of bond belonging to the nna
-            atom_frac = idx / (len(label_line)-1)
-            nna_frac = 1-atom_frac
+            atom_frac = idx / (len(label_line) - 1)
+            nna_frac = 1 - atom_frac
 
             # add fraction making up bond
             total_basin_frac += nna_frac * frac
@@ -60,11 +63,12 @@ def get_core_dist_ratios(
         # adjust for any fractions that had no cores
         if total_frac == 0:
             continue
-        frac_mult = 1/total_frac
+        frac_mult = 1 / total_frac
         # update arrays
         basin_fracs[nna_idx] = total_basin_frac * frac_mult
 
     return basin_fracs
+
 
 @njit(cache=True, parallel=True)
 def get_core_dists(
@@ -75,7 +79,7 @@ def get_core_dists(
     nna_indices,
     core_basins,
     volume_bond_fracs,
-        ):
+):
 
     basin_dists = np.zeros(len(nna_indices), dtype=np.float64)
 
@@ -93,7 +97,9 @@ def get_core_dists(
                 # this is an nna in the charge density and we don't want to include
                 # it.
                 continue
-            atom_coords = atom_frac_coords[int(atom_idx)] + INT_TO_IMAGE[int(atom_image)]
+            atom_coords = (
+                atom_frac_coords[int(atom_idx)] + INT_TO_IMAGE[int(atom_image)]
+            )
             total_frac += frac
             # get distance to atom
             atom_cart_coords = atom_coords @ matrix
@@ -104,7 +110,7 @@ def get_core_dists(
         # adjust for any fractions that had no cores
         if total_frac == 0:
             continue
-        frac_mult = 1/total_frac
+        frac_mult = 1 / total_frac
         # update arrays
         basin_dists[nna_idx] = weighted_dist * frac_mult
 

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-from importlib import metadata
 import logging
+from importlib import metadata
+
 from rich.logging import RichHandler
 
 # Version and Logging
@@ -21,12 +22,13 @@ logging.basicConfig(
     ],
 )
 
-from .toolkit.structure import Structure
-from .toolkit.grid import Grid
 from .bader.bader import Bader
-
+from .toolkit.grid import Grid
+from .toolkit.structure import Structure
 
 # hide other imports
 __all__ = ["Bader", "Structure", "Grid"]
+
+
 def __dir__():
     return __all__

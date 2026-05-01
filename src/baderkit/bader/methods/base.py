@@ -8,7 +8,6 @@ from typing import TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
-from baderkit.toolkit import Grid
 from baderkit.global_numba.basic import get_lowest_uint
 from baderkit.global_numba.basins import (
     get_basin_charges_and_volumes,
@@ -17,17 +16,18 @@ from baderkit.global_numba.basins import (
     update_labels_and_images,
 )
 from baderkit.global_numba.critical_points import (
+    find_potential_saddle_points,
+    get_saddle_connections,
     get_saddles_from_basins,
     get_single_point_saddles,
     refine_critical_points,
     remove_adjacent_saddles,
-    find_potential_saddle_points,
-    get_saddle_connections,
 )
 from baderkit.global_numba.persistence import (
     init_by_approx_persistence,
 )
 from baderkit.global_numba.transforms import ALL_NEIGHBOR_TRANSFORMS
+from baderkit.toolkit import Grid
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="MethodBase")
@@ -185,10 +185,10 @@ class MethodBase:
         t0 = time.time()
 
         extrema_roots = self.labels[
-            self.extrema_vox[:,0],
-            self.extrema_vox[:,1],
-            self.extrema_vox[:,2],
-            ]
+            self.extrema_vox[:, 0],
+            self.extrema_vox[:, 1],
+            self.extrema_vox[:, 2],
+        ]
         root_transforms = np.full(len(extrema_roots), 13, dtype=np.int8)
 
         # update labels/images
@@ -708,19 +708,18 @@ class MethodBase:
 
         # Get likely saddle mask
         saddle_mask = find_potential_saddle_points(
-            data = self.reference_grid.total,
-            edge_mask = edge_mask,
-            lattice = self.reference_grid.matrix,
-            transforms = transforms,
-            use_minima = self.use_minima
-            )
+            data=self.reference_grid.total,
+            edge_mask=edge_mask,
+            lattice=self.reference_grid.matrix,
+            transforms=transforms,
+            use_minima=self.use_minima,
+        )
         saddle_vox = np.argwhere(saddle_mask)
 
         if self.use_minima:
             saddle_morses = np.array((1, 11, 21, 22), dtype=np.int64)
         else:
             saddle_morses = np.array((2, 10, 20, 21), dtype=np.int64)
-
 
         # refine saddle positions
         # NOTE: Theses settings seem to work well for the ELF. Charge density

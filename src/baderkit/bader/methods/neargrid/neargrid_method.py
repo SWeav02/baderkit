@@ -104,9 +104,7 @@ class NeargridMethod(MethodBase):
         # remove extrema from refinement
         refinement_mask[self.extrema_mask] = False
         # note these labels and the vacuum should not be reassigned again in future cycles
-        labels[refinement_mask & vacuum_mask] = -labels[
-            refinement_mask & vacuum_mask
-        ]
+        labels[refinement_mask & vacuum_mask] = -labels[refinement_mask & vacuum_mask]
         labels, images = refine_fast_neargrid(
             data=reference_data,
             labels=labels,

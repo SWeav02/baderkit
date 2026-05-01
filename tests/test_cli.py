@@ -136,12 +136,12 @@ def test_labeler():
                 "-s",
                 "-p",
                 "sel",
-                "metallic",
+                "metallic bond",
             ],
         )
         time.sleep(0)
         assert result.exit_code == 0
-        assert Path("ELFCAR_M_up").exists()
+        assert Path("ELFCAR_Xm_up").exists()
 
 
 # TODO: I couldn't get this to run and be headless, so for now I'm going to

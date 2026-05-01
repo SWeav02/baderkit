@@ -17,8 +17,6 @@ from pymatgen.io.vasp import VolumetricData
 from scipy.ndimage import label, spline_filter, zoom
 from scipy.spatial import Voronoi
 
-from baderkit.toolkit.interpolator import Interpolator
-from baderkit.toolkit.structure import Structure
 from baderkit.global_numba.basic import get_transforms_in_radius
 from baderkit.global_numba.file_parsers import (
     Format,
@@ -29,6 +27,8 @@ from baderkit.global_numba.file_parsers import (
 )
 from baderkit.global_numba.file_parsers import write_cube as write_cube_file
 from baderkit.global_numba.file_parsers import write_vasp as write_vasp_file
+from baderkit.toolkit.interpolator import Interpolator
+from baderkit.toolkit.structure import Structure
 
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Grid")

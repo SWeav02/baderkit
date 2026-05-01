@@ -8,18 +8,19 @@ from numpy.typing import NDArray
 
 from baderkit._base_analysis import BaseAnalysis
 from baderkit.bader.bader import Bader
-from baderkit.toolkit import Grid, Structure
 from baderkit.elf_analysis.overlap.overlap import BasinOverlap
+from baderkit.toolkit import Grid, Structure
 
-from .enum_and_styling import FeatureType
 from .elf_labeler_numba import (
     get_core_dist_ratios,
     get_core_dists,
-    )
+)
+from .enum_and_styling import FeatureType
 
 Self = TypeVar("Self", bound="ElfLabeler")
 
 # TODO: Add useful write methods?
+
 
 class ElfLabeler(BaseAnalysis):
     """
@@ -39,7 +40,7 @@ class ElfLabeler(BaseAnalysis):
         "basin_types",
         "attractor_shapes",
         "heavily_polarized",
-        ]
+    ]
 
     _nna_results = [
         "nna_bond_fracs",
@@ -48,29 +49,22 @@ class ElfLabeler(BaseAnalysis):
         "nna_formula",
         "nnas_per_formula",
         "nnas_per_reduced_formula",
-        ]
+    ]
 
     _nonsummary_results = [
         "label_structure",
         "nna_structure",
         "along_bond",
-        ]
+    ]
 
-    _reset_props = (
-        _basin_results
-        + _nna_results
-        + _nonsummary_results
-    )
+    _reset_props = _basin_results + _nna_results + _nonsummary_results
 
     _summary_props = [
         "basin_results",
         "nna_results",
-        ]
+    ]
 
-    _sub_methods = [
-        "overlap"
-        ]
-
+    _sub_methods = ["overlap"]
 
     def __init__(
         self,
@@ -151,8 +145,8 @@ class ElfLabeler(BaseAnalysis):
             include_properties=[
                 "heavily_polarized",
                 "basin_types",
-                ],
-            )
+            ],
+        )
 
     ###########################################################################
     # Properties
@@ -197,7 +191,6 @@ class ElfLabeler(BaseAnalysis):
                 structure.append(basin_type.dummy_species, basin_frac)
             self._nna_structure = structure
         return self._nna_structure
-
 
     @property
     def overlap(self) -> BasinOverlap:
@@ -274,9 +267,15 @@ class ElfLabeler(BaseAnalysis):
 
         """
         if self._nna_indices is None:
-            self._nna_indices = np.array([i for i,j in enumerate(self.basin_types) if j == FeatureType.nna.value], dtype=np.int64)
+            self._nna_indices = np.array(
+                [
+                    i
+                    for i, j in enumerate(self.basin_types)
+                    if j == FeatureType.nna.value
+                ],
+                dtype=np.int64,
+            )
         return self._nna_indices
-
 
     @property
     def heavily_polarized(self) -> NDArray[bool]:
@@ -291,7 +290,9 @@ class ElfLabeler(BaseAnalysis):
 
         """
         if self._heavily_polarized is None:
-            self._heavily_polarized = self.overlap.polarization_indexes > self.polarization_cutoff
+            self._heavily_polarized = (
+                self.overlap.polarization_indexes > self.polarization_cutoff
+            )
         return self._heavily_polarized
 
     @property
@@ -316,7 +317,7 @@ class ElfLabeler(BaseAnalysis):
                 nna_indices=self.nna_indices,
                 core_basins=self.overlap.core_basins,
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
-                    )
+            )
             self._nna_bond_fracs = fracs * self.nna_neighbor_dists
         return self._nna_bond_fracs
 
@@ -341,7 +342,7 @@ class ElfLabeler(BaseAnalysis):
                 nna_indices=self.nna_indices,
                 core_basins=self.overlap.core_basins,
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
-                    )
+            )
         return self._nna_neighbor_dists
 
     @property
@@ -381,7 +382,9 @@ class ElfLabeler(BaseAnalysis):
         """
         if self._nnas_per_formula is None:
             nnas_per_unit = 0
-            for charge, basin_type in zip(self.elf_bader.basin_charges, self.basin_types):
+            for charge, basin_type in zip(
+                self.elf_bader.basin_charges, self.basin_types
+            ):
                 if basin_type == FeatureType.nna.value:
                     nnas_per_unit += charge
             self._nnas_per_formula = nnas_per_unit
@@ -513,8 +516,8 @@ class ElfLabeler(BaseAnalysis):
             charge_filename=charge_filename,
             reference_filename=reference_filename,
             pseudopotential_filename=pseudopotential_filename,
-            **kwargs
-            )
+            **kwargs,
+        )
 
     def write_features_by_type(
         self,
@@ -534,14 +537,16 @@ class ElfLabeler(BaseAnalysis):
 
         """
         basin_type = FeatureType(basin_type)
-        indices = [i for i,j in enumerate(self.basin_types) if j == basin_type.value]
+        indices = [i for i, j in enumerate(self.basin_types) if j == basin_type.value]
 
         # get a mask at the requested feature
-        up_mask = np.isin(self.elf_bader.basin_labels, indices)
+        up_mask = np.isin(self.elf_bader.maxima_basin_labels, indices)
         # write
         if not "suffix" in kwargs.keys():
             kwargs["suffix"] = f"_{basin_type.dummy_species}"
-        self._write_volume(volume_mask=up_mask, write_grid=write_grid, filename=filename, **kwargs)
+        self._write_volume(
+            volume_mask=up_mask, write_grid=write_grid, filename=filename, **kwargs
+        )
 
     def write_all_features(
         self,
@@ -560,4 +565,4 @@ class ElfLabeler(BaseAnalysis):
                 self.write_features_by_type(
                     basin_type,
                     **kwargs,
-                    )
+                )

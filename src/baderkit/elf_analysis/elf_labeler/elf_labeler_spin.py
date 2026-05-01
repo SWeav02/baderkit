@@ -18,40 +18,33 @@ Self = TypeVar("Self", bound="ElfLabeler")
 
 # TODO: Add useful write methods?
 
-class SpinElfLabeler(BaseAnalysis):
 
+class SpinElfLabeler(BaseAnalysis):
 
     spin_system = "combined"
 
     _basin_results = [
         "basin_types",
-        ]
+    ]
 
     _nna_results = [
         "nnas_per_formula",
         "nnas_per_reduced_formula",
-        ]
+    ]
 
-    _nonsummary_results = [
-        "label_structure",
-        "nna_structure"
-        ]
+    _nonsummary_results = ["label_structure", "nna_structure"]
 
-    _reset_props = (
-        _basin_results
-        + _nna_results
-        + _nonsummary_results
-    )
+    _reset_props = _basin_results + _nna_results + _nonsummary_results
 
     _summary_props = [
         "basin_results",
         "nna_results",
-        ]
+    ]
 
     _sub_methods = [
         "elf_labeler_up",
         "elf_labeler_down",
-        ]
+    ]
 
     def __init__(
         self,
@@ -109,7 +102,9 @@ class SpinElfLabeler(BaseAnalysis):
         self.charge_grid_up, self.charge_grid_down = self.charge_grid.split_to_spin()
 
         if total_charge_grid is not None:
-            self.total_charge_grid_up, self.total_charge_grid_down = self.total_charge_grid.split_to_spin()
+            self.total_charge_grid_up, self.total_charge_grid_down = (
+                self.total_charge_grid.split_to_spin()
+            )
         else:
             self.total_charge_grid_up = None
             self.total_charge_grid_down = None
@@ -232,7 +227,7 @@ class SpinElfLabeler(BaseAnalysis):
             # get species from the spin up system
             new_species = []
             new_coords = []
-            for site in structure_up[len(self.structure):]:
+            for site in structure_up[len(self.structure) :]:
                 species = site.specie.symbol
                 # add frac coords no matter what
                 new_coords.append(site.frac_coords)
@@ -244,7 +239,7 @@ class SpinElfLabeler(BaseAnalysis):
                     # otherwise, we rename the species
                     new_species.append(species + "u")
             # do the same for the spin down system
-            for site in structure_down[len(self.structure):]:
+            for site in structure_down[len(self.structure) :]:
                 # only add the structure if it didn't exist in the spin up system
                 if site not in structure_up:
                     species = site.specie.symbol
@@ -353,7 +348,6 @@ class SpinElfLabeler(BaseAnalysis):
             )
         return self._nnas_per_reduced_formula
 
-
     ###########################################################################
     # From methods
     ###########################################################################
@@ -402,8 +396,8 @@ class SpinElfLabeler(BaseAnalysis):
             charge_filename=charge_filename,
             reference_filename=reference_filename,
             total_only=total_only,
-            **kwargs
-            )
+            **kwargs,
+        )
 
     def write_features_by_type(
         self,
@@ -419,7 +413,7 @@ class SpinElfLabeler(BaseAnalysis):
         Parameters
         ----------
         basin_type : str | FeatureType
-            The type of feature to write, e.g. metallic, electride, etc.
+            The type of feature to write, e.g. 'metallic bond', 'electride', etc.
 
 
         """
@@ -428,12 +422,12 @@ class SpinElfLabeler(BaseAnalysis):
             basin_type,
             suffix=f"_{basin_type.dummy_species}_up",
             **kwargs,
-            )
+        )
         self.elf_labeler_down.write_features_by_type(
             basin_type,
             suffix=f"_{basin_type.dummy_species}_down",
             **kwargs,
-            )
+        )
 
     def write_all_features(
         self,
@@ -452,4 +446,4 @@ class SpinElfLabeler(BaseAnalysis):
                 self.write_features_by_type(
                     basin_type,
                     **kwargs,
-                    )
+                )

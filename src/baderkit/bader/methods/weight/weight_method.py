@@ -99,7 +99,6 @@ class WeightMethod(MethodBase):
         dtype = get_lowest_uint(vacuum_label)
         labels[unassigned_mask] = vacuum_label
 
-
         # adjust charges from vasp convention
         charges /= shape.prod()
         # adjust volumes from voxel count
