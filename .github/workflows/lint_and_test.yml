@@ -46,7 +46,7 @@ jobs:
 
 
       - name: Create conda env and install deps
-        uses: conda-incubator/setup-miniconda@v3
+        uses: conda-incubator/setup-miniconda@v4
         with:
           auto-update-conda: true
           environment-file: environment.yaml
