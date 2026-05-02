@@ -32,9 +32,7 @@ class ElfRadii(BaseAnalysis):
 
     """
 
-    _method_kwargs = [
-        "include_nnas",
-    ]
+    _method_kwargs = ["include_nnas", "cnn_kwargs"]
 
     _radii_results = [
         "bonding_pairs",
@@ -65,6 +63,7 @@ class ElfRadii(BaseAnalysis):
         reference_grid: Grid,
         total_charge_grid: Grid | None = None,
         include_nnas: bool = False,
+        cnn_kwargs: dict | None = None,
         **kwargs,
     ):
         """
@@ -97,6 +96,11 @@ class ElfRadii(BaseAnalysis):
             Whether or not to treat non-nuclear attractors as quasi atoms. If
             set to true, they will be included as central points for the generated
             weighted voronoi surface and be given calculated radii.
+        cnn_kwargs : dict | None, optional
+            If provided, the nearest neighbors will be determined using PyMatGen's CrystalNN
+            class using the keyword arguments in this argument. If not provided, all neighbors
+            that share a weighted voronoi facet (constructed from the ELF radii) will be
+            included.
         **kwargs : dict
             Keyword arguments to pass to the ElfLabeler class.
 
@@ -107,10 +111,20 @@ class ElfRadii(BaseAnalysis):
             charge_grid=charge_grid,
             total_charge_grid=total_charge_grid,
             reference_grid=reference_grid,
+            cnn_kwargs=None,
             **kwargs,
         )
 
         self._include_nnas = include_nnas
+
+        if cnn_kwargs is not None:
+            self._use_cnn = True
+            self._cnn_kwargs = cnn_kwargs
+            self._cnn = CrystalNN(**cnn_kwargs)
+        else:
+            self._use_cnn = False
+            self._cnn_kwargs = None
+            self._cnn = None
 
         super().__init__(
             charge_grid=charge_grid,
@@ -140,6 +154,31 @@ class ElfRadii(BaseAnalysis):
     @include_nnas.setter
     def include_nnas(self, value: bool):
         self._include_nnas = value
+        self._reset_properties()
+
+    @property
+    def cnn_kwargs(self) -> dict | None:
+        """
+
+        Returns
+        -------
+        dict
+            The keyword arguments used to construct the CrystalNN
+            object.
+
+        """
+        return self._cnn_kwargs
+
+    @cnn_kwargs.setter
+    def cnn_kwargs(self, value: dict | None):
+        if value is not None:
+            self._cnn_kwargs = value
+            self._cnn = CrystalNN(**value)
+            self._use_cnn = True
+        else:
+            self._cnn_kwargs = value
+            self._cnn = value
+            self._use_cnn = False
         self._reset_properties()
 
     ###########################################################################
@@ -241,6 +280,19 @@ class ElfRadii(BaseAnalysis):
 
         return self._label_atom_map
 
+    @property
+    def cnn(self) -> CrystalNN:
+        """
+
+        Returns
+        -------
+        CrystalNN
+            If cnn_kwargs were provided, the CrystalNN object used to
+            determine coordination environments.
+
+        """
+        return self._cnn
+
     ###########################################################################
     # Radii Properties
     ###########################################################################
@@ -258,7 +310,7 @@ class ElfRadii(BaseAnalysis):
 
         """
         if self._bonding_pairs is None:
-            self._get_voronoi_radii()
+            self._get_radii()
         return self._bonding_pairs
 
     @property
@@ -273,7 +325,7 @@ class ElfRadii(BaseAnalysis):
 
         """
         if self._all_radii is None:
-            self._get_voronoi_radii()
+            self._get_radii()
         return self._all_radii
 
     @property
@@ -336,7 +388,7 @@ class ElfRadii(BaseAnalysis):
 
         """
         if self._all_bond_types is None:
-            self._get_voronoi_radii()
+            self._get_radii()
         mapping = np.array(["ionic", "covalent", "metallic", "non-bonding"])
         return mapping[self._all_bond_types]
 
@@ -352,21 +404,40 @@ class ElfRadii(BaseAnalysis):
 
         """
         if self._voronoi_planes is None:
-            self._get_voronoi_radii()
+            self._get_radii()
         return self._voronoi_planes
 
     ###########################################################################
-    # Methods
+    # General Methods
     ###########################################################################
+
     def _get_elf_radii_and_type(
         self,
-        site_indices,
-        neigh_indices,
-        neigh_frac_coords,
-        pair_dists,
-        reversed_bonds,
+        site_indices: NDArray[int],
+        neigh_indices: NDArray[int],
+        neigh_frac_coords: NDArray[float],
+        pair_dists: NDArray[float],
+        reversed_bonds: NDArray[bool],
     ):
-        # breakpoint()
+        """
+        Wrapper for the numba method used to calculate radii information
+        given a set of bonding pairs.
+
+        Parameters
+        ----------
+        site_indices : NDArray[int]
+            The indices of the first atom in each bond.
+        neigh_indices : NDArray[int]
+            The index of the neighboring atom in each bond.
+        neigh_frac_coords : NDArray[float]
+            The fractional coordinates of the neighboring atom.
+        pair_dists : NDArray[float]
+            The length of each bond.
+        reversed_bonds : NDArray[bool]
+            Whether or not each bond has been reversed.
+
+        """
+
         # calculate radii
         return get_all_atom_elf_radii(
             site_indices=site_indices,
@@ -381,7 +452,29 @@ class ElfRadii(BaseAnalysis):
             equivalent_atoms=self.structure.equivalent_atoms,
         )
 
-    def _get_neigh_info_from_pymatgen(self, neigh_info: list):
+    ###########################################################################
+    # Voronoi Methods
+    ###########################################################################
+
+    def _get_neigh_info_from_cnn(self, neigh_info: list):
+        """
+        Converts the output from CrystalNN.get_all_nn_info() to arrays.
+
+        Parameters
+        ----------
+        neigh_info : list
+            The output from a CrystalNN.get_all_nn_info() call.
+
+        Returns
+        -------
+        neigh_indices : NDArray[int]
+            The site index of each neighbor.
+        neigh_images : NDArray[int]
+            The periodic image of each neighbor.
+        pair_dists : NDArray[float]
+            The distance to each neighbor.
+
+        """
         # for each site, get all neighbors within a sphere of twice the largest
         # CrystalNN neighbor distance. Get relavent information
         neigh_indices = []
@@ -413,6 +506,26 @@ class ElfRadii(BaseAnalysis):
         neigh_coords: NDArray,
         fracs: NDArray,
     ):
+        """
+        Calculates the plane points/vectors along an atomic bond
+
+        Parameters
+        ----------
+        site_coords : NDArray
+            The fractional coordinates of the first site in the bond.
+        neigh_coords : NDArray
+            The fractional coordinates of the second site in the bond.
+        fracs : NDArray
+            The fraction radius.
+
+        Returns
+        -------
+        plane_points : NDArray[float]
+            A point on the plane.
+        plane_vectors : NDArray[float]
+            The vector from the first atom to the second.
+
+        """
         # calculate vectors from sites to neighs
         plane_vectors = neigh_coords - site_coords
 
@@ -429,6 +542,27 @@ class ElfRadii(BaseAnalysis):
         neigh_coords,
         fracs: NDArray | float,
     ):
+        """
+        Calculates the plane equation along an atomic bond.
+
+        Parameters
+        ----------
+        site_coords : NDArray
+            The fractional coordinates of the first site in the bond.
+        neigh_coords : NDArray
+            The fractional coordinates of the second site in the bond.
+        fracs : NDArray
+            The fraction radius.
+
+
+        Returns
+        -------
+        normals : NDArray[float]
+            The vector from the first atom to the second.
+        b : float
+            The b part of the plane equation
+
+        """
 
         # Get normal vector (A)
         normals = neigh_coords - site_coord  # (N,3)
@@ -447,67 +581,41 @@ class ElfRadii(BaseAnalysis):
 
         return normals, b
 
-    def _get_voronoi_radii(self):
+    def _get_possible_voronoi_planes(
+        self,
+        unique_atoms: NDArray[int],
+        neigh_coords: NDArray[float],
+        pair_dists: NDArray[float],
+        neigh_indices: NDArray[int],
+        neigh_images: NDArray[int],
+    ):
         """
-        Calculates the voronoi planes making up the dividing polyhedra between
-        atoms. Planes are placed at atom radii and include any that contribute to
-        the surface of the polyhedron.
+
+        Parameters
+        ----------
+        unique_atoms : NDArray[int]
+            The set of atoms that are symmetrically unique.
+        neigh_coords : NDArray[float]
+            The neighbor coordinates determined by CrystalNN.
+        pair_dists : NDArray[float]
+            The distance to each neighbor.
+        neigh_indices : NDArray[int]
+            The structure indices of each neighbor.
+        neigh_images : NDArray[int]
+            The periodic image of each neighbor.
 
         Returns
         -------
-        site_indices : NDArray[int]
-            The site indices of each first atom in all bonds.
         neigh_indices : NDArray[int]
-            The site indices of each second atom in all bonds.
+            The structure indices of each neighbor after expansion.
+        neigh_images : NDArray[int]
+            The periodic image of each neighbor after expansion.
         neigh_coords : NDArray[float]
-            The fractional coordinates of each neighboring site.
-        radii : NDArray[float]
-            The radius from the central atom in each bond.
-        all_bond_types : NDArray[bool]
-            The type of each bond, either True for covalent or False for ionic.
-        plane_points : NDArray[float]
-            A point on each partitioning plane. The point is also along the bond
-            line positioned at the radius.
-        plane_vectors : NDArray[float]
-            The vector normal to each plane.
+            The neighbor coordinates determined by expanding the results from CrystalNN.
+        pair_dists : NDArray[float]
+            The distance to each neighbor after expansion.
 
         """
-        # create crystalNN that will get all nearby atoms
-        cnn = CrystalNN(
-            weighted_cn=True,
-            distance_cutoffs=None,
-            x_diff_weight=0.0,
-            porous_adjustment=False,
-        )
-
-        # get symmetric atoms
-        equivalent_atoms = self.structure.equivalent_atoms
-        unique_atoms = np.unique(equivalent_atoms)
-
-        # get symmetry operations. convert to c contiguous for speed in numba
-        symm_ops = self.structure.spacegroup_analyzer.get_symmetry_operations(
-            cartesian=False
-        )
-        rotation_matrices = [np.ascontiguousarray(i.rotation_matrix) for i in symm_ops]
-        translation_vectors = [
-            np.ascontiguousarray(i.translation_vector) for i in symm_ops
-        ]
-
-        # get pure geometric neighbors
-        neigh_info = cnn.get_all_nn_info(self.structure)
-
-        # get neighbor info for unique atoms
-        unique_neigh_info = [neigh_info[i] for i in unique_atoms]
-
-        # get array representations
-        neigh_indices, neigh_images, pair_dists = self._get_neigh_info_from_pymatgen(
-            neigh_info=unique_neigh_info
-        )
-        neigh_coords = [
-            self.structure.frac_coords[neigh_indices[i]] + neigh_images[i]
-            for i in range(len(neigh_indices))
-        ]
-
         # for each unique site, we want to get a set of neighbors that may be part
         # of our voronoi surface. To do this, we want to expand our current set
         # of atoms slightly
@@ -550,67 +658,26 @@ class ElfRadii(BaseAnalysis):
             neigh_images[unique_idx] = max_neigh_images[important_indices]
             neigh_coords[unique_idx] = max_neigh_coords[important_indices]
             pair_dists[unique_idx] = max_pair_dists[important_indices]
+        return neigh_indices, neigh_images, neigh_coords, pair_dists
 
-        # Now we want to calculate the ELF radii for each possible pair. To do
-        # this efficiently, we first want to reduce to symmetrically equivalent
-        # bonds. We do this by converting each bond into a canonical representation
+    def _get_voronoi_contributors(
+        self,
+        site_indices,
+        unique_atoms,
+        neigh_coords,
+        fracs,
+        inverse,
+        neigh_indices,
+        neigh_images,
+        pair_dists,
+        all_bond_types,
+    ):
+        """
 
-        # move all bond info to a single array
-        site_indices = np.concatenate(
-            [[k for i in range(len(j))] for k, j in zip(unique_atoms, neigh_indices)],
-            dtype=np.int32,
-        )
-        neigh_indices = np.concatenate(neigh_indices)
-        neigh_images = np.concatenate(neigh_images)
-        neigh_coords = np.concatenate(neigh_coords)
-        pair_dists = np.concatenate(pair_dists)
+        Reduces the bonds by determining which are involved in the
+        voronoi surface.
 
-        canonical_bonds = get_canonical_bonds(
-            site_indices=site_indices,
-            neigh_indices=neigh_indices,
-            neigh_coords=neigh_coords,
-            equivalent_atoms=equivalent_atoms,
-            all_frac_coords=self.structure.frac_coords,
-            rotation_matrices=rotation_matrices,
-            translation_vectors=translation_vectors,
-            pair_dists=pair_dists,
-            shape=self.reference_grid.shape,
-            tol=1,
-        )
-
-        # get a mask for reversed bonds
-        reversed_mask = canonical_bonds[:, 0] == 1
-
-        # get unique bonds. Reverse bonds are counted as the same (i.e. Ca-N == N-Ca)
-        unique_bonds, indices, inverse = np.unique(
-            canonical_bonds[:, 1:], return_index=True, return_inverse=True, axis=0
-        )
-
-        unique_site_indices = site_indices[indices]
-        unique_neigh_indices = neigh_indices[indices]
-        unique_neigh_images = neigh_images[indices]
-        unique_neigh_coords = neigh_coords[indices]
-        unique_pair_dists = pair_dists[indices]
-        is_reverse = reversed_mask[indices]
-
-        unique_neigh_coords = (
-            self.structure.frac_coords[unique_neigh_indices] + unique_neigh_images
-        )
-        # get radii for each unique bond
-        radii, fracs, all_bond_types = self._get_elf_radii_and_type(
-            unique_site_indices,
-            unique_neigh_indices,
-            unique_neigh_coords,
-            unique_pair_dists,
-            is_reverse,
-        )
-
-        # assign fractions back to each bond
-        fracs = fracs[inverse]
-        all_bond_types = all_bond_types[inverse]
-        # reverse any that need it
-        fracs[reversed_mask] = 1 - fracs[reversed_mask]
-
+        """
         # get ranges for each site
         site_ranges = np.where(site_indices[:-1] != site_indices[1:])[0] + 1
         site_ranges = np.insert(
@@ -679,7 +746,181 @@ class ElfRadii(BaseAnalysis):
         fracs = fracs[important_plane_mask]
         all_bond_types = all_bond_types[important_plane_mask]
 
-        # Generate all bonds using symmetry operations
+        return (
+            site_indices,
+            neigh_indices,
+            neigh_images,
+            neigh_coords,
+            pair_dists,
+            fracs,
+            all_bond_types,
+        )
+
+    def _get_radii(self):
+        """
+        Calculates the voronoi planes making up the dividing polyhedra between
+        atoms. Planes are placed at atom radii and include any that contribute to
+        the surface of the polyhedron.
+
+        Returns
+        -------
+        site_indices : NDArray[int]
+            The site indices of each first atom in all bonds.
+        neigh_indices : NDArray[int]
+            The site indices of each second atom in all bonds.
+        neigh_coords : NDArray[float]
+            The fractional coordinates of each neighboring site.
+        radii : NDArray[float]
+            The radius from the central atom in each bond.
+        all_bond_types : NDArray[bool]
+            The type of each bond, either True for covalent or False for ionic.
+        plane_points : NDArray[float]
+            A point on each partitioning plane. The point is also along the bond
+            line positioned at the radius.
+        plane_vectors : NDArray[float]
+            The vector normal to each plane.
+
+        """
+
+        # create crystalNN that will get all nearby atoms
+        # NOTE: This is distinct from the optional cnn provided by the
+        # user and is exclusively geometric to ensure a closed surface
+        if self.cnn is None:
+            cnn = CrystalNN(
+                weighted_cn=True,
+                distance_cutoffs=None,
+                x_diff_weight=0.0,
+                porous_adjustment=False,
+            )
+        else:
+            cnn = self.cnn
+
+        # get symmetric atoms
+        equivalent_atoms = self.structure.equivalent_atoms
+        unique_atoms = np.unique(equivalent_atoms)
+
+        # get symmetry operations. convert to c contiguous for speed in numba
+        symm_ops = self.structure.spacegroup_analyzer.get_symmetry_operations(
+            cartesian=False
+        )
+        rotation_matrices = [np.ascontiguousarray(i.rotation_matrix) for i in symm_ops]
+        translation_vectors = [
+            np.ascontiguousarray(i.translation_vector) for i in symm_ops
+        ]
+
+        # get neighbors
+        neigh_info = cnn.get_all_nn_info(self.structure)
+
+        # get neighbor info for unique atoms
+        unique_neigh_info = [neigh_info[i] for i in unique_atoms]
+
+        # convert cnn output to array representation
+        neigh_indices, neigh_images, pair_dists = self._get_neigh_info_from_cnn(
+            neigh_info=unique_neigh_info
+        )
+        neigh_coords = [
+            self.structure.frac_coords[neigh_indices[i]] + neigh_images[i]
+            for i in range(len(neigh_indices))
+        ]
+
+        if not self._use_cnn:
+            # Get possible valid neighbors by expanding out beyond the
+            # geometric coordination env.
+            (
+                neigh_indices,
+                neigh_images,
+                neigh_coords,
+                pair_dists,
+            ) = self._get_possible_voronoi_planes(
+                unique_atoms,
+                neigh_coords,
+                pair_dists,
+                neigh_indices,
+                neigh_images,
+            )
+
+        # Reduce to geometrically unique bonding pairs
+
+        # move all bond info to a single array
+        site_indices = np.concatenate(
+            [[k for i in range(len(j))] for k, j in zip(unique_atoms, neigh_indices)],
+            dtype=np.int32,
+        )
+        neigh_indices = np.concatenate(neigh_indices)
+        neigh_images = np.concatenate(neigh_images)
+        neigh_coords = np.concatenate(neigh_coords)
+        pair_dists = np.concatenate(pair_dists)
+
+        canonical_bonds = get_canonical_bonds(
+            site_indices=site_indices,
+            neigh_indices=neigh_indices,
+            neigh_coords=neigh_coords,
+            equivalent_atoms=equivalent_atoms,
+            all_frac_coords=self.structure.frac_coords,
+            rotation_matrices=rotation_matrices,
+            translation_vectors=translation_vectors,
+            pair_dists=pair_dists,
+            shape=self.reference_grid.shape,
+            tol=1,
+        )
+
+        # get a mask for reversed bonds
+        reversed_mask = canonical_bonds[:, 0] == 1
+
+        # get unique bonds. Reverse bonds are counted as the same (i.e. Ca-N == N-Ca)
+        unique_bonds, indices, inverse = np.unique(
+            canonical_bonds[:, 1:], return_index=True, return_inverse=True, axis=0
+        )
+
+        unique_site_indices = site_indices[indices]
+        unique_neigh_indices = neigh_indices[indices]
+        unique_neigh_images = neigh_images[indices]
+        unique_neigh_coords = neigh_coords[indices]
+        unique_pair_dists = pair_dists[indices]
+        is_reverse = reversed_mask[indices]
+
+        unique_neigh_coords = (
+            self.structure.frac_coords[unique_neigh_indices] + unique_neigh_images
+        )
+        # get radii for each unique bond
+        radii, fracs, all_bond_types = self._get_elf_radii_and_type(
+            unique_site_indices,
+            unique_neigh_indices,
+            unique_neigh_coords,
+            unique_pair_dists,
+            is_reverse,
+        )
+
+        # assign fractions back to each bond
+        fracs = fracs[inverse]
+        all_bond_types = all_bond_types[inverse]
+        # reverse any that need it
+        fracs[reversed_mask] = 1 - fracs[reversed_mask]
+
+        if not self._use_cnn:
+            # remove bonds that do not contribute to the voronoi
+            # surface.
+            (
+                site_indices,
+                neigh_indices,
+                neigh_images,
+                neigh_coords,
+                pair_dists,
+                fracs,
+                all_bond_types,
+            ) = self._get_voronoi_contributors(
+                site_indices,
+                unique_atoms,
+                neigh_coords,
+                fracs,
+                inverse,
+                neigh_indices,
+                neigh_images,
+                pair_dists,
+                all_bond_types,
+            )
+
+        # Regenerate all bonds using symmetry operations
         all_bonds = generate_symmetric_bonds(
             site_indices=site_indices,
             neigh_indices=neigh_indices,
@@ -694,7 +935,7 @@ class ElfRadii(BaseAnalysis):
             tol=1,
         )
 
-        # reduce to unique
+        # remove repeats
         all_bonds, indices = np.unique(all_bonds, return_index=True, axis=0)
 
         # Return partitioning information
@@ -731,6 +972,10 @@ class ElfRadii(BaseAnalysis):
         self._all_radii = radii
         self._all_bond_types = all_bond_types
         self._voronoi_planes = plane_points, plane_vectors
+
+    ###########################################################################
+    # From methods
+    ###########################################################################
 
     @classmethod
     def from_vasp(
