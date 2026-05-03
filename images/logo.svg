@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="Layer_1" data-name="Layer 1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 694.303 694.303">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: url(#radial-gradient);
+      }
+
+      .cls-2 {
+        fill: none;
+        stroke: #fff;
+        stroke-miterlimit: 10;
+        stroke-width: .75px;
+      }
+
+      .cls-3 {
+        fill: #371046;
+      }
+    </style>
+    <radialGradient id="radial-gradient" cx="62.208" cy="-275.76" fx="62.208" fy="-275.76" r="344.378" gradientTransform="translate(197.838 110.923) rotate(135) scale(.989)" gradientUnits="userSpaceOnUse">
+      <stop offset=".183" stop-color="#fff369"/>
+      <stop offset=".283" stop-color="#fdf269"/>
+      <stop offset=".319" stop-color="#f6f069"/>
+      <stop offset=".345" stop-color="#eaec6a"/>
+      <stop offset=".366" stop-color="#d9e76b"/>
+      <stop offset=".384" stop-color="#c3e16d"/>
+      <stop offset=".399" stop-color="#a8d96f"/>
+      <stop offset=".414" stop-color="#87cf72"/>
+      <stop offset=".426" stop-color="#62c475"/>
+      <stop offset=".438" stop-color="#39b878"/>
+      <stop offset=".439" stop-color="#35b779"/>
+      <stop offset=".448" stop-color="#38b27b"/>
+      <stop offset=".582" stop-color="#63759b"/>
+      <stop offset=".646" stop-color="#745da8"/>
+      <stop offset=".742" stop-color="#634489"/>
+      <stop offset=".878" stop-color="#4e2564"/>
+      <stop offset=".949" stop-color="#461a56"/>
+    </radialGradient>
+  </defs>
+  <polygon class="cls-1" points="60.375 347.228 347.152 .451 633.928 347.228 347.152 694.004 60.375 347.228"/>
+  <circle class="cls-3" cx="347.152" cy="347.228" r="138.541"/>
+  <rect class="cls-2" x=".375" y=".375" width="693.553" height="693.553"/>
+</svg>
