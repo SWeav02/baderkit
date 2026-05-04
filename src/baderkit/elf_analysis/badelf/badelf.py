@@ -11,7 +11,7 @@ from pymatgen.analysis.local_env import CrystalNN
 from scipy.ndimage import label
 from tqdm import tqdm
 
-from baderkit._base_analysis import BaseAnalysis
+from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.bader import Bader
 from baderkit.elf_analysis.elf_labeler.elf_labeler import ElfLabeler
 from baderkit.elf_analysis.elf_labeler.enum_and_styling import FeatureType
@@ -30,7 +30,7 @@ from .badelf_numba import (
 Self = TypeVar("Self", bound="Badelf")
 
 
-class Badelf(BaseAnalysis):
+class Badelf(BaseElfAnalysis):
 
     spin_system = "total"
 
@@ -1149,60 +1149,6 @@ class Badelf(BaseAnalysis):
                 matrix=self.charge_grid.matrix,
                 max_value=np.max(self.structure.lattice.abc) * 2,
             )
-        )
-
-    ###########################################################################
-    # From methods
-    ###########################################################################
-
-    @classmethod
-    def from_vasp(
-        cls,
-        charge_filename: Path | str = "CHGCAR",
-        reference_filename: Path | str = "ELFCAR",
-        pseudopotential_filename: Path | str = "POTCAR",
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a Bader class object from VASP files.
-
-        Parameters
-        ----------
-        charge_filename : Path | str
-            The path to the CHGCAR like file that will be used for integrating charge.
-            The default is "CHGCAR".
-        reference_filename : Path |  str
-            The path to ELFCAR like file that will be used for partitioning.
-        total_charge_filename : Path |  str, optional
-            The path to the CHGCAR like file used for determining vacuum regions
-            in the system. For pseudopotential codes this represents the total
-            electron density and should be provided whenever possible.
-            If None, defaults to the charge_grid.
-        pseudopotential_filename : Path |  str
-            The path to the pseudopotentials used for calculating oxidation states. Alternatively,
-            a dictionary representing the valence counts of each atom in the system
-            where each entry is the species symbol and each value is the number
-            of electrons used for that species in the calculation.
-        total_only: bool
-            If true, only the first set of data in each file will be read. This
-            increases speed and reduced memory usage as the other data is typically
-            not used.
-            Defaults to True.
-        **kwargs : dict
-            Keyword arguments to pass to the class.
-
-        Returns
-        -------
-        Self
-            A BaseAnalysis class object.
-
-        """
-
-        return super().from_vasp(
-            charge_filename=charge_filename,
-            reference_filename=reference_filename,
-            pseudopotential_filename=pseudopotential_filename,
-            **kwargs,
         )
 
     ###########################################################################

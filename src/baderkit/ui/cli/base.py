@@ -150,7 +150,7 @@ def float_or_bool(value: str):
 
 
 @baderkit_app.command(no_args_is_help=True)
-def run(
+def bader(
     charge_file: Path = typer.Argument(
         default=...,
         help="The path to the charge density file",

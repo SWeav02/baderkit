@@ -1,6 +1,6 @@
 ## Introduction
 
-The `Badelf` class uses principles from Bader's Quantum Theory of Atoms in Molecules combined with the Electron Localization Function (ELF) to calculate atomic charges. It is primarily designed for calculating oxidation states in electride systems, which was the motivation for the original [work](https://pubs.acs.org/doi/10.1021/jacs.3c10876). For more in-depth analysis of the ELF, particularly in systems with non-nuclear chemical features (e.g. covalent bonds, lone-pairs), the [ElfLabeler](../../elf_labeler/usage) class is more appropriate.
+The `Badelf` class includes several methods for calculating oxidation states in materials combining principles from Bader's Quantum Theory of Atoms in Molecules with the Electron Localization Function (ELF). The original motivation was calculating oxidation states in electride systems[work](https://pubs.acs.org/doi/10.1021/jacs.3c10876).
 
 ## Basic Use
 

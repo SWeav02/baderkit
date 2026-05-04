@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 from pymatgen.analysis.local_env import CrystalNN
 from scipy.spatial import HalfspaceIntersection
 
-from baderkit._base_analysis import BaseAnalysis
+from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.elf_analysis.elf_labeler.elf_labeler import ElfLabeler
 from baderkit.elf_analysis.elf_labeler.enum_and_styling import FeatureType
 from baderkit.global_numba.voronoi import (
@@ -25,7 +25,7 @@ from .elf_radii_numba import (
 Self = TypeVar("Self", bound="ElfRadii")
 
 
-class ElfRadii(BaseAnalysis):
+class ElfRadii(BaseElfAnalysis):
     """
     A tool for calculating ionic/covalent radii based on a localization function
     (ELF, ELI-D, LOL, etc.).
@@ -972,51 +972,3 @@ class ElfRadii(BaseAnalysis):
         self._all_radii = radii
         self._all_bond_types = all_bond_types
         self._voronoi_planes = plane_points, plane_vectors
-
-    ###########################################################################
-    # From methods
-    ###########################################################################
-
-    @classmethod
-    def from_vasp(
-        cls,
-        charge_filename: Path | str = "CHGCAR",
-        reference_filename: Path | str = "ELFCAR",
-        pseudopotential_filename: Path | str = "POTCAR",
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a Bader class object from VASP files.
-
-        Parameters
-        ----------
-        charge_filename : Path | str
-            The path to the CHGCAR like file that will be used for integrating charge.
-            The default is "CHGCAR".
-        reference_filename : Path |  str
-            The path to ELFCAR like file that will be used for partitioning.
-        total_charge_filename : Path |  str, optional
-            The path to the CHGCAR like file used for determining vacuum regions
-            in the system. For pseudopotential codes this represents the total
-            electron density and should be provided whenever possible.
-            If None, defaults to the charge_grid.
-        total_only: bool
-            If true, only the first set of data in each file will be read. This
-            increases speed and reduced memory usage as the other data is typically
-            not used.
-            Defaults to True.
-        **kwargs : dict
-            Keyword arguments to pass to the class.
-
-        Returns
-        -------
-        Self
-            A BaseAnalysis class object.
-
-        """
-        # this is just a wrapper to set the ELFCAR as a default
-        return super().from_vasp(
-            charge_filename=charge_filename,
-            reference_filename=reference_filename,
-            **kwargs,
-        )

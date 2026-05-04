@@ -1,6 +1,6 @@
 # Methods and Benchmarks
 
-The available BadELF methods differ from the [Bader](../../bader/methods) methods in that they refer to different partitioning schemes rather than methods of approximating the smooth zero-flux surface.
+We provide several methods for partitioning the ELF. In general, the "zero-flux" method is sufficient and is the most akin to Bader charge analysis. However, in systems with covalent/metallic bonds, these basins must be divided by somewhat arbitrary metrics (e.g. electronegativity, atomic distance, etc.). In these case the other methods may be more appropriate as they rigorously divide covalent/metallic bonds along weighted voronoi-like planes.
 
 ## Methods
 

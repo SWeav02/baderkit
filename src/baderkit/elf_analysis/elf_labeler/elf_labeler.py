@@ -6,7 +6,7 @@ from typing import TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
-from baderkit._base_analysis import BaseAnalysis
+from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.bader.bader import Bader
 from baderkit.elf_analysis.overlap.overlap import BasinOverlap
 from baderkit.toolkit import Grid, Structure
@@ -22,7 +22,7 @@ Self = TypeVar("Self", bound="ElfLabeler")
 # TODO: Add useful write methods?
 
 
-class ElfLabeler(BaseAnalysis):
+class ElfLabeler(BaseElfAnalysis):
     """
 
     A tool for labeling basins in a localization function (ELF, ELI-D, LOL, etc.)
@@ -415,15 +415,11 @@ class ElfLabeler(BaseAnalysis):
         Label scheme:
             shared:
                 point/ring:
-                    atom center -> ionic shell
                     along bond:
                         heavily shared -> covalent bond
                         barely shared -> ionic bond
                     not along bond:
-                        heavily shared:
-                            small -> metallic bond
-                            medium -> multi-center bond?
-                            large -> nna?
+                        heavily shared -> NNA
                         barely shared:
                             dominant atom has other bonds -> lone-pair
                             dominant atom has no bonds -> ionic shell
@@ -431,9 +427,8 @@ class ElfLabeler(BaseAnalysis):
 
             unshared:
                 point:
-                    atom center -> core
+                    atom center -> shell
                     elsewhere -> lone-pair
-                ring -> core?
                 cage -> core
         """
 
@@ -468,56 +463,6 @@ class ElfLabeler(BaseAnalysis):
                 else:
                     types.append(FeatureType.nna)
         self._basin_types = types
-
-    @classmethod
-    def from_vasp(
-        cls,
-        charge_filename: Path | str = "CHGCAR",
-        reference_filename: Path | str = "ELFCAR",
-        pseudopotential_filename: Path | str = "POTCAR",
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a Bader class object from VASP files.
-
-        Parameters
-        ----------
-        charge_filename : Path | str
-            The path to the CHGCAR like file that will be used for integrating charge.
-            The default is "CHGCAR".
-        reference_filename : Path |  str
-            The path to ELFCAR like file that will be used for partitioning.
-        total_charge_filename : Path |  str, optional
-            The path to the CHGCAR like file used for determining vacuum regions
-            in the system. For pseudopotential codes this represents the total
-            electron density and should be provided whenever possible.
-            If None, defaults to the charge_grid.
-        pseudopotential_filename : Path |  str
-            The path to the pseudopotentials used for calculating oxidation states. Alternatively,
-            a dictionary representing the valence counts of each atom in the system
-            where each entry is the species symbol and each value is the number
-            of electrons used for that species in the calculation.
-        total_only: bool
-            If true, only the first set of data in each file will be read. This
-            increases speed and reduced memory usage as the other data is typically
-            not used.
-            Defaults to True.
-        **kwargs : dict
-            Keyword arguments to pass to the class.
-
-        Returns
-        -------
-        Self
-            A BaseAnalysis class object.
-
-        """
-
-        return super().from_vasp(
-            charge_filename=charge_filename,
-            reference_filename=reference_filename,
-            pseudopotential_filename=pseudopotential_filename,
-            **kwargs,
-        )
 
     def write_features_by_type(
         self,

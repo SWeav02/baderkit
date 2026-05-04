@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 
 import math
-from pathlib import Path
 from typing import TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
 
-from baderkit._base_analysis import BaseAnalysis
+from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.bader.bader import Bader
 from baderkit.global_numba.coord_env import is_along_bond_all
 from baderkit.toolkit import Grid, Structure
@@ -23,7 +22,7 @@ from .overlap_numba import (
 Self = TypeVar("Self", bound="BasinOverlap")
 
 
-class BasinOverlap(BaseAnalysis):
+class BasinOverlap(BaseElfAnalysis):
     """
     A convenience class for calculating the overlap between basins calculated
     in the charge density and a localization density such as ELF.
@@ -757,10 +756,7 @@ class BasinOverlap(BaseAnalysis):
             atom_shells = self.atom_shell_groups[atom_idx]
             local_overlap = self.qtaim_overlap_groups[atom_idx]
             for shell in atom_shells:
-                try:
-                    overlap_fracs = local_overlap[shell][:, 2]
-                except:
-                    breakpoint()
+                overlap_fracs = local_overlap[shell][:, 2]
                 local_indices = local_overlap[shell][:, 0].astype(int)
                 # if all members of this shell are almost entirely owned by this
                 # atom, we have a core
@@ -790,45 +786,3 @@ class BasinOverlap(BaseAnalysis):
 
         self._shared_basins = shared
         self._core_basins = cores
-
-    @classmethod
-    def from_vasp(
-        cls,
-        charge_filename: Path | str = "CHGCAR",
-        reference_filename: Path | str = "ELFCAR",
-        **kwargs,
-    ) -> Self:
-        """
-        Creates a BasinOverlap class object from VASP files.
-
-        Parameters
-        ----------
-        charge_filename : Path | str, optional
-            The path to the CHGCAR like file that will be used for integrating charge.
-            The default is "CHGCAR".
-        reference_filename : Path |  str
-            The path to ELFCAR like file that will be used for partitioning.
-        total_charge_filename : Grid | None, optional
-            The path to the CHGCAR like file used for determining vacuum regions
-            in the system. For pseudopotential codes this represents the total
-            electron density and should be provided whenever possible.
-            If None, defaults to the charge_grid.
-        total_only: bool
-            If true, only the first set of data in each file will be read. This
-            increases speed and reduced memory usage as the other data is typically
-            not used.
-            Defaults to True.
-        **kwargs : dict
-            Keyword arguments to pass to the class.
-
-        Returns
-        -------
-        Self
-            A BaseAnalysis class object.
-
-        """
-        return super().from_vasp(
-            charge_filename=charge_filename,
-            reference_filename=reference_filename,
-            **kwargs,
-        )

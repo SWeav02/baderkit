@@ -1,1 +1,0 @@
-::: src.baderkit.elf_analysis.elf_labeler.SpinElfLabeler

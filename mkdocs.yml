@@ -63,32 +63,47 @@ markdown_extensions:
   
 nav:
   - Introduction: index.md
-  - Bader:
-      - Quick Start: bader/usage.md
-      - Background: bader/background.md
-      - Methods: bader/methods.md
-  - BadELF:
-      - Quick Start: badelf/usage.md
-      - Background: badelf/background.md
-      - Methods: badelf/methods.md
-  - ElfLabeler:
-      - Quick Start: elf_labeler/usage.md
-      - Background: elf_labeler/background.md
-  - CriticalPoints:
-      - Quick Start: critical_points/usage.md
+  - Basic Usage: usage.md
+  - Theory and Methods:
+    - Bader:
+      - Theory: theory/bader/background.md
+      - Methods: theory/bader/methods.md
+    - Elf Analysis:
+      - BasinOverlap: theory/elf_analysis/basin_overlap.md
+      - ElfLabeler: theory/elf_analysis/elf_labeler.md
+      - ElfRadii: theory/elf_analysis/elf_radii.md
+      - BadELF:
+          - Background: theory/elf_analysis/badelf/background.md
+          - Methods: theory/elf_analysis/badelf/methods.md
+    - CriticalPoints: theory/critical_points/usage.md
   - API Reference: 
-    - Core:
-      - Bader: api_reference/core/bader.md
-      - Grid: api_reference/core/grid.md
-      - ElfLabeler: api_reference/core/labeler.md
-      - SpinElfLabeler: api_reference/core/labeler_spin.md
-      - Badelf: api_reference/core/badelf.md
-      - SpinBadelf: api_reference/core/badelf_spin.md
+    - Utilities:
+      - Structure: api_reference/utilities/structure.md
+      - Grid: api_reference/utilities/grid.md
+    - Bader: 
+      - Bader: api_reference/bader/bader.md
+    - Elf Analysis:
+      - BasinOverlap: api_reference/elf_analysis/basin_overlap.md
+      - ElfLabeler: api_reference/elf_analysis/labeler.md
+      - SpinElfLabeler: api_reference/elf_analysis/labeler_spin.md
+      - ElfRadii: api_reference/elf_analysis/elf_radii.md
+      - Badelf: api_reference/elf_analysis/badelf.md
+      - SpinBadelf: api_reference/elf_analysis/badelf_spin.md
     - Plotting:
-      - Structure: api_reference/plotting/structure.md
-      - Grid: api_reference/plotting/grid.md
-      - Bader: api_reference/plotting/bader.md
-  - Examples: examples.md
+      - StructurePlotter: api_reference/plotting/structure.md
+      - GridPlotter: api_reference/plotting/grid.md
+      - BaderPlotter: api_reference/plotting/bader.md
+  - Tutorials: 
+    - tutorials/index.md
+    - 'Bader: Oxidation States': tutorials/bader.md
+    - 'Bader: Cube Files': tutorials/bader_cube.md
+    - 'Bader: Other File Formats': tutorials/bader_other.md
+    - 'BadELF: Electride Charges': tutorials/badelf.md
+    - 'BadELF: Spin Separated Charge': tutorials/badelf_spin.md
+    - 'Elf Labeler: Covalent Bonds': tutorials/elf_labeler.md
+    - 'Basin Overlap: Polarization Index': tutorials/basin_overlap.md
+    - 'Elf Radii: Ionic Radii': tutorials/elf_radii.md
+  - Citing: citing.md
 
 plugins:
   - search
