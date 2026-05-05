@@ -799,10 +799,10 @@ class BasinOverlap(BaseElfAnalysis):
                 # BUGFIX: If there is only one basin in a shell, we base whether it is
                 # a core or lone-pair on its distance
                 if len(local_indices) == 1:
-                    if dist <= core_dist_tol:
+                    if dist <= core_dist_tol and overlap_fracs[0]>1.0-core_tol:
                         cores[local_indices[0]] = atom_idx
                         continue
-                    else:
+                    elif overlap_fracs[0]>1.0-lone_pair_tol:
                         lone_pairs[local_indices[0]] = atom_idx
                         continue
 
