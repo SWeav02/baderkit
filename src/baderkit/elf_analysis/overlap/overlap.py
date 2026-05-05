@@ -679,7 +679,7 @@ class BasinOverlap(BaseElfAnalysis):
                 atom_frac_coords=self.reference_grid.structure.frac_coords,
                 local_frac_coords=self.local_maxima_frac,
                 matrix=self.reference_grid.matrix,
-                tol=0.1,
+                tol=0.15,
             )
             self._atom_shell_groups = all_atom_shells
             self._atom_average_shell_dists = basin_dists
