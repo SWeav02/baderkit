@@ -793,18 +793,19 @@ class BasinOverlap(BaseElfAnalysis):
             shell_dists = self.atom_average_shell_dists[atom_idx]
             local_overlap = self.qtaim_overlap_groups[atom_idx]
             for shell, dist in zip(atom_shells, shell_dists):
-                # BUGFIX: If there is only one basin in a shell, we base whether it is
-                # a core or lone-pair on its distance
-                if len(shell) == 1:
-                    if dist <= core_dist_tol:
-                        cores[shell[0]] = atom_idx
-                        continue
-                    else:
-                        lone_pairs[shell[0]] = atom_idx
-                        continue
-
                 overlap_fracs = local_overlap[shell][:, 2]
                 local_indices = local_overlap[shell][:, 0].astype(int)
+
+                # BUGFIX: If there is only one basin in a shell, we base whether it is
+                # a core or lone-pair on its distance
+                if len(local_indices) == 1:
+                    if dist <= core_dist_tol:
+                        cores[local_indices[0]] = atom_idx
+                        continue
+                    else:
+                        lone_pairs[local_indices[0]] = atom_idx
+                        continue
+
                 # if all members of this shell are almost entirely owned by this
                 # atom, we have a core
                 if np.all(overlap_fracs > 1.0 - core_tol):
