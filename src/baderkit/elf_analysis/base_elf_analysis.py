@@ -34,8 +34,8 @@ class BaseElfAnalysis(BaseAnalysis):
 
         """
         super().__init__(
-            charge_grid,
-            reference_grid,
+            charge_grid=charge_grid,
+            reference_grid=reference_grid,
             **kwargs
             )
 
