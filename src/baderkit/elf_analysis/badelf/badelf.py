@@ -594,12 +594,7 @@ class Badelf(BaseElfAnalysis):
             The number of nna electrons for the full structure formula.
 
         """
-        if self._nnas_per_formula is None:
-            nnas_per_unit = 0
-            for i in range(len(self.structure), len(self.nna_structure)):
-                nnas_per_unit += self.atom_charges[i]
-            self._nnas_per_formula = nnas_per_unit
-        return round(self._nnas_per_formula, 10)
+        return self.labeler.nnas_per_formula
 
     @property
     def nnas_per_reduced_formula(self) -> float:
@@ -611,15 +606,7 @@ class Badelf(BaseElfAnalysis):
             The number of electrons in the reduced formula of the structure.
 
         """
-        if self._nnas_per_reduced_formula is None:
-            (
-                _,
-                formula_reduction_factor,
-            ) = self.structure.composition.get_reduced_composition_and_factor()
-            self._nnas_per_reduced_formula = (
-                self.nnas_per_formula / formula_reduction_factor
-            )
-        return round(self._nnas_per_reduced_formula, 10)
+        return self.labeler.nnas_per_reduced_formula
 
     @property
     def nna_formula(self) -> str:

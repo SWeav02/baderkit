@@ -9,11 +9,15 @@ badelf = Badelf.from_vasp(
     pseudopotential_filename="POTCAR"
     )
 
+electride_structure = badelf.nna_structure
+electrides_per_formula = badelf.nnas_per_reduced_formula
+electride_dimensionality = badelf.nna_dimensionality
+
 # structure including electride site
-print(f"Electride Structure: {badelf.nna_structure}")
+print(f"Electride Structure: {electride_structure}")
 
 # print electron counts
-print(f"Electron Count: {badelf.nnas_per_reduced_formula}")
+print(f"Electron Count: {electrides_per_formula}")
 
 # print dimensionality
-print(f"Electride Dimensionality: {badelf.nna_dimensionality}")
+print(f"Electride Dimensionality: {electride_dimensionality}")

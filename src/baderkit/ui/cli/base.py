@@ -567,26 +567,12 @@ def badelf(
         help="The method to use for bader portions of the algorithm",
         case_sensitive=False,
     ),
-    # Currently only vasp is supported for badelf
-    # format: Format = typer.Option(
-    #     None,
-    #     "--format",
-    #     "-f",
-    #     help="The format of the files to read in",
-    #     case_sensitive=False,
-    # ),
     print: BadelfPrintOptions = typer.Option(
         None,
         "--print",
         "-p",
         help="Optional printing of atom basins",
         case_sensitive=False,
-    ),
-    spin: bool = typer.Option(
-        False,
-        "--spin",
-        "-s",
-        help="Whether to separate the spin-up/spin-down systems",
     ),
     indices: str = typer.Argument(
         default="",
@@ -597,10 +583,8 @@ def badelf(
     Runs a BadELF analysis on the provided files. Currently only VASP files are
     accepted.
     """
-    if not spin:
-        from baderkit.elf_analysis import Badelf
-    else:
-        from baderkit.elf_analysis import SpinBadelf as Badelf
+
+    from baderkit.elf_analysis import Badelf
 
     # instance bader
     badelf = Badelf.from_vasp(
@@ -662,26 +646,12 @@ def label(
         help="The bader method to use for partitioning the ELF",
         case_sensitive=False,
     ),
-    # Currently only vasp is supported for badelf
-    # format: Format = typer.Option(
-    #     None,
-    #     "--format",
-    #     "-f",
-    #     help="The format of the files to read in",
-    #     case_sensitive=False,
-    # ),
     print: LabelerPrintOptions = typer.Option(
         None,
         "--print",
         "-p",
         help="Optional printing of chemical feature volumes",
         case_sensitive=False,
-    ),
-    spin: bool = typer.Option(
-        False,
-        "--spin",
-        "-s",
-        help="Whether to separate the spin-up/spin-down systems",
     ),
     features: str = typer.Argument(
         default="",
@@ -692,10 +662,8 @@ def label(
     Labels the ELF features in the provided files. Currently only VASP files are
     accepted.
     """
-    if not spin:
-        from baderkit.elf_analysis import ElfLabeler
-    else:
-        from baderkit.elf_analysis import SpinElfLabeler as ElfLabeler
+
+    from baderkit.elf_analysis import ElfLabeler
 
     # instance bader
     labeler = ElfLabeler.from_vasp(
