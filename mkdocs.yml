@@ -99,14 +99,14 @@ nav:
       - 'Bader: Oxidation States': tutorials/vasp/bader.md
       - 'BadELF: Electride Charges': tutorials/vasp/badelf.md
       - 'BadELF: Spin Separated Charge': tutorials/vasp/badelf_spin.md
-      - 'Elf Labeler: Covalent Bonds': tutorials/vasp/elf_labeler.md
+      - 'Elf Labeler: Bond Order': tutorials/vasp/bond_order.md
       - 'Basin Overlap: Polarization Index': tutorials/vasp/basin_overlap.md
       - 'Elf Radii: Ionic Radii': tutorials/vasp/elf_radii.md
     - QE:
       - 'Bader: Oxidation States': tutorials/qe/bader.md
       - 'BadELF: Electride Charges': tutorials/qe/badelf.md
       - 'BadELF: Spin Separated Charge': tutorials/qe/badelf_spin.md
-      - 'Elf Labeler: Covalent Bonds': tutorials/qe/elf_labeler.md
+      - 'Elf Labeler: Bond Order': tutorials/qe/bond_order.md
       - 'Basin Overlap: Polarization Index': tutorials/qe/basin_overlap.md
       - 'Elf Radii: Ionic Radii': tutorials/qe/elf_radii.md
     - Other:

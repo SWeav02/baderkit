@@ -100,8 +100,8 @@ It is common for systems to have differing ELF topologies in the spin-up and spi
     
     You should see logging information as BaderKit runs, then outputs similar to the following:
         ```
-        Spin-up metal bond population: 5.1593341108
-        Spin-down metal bond population: 2.8406653633
+        Spin-up metal bond population: 1.336115618
+        Spin-down metal bond population: 0.9357502685
         ```
 
 === "Command Line"

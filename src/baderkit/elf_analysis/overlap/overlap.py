@@ -9,6 +9,7 @@ from numpy.typing import NDArray
 from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.bader.bader import Bader
 from baderkit.global_numba.coord_env import is_along_bond_all
+from baderkit.global_numba.basic import merge_frac_coords_weighted
 from baderkit.toolkit import Grid, Structure
 
 from .overlap_numba import (
@@ -59,6 +60,7 @@ class BasinOverlap(BaseElfAnalysis):
         "overlap_charges",
         "overlap_volumes",
         "overlap_labels",
+        "local_maxima_center_frac",
         "bond_fractions",
         "volume_bond_fractions",
         "qtaim_overlap_groups",
@@ -171,6 +173,39 @@ class BasinOverlap(BaseElfAnalysis):
         return self.local_bader.maxima_frac
 
     @property
+    def local_maxima_center_frac(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The fractional coordinates of the "center of mass" for each maximum in
+            the localization function grid. This is used when determining if a basin
+            is along a bond, and is particularly necessary for ring shaped covalent bonds.
+
+        """
+        if self._local_maxima_center_frac is None:
+            weighted_frac = []
+            for coords in self.local_bader.maxima_betti_groups:
+                # get values at coords
+                values = self.reference_grid.total[
+                    coords[:,0],
+                    coords[:,1],
+                    coords[:,2],
+                    ]
+                frac_coords = coords / self.reference_grid.shape
+
+                weighted_frac.append(
+                    merge_frac_coords_weighted(
+                        frac_coords=frac_coords,
+                        values=values,
+                        )
+                    )
+            self._local_maxima_center_frac = np.array(weighted_frac)
+
+        return self._local_maxima_center_frac
+
+    @property
     def qtaim_maxima_frac(self) -> NDArray[np.float64]:
         """
 
@@ -190,7 +225,7 @@ class BasinOverlap(BaseElfAnalysis):
     def along_bond(self):
         if self._along_bond is None:
             self._along_bond, _ = is_along_bond_all(
-                feature_frac_coords=self.local_maxima_frac,
+                feature_frac_coords=self.local_maxima_center_frac,
                 atom_frac_coords=self.reference_grid.structure.frac_coords,
                 atom_cart_coords=self.reference_grid.structure.cart_coords,
                 matrix=self.reference_grid.matrix,
