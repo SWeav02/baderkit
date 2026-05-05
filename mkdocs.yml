@@ -95,14 +95,22 @@ nav:
       - BaderPlotter: api_reference/plotting/bader.md
   - Tutorials: 
     - tutorials/index.md
-    - 'Bader: Oxidation States': tutorials/bader.md
-    - 'Bader: Cube Files': tutorials/bader_cube.md
-    - 'Bader: Other File Formats': tutorials/bader_other.md
-    - 'BadELF: Electride Charges': tutorials/badelf.md
-    - 'BadELF: Spin Separated Charge': tutorials/badelf_spin.md
-    - 'Elf Labeler: Covalent Bonds': tutorials/elf_labeler.md
-    - 'Basin Overlap: Polarization Index': tutorials/basin_overlap.md
-    - 'Elf Radii: Ionic Radii': tutorials/elf_radii.md
+    - VASP:
+      - 'Bader: Oxidation States': tutorials/vasp/bader.md
+      - 'BadELF: Electride Charges': tutorials/vasp/badelf.md
+      - 'BadELF: Spin Separated Charge': tutorials/vasp/badelf_spin.md
+      - 'Elf Labeler: Covalent Bonds': tutorials/vasp/elf_labeler.md
+      - 'Basin Overlap: Polarization Index': tutorials/vasp/basin_overlap.md
+      - 'Elf Radii: Ionic Radii': tutorials/vasp/elf_radii.md
+    - QE:
+      - 'Bader: Oxidation States': tutorials/qe/bader.md
+      - 'BadELF: Electride Charges': tutorials/qe/badelf.md
+      - 'BadELF: Spin Separated Charge': tutorials/qe/badelf_spin.md
+      - 'Elf Labeler: Covalent Bonds': tutorials/qe/elf_labeler.md
+      - 'Basin Overlap: Polarization Index': tutorials/qe/basin_overlap.md
+      - 'Elf Radii: Ionic Radii': tutorials/qe/elf_radii.md
+    - Other:
+      - 'Bader: Custom File Formats': tutorials/other/other_formats.md
   - Citing: citing.md
 
 plugins:
