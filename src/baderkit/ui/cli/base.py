@@ -137,9 +137,7 @@ def bader(
     ),
 ):
     """
-    Runs a bader analysis on the provided files. File formats are automatically
-    parsed based on the name. Current accepted files include VASP's CHGCAR/ELFCAR
-    or .cube files.
+    Runs a bader analysis on the provided files and writes the results to `bader.json`
     """
     from baderkit import Bader
 
@@ -240,14 +238,13 @@ def badelf(
     ),
 ):
     """
-    Runs a BadELF analysis on the provided files. Currently only VASP files are
-    accepted.
+    Runs a BadELF analysis on the provided files and writes the results to `badelf.json`
     """
 
     from baderkit.elf_analysis import Badelf
 
     # instance bader
-    badelf = Badelf.from_vasp(
+    badelf = Badelf.from_dynamic(
         charge_filename=charge_file,
         total_charge_filename=total_charge_file,
         reference_filename=reference_file,
@@ -319,14 +316,14 @@ def label(
     ),
 ):
     """
-    Labels the ELF features in the provided files. Currently only VASP files are
-    accepted.
+    Labels the ELF features in the provided files and writes the results to
+    `labeler.json`
     """
 
     from baderkit.elf_analysis import ElfLabeler
 
     # instance bader
-    labeler = ElfLabeler.from_vasp(
+    labeler = ElfLabeler.from_dynamic(
         charge_filename=charge_file,
         total_charge_filename=total_charge_file,
         reference_filename=reference_file,
@@ -334,7 +331,7 @@ def label(
         # format=format,
     )
     # write summary
-    labeler.write_json("label.json")
+    labeler.write_json("labeler.json")
 
     labeler.label_structure.to("POSCAR_labeled", "POSCAR")
 
@@ -372,14 +369,13 @@ def overlap(
     ),
 ):
     """
-    Calculates the overlap between the ELF and QTAIM basins and writes the
-    results to an `overlap.json` file.
+    Calculates the overlap between the ELF and QTAIM basins and writes the results to `overlap.json`.
     """
 
     from baderkit.elf_analysis import BasinOverlap
 
     # instance bader
-    overlap = BasinOverlap.from_vasp(
+    overlap = BasinOverlap.from_dynamic(
         charge_filename=charge_file,
         total_charge_filename=total_charge_file,
         reference_filename=reference_file,
@@ -419,14 +415,13 @@ def radii(
         )
 ):
     """
-    Calculates the ionic/covalent radii for each atom in the system and writes
-    the results to an `radii.json` file.
+    Calculates the ionic/covalent radii for each atom in the system and writes the results to `radii.json`.
     """
 
     from baderkit.elf_analysis import ElfRadii
 
     # instance bader
-    radii = ElfRadii.from_vasp(
+    radii = ElfRadii.from_dynamic(
         charge_filename=charge_file,
         total_charge_filename=total_charge_file,
         reference_filename=reference_file,
@@ -473,7 +468,7 @@ def sum(
     ),
 ):
     """
-    A helper function for summing two grids.
+    Sums two grid files.
     """
     from baderkit import Grid
 
@@ -535,8 +530,7 @@ def regrid(
     ),
 ):
     """
-    A helper function for generating a grid file at a different voxel resolution.
-    Particularly useful for creating files with lower resolution for easier plotting.
+    Creates a new grid file with a different voxel resolution. This is particularly useful for creating files with lower resolution for easier plotting. 
     """
     from baderkit import Grid
 
@@ -594,8 +588,7 @@ def split(
     ),
 ):
     """
-    A helper function for splitting a spin polarized charge density or ELF to its
-    spin-up and spin-down components.
+    Splits a spin polarized charge density or ELF to its spin-up and spin-down components.
     """
     from baderkit import Grid
 
@@ -684,8 +677,8 @@ def gui():
         import qtpy
     except:
         logging.warning(
-            'Please run `pip install baderkit\[gui]` (or `pip install "baderkit\[gui]"` depending on the OS/shell).'
-        )
+    r'Please run `pip install baderkit\[gui]` (or `pip install "baderkit\[gui]"` depending on the OS/shell).'
+)
         return
 
     from baderkit.ui.gui.main import run_app
