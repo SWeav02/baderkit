@@ -20,14 +20,28 @@ This tutorial provides a basic example of calculating oxidation states using VAS
 
     ```
     Global Parameters
-    LAECHG = True         # Write AECCAR files
-    EDIFF  = 1E-06        # SCF energy convergence, in eV
-    ENCUT  = 520
+    ISTART =  1            (Read existing wavefunction, if there)
+    ISPIN  =  1            (Non-Spin polarised DFT)
+    LREAL  = AUTO          (Projection operators: automatic)
+    LWAVE  = .TRUE.        (Write WAVECAR or not)
+    LCHARG = .TRUE.        (Write CHGCAR or not)
 
-    Grid Size             # Moderately grid density
+    Static Calculation
+    ISMEAR =  0            (gaussian smearing method)
+    SIGMA  =  0.05         (please check the width of the smearing)
+    NELM   =  60           (Max electronic SCF steps)
+    EDIFF  =  1E-06        (SCF energy convergence, in eV)
+
+    LAECHG = .TRUE.        (Activate AECCAR files)
+    LELF   = .TRUE.        (Activate ELF)
+
+    Grid Size              (Must set fine grid to be the same)
     NGX    = 30
     NGY    = 30
     NGZ    = 30
+    NGXF    = 30
+    NGYF    = 30
+    NGZF    = 30
     ```
 
 3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary.
@@ -76,8 +90,8 @@ This tutorial provides a basic example of calculating oxidation states using VAS
         print(bader.oxidation_states)
         ```
     
-    You should see logging information as BaderKit runs, then the oxidation states of each atom in the structure:
-        `array([ 0.87331308, -0.8732974 ])`
+        You should see logging information as BaderKit runs, then the oxidation states of each atom in the structure:
+            `array([ 0.87331308, -0.8732974 ])`
 
 === "Command Line"
 

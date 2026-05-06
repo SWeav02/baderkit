@@ -82,24 +82,24 @@ The `Badelf` class includes several methods for calculating oxidation states in 
         print(f"Electride Dimensionality: {electride_dimensionality}")
         ```
     
-    You should see logging information as BaderKit runs, then outputs similar to the following:
-        ```
-        Electride Structure: Full Formula (Xmc1 Ca2 N1)
-        Reduced Formula: XmcCa2N
-        abc   :   6.743135   6.743134   6.743135
-        angles:  30.925110  30.925113  30.925113
-        pbc   :       True       True       True
-        Sites (4)
-        #  SP            a         b         c  label
-        ---  -----  --------  --------  --------  -------
-        0  Ca     0.731317  0.731317  0.731317  Ca
-        1  Ca     0.268683  0.268683  0.268683  Ca
-        2  N      0         0         0         N
-        3  Xmc0+  0.5       0.5       0.5       Xmc
-        Electron Count: 1.0358152597
-        Electride Dimensionality: 2
+        You should see logging information as BaderKit runs, then outputs similar to the following:
+            ```
+            Electride Structure: Full Formula (Xmc1 Ca2 N1)
+            Reduced Formula: XmcCa2N
+            abc   :   6.743135   6.743134   6.743135
+            angles:  30.925110  30.925113  30.925113
+            pbc   :       True       True       True
+            Sites (4)
+            #  SP            a         b         c  label
+            ---  -----  --------  --------  --------  -------
+            0  Ca     0.731317  0.731317  0.731317  Ca
+            1  Ca     0.268683  0.268683  0.268683  Ca
+            2  N      0         0         0         N
+            3  Xmc0+  0.5       0.5       0.5       Xmc
+            Electron Count: 1.0358152597
+            Electride Dimensionality: 2
 
-        ```
+            ```
 
 === "Command Line"
 
@@ -121,7 +121,7 @@ And that's it! Try playing around with what else the `Badelf` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/electrides_vasp.py" download>electrides_vasp.py</a>
+Tutorial Script: <a href="/tutorial_scripts/vasp/electride_charge.py" download>electride_charge.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/Ca2N.zip" download>Ca2N.zip</a>
 

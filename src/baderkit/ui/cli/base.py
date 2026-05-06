@@ -33,96 +33,6 @@ def version():
 
     print(f"Installed version: v{baderkit.__version__}")
 
-
-@baderkit_app.command()
-def download_examples(
-    output_path: Path = typer.Option(
-        Path("baderkit_examples"),
-        "--output-path",
-        "-o",
-        help="The directory to write the example files to",
-    ),
-    unzip: bool = typer.Option(
-        False,
-        "--unzip",
-        "-z",
-        help="Unzip after download and delete the zip file.",
-    ),
-):
-    """
-    Downloads a zipped file with examples of various applications.
-    """
-    import logging
-    import sys
-    import urllib.request
-    from pathlib import Path
-
-    def reporthook(blocknum, blocksize, totalsize):
-        readsofar = blocknum * blocksize
-        if totalsize > 0:
-            percent = readsofar * 1e2 / totalsize
-            sys.stdout.write(f"\rDownloading... {percent:5.1f}%")
-            sys.stdout.flush()
-
-    base_url = "https://github.com/SWeav02/baderkit/releases/download/0.9.0/"
-    files = ["H2O", "Ag", "B", "Ca2N", "NaCl"]
-
-    output_path = Path(output_path)
-
-    # --------------------
-    # Download step
-    # --------------------
-    for file in files:
-        path = output_path / file
-        zip_path = path.with_suffix(".zip")
-
-        # Skip download if either already exists
-        if path.exists():
-            logging.info(f"{path} already exists, skipping download")
-            continue
-
-        if zip_path.exists():
-            logging.info(f"{zip_path.name} already exists, skipping download")
-            continue
-
-        logging.info(f"Downloading {zip_path.name}...")
-        url = base_url + file + ".zip"
-
-        zip_path.parent.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(url, zip_path, reporthook)
-        print()  # newline after progress bar
-
-    # --------------------
-    # Unzip step
-    # --------------------
-    if unzip:
-        import zipfile
-
-        for file in files:
-            path = output_path / file
-            zip_path = path.with_suffix(".zip")
-
-            # Skip if already unzipped
-            if path.exists():
-                logging.info(f"{path} already unzipped, skipping")
-                continue
-
-            # Skip if zip missing
-            if not zip_path.exists():
-                logging.info(f"{zip_path.name} not found, skipping unzip")
-                continue
-
-            logging.info(f"Unzipping {zip_path.name}...")
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(path)
-
-            logging.info(f"Removing {zip_path.name}...")
-            zip_path.unlink()
-
-    else:
-        logging.info(f"Downloaded files to {output_path}")
-
-
 class PrintOptions(str, Enum):
     all_atoms = "all_atoms"
     sel_atoms = "sel_atoms"
@@ -148,6 +58,9 @@ def float_or_bool(value: str):
     except ValueError:
         raise typer.BadParameter("Value must be a float or a boolean.")
 
+###############################################################################
+# Main Method Commands
+###############################################################################
 
 @baderkit_app.command(no_args_is_help=True)
 def bader(
@@ -269,7 +182,263 @@ def bader(
     elif print == "sel_spec":
         for species in indices:
             bader.write_species_volume(species=species)
+            
 
+class BadelfPrintOptions(str, Enum):
+    all_atoms = "all_atoms"
+    sel_atoms = "sel_atoms"
+    sum_atoms = "sum_atoms"
+    sel_spec = "sel_spec"
+
+
+class BadelfMethod(str, Enum):
+    badelf = "badelf"
+    voronelf = "voronelf"
+    zero_flux = "zero-flux"
+
+
+@baderkit_app.command(no_args_is_help=True)
+def badelf(
+    charge_file: Path = typer.Argument(
+        default=...,
+        help="The path to the charge density file",
+    ),
+    reference_file: Path = typer.Argument(
+        default=...,
+        help="The path to the reference file",
+    ),
+    total_charge_file: Path = typer.Option(
+        None,
+        "--total-charge-file",
+        "-tot",
+        help="The path to the total charge file",
+    ),
+    method: BadelfMethod = typer.Option(
+        BadelfMethod.zero_flux,
+        "--method",
+        "-m",
+        help="The method to use for separating atoms and electrides",
+        case_sensitive=False,
+    ),
+    bader_method: Method = typer.Option(
+        Method.default,
+        "--bader-method",
+        "-bm",
+        help="The method to use for bader portions of the algorithm",
+        case_sensitive=False,
+    ),
+    print: BadelfPrintOptions = typer.Option(
+        None,
+        "--print",
+        "-p",
+        help="Optional printing of atom basins",
+        case_sensitive=False,
+    ),
+    indices: str = typer.Argument(
+        default="",
+        help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins [1,2,3]`",
+    ),
+):
+    """
+    Runs a BadELF analysis on the provided files. Currently only VASP files are
+    accepted.
+    """
+
+    from baderkit.elf_analysis import Badelf
+
+    # instance bader
+    badelf = Badelf.from_vasp(
+        charge_filename=charge_file,
+        total_charge_filename=total_charge_file,
+        reference_filename=reference_file,
+        partition_method=method,
+        elf_labeler={"method": bader_method},
+        # format=format,
+    )
+    # write summary
+    badelf.write_json("badelf.json")
+
+    # convert indices from string to list
+    try:
+        indices = [int(i) for i in indices.strip("[] ").split(",")]
+    except:
+        indices = [i.strip() for i in indices.strip("[] ").split(",")]
+
+    # write basins
+    if indices is None:
+        indices = []
+    if print == "all_atoms":
+        badelf.write_all_atom_volumes()
+    elif print == "sel_atoms":
+        badelf.write_atom_volumes(atom_indices=indices)
+    elif print == "sum_atoms":
+        badelf.write_atom_volumes_sum(atom_indices=indices)
+    elif print == "sel_spec":
+        for species in indices:
+            badelf.write_species_volume(species=species)
+
+
+class LabelerPrintOptions(str, Enum):
+    all_atoms = "all"
+    sel_atoms = "sel"
+
+
+@baderkit_app.command(no_args_is_help=True)
+def label(
+    charge_file: Path = typer.Argument(
+        default=...,
+        help="The path to the charge density file",
+    ),
+    reference_file: Path = typer.Argument(
+        default=...,
+        help="The path to the reference file",
+    ),
+    total_charge_file: Path = typer.Option(
+        None,
+        "--total-charge-file",
+        "-tot",
+        help="The path to the total charge file",
+    ),
+    method: Method = typer.Option(
+        Method.default,
+        "--method",
+        "-m",
+        help="The bader method to use for partitioning the ELF",
+        case_sensitive=False,
+    ),
+    print: LabelerPrintOptions = typer.Option(
+        None,
+        "--print",
+        "-p",
+        help="Optional printing of chemical feature volumes",
+        case_sensitive=False,
+    ),
+    features: str = typer.Argument(
+        default="",
+        help="The feature labels used for print method. Can be added at the end of the call. For example: `baderkit label CHGCAR ELFCAR -p sel_feat metallic`",
+    ),
+):
+    """
+    Labels the ELF features in the provided files. Currently only VASP files are
+    accepted.
+    """
+
+    from baderkit.elf_analysis import ElfLabeler
+
+    # instance bader
+    labeler = ElfLabeler.from_vasp(
+        charge_filename=charge_file,
+        total_charge_filename=total_charge_file,
+        reference_filename=reference_file,
+        method=method,
+        # format=format,
+    )
+    # write summary
+    labeler.write_json("label.json")
+
+    labeler.label_structure.to("POSCAR_labeled", "POSCAR")
+
+    # convert indices from string to list
+    # write basins
+    if features is None:
+        features = "unknown"
+    if print == "all":
+        labeler.write_all_features()
+    elif print == "sel":
+        labeler.write_features_by_type(features)
+
+@baderkit_app.command(no_args_is_help=True)
+def overlap(
+    charge_file: Path = typer.Argument(
+        default=...,
+        help="The path to the charge density file",
+    ),
+    reference_file: Path = typer.Argument(
+        default=...,
+        help="The path to the reference file",
+    ),
+    total_charge_file: Path = typer.Option(
+        None,
+        "--total-charge-file",
+        "-tot",
+        help="The path to the total charge file",
+    ),
+    method: Method = typer.Option(
+        Method.default,
+        "--method",
+        "-m",
+        help="The bader method to use for partitioning the ELF",
+        case_sensitive=False,
+    ),
+):
+    """
+    Calculates the overlap between the ELF and QTAIM basins and writes the
+    results to an `overlap.json` file.
+    """
+
+    from baderkit.elf_analysis import BasinOverlap
+
+    # instance bader
+    overlap = BasinOverlap.from_vasp(
+        charge_filename=charge_file,
+        total_charge_filename=total_charge_file,
+        reference_filename=reference_file,
+        method=method,
+    )
+    # write summary
+    overlap.write_json("overlap.json")
+
+@baderkit_app.command(no_args_is_help=True)
+def radii(
+    charge_file: Path = typer.Argument(
+        default=...,
+        help="The path to the charge density file",
+    ),
+    reference_file: Path = typer.Argument(
+        default=...,
+        help="The path to the reference file",
+    ),
+    total_charge_file: Path = typer.Option(
+        None,
+        "--total-charge-file",
+        "-tot",
+        help="The path to the total charge file",
+    ),
+    method: Method = typer.Option(
+        Method.default,
+        "--method",
+        "-m",
+        help="The bader method to use for partitioning the ELF",
+        case_sensitive=False,
+    ),
+    include_nnas: bool = typer.Option(
+        False,
+        "--include-nnas",
+        "-nna",
+        help="Whether or not to treat non-nuclear attractors (metals, electrides, etc.) as quasi-atoms."
+        )
+):
+    """
+    Calculates the ionic/covalent radii for each atom in the system and writes
+    the results to an `radii.json` file.
+    """
+
+    from baderkit.elf_analysis import ElfRadii
+
+    # instance bader
+    radii = ElfRadii.from_vasp(
+        charge_filename=charge_file,
+        total_charge_filename=total_charge_file,
+        reference_filename=reference_file,
+        method=method,
+        include_nnas=include_nnas,
+    )
+    # write summary
+    radii.write_json("radii.json")
+
+###############################################################################
+# Utility Commands
+###############################################################################
 
 @baderkit_app.command(no_args_is_help=True)
 def sum(
@@ -522,167 +691,3 @@ def gui():
     from baderkit.ui.gui.main import run_app
 
     run_app()
-
-
-class BadelfPrintOptions(str, Enum):
-    all_atoms = "all_atoms"
-    sel_atoms = "sel_atoms"
-    sum_atoms = "sum_atoms"
-    sel_spec = "sel_spec"
-
-
-class BadelfMethod(str, Enum):
-    badelf = "badelf"
-    voronelf = "voronelf"
-    zero_flux = "zero-flux"
-
-
-@baderkit_app.command(no_args_is_help=True)
-def badelf(
-    charge_file: Path = typer.Argument(
-        default=...,
-        help="The path to the charge density file",
-    ),
-    reference_file: Path = typer.Argument(
-        default=...,
-        help="The path to the reference file",
-    ),
-    total_charge_file: Path = typer.Option(
-        None,
-        "--total-charge-file",
-        "-tot",
-        help="The path to the total charge file",
-    ),
-    method: BadelfMethod = typer.Option(
-        BadelfMethod.zero_flux,
-        "--method",
-        "-m",
-        help="The method to use for separating atoms and electrides",
-        case_sensitive=False,
-    ),
-    bader_method: Method = typer.Option(
-        Method.default,
-        "--bader-method",
-        "-bm",
-        help="The method to use for bader portions of the algorithm",
-        case_sensitive=False,
-    ),
-    print: BadelfPrintOptions = typer.Option(
-        None,
-        "--print",
-        "-p",
-        help="Optional printing of atom basins",
-        case_sensitive=False,
-    ),
-    indices: str = typer.Argument(
-        default="",
-        help="The indices used for print method. Can be added at the end of the call. For example: `baderkit run CHGCAR -p sel_basins [1,2,3]`",
-    ),
-):
-    """
-    Runs a BadELF analysis on the provided files. Currently only VASP files are
-    accepted.
-    """
-
-    from baderkit.elf_analysis import Badelf
-
-    # instance bader
-    badelf = Badelf.from_vasp(
-        charge_filename=charge_file,
-        total_charge_filename=total_charge_file,
-        reference_filename=reference_file,
-        partition_method=method,
-        elf_labeler={"method": bader_method},
-        # format=format,
-    )
-    # write summary
-    badelf.write_json("badelf.json")
-
-    # convert indices from string to list
-    try:
-        indices = [int(i) for i in indices.strip("[] ").split(",")]
-    except:
-        indices = [i.strip() for i in indices.strip("[] ").split(",")]
-
-    # write basins
-    if indices is None:
-        indices = []
-    if print == "all_atoms":
-        badelf.write_all_atom_volumes()
-    elif print == "sel_atoms":
-        badelf.write_atom_volumes(atom_indices=indices)
-    elif print == "sum_atoms":
-        badelf.write_atom_volumes_sum(atom_indices=indices)
-    elif print == "sel_spec":
-        for species in indices:
-            badelf.write_species_volume(species=species)
-
-
-class LabelerPrintOptions(str, Enum):
-    all_atoms = "all"
-    sel_atoms = "sel"
-
-
-@baderkit_app.command(no_args_is_help=True)
-def label(
-    charge_file: Path = typer.Argument(
-        default=...,
-        help="The path to the charge density file",
-    ),
-    reference_file: Path = typer.Argument(
-        default=...,
-        help="The path to the reference file",
-    ),
-    total_charge_file: Path = typer.Option(
-        None,
-        "--total-charge-file",
-        "-tot",
-        help="The path to the total charge file",
-    ),
-    method: Method = typer.Option(
-        Method.default,
-        "--method",
-        "-m",
-        help="The bader method to use for partitioning the ELF",
-        case_sensitive=False,
-    ),
-    print: LabelerPrintOptions = typer.Option(
-        None,
-        "--print",
-        "-p",
-        help="Optional printing of chemical feature volumes",
-        case_sensitive=False,
-    ),
-    features: str = typer.Argument(
-        default="",
-        help="The feature labels used for print method. Can be added at the end of the call. For example: `baderkit label CHGCAR ELFCAR -p sel_feat metallic`",
-    ),
-):
-    """
-    Labels the ELF features in the provided files. Currently only VASP files are
-    accepted.
-    """
-
-    from baderkit.elf_analysis import ElfLabeler
-
-    # instance bader
-    labeler = ElfLabeler.from_vasp(
-        charge_filename=charge_file,
-        total_charge_filename=total_charge_file,
-        reference_filename=reference_file,
-        method=method,
-        # format=format,
-    )
-    # write summary
-    labeler.write_json("label.json")
-
-    labeler.label_structure.to("POSCAR_labeled", "POSCAR")
-
-    # convert indices from string to list
-    # write basins
-    if features is None:
-        features = "unknown"
-    if print == "all":
-        labeler.write_all_features()
-    elif print == "sel":
-        labeler.write_features_by_type(features)

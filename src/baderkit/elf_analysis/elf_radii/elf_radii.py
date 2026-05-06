@@ -35,11 +35,12 @@ class ElfRadii(BaseElfAnalysis):
     _method_kwargs = ["include_nnas", "cnn_kwargs"]
 
     _radii_results = [
-        "bonding_pairs",
-        "all_radii",
+        "species",
         "atom_radii",
-        "all_bond_types",
         "atom_bond_types",
+        "all_radii",
+        "all_bond_types",
+        "bonding_pairs",
     ]
 
     _nonsummary_results = [
@@ -217,6 +218,19 @@ class ElfRadii(BaseElfAnalysis):
                     structure.append("x", frac)
             self._structure = structure
         return self._structure
+    
+    @property
+    def species(self) -> list[str]:
+        """
+
+        Returns
+        -------
+        list[str]
+            The species of each atom/dummy atom in the nna structure. Covalent
+            and metallic features are not included.
+
+        """
+        return self.labeler.species
 
     @property
     def local_basin_labels(self) -> NDArray[int]:

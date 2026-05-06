@@ -338,7 +338,7 @@ class Badelf(BaseElfAnalysis):
             and metallic features are not included.
 
         """
-        return [i.specie.symbol for i in self.labeler.nna_structure]
+        return self.labeler.species
 
     ###########################################################################
     # Properties

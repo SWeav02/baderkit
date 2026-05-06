@@ -49,6 +49,7 @@ class ElfLabeler(BaseElfAnalysis):
         "nna_formula",
         "nnas_per_formula",
         "nnas_per_reduced_formula",
+        "species",
     ]
 
     _nonsummary_results = [
@@ -409,6 +410,19 @@ class ElfLabeler(BaseElfAnalysis):
                 self.nnas_per_formula / formula_reduction_factor
             )
         return round(self._nnas_per_reduced_formula, 10)
+    
+    @property
+    def species(self) -> list[str]:
+        """
+
+        Returns
+        -------
+        list[str]
+            The species of each atom/dummy atom in the nna structure. Covalent
+            and metallic features are not included.
+
+        """
+        return [i.specie.symbol for i in self.nna_structure]
 
     def _label_basins(self):
         """

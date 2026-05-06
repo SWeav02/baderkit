@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 from baderkit import Grid
-from baderkit.elf_analysis import ElfLabeler
+from baderkit.elf_analysis import ElfRadii
 
 # generate CHGCAR_sum file
 core_grid = Grid.from_vasp("AECCAR0")
@@ -9,20 +9,18 @@ val_grid = Grid.from_vasp("AECCAR2")
 total = core_grid.linear_add(val_grid)
 total.write_vasp("CHGCAR_sum")
 
-# load labelers
-labeler = ElfLabeler.from_vasp(
+# load radii method
+elf_radii = ElfRadii.from_vasp(
     charge_filename="CHGCAR",
     reference_filename="ELFCAR",
     total_charge_filename="CHGCAR_sum",
     pseudopotential_filename="POTCAR"
     )
 
-# get chemical features and each basins charge
-features = labeler.basin_types
-charges = labeler.elf_bader.basin_charges
+# get the radius of Na
+elf_radius = elf_radii.atom_radii[0]
+shannon_radius = elf_radii.structure[0].specie.average_ionic_radius
 
-# get index of covalent bond
-covalent_idx = features.index("covalent bond")
-
-# print bond order
-print(f"Bond Order: {charges[covalent_idx]/2}")
+# print results
+print(f"ELF Radius: {round(elf_radius,2)} ang")
+print(f"Shannon Radius: {shannon_radius}")

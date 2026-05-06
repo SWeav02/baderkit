@@ -43,6 +43,7 @@ class BasinOverlap(BaseElfAnalysis):
         "along_bond",
         "attractor_shapes",
         "attractor_depths",
+        "significant_local_contributors",
     ]
 
     _atom_results = [
@@ -252,6 +253,25 @@ class BasinOverlap(BaseElfAnalysis):
             # non-zero entries in each row of our overlap_matrix
             self._atomicities = np.array([len(i) for i in self.bond_fractions])
         return self._atomicities
+    
+    @property
+    def significant_local_contributors(self) -> list[NDArray[int]]:
+        """
+
+        Returns
+        -------
+        list[NDArray[int]]
+            For each basin in the localization function, this property gives
+            the indices of the atoms that overlap to a significant degree (>5%).
+
+        """
+        
+        if self._significant_local_contributors is None:
+            contributors = []
+            for i in self.bond_fractions:
+                contributors.append(i[:,0].astype(int))
+            self._significant_local_contributors = contributors
+        return self._significant_local_contributors
 
     @property
     def overlap_table(self) -> NDArray[np.int64]:
