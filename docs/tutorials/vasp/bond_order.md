@@ -1,70 +1,49 @@
-The `ElfLabeler` class can be used to automatically identify various chemical features in a system. This can be useful for a variety of automation task. Here we demonstrate its use for locating the covalent bonds in the ethane, ethene, and ethyne series. We also show how it can be used to calculate the bond order in these systems.
+The `ElfLabeler` class can be used to automatically identify various chemical features in a system. This can be useful for a variety of automation task. Here we demonstrate its use for locating the covalent bonds in the the CO<sub>2</sub> molecules of dry ice. We also demonstrate how to calculate the exact and formal bond-order of the bond.
 
 ## VASP
 
-1. Create POSCAR files
+1. Create the CO<sub>2</sub> POSCAR file.
 
-    === "Ethane"
-        ```
-        Ca2 N1
-        1.0
-        3.537074 0.051133 5.740763
-        1.665193 3.120999 5.740763
-        0.083858 0.051133 6.742420
-        Ca N
-        2 1
-        direct
-        0.731317 0.731317 0.731317 Ca
-        0.268683 0.268683 0.268683 Ca
-        0.000000 0.000000 -0.000000 N
-        ```
+    ```
+    C4 O8
+    1.0
+    5.4970732799999986    0.0000000000000000    0.0000000000000003
+    -0.0000000000000003    5.4970732799999986    0.0000000000000003
+    0.0000000000000000    0.0000000000000000    5.4970732799999986
+    C O
+    4 8
+    direct
+    0.0000000000000000    0.0000000000000000    0.0000000000000000 C
+    0.5000000000000000    0.0000000000000000    0.5000000000000000 C
+    0.5000000000000000    0.5000000000000000    0.0000000000000000 C
+    0.0000000000000000    0.5000000000000000    0.5000000000000000 C
+    0.1225369799999990    0.1225369799999990    0.1225369799999990 O
+    0.3774630200000000    0.8774630200000000    0.6225369800000000 O
+    0.6225369800000000    0.3774630200000000    0.8774630200000000 O
+    0.8774630200000000    0.6225369800000000    0.3774630200000000 O
+    0.8774630200000000    0.8774630200000000    0.8774630200000000 O
+    0.6225369800000000    0.1225369799999990    0.3774630200000000 O
+    0.3774630200000000    0.6225369800000000    0.1225369799999990 O
+    0.1225369799999990    0.3774630200000000    0.6225369800000000 O
+    ```
 
-    === "Ethene"
-        ```
-        Ca2 N1
-        1.0
-        3.537074 0.051133 5.740763
-        1.665193 3.120999 5.740763
-        0.083858 0.051133 6.742420
-        Ca N
-        2 1
-        direct
-        0.731317 0.731317 0.731317 Ca
-        0.268683 0.268683 0.268683 Ca
-        0.000000 0.000000 -0.000000 N
-        ```
-
-    === "Ethyne"
-        ```
-        Ca2 N1
-        1.0
-        3.537074 0.051133 5.740763
-        1.665193 3.120999 5.740763
-        0.083858 0.051133 6.742420
-        Ca N
-        2 1
-        direct
-        0.731317 0.731317 0.731317 Ca
-        0.268683 0.268683 0.268683 Ca
-        0.000000 0.
-        ```
-
-2. Create your INCAR file. Below is a minimal example that writes the required CHGCAR and ELFCAR files. In general, the grid density should be at least 10 pts/Å along each lattice vector for well converged Bader analysis.
+2. Create your INCAR file. Below is a minimal example that writes the required CHGCAR, AECCAR, and ELFCAR files. In general, the grid density should be at least 10 pts/Å along each lattice vector for well converged Bader analysis.
 
     ```
     Global Parameters
-    LELF = True         # Write ELFCAR file
+    LAECHG = True         # Write AECCAR files
+    LELF = True           # Write ELFCAR file
     EDIFF  = 1E-06        # SCF energy convergence, in eV
     ENCUT  = 520
 
     Grid Size             # Moderately grid density
-    NGX    = 70
-    NGY    = 70
-    NGZ    = 70
+    NGX    = 60
+    NGY    = 60
+    NGZ    = 60
     "Fine" Grid Size      # Must Match Standard Grid
-    NGXF   = 70
-    NGYF   = 70
-    NGZF   = 70
+    NGXF   = 60
+    NGYF   = 60
+    NGZF   = 60
     ```
 
 3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary.
@@ -84,52 +63,64 @@ The `ElfLabeler` class can be used to automatically identify various chemical fe
     2. Import the Badelf class
 
         ```Python
-        from baderkit.elf_analysis import Badelf
+        import math
+        from baderkit import Grid
+        from baderkit.elf_analysis import ElfLabeler
         ```
 
-    3. Now create the Badelf class instance.
+    3. We recommend using the reconstructed total charge density as a reference for Bader partitioning when possible. In VASP we can construct this from the AECCAR files.
 
         ```Python
-        badelf = Badelf.from_vasp(
-        charge_filename="CHGCAR",
-        reference_filename="ELFCAR",
-        pseudopotential_filename="POTCAR"
-        )
+        core_grid = Grid.from_vasp("AECCAR0")
+        val_grid = Grid.from_vasp("AECCAR2")
+        total = core_grid.linear_add(val_grid)
+        total.write_vasp("CHGCAR_sum")
         ```
 
-    4. Finally, print some useful information to the console.
+    3. Now create the ElfLabeler class instance.
+
         ```Python
-        electride_structure = badelf.nna_structure
-        electrides_per_formula = badelf.nnas_per_reduced_formula
-        electride_dimensionality = badelf.nna_dimensionality
+        labeler = ElfLabeler.from_vasp(
+            charge_filename="CHGCAR",
+            reference_filename="ELFCAR",
+            total_charge_filename="CHGCAR_sum",
+            pseudopotential_filename="POTCAR"
+            )
 
-        # structure including electride site
-        print(f"Electride Structure: {electride_structure}")
+        ```
 
-        # print electron counts
-        print(f"Electron Count: {electrides_per_formula}")
+    4. label the basins in the ELF and get the charge in each.
+        ```Python
+        features = labeler.basin_types
+        charges = labeler.elf_bader.basin_charges
+        ```
 
-        # print dimensionality
-        print(f"Electride Dimensionality: {electride_dimensionality}")
+    5. Get the indices that correspond to covalent bonds, and calculate the bond-order at each
+        ```Python
+        covalent = [i for i, j in enumerate(features) if j == "covalent bond"]
+
+        bond_orders = []
+        for idx in covalent:
+            bond_orders.append(charges[idx]/2)
         ```
     
-    You should see logging information as BaderKit runs, then outputs similar to the following:
+    6. Finally, print the exact bond-orders and the formal bond-orders to the console.
+        ```Python
+        for idx, bo in zip(covalent, bond_orders):
+            print(f"Basin {idx} Bond Order: {round(bo,2)} -> {math.ceil(charges[idx]/2)}")
         ```
-        Electride Structure: Full Formula (Xmc1 Ca2 N1)
-        Reduced Formula: XmcCa2N
-        abc   :   6.743135   6.743134   6.743135
-        angles:  30.925110  30.925113  30.925113
-        pbc   :       True       True       True
-        Sites (4)
-        #  SP            a         b         c  label
-        ---  -----  --------  --------  --------  -------
-        0  Ca     0.731317  0.731317  0.731317  Ca
-        1  Ca     0.268683  0.268683  0.268683  Ca
-        2  N      0         0         0         N
-        3  Xmc0+  0.5       0.5       0.5       Xmc
-        Electron Count: 1.0358152597
-        Electride Dimensionality: 2
-
+    
+        You should see logging information as BaderKit runs, then outputs similar to the following:
+        
+        ```
+        Basin 8 Bond Order: 1.37 -> 2
+        Basin 9 Bond Order: 1.37 -> 2
+        Basin 10 Bond Order: 1.37 -> 2
+        Basin 11 Bond Order: 1.37 -> 2
+        Basin 12 Bond Order: 1.37 -> 2
+        Basin 13 Bond Order: 1.37 -> 2
+        Basin 14 Bond Order: 1.37 -> 2
+        Basin 15 Bond Order: 1.37 -> 2
         ```
 
 === "Command Line"
@@ -140,21 +131,27 @@ The `ElfLabeler` class can be used to automatically identify various chemical fe
         conda activate baderkit
         ```
 
+    2. We recommend using the reconstructed total charge density as a reference for Bader partitioning when possible. In VASP we can construct this from the AECCAR files.
+
+        ```Bash
+        baderkit sum AECCAR0 AECCAR2
+        ```
+
     3. Run the Badelf analysis.
 
         ```Bash
-        baderkit badelf CHGCAR ELFCAR
+        baderkit badelf CHGCAR ELFCAR -tot CHGCAR_sum
         ```
 
-        You should see logging information printed to the console and once complete a `badelf.json` file will be written which summarizes the results of the calculation.
+        You should see logging information printed to the console and once complete a `labeler.json` file will be written which summarizes the results of the calculation.
 
-And that's it! Try playing around with what else the `Badelf` class offers.
+And that's it! Try playing around with what else the `ElfLabeler` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/electrides_vasp.py" download>electrides_vasp.py</a>
+Tutorial Script: <a href="/tutorial_scripts/vasp/electrides_vasp.py" download>bond_order.py</a>
 
-VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/Ca2N.zip" download>Ca2N.zip</a>
+VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/CO2.zip" download>CO2.zip</a>
 
 ## Warnings for VASP
 
