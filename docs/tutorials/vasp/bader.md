@@ -119,6 +119,6 @@ And that's it! Try playing around with what else the `Bader` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/oxidation_states_vasp.py" download>oxidation_states_vasp.py</a>
+Tutorial Script: <a href="/tutorial_scripts/vasp/oxidation_states.py" download>oxidation_states.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl.zip" download>NaCl.zip</a>

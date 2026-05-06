@@ -130,15 +130,15 @@ class Bader(BaseAnalysis):
     ]
 
     _atom_results = [
-        "basin_atoms",
-        "basin_atom_dists",
         "atom_charges",
         "atom_volumes",
+        "oxidation_states",
+        "basin_atoms",
+        "basin_atom_dists",
         "atom_min_surface_distances",
         "atom_avg_surface_distances",
         "atom_surface_areas",
         "atom_contact_surface_areas",
-        "oxidation_states",
     ]
 
     _nonsummary_results = [
