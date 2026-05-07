@@ -40,6 +40,15 @@ class Format(str, Enum):
             Format.hdf5: "from_hdf5",
             Format.xsf:  "from_xsf",
         }[self]
+    
+    @property
+    def suffix(self):
+        return {
+            Format.vasp: "",
+            Format.cube: ".cube",
+            Format.hdf5: ".h5",
+            Format.xsf:  ".xsf",
+        }[self]
 
 
 def round_to_sig_figs(array, num_sig_figs):
@@ -495,14 +504,19 @@ def read_cube(
 
     # infer sig figs before converting units
     sig_figs = infer_significant_figures(arr)
-
-    # adjust data to vasp conventions and store in data dict
-    volume = structure.volume
+    
+    # convert bohr units
     if bohr_units:
-        volume *= 1.88973**3
+        arr *= 1.88973**3
+    
+    # check for ELF-like data. If charge-like, convert units
+    eps = 0.01
+    if not (arr.max() <= 1.0 + eps and arr.min() >= 0.0 - eps):
+        arr *= structure.volume
+    
     data = {}
-    data["total"] = arr * volume
-
+    data["total"] = arr
+    
     # apply sig figs to array
     data["total"] = round_to_sig_figs(data["total"], sig_figs)
 
@@ -634,23 +648,19 @@ def read_xsf(
     ###########################################################################
     # Convert density -> vasp conventions
     ###########################################################################
+    
+    # infer sig figs before conversion
+    sig_figs = infer_significant_figures(arr)
 
     shape = np.array(arr.shape)
-
-    # XSF lattice vectors are usually in Angstrom
-    volume = abs(np.linalg.det(grid_lattice))
-
-    # Convert Å^3 -> bohr^3
-    volume *= (1.88973**3)
-
-    # Density [e/bohr^3] -> electrons per voxel
-    arr *= volume
-
-    ###########################################################################
-    # Infer sig figs
-    ###########################################################################
-
-    sig_figs = infer_significant_figures(arr)
+    
+    # convert bohr units
+    arr *= 1.88973**3
+    
+    # check for ELF-like data. If charge-like, convert units
+    eps = 0.01
+    if not (arr.max() <= 1.0 + eps and arr.min() >= 0.0 - eps):
+        arr *= structure.volume
 
     data = {}
     data["total"] = round_to_sig_figs(arr, sig_figs)
@@ -783,6 +793,7 @@ def write_vasp(
 def write_cube(
     filename: str | Path,
     grid,
+    data_type: str,
     ion_charges: NDArray[float] | None = None,
     origin: NDArray[float] | None = None,
 ) -> None:
@@ -808,7 +819,10 @@ def write_cube(
     structure = grid.structure
     nx, ny, nz = grid.shape
     # adjust total by volume in bohr units
-    total = grid.total / (structure.volume * 1.88973**3)
+    if data_type != "elf":
+        total = grid.total / (structure.volume * 1.88973**3)
+    else:
+        total = grid.total
 
     natoms = len(structure)
     if ion_charges is None:
@@ -865,6 +879,7 @@ def write_cube(
 def write_xsf(
     filename: str | Path,
     grid,
+    data_type: str,
     origin: NDArray[float] | None = None,
 ) -> None:
     """
@@ -877,7 +892,10 @@ def write_xsf(
     structure = grid.structure
     nx, ny, nz = grid.shape
     # adjust total by volume in bohr units
-    total = grid.total / (structure.volume * 1.88973**3)
+    if data_type != "elf":
+        total = grid.total / (structure.volume * 1.88973**3)
+    else:
+        total = grid.total
     # add back padded values
     total = np.pad(total, ((0, 1), (0, 1), (0, 1)), mode="wrap")
 

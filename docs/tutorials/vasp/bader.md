@@ -8,8 +8,8 @@ This tutorial provides a basic example of calculating oxidation states using VAS
     Na1 Cl1
     1.0
     3.4220145991671784    0.0000000000000000    1.9757010500000005
-    1.1406715330557264    3.2263063045206364    1.9757010500000005
-    0.0000000000000000    0.0000000000000000    3.9514021000000001
+    1.1486715330557264    3.2263063045206364    1.9757010500000005
+    0.0000000000000000    0.0000000000000000    3.9514821000000001
     Na Cl
     1 1
     direct
@@ -36,12 +36,12 @@ This tutorial provides a basic example of calculating oxidation states using VAS
     LELF   = .TRUE.        (Activate ELF)
 
     Grid Size              (Must set fine grid to be the same)
-    NGX    = 30
-    NGY    = 30
-    NGZ    = 30
-    NGXF    = 30
-    NGYF    = 30
-    NGZF    = 30
+    NGX    = 48
+    NGY    = 48
+    NGZ    = 48
+    NGXF    = 48
+    NGYF    = 48
+    NGZF    = 48
     ```
 
 3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary.
@@ -91,7 +91,7 @@ This tutorial provides a basic example of calculating oxidation states using VAS
         ```
     
         You should see logging information as BaderKit runs, then the oxidation states of each atom in the structure:
-            `array([ 0.87331308, -0.8732974 ])`
+            `array([ 0.86225884 -0.86225546])`
 
 === "Command Line"
 

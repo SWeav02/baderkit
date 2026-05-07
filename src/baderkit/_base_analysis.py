@@ -448,7 +448,7 @@ class BaseAnalysis(ABC):
         total_charge_filename: Path | None | str = None,
         reference_filename: Path | None | str = None,
         format: Literal["vasp", "cube", None] = None,
-        pseudopotential_filename: Path | None | str | bool = None,
+        pseudopotential_filename: Path | None | list | str | bool = None,
         total_only: bool = True,
         valence_counts: dict | None = None,
         **kwargs,
@@ -471,12 +471,15 @@ class BaseAnalysis(ABC):
         reference_filename : Path | None | str, optional
             The path to the file that will be used for partitioning.
             If None, defaults to the total charge grid.
-        pseudopotential_filename : Path | None | str | dict, optional
-            The path to the pseudopotentials used for calculating oxidation states. Alternatively,
-            a dictionary representing the valence counts of each atom in the system
-            where each entry is the species symbol and each value is the number
-            of electrons used for that species in the calculation. If None,
-            any properties relying on valence counts will not be calculated.
+        pseudopotential_filename : Path | None | list | str | dict, optional
+            The path(s) to the pseudopotentials used for calculating oxidation states. 
+            If a single path is provided, only one pseudopotential will be read.
+            If a list is provided, each will be read in order.
+            Alternatively, you can provide  a dictionary representing the valence 
+            counts of each atom in the system where each entry is the species 
+            symbol and each value is the number of electrons used for that species 
+            in the calculation. If None, any properties relying on valence counts 
+            will not be calculated.
         format : Literal["vasp", "cube", None], optional
             The format of the grids to read in. If None, the formats will be
             guessed from the file names.

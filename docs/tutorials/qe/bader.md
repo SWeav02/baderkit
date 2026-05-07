@@ -2,51 +2,58 @@ This tutorial provides a basic example of calculating oxidation states using Qua
 
 ## Quantum Espresso
 
-1. Create an input file for an electronic relaxation. Here we provide an example for the NaCl structure which we named `scf.in` on our system.
+1. Create an input file for an electronic relaxation. Here we provide an example for the NaCl structure which we named `scf.in` on our system. While you can use any name, we like to use the `.in` suffix for clarity.
     ```
     &CONTROL
-    calculation = 'scf',
-    prefix = 'nacl',
-    outdir = './scf',
+    calculation = 'scf'
+    etot_conv_thr =   2.0000000000d-04
+    forc_conv_thr =   1.0000000000d-03
+    outdir = './scf'
+    prefix = 'nacl'
     pseudo_dir = '.'
+    tprnfor = .true.
+    tstress = .true.
+    verbosity = 'high'
     /
-
     &SYSTEM
-    ibrav = 0,
-    nat = 2,
-    ntyp = 2,
-    ecutwfc = 40.0,
-    ecutrho = 320.0,
+    degauss =   2.7500000000d-02
+    ecutrho =   320.0
+    ecutwfc =   70.0
+    ibrav = 0
+    nat = 2
+    nosym = .false.
+    ntyp = 2
+    occupations = 'fixed'
     /
-
     &ELECTRONS
-    conv_thr = 1.d-6,
-    mixing_beta = 0.7
+    conv_thr =   8.0000000000d-10
+    electron_maxstep = 80
+    mixing_beta =   4.0000000000d-01
     /
-
     ATOMIC_SPECIES
-    Na  22.990  na_pbe_v1.5.uspp.F.UPF
-    Cl  35.453  cl_pbe_v1.4.uspp.F.UPF
-
-    CELL_PARAMETERS angstrom
-    3.4220145991671784    0.0000000000000000    1.9757010500000005
-    1.1406715330557264    3.2263063045206364    1.9757010500000005
-    0.0000000000000000    0.0000000000000000    3.9514021000000001
-
+    Cl     35.453 Cl.pbesol-n-kjpaw_psl.1.0.0.UPF
+    Na     22.98977 Na.pbesol-spn-kjpaw_psl.1.0.0.UPF
     ATOMIC_POSITIONS crystal
-    Na 0.000000 0.000000 0.000000
-    Cl 0.500000 0.500000 0.500000
-
+    Na           0.0000000000       0.0000000000       0.0000000000
+    Cl           0.5000000000       0.5000000000       0.5000000000
     K_POINTS automatic
-    2 2 2 0 0 0
+    7 7 7 0 0 0
+    CELL_PARAMETERS angstrom
+        3.4220145992       0.0000000000       1.9757010500
+        1.1406715331       3.2263063045       1.9757010500
+        0.0000000000       0.0000000000       3.9514021000
     ```
-    Make sure you have appropriate pseudopotentials in the folder, or point to a directory containing them. We use the standard solid-state pseudopotentials database [SSSP](https://legacy.materialscloud.org/discover/sssp/table/efficiency#sssp-license).
+
+    Make sure you have appropriate pseudopotentials and point `pseudo_dir` to their location. We copy the pseudopotentials into the active directory so that BaderKit can automatically parse them. For this tutorial, we used PPs generated from [pslibrary v1.0.0](https://dalcorso.github.io/pslibrary/).
 
 2. Run the scf calculation. On our system we use the following command.
 
-    `mpirun -np 12 pw.x -in scf.in`
+    ```
+    mpirun -np 12 pw.x -in scf.in
+    ```
 
-3. We need the valence charge density produced by the calculation as well as the 'all-electron' (valence and core) density. To generate these, we must run the post-processing package, `pp.x`, once for each file. Here we provide reasonable inputs for both.
+3. We need the valence charge density produced by the calculation as well as the 'all-electron' (valence and core) density. To generate these, we must run the post-processing package, `pp.x`, once for each file. Here we provide the inputs for both which we named 'chg.in' and 'tot_chg.in' respectively.
+
     === "Valence"
         ```
         &INPUTPP
@@ -86,6 +93,9 @@ This tutorial provides a basic example of calculating oxidation states using Qua
     ```
     This should print `.cube` files for the valence and total charge densities.
 
+!!! Tip
+    We have also added functionality for XCrySDen's `.xsf` format if you prefer. Note that we currently only parse the first density grid in the file.
+
 
 ## BaderKit
 
@@ -105,8 +115,6 @@ This tutorial provides a basic example of calculating oxidation states using Qua
         bader = Bader.from_cube(
             charge_filename="chg.cube",
             total_charge_filename="tot_chg.cube",
-            vacuum_tol=False,
-            persistence_tol=0.2,
         )
         ```
 
@@ -116,7 +124,10 @@ This tutorial provides a basic example of calculating oxidation states using Qua
         ```
     
         You should see logging information as BaderKit runs, then the oxidation states of each atom in the structure:
-            `array([ 0.8613451  -0.86136255])`
+            `array([ 0.86285438 -0.86280059])`
+    
+    !!! Tip
+        If you get `None` BaderKit likely can't find your pseudopotentials. Made sure they are in the active directory or you point to them using the `pseudopotential_filename` tag.
 
 === "Command Line"
 
@@ -138,6 +149,6 @@ And that's it! Try playing around with what else the `Bader` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/qe/oxidation_states.py" download>oxidation_states_vasp.py</a>
+Tutorial Script: <a href="/tutorial_scripts/qe/oxidation_states.py" download>oxidation_states.py</a>
 
-VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl_qe.zip" download>NaCl.zip</a>
+VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl_qe.zip" download>NaCl_qe.zip</a>

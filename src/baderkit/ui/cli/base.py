@@ -624,6 +624,78 @@ def split(
     spin_up.write(filename=output_up, output_format=output_format)
     spin_down.write(filename=output_down, output_format=output_format)
 
+@baderkit_app.command(no_args_is_help=True)
+def make_elf(
+    charge_file: Path = typer.Argument(
+        ...,
+        help="The path to the file containing the charge density",
+    ),
+    kinetic_file: Path = typer.Argument(
+        ...,
+        help="The path to the file containing the kinetic energy density"
+    ),
+    output_path: Path = typer.Option(
+        None,
+        "--output-path",
+        "-o",
+        help="The path to write the converted grid to. If None, defaults to ELFCAR or elf.suffix",
+        case_sensitive=True,
+    ),
+    output_format: Format = typer.Option(
+        None,
+        "--output-format",
+        "-of",
+        help="The output format of the files. If None, the input format will be used.",
+        case_sensitive=False,
+    ),
+    input_format: Format = typer.Option(
+        None,
+        "--input-format",
+        "-if",
+        help="The input format of the file. If None, this will be guessed from the file.",
+        case_sensitive=False,
+    ),
+):
+    """
+    Converts the provided file to another format.
+    """
+    from baderkit import Grid
+    from baderkit.global_numba.elf_construction import compute_elf
+
+    # make sure files are paths
+    charge_file = Path(charge_file)
+    kinetic_file = Path(kinetic_file)
+    # load grid dynamically
+    charge_grid = Grid.from_dynamic(charge_file, format=input_format)
+    kinetic_grid = Grid.from_dynamic(kinetic_file, format=input_format)
+    
+    logging.info("Calculating ELF")
+    
+    lattice = charge_grid.matrix
+    elf = compute_elf(
+        rho=charge_grid.total,
+        tau=kinetic_grid.total,
+        lattice=lattice,
+        )
+    
+    elf_grid = Grid(
+        structure=charge_grid.structure,
+        data={"total": elf},
+        source_format=charge_grid.source_format,
+        data_type="elf",
+        )
+    
+    if output_path is None:
+        format = charge_grid.source_format
+        
+        if format == Format.vasp:
+            output_path = Path("ELFCAR")
+        else:
+            output_path = Path("elf").with_suffix(format.suffix)
+            
+    # write file
+    elf_grid.write(output_path, output_format)
+
 
 @baderkit_app.command(no_args_is_help=True)
 def convert(

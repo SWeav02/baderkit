@@ -1639,6 +1639,7 @@ class Grid(VolumetricData):
         write_cube_file(
             filename=filename,
             grid=self,
+            data_type=self.data_type,
             **kwargs,
         )
 
@@ -1665,6 +1666,7 @@ class Grid(VolumetricData):
         write_xsf_file(
             filename=filename,
             grid=self,
+            data_type=self.data_type,
             **kwargs,
         )
 
@@ -1713,6 +1715,7 @@ class Grid(VolumetricData):
             output_format = self.source_format
         # Make sure format is a Format object not a string
         output_format = Format(output_format)
+
         # get the writing method corresponding to this output format
         method_name = output_format.writer
         # write the grid
