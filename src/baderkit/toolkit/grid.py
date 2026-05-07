@@ -24,9 +24,11 @@ from baderkit.global_numba.file_parsers import (
     infer_significant_figures,
     read_cube,
     read_vasp,
+    read_xsf,
 )
 from baderkit.global_numba.file_parsers import write_cube as write_cube_file
 from baderkit.global_numba.file_parsers import write_vasp as write_vasp_file
+from baderkit.global_numba.file_parsers import write_xsf as write_xsf_file
 from baderkit.toolkit.interpolator import Interpolator
 from baderkit.toolkit.structure import Structure
 
@@ -1400,6 +1402,51 @@ class Grid(VolumetricData):
         )
 
     @classmethod
+    def from_xsf(
+        cls,
+        grid_file: str | Path,
+        data_type: str | DataType = None,
+        **kwargs,
+    ) -> Self:
+        """
+        Create a grid instance using a XCrySDen xsf file.
+
+        Parameters
+        ----------
+        grid_file : str | Path
+            The file the instance should be made from. Should be a gaussian
+            cube file.
+        data_type: str | DataType
+            The type of data loaded from the file, either charge or elf. If
+            None, the type will be guessed from the data range.
+            Defaults to None.
+
+        Returns
+        -------
+        Self
+            Grid from the specified file.
+
+        """
+        logging.info(f"Loading {grid_file}")
+        t0 = time.time()
+        # make sure path is a Path object
+        grid_file = Path(grid_file)
+        # check that file exists
+        assert grid_file.exists(), f"No file with name {grid_file} found in directory"
+        structure, data, origin, sig_figs = read_xsf(grid_file)
+        # TODO: Also save the ion charges/origin for writing later
+        t1 = time.time()
+        logging.info(f"Time: {round(t1-t0,2)}")
+        return cls(
+            structure=structure,
+            data=data,
+            data_type=data_type,
+            source_format=Format.xsf,
+            sig_figs=sig_figs,
+            **kwargs,
+        )
+
+    @classmethod
     def from_vasp_pymatgen(
         cls,
         grid_file: str | Path,
@@ -1590,6 +1637,32 @@ class Grid(VolumetricData):
         filename = Path(filename)
         logging.info(f"Writing {filename.name}")
         write_cube_file(
+            filename=filename,
+            grid=self,
+            **kwargs,
+        )
+
+    def write_xsf(
+        self,
+        filename: Path | str,
+        **kwargs,
+    ):
+        """
+        Writes the Grid to a Gaussian cube-like file at the provided path.
+
+        Parameters
+        ----------
+        filename : Path | str
+            The name of the file to write to.
+
+        Returns
+        -------
+        None.
+
+        """
+        filename = Path(filename)
+        logging.info(f"Writing {filename.name}")
+        write_xsf_file(
             filename=filename,
             grid=self,
             **kwargs,

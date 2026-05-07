@@ -38,8 +38,8 @@ class BaseElfAnalysis(BaseAnalysis):
             reference_grid=reference_grid,
             **kwargs
             )
-        
-        
+
+
 
     ###########################################################################
     # From Methods
@@ -89,34 +89,6 @@ class BaseElfAnalysis(BaseAnalysis):
 
         """
         return cls.from_dynamic(charge_filename, reference_filename=reference_filename, format="vasp", **kwargs)
-
-    @classmethod
-    def from_cube(cls, **kwargs) -> Self:
-        """
-        Creates a Bader class object from .cube files.
-
-        Parameters
-        ----------
-        charge_filename : Path | str, optional
-            The path to the .cube like file that will be used for integrating charge.
-        total_charge_filename : Grid | None, optional
-            The path to the .cube like file used for determining vacuum regions
-            in the system. For pseudopotential codes this represents the total
-            electron density and should be provided whenever possible.
-            If None, defaults to the charge_grid.
-        reference_filename : Path | None | str, optional
-            The path to .cube file that will be used for partitioning.
-            If None, the total charge file will be used for partitioning.
-        **kwargs : dict
-            Keyword arguments to pass to the class.
-
-        Returns
-        -------
-        Self
-            A BaseAnalysis class object.
-
-        """
-        return cls.from_dynamic(format="cube", **kwargs)
 
     @classmethod
     def from_dynamic(

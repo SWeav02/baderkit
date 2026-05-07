@@ -414,6 +414,34 @@ class BaseAnalysis(ABC):
         return cls.from_dynamic(format="cube", **kwargs)
 
     @classmethod
+    def from_xsf(cls, **kwargs) -> Self:
+        """
+        Creates a Bader class object from .xsf files.
+
+        Parameters
+        ----------
+        charge_filename : Path | str, optional
+            The path to the .xsf like file that will be used for integrating charge.
+        total_charge_filename : Grid | None, optional
+            The path to the .xsf like file used for determining vacuum regions
+            in the system. For pseudopotential codes this represents the total
+            electron density and should be provided whenever possible.
+            If None, defaults to the charge_grid.
+        reference_filename : Path | None | str, optional
+            The path to .xsf file that will be used for partitioning.
+            If None, the total charge file will be used for partitioning.
+        **kwargs : dict
+            Keyword arguments to pass to the class.
+
+        Returns
+        -------
+        Self
+            A BaseAnalysis class object.
+
+        """
+        return cls.from_dynamic(format="xsf", **kwargs)
+
+    @classmethod
     def from_dynamic(
         cls,
         charge_filename: Path | str,

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
-from pymatgen.core import Lattice, Structure
+from pymatgen.core import Lattice, Structure, Element
 from pymatgen.io.vasp import Poscar, Potcar
 
 
@@ -21,6 +21,7 @@ class Format(str, Enum):
     vasp = "vasp"
     cube = "cube"
     hdf5 = "hdf5"
+    xsf  = "xsf"
 
     @property
     def writer(self):
@@ -28,6 +29,7 @@ class Format(str, Enum):
             Format.vasp: "write_vasp",
             Format.cube: "write_cube",
             Format.hdf5: "to_hdf5",
+            Format.xsf:  "write_xsf",
         }[self]
 
     @property
@@ -36,6 +38,7 @@ class Format(str, Enum):
             Format.vasp: "from_vasp",
             Format.cube: "from_cube",
             Format.hdf5: "from_hdf5",
+            Format.xsf:  "from_xsf",
         }[self]
 
 
@@ -111,38 +114,91 @@ def detect_volume_format(filename: str | Path):
     filename = Path(filename)
     source_format = None
 
-    # check for vasp or cube
+    # -------------------------------------------------------------------------
+    # Check text-based formats
+    # -------------------------------------------------------------------------
+
     try:
         with open(filename, "r") as f:
-            # skip the first two lines
-            next(f)
-            next(f)
-            # The third line of a VASP CHGCAR/ELFCAR will have 3 values
-            # corresponding to the first lattice vector. .cube files will
-            # have 4 corresponding to the number of atoms and origin coords
-            line_len = len(next(f).split())
-            if line_len == 3:
-                source_format = Format.vasp
-            elif line_len == 4:
-                source_format = Format.cube
-    except:
+
+            # Read first few lines for format detection
+            first_lines = [next(f).strip() for _ in range(20)]
+
+            # -----------------------------------------------------------------
+            # Check for XSF
+            # -----------------------------------------------------------------
+
+            upper_lines = [line.upper() for line in first_lines]
+
+            if (
+                any("PRIMVEC" in line for line in upper_lines)
+                or any("BEGIN_DATAGRID_3D" in line for line in upper_lines)
+            ):
+                source_format = Format.xsf
+
+            else:
+                # -------------------------------------------------------------
+                # Check VASP / CUBE
+                # -------------------------------------------------------------
+
+                with open(filename, "r") as f2:
+                    # skip first two lines
+                    next(f2)
+                    next(f2)
+
+                    # The third line of a VASP CHGCAR/ELFCAR has 3 values
+                    # corresponding to the first lattice vector.
+                    #
+                    # .cube files have 4 values corresponding to:
+                    # number of atoms + origin coordinates
+                    line_len = len(next(f2).split())
+
+                    if line_len == 3:
+                        source_format = Format.vasp
+
+                    elif line_len == 4:
+                        source_format = Format.cube
+
+    except Exception:
+        pass
+
+    # -------------------------------------------------------------------------
+    # Check HDF5
+    # -------------------------------------------------------------------------
+
+    if source_format is None:
+
         try:
-            # check for hdf5
             with open(filename, "rb") as f:
-                # read first 8 bytes
+                # HDF5 signature
                 sig = f.read(8)
+
                 if sig == b"\x89HDF\r\n\x1a\n":
                     source_format = Format.hdf5
-        except:
-            logging.warning("""
-            Tried to detect HDF5 format, but h5py is not installed.
-            To read HDF5 files, install with `conda install h5py` or `pip install h5py`
-            """)
+
+        except Exception:
+            logging.warning(
+                """
+                Tried to detect HDF5 format, but h5py is not installed.
+                To read HDF5 files, install with:
+                    conda install h5py
+                or:
+                    pip install h5py
+                """
+            )
+
+    # -------------------------------------------------------------------------
+    # Final check
+    # -------------------------------------------------------------------------
 
     if source_format is None:
         raise ValueError("File format not recognized.")
+
     return source_format
 
+###############################################################################
+# Read Methods
+###############################################################################
 
 def read_vasp(filename, total_only: bool):
     path = Path(filename)
@@ -185,10 +241,6 @@ def read_vasp(filename, total_only: bool):
                 with warnings.catch_warnings(action="ignore"):
                     potcar = Potcar.from_file(path.parent / "POTCAR")
                 atom_types = potcar.symbols
-                # except:
-                #     logging.warning("POTCAR could not be read, likely due to being malformed. Atoms will be set as dummy atoms.")
-                #     atom_types = [f"Z{i}" for i in range(len(atom_counts))]
-                #     breakpoint()
 
         else:
             # This is the species line
@@ -286,10 +338,8 @@ def read_vasp(filename, total_only: bool):
 
             # 4) collect augmentation bytes (lines) until next numeric start
             aug_lines = []
-            try:
-                mm.seek(pos)
-            except:
-                breakpoint()
+            mm.seek(pos)
+
             while True:
                 line = mm.readline()  # returns bytes (fast)
                 if not line:
@@ -354,6 +404,262 @@ def read_vasp(filename, total_only: bool):
 
     return structure, data, data_aug, sig_figs
 
+def read_cube(
+    filename: str | Path,
+):
+    # make sure file is a path object
+    filename = Path(filename)
+    ###########################################################################
+    # Read Structure. Open file in string reading mode
+    ###########################################################################
+    with open(filename, "r") as f:
+        # Skip first two comment lines
+        f.readline()
+        f.readline()
+
+        # Get number of ions and origin
+        line = f.readline().split()
+        nions = int(line[0])
+        origin = np.array(line[1:], dtype=float)
+
+        # Get lattice and grid shape info
+        bohr_units = True
+        shape = np.empty(3, dtype=int)
+        lattice_matrix = np.empty((3, 3), dtype=float)
+        for i in range(3):
+            line = f.readline().split()
+            npts_i = int(line[0])
+            # A negative value indicates units are Ang. Positive is Bohr
+            if npts_i < 0:
+                bohr_units = False
+                npts_i = -npts_i
+            shape[i] = npts_i
+            lattice_matrix[i] = np.array(line[1:], dtype=float)
+
+        # Scale lattice_matrix to cartesian
+        lattice_matrix *= shape[:, None]
+
+        # Get atom info
+        atomic_nums = np.empty(nions, dtype=int)
+        ion_charges = np.empty(nions, dtype=float)
+        atom_coords = np.empty((nions, 3), dtype=float)
+        for i in range(nions):
+            line = f.readline().split()
+            atomic_nums[i] = int(line[0])
+            ion_charges[i] = float(line[1])
+            atom_coords[i] = np.array(line[2:], dtype=float)
+
+        # The next line is the start of the data. Get the exact byte position
+        data_start_offset = f.tell()
+
+    # convert to Angstrom
+    if bohr_units:
+        lattice_matrix /= 1.88973
+        origin /= 1.88973
+        atom_coords /= 1.88973
+    # Adjust atom positions based on origin
+    atom_coords -= origin
+
+    # Create Structure object
+    lattice = Lattice(lattice_matrix)
+    structure = Structure(
+        lattice=lattice,
+        species=atomic_nums,
+        coords=atom_coords,
+        coords_are_cartesian=True,
+    )
+
+    # Read charge density
+    ngrid = shape.prod()
+
+    ###########################################################################
+    # Read FFT Grids. Use byte read mode and mmap for faster read and lower memory
+    ###########################################################################
+    with open(filename, "rb") as fb:
+        mm = mmap.mmap(fb.fileno(), 0, access=mmap.ACCESS_READ)
+        # read the rest of the file
+        block_bytes = mm[data_start_offset:]  # returns bytes (one copy)
+        # decode and parse with numpy
+        # latin1 is the fastest 1:1 mapping decode
+        text = block_bytes.decode("latin1")
+        arr = np.fromstring(text, sep=" ", count=ngrid, dtype=np.float64)
+
+        if arr.size < ngrid:
+            # incomplete block or EOF
+            logging.warn("End of file reached before expected")
+        # reshape noting VASP's Fortran ordering
+        arr = arr.reshape(shape, order="F")
+        arr = np.ascontiguousarray(arr)
+
+        mm.close()
+
+    # infer sig figs before converting units
+    sig_figs = infer_significant_figures(arr)
+
+    # adjust data to vasp conventions and store in data dict
+    volume = structure.volume
+    if bohr_units:
+        volume *= 1.88973**3
+    data = {}
+    data["total"] = arr * volume
+
+    # apply sig figs to array
+    data["total"] = round_to_sig_figs(data["total"], sig_figs)
+
+    return structure, data, ion_charges, origin, sig_figs
+
+def read_xsf(
+    filename: str | Path,
+):
+    filename = Path(filename)
+
+    ###########################################################################
+    # Read Structure. Open file in string reading mode
+    ###########################################################################
+
+    with open(filename, "r") as f:
+        # find PRIMVEC line
+        i = 0
+        for _ in range(100):
+            line = f.readline()
+            if line.strip().upper() == "PRIMVEC":
+                primvec_idx = i
+                break
+            i += 1
+
+        if primvec_idx is None:
+            raise ValueError("PRIMVEC block not found")
+
+        a = np.fromstring(f.readline(), sep=" ")
+        b = np.fromstring(f.readline(), sep=" ")
+        c = np.fromstring(f.readline(), sep=" ")
+        lattice_matrix = np.array((a,b,c),dtype=float)
+
+        # find PRIMCOORD line
+        primcoord_idx = None
+        for _ in range(100):
+            line = f.readline()
+            if line.strip().upper() == "PRIMCOORD":
+                primcoord_idx = i
+                break
+            i += 1
+        if primcoord_idx is None:
+            raise ValueError("PRIMCOORD block not found")
+
+        nions = int(f.readline().split()[0])
+
+        atomic_nums = np.empty(nions, dtype=int)
+        atom_coords = np.empty((nions, 3), dtype=float)
+
+        for i in range(nions):
+            line = f.readline().split()
+
+            # try reading as an integer. Some codes may write this as the
+            # species
+            try:
+                atomic_nums[i] = int(line[0])
+            except:
+                atomic_nums[i] = Element(line[0]).Z
+
+            atom_coords[i] = np.array(line[1:4], dtype=float)
+
+        # find the DATAGRID block
+        grid_idx = None
+        for _ in range(100):
+            line = f.readline()
+            if "BEGIN_DATAGRID_3D" in line.upper():
+                grid_idx = i
+                break
+            i += 1
+        if grid_idx is None:
+            raise ValueError("BEGIN_DATAGRID_3D block not found")
+
+        # Grid shape includes periodic duplicate endpoint
+        shape = np.fromstring(f.readline(), sep=" ", dtype=int)
+        origin = np.fromstring(f.readline(), sep=" ")
+        a = np.fromstring(f.readline(), sep=" ")
+        b = np.fromstring(f.readline(), sep=" ")
+        c = np.fromstring(f.readline(), sep=" ")
+        grid_lattice = np.array((a,b,c),dtype=float)
+        # The next line is the start of the data. Get the exact byte position
+        data_start_offset = f.tell()
+
+    ###########################################################################
+    # Read FFT Grids. Use byte read mode and mmap for faster read and lower memory
+    ###########################################################################
+    ngrid = shape.prod()
+    with open(filename, "rb") as fb:
+        mm = mmap.mmap(fb.fileno(), 0, access=mmap.ACCESS_READ)
+        # read the rest of the file
+        block_bytes = mm[data_start_offset:]  # returns bytes (one copy)
+        # decode and parse with numpy
+        # latin1 is the fastest 1:1 mapping decode
+        text = block_bytes.decode("latin1")
+
+        arr = np.fromstring(text, sep=" ", count=int(ngrid), dtype=np.float64)
+
+        if arr.size < ngrid:
+            # incomplete block or EOF
+            logging.warn("End of file reached before expected")
+        # reshape noting VASP's Fortran ordering
+        arr = arr.reshape(shape, order="F")
+        arr = np.ascontiguousarray(arr)
+
+        mm.close()
+
+    ###########################################################################
+    # Create Structure object
+    ###########################################################################
+
+    atom_coords -= origin
+
+    lattice = Lattice(lattice_matrix)
+
+    structure = Structure(
+        lattice=lattice,
+        species=atomic_nums,
+        coords=atom_coords,
+        coords_are_cartesian=True,
+    )
+
+    ###########################################################################
+    # Read volumetric data
+    ###########################################################################
+
+    # Remove periodic duplicate endpoints
+    arr = arr[:-1, :-1, :-1]
+
+    arr = np.ascontiguousarray(arr)
+
+    ###########################################################################
+    # Convert density -> vasp conventions
+    ###########################################################################
+
+    shape = np.array(arr.shape)
+
+    # XSF lattice vectors are usually in Angstrom
+    volume = abs(np.linalg.det(grid_lattice))
+
+    # Convert Å^3 -> bohr^3
+    volume *= (1.88973**3)
+
+    # Density [e/bohr^3] -> electrons per voxel
+    arr *= volume
+
+    ###########################################################################
+    # Infer sig figs
+    ###########################################################################
+
+    sig_figs = infer_significant_figures(arr)
+
+    data = {}
+    data["total"] = round_to_sig_figs(arr, sig_figs)
+
+    return structure, data, origin, sig_figs
+
+###############################################################################
+# Write Methods
+###############################################################################
 
 @njit(cache=True)
 def format_fortran(mant, exp):
@@ -474,112 +780,6 @@ def write_vasp(
                 ]
                 file.writelines(aug_lines)
 
-
-def read_cube(
-    filename: str | Path,
-):
-    # make sure file is a path object
-    filename = Path(filename)
-    ###########################################################################
-    # Read Structure. Open file in string reading mode
-    ###########################################################################
-    with open(filename, "r") as f:
-        # Skip first two comment lines
-        f.readline()
-        f.readline()
-
-        # Get number of ions and origin
-        line = f.readline().split()
-        nions = int(line[0])
-        origin = np.array(line[1:], dtype=float)
-
-        # Get lattice and grid shape info
-        bohr_units = True
-        shape = np.empty(3, dtype=int)
-        lattice_matrix = np.empty((3, 3), dtype=float)
-        for i in range(3):
-            line = f.readline().split()
-            npts_i = int(line[0])
-            # A negative value indicates units are Ang. Positive is Bohr
-            if npts_i < 0:
-                bohr_units = False
-                npts_i = -npts_i
-            shape[i] = npts_i
-            lattice_matrix[i] = np.array(line[1:], dtype=float)
-
-        # Scale lattice_matrix to cartesian
-        lattice_matrix *= shape[:, None]
-
-        # Get atom info
-        atomic_nums = np.empty(nions, dtype=int)
-        ion_charges = np.empty(nions, dtype=float)
-        atom_coords = np.empty((nions, 3), dtype=float)
-        for i in range(nions):
-            line = f.readline().split()
-            atomic_nums[i] = int(line[0])
-            ion_charges[i] = float(line[1])
-            atom_coords[i] = np.array(line[2:], dtype=float)
-
-        # The next line is the start of the data. Get the exact byte position
-        data_start_offset = f.tell()
-
-    # convert to Angstrom
-    if bohr_units:
-        lattice_matrix /= 1.88973
-        origin /= 1.88973
-        atom_coords /= 1.88973
-    # Adjust atom positions based on origin
-    atom_coords -= origin
-
-    # Create Structure object
-    lattice = Lattice(lattice_matrix)
-    structure = Structure(
-        lattice=lattice,
-        species=atomic_nums,
-        coords=atom_coords,
-        coords_are_cartesian=True,
-    )
-
-    # Read charge density
-    ngrid = shape.prod()
-
-    ###########################################################################
-    # Read FFT Grids. Use byte read mode and mmap for faster read and lower memory
-    ###########################################################################
-    with open(filename, "rb") as fb:
-        mm = mmap.mmap(fb.fileno(), 0, access=mmap.ACCESS_READ)
-        # read the rest of the file
-        block_bytes = mm[data_start_offset:]  # returns bytes (one copy)
-        # decode and parse with numpy
-        # latin1 is the fastest 1:1 mapping decode
-        text = block_bytes.decode("latin1")
-        arr = np.fromstring(text, sep=" ", count=ngrid, dtype=np.float64)
-
-        if arr.size < ngrid:
-            # incomplete block or EOF
-            logging.warn("End of file reached before expected")
-        # reshape noting VASP's Fortran ordering
-        arr = arr.reshape(shape, order="F")
-        arr = np.ascontiguousarray(arr)
-
-        mm.close()
-
-    # infer sig figs before converting units
-    sig_figs = infer_significant_figures(arr)
-
-    # adjust data to vasp conventions and store in data dict
-    volume = structure.volume
-    if bohr_units:
-        volume *= 1.88973**3
-    data = {}
-    data["total"] = arr * volume
-
-    # apply sig figs to array
-    data["total"] = round_to_sig_figs(data["total"], sig_figs)
-
-    return structure, data, ion_charges, origin, sig_figs
-
-
 def write_cube(
     filename: str | Path,
     grid,
@@ -603,7 +803,6 @@ def write_cube(
     """
     # normalize inputs and basic checks
     cube_path = Path(filename)
-    # cube_path = cube_path.with_suffix(".cube")
 
     # get structure and grid info
     structure = grid.structure
@@ -648,6 +847,80 @@ def write_cube(
     for Z, q, pos in zip(atomic_numbers, ion_charges, positions):
         x, y, z = pos
         header += f"{int(Z):5d}{float(q):12.6f}{x:12.6f}{y:12.6f}{z:12.6f}\n"
+
+    # get flat, then reshape to lines of the appropriate size
+    flat = total.ravel(order="F")
+    flat = flat.reshape((nx * ny, nz))
+
+    with open(cube_path, "w", encoding="utf-8") as file:
+        file.write(header)
+        for line in flat:
+            formatted = [f"{float(d):13.5E}" for d in line]
+            if not formatted:
+                continue
+            # join 6 entries per line, then join lines and add final newline
+            rows = ("".join(formatted[i : i + 6]) for i in range(0, len(formatted), 6))
+            file.write("\n".join(rows) + "\n")
+
+def write_xsf(
+    filename: str | Path,
+    grid,
+    origin: NDArray[float] | None = None,
+) -> None:
+    """
+    Write a XCrySDen xsf file containing charge density.
+    """
+    # normalize inputs and basic checks
+    cube_path = Path(filename)
+
+    # get structure and grid info
+    structure = grid.structure
+    nx, ny, nz = grid.shape
+    # adjust total by volume in bohr units
+    total = grid.total / (structure.volume * 1.88973**3)
+    # add back padded values
+    total = np.pad(total, ((0, 1), (0, 1), (0, 1)), mode="wrap")
+
+    natoms = len(structure)
+
+    if origin is None:
+        origin = np.zeros(3, dtype=float)
+
+    lattice_matrix = grid.matrix
+
+    atomic_numbers = structure.atomic_numbers
+
+    positions = structure.cart_coords
+
+    # write to file
+    # generate header lines
+    header = ""
+    # header lines
+    header += " CRYSTAL\n"
+    header += " PRIMVEC\n"
+    # lattice matrix
+    for vec in lattice_matrix:
+        header += f" {vec[0]:12.6f}{vec[1]:12.6f}{vec[2]:12.6f}\n"
+    # atom counts/coords
+    header += " PRIMCOORD\n"
+    header += f"{natoms:6}{1:6}\n"
+    for Z, pos in zip(atomic_numbers, positions):
+        x, y, z = pos
+        header += f"{int(Z):5d}{x:12.6f}{y:12.6f}{z:12.6f}\n"
+    header += "BEGIN_BLOCK_DATAGRID_3D\n"
+    header += "3D_PWSCF\n"
+    header += "BEGIN_DATAGRID_3D_UNKNOWN\n"
+
+    # grid dims
+    nx, ny, nz = grid.shape + 1
+    header += f"{nx:6d}{ny:6d}{nz:6d}\n"
+
+    # origin
+    header += f"{origin[0]:12.6f}{origin[1]:12.6f}{origin[2]:12.6f}\n"
+
+    # lattice matrix (again)
+    for vec in lattice_matrix:
+        header += f" {vec[0]:12.6f}{vec[1]:12.6f}{vec[2]:12.6f}\n"
 
     # get flat, then reshape to lines of the appropriate size
     flat = total.ravel(order="F")

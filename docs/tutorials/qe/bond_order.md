@@ -1,22 +1,30 @@
-The `ElfLabeler` class can be used to automatically identify various chemical features in a system. This can be useful for a variety of automation task. Here we demonstrate its use for locating the covalent bonds in the the CO<sub>2</sub> molecule. We also demonstrate how to calculate the exact and formal bond-order of the bond.
+The `ElfLabeler` class can be used to automatically identify various chemical features in a system. This can be useful for a variety of automation task. Here we demonstrate its use for locating the covalent bonds in the the CO<sub>2</sub> molecules of dry ice. We also demonstrate how to calculate the exact and formal bond-order of the bond.
 
 ## VASP
 
 1. Create the CO<sub>2</sub> POSCAR file.
 
     ```
-    CO2 in 10x10x10 cubic box
+    C4 O8
     1.0
-    10.000000 0.000000 0.000000
-    0.000000 10.000000 0.000000
-    0.000000 0.000000 10.000000
+    5.4970732799999986    0.0000000000000000    0.0000000000000003
+    -0.0000000000000003    5.4970732799999986    0.0000000000000003
+    0.0000000000000000    0.0000000000000000    5.4970732799999986
     C O
-    1 2
-    Direct
-    0.500000 0.500000 0.500000
-    0.500000 0.500000 0.616000
-    0.500000 0.500000 0.384000
-
+    4 8
+    direct
+    0.0000000000000000    0.0000000000000000    0.0000000000000000 C
+    0.5000000000000000    0.0000000000000000    0.5000000000000000 C
+    0.5000000000000000    0.5000000000000000    0.0000000000000000 C
+    0.0000000000000000    0.5000000000000000    0.5000000000000000 C
+    0.1225369799999990    0.1225369799999990    0.1225369799999990 O
+    0.3774630200000000    0.8774630200000000    0.6225369800000000 O
+    0.6225369800000000    0.3774630200000000    0.8774630200000000 O
+    0.8774630200000000    0.6225369800000000    0.3774630200000000 O
+    0.8774630200000000    0.8774630200000000    0.8774630200000000 O
+    0.6225369800000000    0.1225369799999990    0.3774630200000000 O
+    0.3774630200000000    0.6225369800000000    0.1225369799999990 O
+    0.1225369799999990    0.3774630200000000    0.6225369800000000 O
     ```
 
 2. Create your INCAR file. Below is a minimal example that writes the required CHGCAR, AECCAR, and ELFCAR files. In general, the grid density should be at least 10 pts/Å along each lattice vector for well converged Bader analysis.
@@ -29,13 +37,13 @@ The `ElfLabeler` class can be used to automatically identify various chemical fe
     ENCUT  = 520
 
     Grid Size             # Moderately grid density
-    NGX    = 100
-    NGY    = 100
-    NGZ    = 100
+    NGX    = 60
+    NGY    = 60
+    NGZ    = 60
     "Fine" Grid Size      # Must Match Standard Grid
-    NGXF   = 100
-    NGYF   = 100
-    NGZF   = 100
+    NGXF   = 60
+    NGYF   = 60
+    NGZF   = 60
     ```
 
 3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary.
@@ -52,9 +60,10 @@ The `ElfLabeler` class can be used to automatically identify various chemical fe
 
     1. If you would like to follow along, open your preferred IDE in an environment with BaderKit installed. Alternatively, the complete python script from this tutorial is available at the end of this page.
 
-    2. Import the ElfLabeler class
+    2. Import the Badelf class
 
         ```Python
+        import math
         from baderkit import Grid
         from baderkit.elf_analysis import ElfLabeler
         ```
@@ -86,19 +95,33 @@ The `ElfLabeler` class can be used to automatically identify various chemical fe
         charges = labeler.elf_bader.basin_charges
         ```
 
-    5. Get the index corresponding to the first covalent bond between C and O and print the bond-order to the console.
+    5. Get the indices that correspond to covalent bonds, and calculate the bond-order at each
         ```Python
-        covalent_idx = features.index("covalent bond")
-        print(f"Bond Order: {charges[covalent_idx]/2}")
+        covalent = [i for i, j in enumerate(features) if j == "covalent bond"]
+
+        bond_orders = []
+        for idx in covalent:
+            bond_orders.append(charges[idx]/2)
+        ```
+    
+    6. Finally, print the exact bond-orders and the formal bond-orders to the console.
+        ```Python
+        for idx, bo in zip(covalent, bond_orders):
+            print(f"Basin {idx} Bond Order: {round(bo,2)} -> {math.ceil(charges[idx]/2)}")
         ```
     
         You should see logging information as BaderKit runs, then outputs similar to the following:
         
         ```
-        Bond Order: 1.3742746666
+        Basin 8 Bond Order: 1.37 -> 2
+        Basin 9 Bond Order: 1.37 -> 2
+        Basin 10 Bond Order: 1.37 -> 2
+        Basin 11 Bond Order: 1.37 -> 2
+        Basin 12 Bond Order: 1.37 -> 2
+        Basin 13 Bond Order: 1.37 -> 2
+        Basin 14 Bond Order: 1.37 -> 2
+        Basin 15 Bond Order: 1.37 -> 2
         ```
-        
-        Note that the BO is lower than the formal value of 2. This is because the CO bond is partially ionic in nature, with Oxygen taking the dominant share.
 
 === "Command Line"
 
@@ -114,18 +137,13 @@ The `ElfLabeler` class can be used to automatically identify various chemical fe
         baderkit sum AECCAR0 AECCAR2
         ```
 
-    3. Run the labeler analysis.
+    3. Run the Badelf analysis.
 
         ```Bash
-        baderkit label CHGCAR ELFCAR -tot CHGCAR_sum
+        baderkit badelf CHGCAR ELFCAR -tot CHGCAR_sum
         ```
 
         You should see logging information printed to the console and once complete a `labeler.json` file will be written which summarizes the results of the calculation.
 
 And that's it! Try playing around with what else the `ElfLabeler` class offers.
 
-## Download Resources
-
-Tutorial Script: <a href="/tutorial_scripts/vasp/electrides_vasp.py" download>bond_order.py</a>
-
-VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/CO2.zip" download>CO2.zip</a>

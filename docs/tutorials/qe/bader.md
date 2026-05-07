@@ -13,7 +13,7 @@ This tutorial provides a basic example of calculating oxidation states using Qua
 
     &SYSTEM
     ibrav = 0,
-    nat = 3,
+    nat = 2,
     ntyp = 2,
     ecutwfc = 40.0,
     ecutrho = 320.0,
@@ -39,7 +39,6 @@ This tutorial provides a basic example of calculating oxidation states using Qua
 
     K_POINTS automatic
     2 2 2 0 0 0
-
     ```
     Make sure you have appropriate pseudopotentials in the folder, or point to a directory containing them. We use the standard solid-state pseudopotentials database [SSSP](https://legacy.materialscloud.org/discover/sssp/table/efficiency#sssp-license).
 
@@ -61,9 +60,6 @@ This tutorial provides a basic example of calculating oxidation states using Qua
         iflag = 3
         output_format = 6
         fileout = 'chg.cube'
-        nx = 30
-        ny = 30
-        nz = 30
         /
         ```
 
@@ -80,9 +76,6 @@ This tutorial provides a basic example of calculating oxidation states using Qua
         iflag = 3
         output_format = 6
         fileout = 'tot_chg.cube'
-        nx = 30
-        ny = 30
-        nz = 30
         /
         ```
 
@@ -91,8 +84,8 @@ This tutorial provides a basic example of calculating oxidation states using Qua
     mpirun -np 12 pp.x -in chg.in
     mpirun -np 12 pp.x -in tot_chg.in
     ```
+    This should print `.cube` files for the valence and total charge densities.
 
-    You should now be ready to move over to BaderKit
 
 ## BaderKit
 
@@ -112,6 +105,8 @@ This tutorial provides a basic example of calculating oxidation states using Qua
         bader = Bader.from_cube(
             charge_filename="chg.cube",
             total_charge_filename="tot_chg.cube",
+            vacuum_tol=False,
+            persistence_tol=0.2,
         )
         ```
 
@@ -121,7 +116,7 @@ This tutorial provides a basic example of calculating oxidation states using Qua
         ```
     
         You should see logging information as BaderKit runs, then the oxidation states of each atom in the structure:
-            `array([ 0.87331308, -0.8732974 ])`
+            `array([ 0.8613451  -0.86136255])`
 
 === "Command Line"
 
@@ -131,16 +126,10 @@ This tutorial provides a basic example of calculating oxidation states using Qua
         conda activate baderkit
         ```
 
-    2. We recommend using the reconstructed total charge density as a reference for Bader partitioning when possible. In VASP we can construct this from the AECCAR files.
+    2. Run the Bader analysis.
 
         ```Bash
-        baderkit sum AECCAR0 AECCAR2
-        ```
-
-    3. Run the Bader analysis.
-
-        ```Bash
-        baderkit bader CHGCAR -ref CHGCAR_sum
+        baderkit bader chg.cube -ref tot_chg.cube
         ```
 
         You should see logging information printed to the console and once complete a `bader.json` file will be written which summarizes the results of the calculation.
@@ -149,6 +138,6 @@ And that's it! Try playing around with what else the `Bader` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/oxidation_states_vasp.py" download>oxidation_states_vasp.py</a>
+Tutorial Script: <a href="/tutorial_scripts/qe/oxidation_states.py" download>oxidation_states_vasp.py</a>
 
-VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl.zip" download>NaCl.zip</a>
+VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl_qe.zip" download>NaCl.zip</a>
