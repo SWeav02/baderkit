@@ -2,77 +2,224 @@ The `BasinOverlap` class is the basis for most other ELF analysis methods. A key
 
 ## VASP
 
-1. Create folders for SiO<sub>2</sub> and SiSe<sub>2</sub> then add the relavent POSCARs.
+1. Create folders for SiO<sub>2</sub> and SiSe<sub>2</sub> then add the relavent input files.
 
     === "SiO<sub>2</sub>"
 
         ```
-        Si3 O6
-        1.0000000000000000
-            2.9065788033759707   -5.0343421636499297    0.0000000000000000
-            2.9065788033759707    5.0343421636499297   -0.0000000000000000
-            0.0000000000000000   -0.0000000000000000    6.8388368079686197
-        Si   O
-            3     6
-        Direct
-        0.5426351758707367  0.5426351758707367  0.0000000000000000
-        0.0000000000000000  0.4573648241292635  0.6666666666666643
-        0.4573648241292635  0.0000000000000000  0.3333333333333357
-        0.3105338987464629  0.3715918000134620  0.7397430676385232
-        0.6284081999865376  0.9389420987330006  0.0730764009718589
-        0.0610579012669993  0.6894661012535368  0.4064097343051874
-        0.3715918000134621  0.3105338987464629  0.2602569323614768
-        0.6894661012535368  0.0610579012669993  0.5935902656948125
-        0.9389420987330006  0.6284081999865376  0.9269235990281411
+        &CONTROL
+        calculation = 'scf'
+        etot_conv_thr =   9.0000000000d-04
+        forc_conv_thr =   1.0000000000d-03
+        outdir = './scf/'
+        prefix = 'sio2'
+        pseudo_dir = '.'
+        tprnfor = .true.
+        tstress = .true.
+        verbosity = 'high'
+        /
+        &SYSTEM
+        degauss =   2.7500000000d-02
+        ecutrho =   4.0000000000d+02
+        ecutwfc =   5.0000000000d+01
+        ibrav = 0
+        nat = 9
+        nosym = .false.
+        ntyp = 2
+        occupations = 'fixed'
+        /
+        &ELECTRONS
+        conv_thr =   3.6000000000d-09
+        electron_maxstep = 80
+        mixing_beta =   4.0000000000d-01
+        /
+        ATOMIC_SPECIES
+        O      15.9994 O.pbesol-n-kjpaw_psl.1.0.0.UPF
+        Si     28.0855 Si.pbesol-n-kjpaw_psl.1.0.0.UPF
+        ATOMIC_POSITIONS crystal
+        Si           0.5392609666       0.5392609666       0.0000000000
+        Si           1.0000000000       0.4607390334       0.6666666667
+        Si           0.4607390334      -0.0000000000       0.3333333333
+        O            0.2823785520       0.4073820558       0.7734433510
+        O            0.5926179442       0.8749964962       0.1067766843
+        O            0.1250035038       0.7176214480       0.4401100176
+        O            0.4073820558       0.2823785520       0.2265566490
+        O            0.7176214480       0.1250035038       0.5598899824
+        O            0.8749964962       0.5926179442       0.8932233157
+        K_POINTS automatic
+        5 5 4 0 0 0
+        CELL_PARAMETERS angstrom
+            2.4258960288      -4.2017751758       0.0000000000
+            2.4258960288       4.2017751758      -0.0000000000
+            0.0000000000       0.0000000000       5.3743607716
         ```
 
     === "SiSe<sub>2</sub>"
         ```
-        Si3 Se6
-        1.0000000000000000
-            3.0736185368658857   -5.3236634689372266    0.0000000000000000
-            3.0736185368658857    5.3236634689372266   -0.0000000000000000
-            0.0000000000000000    0.0000000000000000    7.3581003117850452
-        Si   Se
-            3     6
-        Direct
-        0.5425008931935045  0.5425008931935045  0.0000000000000000
-        0.0000000000000000  0.4574991068064957  0.6666666666666643
-        0.4574991068064957  0.0000000000000000  0.3333333333333357
-        0.3146965008777560  0.3670459293023581  0.7360315685352555
-        0.6329540706976418  0.9476505715753980  0.0693649018685914
-        0.0523494284246021  0.6853034991222440  0.4026982352019201
-        0.3670459293023581  0.3146965008777560  0.2639684314647442
-        0.6853034991222440  0.0523494284246021  0.5973017647980802
-        0.9476505715753980  0.6329540706976418  0.9306350981314088
+        &CONTROL
+        calculation = 'scf'
+        etot_conv_thr =   9.0000000000d-04
+        forc_conv_thr =   1.0000000000d-03
+        outdir = './scf/'
+        prefix = 'sise2'
+        pseudo_dir = '.'
+        tprnfor = .true.
+        tstress = .true.
+        verbosity = 'high'
+        /
+        &SYSTEM
+        degauss =   2.7500000000d-02
+        ecutrho =   2.4000000000d+02
+        ecutwfc =   3.0000000000d+01
+        ibrav = 0
+        nat = 9
+        nosym = .false.
+        ntyp = 2
+        occupations = 'fixed'
+        /
+        &ELECTRONS
+        conv_thr =   3.6000000000d-09
+        electron_maxstep = 80
+        mixing_beta =   4.0000000000d-01
+        /
+        ATOMIC_SPECIES
+        Se     78.96 Se.pbesol-dn-kjpaw_psl.1.0.0.UPF
+        Si     28.0855 Si.pbesol-n-kjpaw_psl.1.0.0.UPF
+        ATOMIC_POSITIONS crystal
+        Si           0.5425008932       0.5425008932       0.0000000000
+        Si          -0.0000000000       0.4574991068       0.6666666667
+        Si           0.4574991068      -0.0000000000       0.3333333333
+        Se           0.3146965009       0.3670459293       0.7360315685
+        Se           0.6329540707       0.9476505716       0.0693649019
+        Se           0.0523494284       0.6853034991       0.4026982352
+        Se           0.3670459293       0.3146965009       0.2639684315
+        Se           0.6853034991       0.0523494284       0.5973017648
+        Se           0.9476505716       0.6329540707       0.9306350981
+        K_POINTS automatic
+        4 4 3 0 0 0
+        CELL_PARAMETERS angstrom
+            3.0736185369      -5.3236634689       0.0000000000
+            3.0736185369       5.3236634689      -0.0000000000
+            0.0000000000       0.0000000000       7.3581003118
+        ```
+    Make sure you have appropriate pseudopotentials and point `pseudo_dir` to their location. We copy the pseudopotentials into the active directory so that BaderKit can automatically parse them. For this tutorial, we used PPs generated from [pslibrary v1.0.0](https://dalcorso.github.io/pslibrary/).
+
+2. Run the scf calculation. On our system we use the following command.
+
+    ```
+    mpirun -np 12 pw.x -in scf.in
+    ```
+
+3. We need the valence charge density,'all-electron' (valence and core) density, and electron localization function (ELF). To generate these, we must run the post-processing package, `pp.x`, once for each file. Here we provide the inputs for both which we named `chg.in`, `tot_chg.in`, and `elf.in` respectively. Add these to the corresponding system directories.
+
+    === "Valence - SiO<sub>2</sub>"
+        ```
+        &INPUTPP
+        prefix = 'sio2',
+        outdir = './scf/',
+        plot_num = 0
+        /
+
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 6
+        fileout = 'chg.cube'
+        /
         ```
 
-2. Create your INCAR files. Below is a minimal example that writes the required CHGCAR, AECCAR, and ELFCAR files. In general, the grid density should be at least 10 pts/Å along each lattice vector for well converged Bader analysis. Since both systems are a similar size, we use the same grid.
+    === "Total - SiO<sub>2</sub>"
+        ```
+        &INPUTPP
+        prefix = 'sio2',
+        outdir = './scf/',
+        plot_num = 21
+        /
 
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 6
+        fileout = 'tot_chg.cube'
+        /
+        ```
+
+    === "ELF - SiO<sub>2</sub>"
+        ```
+        &INPUTPP
+        prefix = 'sio2',
+        outdir = './scf/',
+        plot_num = 8
+        /
+
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 6
+        fileout = 'elf.cube'
+        /
+        ```
+
+    === "Valence - SiSe<sub>2</sub>"
+        ```
+        &INPUTPP
+        prefix = 'sise2',
+        outdir = './scf/',
+        plot_num = 0
+        /
+
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 6
+        fileout = 'chg.cube'
+        /
+        ```
+
+    === "Total - SiSe<sub>2</sub>"
+        ```
+        &INPUTPP
+        prefix = 'sise2',
+        outdir = './scf/',
+        plot_num = 21
+        /
+
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 6
+        fileout = 'tot_chg.cube'
+        /
+        ```
+
+    === "ELF - SiSe<sub>2</sub>"
+        ```
+        &INPUTPP
+        prefix = 'sise2',
+        outdir = './scf/',
+        plot_num = 8
+        /
+
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 6
+        fileout = 'elf.cube'
+        /
+        ```
+
+
+4. Run the post-processing on each file to produce the required cube files.
     ```
-    Global Parameters
-    LAECHG = True         # Write AECCAR files
-    LELF = True           # Write ELFCAR file
-    EDIFF  = 1E-06        # SCF energy convergence, in eV
-    ENCUT  = 520
-
-    Grid Size             # Moderately grid density
-    NGX    = 60
-    NGY    = 60
-    NGZ    = 70
-    "Fine" Grid Size      # Must Match Standard Grid
-    NGXF   = 60
-    NGYF   = 60
-    NGZF   = 70
+    mpirun -np 12 pp.x -in chg.in
+    mpirun -np 12 pp.x -in tot_chg.in
+    mpirun -np 12 pp.x -in elf.in
     ```
+    This should print the required `.cube` files.
 
-3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary. We recommend using pseudopotentials with some core electrons such as 'Si_sv' and 'Se_sv' to properly separate the core region in the ELF.
+!!! Tip
+    We have also added functionality for XCrySDen's `.xsf` format if you prefer. Note that we currently only parse the first density grid in the file.
 
-4. Run VASP. Depending on your system how you do this may vary. On our system we use the following command.
-
-    ```
-    mpirun -np 12 vasp_std
-    ```
 
 ## BaderKit
 
@@ -84,11 +231,10 @@ The `BasinOverlap` class is the basis for most other ELF analysis methods. A key
 
         ```Python
         from pathlib import Path
-        from baderkit import Grid
         from baderkit.elf_analysis import ElfLabeler
         ```
     
-    3. Note the folders where your VASP results are stored and create lists to store the results.
+    3. Note the folders where your QE results are stored and create lists to store the results.
         ```Python
         folders = [
         Path("SiO2"),
@@ -105,30 +251,25 @@ The `BasinOverlap` class is the basis for most other ELF analysis methods. A key
         ```Python
         for folder in folders:
 
-            # generate CHGCAR_sum file
-            core_grid = Grid.from_vasp(folder / "AECCAR0")
-            val_grid = Grid.from_vasp(folder / "AECCAR2")
-            total = core_grid.linear_add(val_grid)
-            total.write_vasp(folder / "CHGCAR_sum")
-            
             # load labeler
-            labeler = ElfLabeler.from_vasp(
-                charge_filename=folder / "CHGCAR",
-                reference_filename=folder / "ELFCAR",
-                total_charge_filename=folder / "CHGCAR_sum",
-                pseudopotential_filename=folder / "POTCAR"
+            labeler = ElfLabeler.from_cube(
+                charge_filename=folder / "chg.cube",
+                reference_filename=folder / "elf.cube",
+                total_charge_filename=folder / "tot_chg.cube",
                 )
-            
+
             # get the first basin corresponding to a bond
+            basin_type = None
+            basin_idx = None
             for idx, i in enumerate(labeler.basin_types):
                 if "bond" in i:
                     basin_type = i
                     basin_idx = idx
                     break
-                
+
             # get the bond polarity
             bond_polarity = labeler.overlap.polarization_indexes[basin_idx]
-            
+
             # add bond types and polarities to our lists
             bond_types.append(basin_type)
             bond_polarities.append(bond_polarity)
@@ -138,8 +279,8 @@ The `BasinOverlap` class is the basis for most other ELF analysis methods. A key
 
         ```Python
         for system, bond, polarity in zip(folders, bond_types, bond_polarities):
-        # print the polarity and basin type
-        print(f"{system.name} Bond Polarity: {polarity} -> {bond}")
+            # print the polarity and basin type
+            print(f"{system.name} Bond Polarity: {polarity} -> {bond}")
         ```
     
         You should see logging information as BaderKit runs, then outputs similar to the following:

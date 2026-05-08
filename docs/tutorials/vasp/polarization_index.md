@@ -138,8 +138,8 @@ The `BasinOverlap` class is the basis for most other ELF analysis methods. A key
 
         ```Python
         for system, bond, polarity in zip(folders, bond_types, bond_polarities):
-        # print the polarity and basin type
-        print(f"{system.name} Bond Polarity: {polarity} -> {bond}")
+            # print the polarity and basin type
+            print(f"{system.name} Bond Polarity: {polarity} -> {bond}")
         ```
     
         You should see logging information as BaderKit runs, then outputs similar to the following:

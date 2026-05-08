@@ -2,46 +2,117 @@ Ionic and covalent radii are typically determined from tabulated data such as th
 
 ## VASP
 
-1. Create your POSCAR file. As an example, we used the following NaCl structure.
+1. Create an input file for NaCl.
 
     ```
-    Na1 Cl1
-    1.0000000000000000
-        3.3674419368762565   -0.0000000000000000    1.9441935087359421
-        1.1224806456254190    3.1748547050895506    1.9441935087359421
-        -0.0000000000000000    0.0000000000000000    3.8883870174718833
-    Na   Cl
-        1     1
-    Direct
-    0.0000000000000000  0.0000000000000000 -0.0000000000000000
-    0.5000000000000000  0.5000000000000000  0.5000000000000000
+    &CONTROL
+    calculation = 'scf'
+    etot_conv_thr =   2.0000000000d-04
+    forc_conv_thr =   1.0000000000d-03
+    outdir = './scf'
+    prefix = 'nacl'
+    pseudo_dir = '.'
+    tprnfor = .true.
+    tstress = .true.
+    verbosity = 'high'
+    /
+    &SYSTEM
+    degauss =   2.7500000000d-02
+    ecutrho =   320.0
+    ecutwfc =   70.0
+    ibrav = 0
+    nat = 2
+    nosym = .false.
+    ntyp = 2
+    occupations = 'fixed'
+    /
+    &ELECTRONS
+    conv_thr =   8.0000000000d-10
+    electron_maxstep = 80
+    mixing_beta =   4.0000000000d-01
+    /
+    ATOMIC_SPECIES
+    Cl     35.453 Cl.pbesol-n-kjpaw_psl.1.0.0.UPF
+    Na     22.98977 Na.pbesol-spn-kjpaw_psl.1.0.0.UPF
+    ATOMIC_POSITIONS crystal
+    Na           0.0000000000       0.0000000000       0.0000000000
+    Cl           0.5000000000       0.5000000000       0.5000000000
+    K_POINTS automatic
+    7 7 7 0 0 0
+    CELL_PARAMETERS angstrom
+        3.4220145992       0.0000000000       1.9757010500
+        1.1406715331       3.2263063045       1.9757010500
+        0.0000000000       0.0000000000       3.9514021000
     ```
-2. Create your INCAR file. Below is a minimal example that writes the required CHGCAR, AECCAR, and ELFCAR files. In general, the grid density should be at least 10 pts/Å along each lattice vector for well converged Bader analysis.
+    Make sure you have appropriate pseudopotentials and point `pseudo_dir` to their location. We copy the pseudopotentials into the active directory so that BaderKit can automatically parse them. For this tutorial, we used PPs generated from [pslibrary v1.0.0](https://dalcorso.github.io/pslibrary/).
+
+2. Run the scf calculation. On our system we use the following command.
 
     ```
-    Global Parameters
-    LAECHG = True         # Write AECCAR files
-    LELF = True           # Write ELFCAR file
-    EDIFF  = 1E-06        # SCF energy convergence, in eV
-    ENCUT  = 520
-
-    Grid Size             # Moderately grid density
-    NGX    = 30
-    NGY    = 30
-    NGZ    = 30
-    "Fine" Grid Size      # Must Match Standard Grid
-    NGXF   = 30
-    NGYF   = 30
-    NGZF   = 30
+    mpirun -np 12 pw.x -in scf.in
     ```
 
-3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary.
+3. We need the valence charge density,'all-electron' (valence and core) density, and electron localization function (ELF). To generate these, we must run the post-processing package, `pp.x`, once for each file. Here we provide the inputs for both which we named `chg.in`, `tot_chg.in`, and `elf.in` respectively.
 
-4. Run VASP. Depending on your system how you do this may vary. On our system we use the following command.
+    === "Valence"
+        ```
+        &INPUTPP
+        prefix = 'nacl',
+        outdir = './scf/',
+        plot_num = 0
+        /
 
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 6
+        fileout = 'chg.cube'
+        /
+        ```
+
+    === "Total"
+        ```
+        &INPUTPP
+        prefix = 'nacl',
+        outdir = './scf/',
+        plot_num = 21
+        /
+
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 6
+        fileout = 'tot_chg.cube'
+        /
+        ```
+
+    === "ELF"
+        ```
+        &INPUTPP
+        prefix = 'nacl',
+        outdir = './scf/',
+        plot_num = 8
+        /
+
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 6
+        fileout = 'elf.cube'
+        /
+        ```
+
+
+4. Run the post-processing on each file to produce the required cube files.
     ```
-    mpirun -np 12 vasp_std
+    mpirun -np 12 pp.x -in chg.in
+    mpirun -np 12 pp.x -in tot_chg.in
+    mpirun -np 12 pp.x -in elf.in
     ```
+    This should print the required `.cube` files.
+
+!!! Tip
+    We have also added functionality for XCrySDen's `.xsf` format if you prefer. Note that we currently only parse the first density grid in the file.
 
 ## BaderKit
 
@@ -56,23 +127,13 @@ Ionic and covalent radii are typically determined from tabulated data such as th
         from baderkit.elf_analysis import ElfRadii
         ```
 
-    3. We recommend using the reconstructed total charge density as a reference for Bader partitioning when possible. In VASP we can construct this from the AECCAR files.
-
-        ```Python
-        core_grid = Grid.from_vasp("AECCAR0")
-        val_grid = Grid.from_vasp("AECCAR2")
-        total = core_grid.linear_add(val_grid)
-        total.write_vasp("CHGCAR_sum")
-        ```
-
     3. Now create the ElfRadii class instance.
 
         ```Python
-        elf_radii = ElfRadii.from_vasp(
-            charge_filename="CHGCAR",
-            reference_filename="ELFCAR",
-            total_charge_filename="CHGCAR_sum",
-            pseudopotential_filename="POTCAR"
+        elf_radii = ElfRadii.from_cube(
+            charge_filename="chg.cube",
+            reference_filename="elf.cube",
+            total_charge_filename="tot_chg.cube",
             )
         ```
 
@@ -91,7 +152,7 @@ Ionic and covalent radii are typically determined from tabulated data such as th
     
     You should see logging information as BaderKit runs, then the oxidation states of each atom in the structure:
         ```
-        ELF Radius: 1.05
+        ELF Radius: 1.06 ang
         Shannon Radius: 1.16 ang
         ```
 
@@ -103,16 +164,10 @@ Ionic and covalent radii are typically determined from tabulated data such as th
         conda activate baderkit
         ```
 
-    2. We recommend using the reconstructed total charge density as a reference for Bader partitioning when possible. In VASP we can construct this from the AECCAR files.
-
-        ```Bash
-        baderkit sum AECCAR0 AECCAR2
-        ```
-
     3. Run the ElfRadii analysis.
 
         ```Bash
-        baderkit radii CHGCAR ELFCAR -tot CHGCAR_sum
+        baderkit radii chg.cube elf.cube -tot tot_chg.cube
         ```
 
         You should see logging information printed to the console and once complete a `radii.json` file will be written which summarizes the results of the calculation.
@@ -121,6 +176,6 @@ And that's it! Try playing around with what else the `ElfRadii` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/oxidation_states_vasp.py" download>elf_radii.py</a>
+Tutorial Script: <a href="/tutorial_scripts/qe/elf_radii.py" download>elf_radii.py</a>
 
-VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl_radii.zip" download>NaCl_radii.zip</a>
+VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl_radii_qe.zip" download>NaCl_radii_qe.zip</a>

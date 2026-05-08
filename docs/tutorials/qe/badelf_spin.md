@@ -53,68 +53,87 @@ It is common for systems to have differing ELF topologies in the spin-up and spi
     ```
     mpirun -np 12 pw.x -in scf.in
     ```
+3. We need the valence charge density and electron localization function for each spin. Unfortunately, Quantum ESPRESSO does not provide a method for spin-polarized ELF. Instead, BaderKit provides a convenience method, based on QE's `elf.f90` module, that calculates the ELF from the charge density and kinetic energy density for each spin. To generate these we must run the post-processing package, `pp.x` for each file. Here we provide the inputs for each required file which we name `chg_up.in`, `chg_down.in`, `kin_up.in` and `kin_down.in`.
 
-3. We need the valence charge density,'all-electron' (valence and core) density, and electron localization function (ELF). To generate these, we must run the post-processing package, `pp.x`, once for each file. Here we provide the inputs for both which we named `chg.in`, `tot_chg.in`, and `elf.in` respectively.
-
-    === "Valence"
+    === "Charge Up"
         ```
         &INPUTPP
         prefix = 'fe',
         outdir = './scf/',
-        plot_num = 0
+        plot_num = 0,
+        spin_component = 1
         /
 
         &PLOT
         nfile = 1
         iflag = 3
-        output_format = 6
-        fileout = 'fe.cube'
+        output_format = 5
+        fileout = 'chg_up.xsf'
         /
         ```
 
-    === "Total"
+    === "Charge Down"
         ```
         &INPUTPP
         prefix = 'fe',
         outdir = './scf/',
-        plot_num = 21
+        plot_num = 0,
+        spin_component = 2
         /
 
         &PLOT
         nfile = 1
         iflag = 3
-        output_format = 6
-        fileout = 'tot_chg.cube'
+        output_format = 5
+        fileout = 'chg_down.xsf'
         /
         ```
 
-    === "ELF"
+    === "KED Up"
         ```
         &INPUTPP
         prefix = 'fe',
         outdir = './scf/',
-        plot_num = 8
+        plot_num = 22,
+        spin_component = 1
         /
 
         &PLOT
         nfile = 1
         iflag = 3
-        output_format = 6
-        fileout = 'elf.cube'
+        output_format = 5
+        fileout = 'kin_up.xsf'
         /
         ```
 
+    === "KED Down"
+        ```
+        &INPUTPP
+        prefix = 'fe',
+        outdir = './scf/',
+        plot_num = 0,
+        spin_component = 2
+        /
+
+        &PLOT
+        nfile = 1
+        iflag = 3
+        output_format = 5
+        fileout = 'kin_down.xsf'
+        /
+        ```
 
 4. Run the post-processing on each file to produce the required cube files.
     ```
-    mpirun -np 12 pp.x -in chg.in
-    mpirun -np 12 pp.x -in tot_chg.in
-    mpirun -np 12 pp.x -in elf.in
+    mpirun -np 12 pp.x -in chg_up.in
+    mpirun -np 12 pp.x -in chg_down.in
+    mpirun -np 12 pp.x -in kin_up.in
+    mpirun -np 12 pp.x -in kin_down.in
     ```
-    This should print the required `.cube` files.
+    This should write the required `.xsf` files.
 
-!!! Tip
-    We have also added functionality for XCrySDen's `.xsf` format if you prefer. Note that we currently only parse the first density grid in the file.
+!!! Note
+    We use the XCrySDen .xsf file format in this tutorial which writes on the exact FFT grid used by Quantum ESPRESSO without interpolation. We have found that ELF calculations using this format more closely match the ELF calculated by QE for total electron calculations. You can still use the .cube format if you prefer, but the exact ELF value may slightly differ.
 
 ## BaderKit
 
@@ -122,25 +141,38 @@ It is common for systems to have differing ELF topologies in the spin-up and spi
 
     1. If you would like to follow along, open your preferred IDE in an environment with BaderKit installed. Alternatively, the complete python script from this tutorial is available at the end of this page.
 
-    2. Import the Grid and Badelf class
+    2. Import the Grid and Badelf class as well as the ELF helper function.
 
         ```Python
         from baderkit import Grid
         from baderkit.elf_analysis import Badelf
+        from baderkit.global_numba.elf_construction import compute_elf_from_grid
+
         ```
 
     3. Load the spin polarized grids
 
         ```python
-        polarized_charge = Grid.from_vasp("CHGCAR", total_only=False)
-        polarized_elf = Grid.from_vasp("ELFCAR", total_only=False)
+        charge_up = Grid.from_xsf("chg_up.xsf")
+        charge_down = Grid.from_xsf("chg_down.xsf")
+        ked_up = Grid.from_xsf("kin_up.xsf")
+        ked_down = Grid.from_xsf("kin_down.xsf")
+
         ```
     
-    4. Split the polarized grids into their spin-up and spin-down components
+    4. Calculate the ELF.
 
         ```python
-        charge_up, charge_down = polarized_charge.split_to_spin()
-        elf_up, elf_down = polarized_elf.split_to_spin()
+        elf_up = compute_elf_from_grid(
+            charge_grid=charge_up,
+            ked_grid=ked_up,
+            spin=True,
+            )
+        elf_down = compute_elf_from_grid(
+            charge_grid=charge_down,
+            ked_grid=ked_down,
+            spin=True,
+            )
         ```
 
     5. Create the polarized BadELF objects.
@@ -149,16 +181,10 @@ It is common for systems to have differing ELF topologies in the spin-up and spi
         badelf_up = Badelf(
             charge_grid=charge_up,
             reference_grid=elf_up,
-            valence_counts={
-                "Fe": 16
-                }
             )
         badelf_down = Badelf(
             charge_grid=charge_down,
             reference_grid=elf_down,
-            valence_counts={
-                "Fe": 16
-                }
             )
         ```
 
@@ -173,8 +199,8 @@ It is common for systems to have differing ELF topologies in the spin-up and spi
     
         You should see logging information as BaderKit runs, then outputs similar to the following:
             ```
-            Spin-up metal bond population: 1.336115618
-            Spin-down metal bond population: 0.9357502685
+            Spin-up metal bond population: 0.946546023
+            Spin-down metal bond population: 1.2712379158
             ```
 
 === "Command Line"
@@ -185,18 +211,18 @@ It is common for systems to have differing ELF topologies in the spin-up and spi
         conda activate baderkit
         ```
 
-    2. Split the charge density and ELF into spin-up and spin-down systems
+    2. Calculate the polarized ELF
         ```bash
-        baderkit split CHGCAR
-        baderkit split ELFCAR
+        baderkit make-elf chg_up.xsf kin_up.xsf -s -o elf_up.xsf
+        baderkit make-elf chg_down.xsf kin_down.xsf -s -o elf_down.xsf
         ```
 
     3. Run the Badelf analysis on each system separately. Make sure to change the name of the output .json file to avoid overwriting it.
 
         ```bash
-        baderkit badelf CHGCAR_up ELFCAR_up
+        baderkit badelf chg_up.xsf elf_up.xsf
         mv badelf.json badelf_up.json
-        baderkit badelf CHGCAR_down ELFCAR_down
+        baderkit badelf chg_down.xsf elf_down.xsf
         mv badelf.json badelf_down.json
         ```
 
@@ -205,7 +231,7 @@ And that's it! Try playing around with what else the `Badelf` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/spin_badelf_vasp.py" download>spin_badelf_vasp.py</a>
+Tutorial Script: <a href="/tutorial_scripts/qe/spin_badelf.py" download>spin_badelf.py</a>
 
-VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/Fe.zip" download>Fe.zip</a>
+VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/Fe_qe.zip" download>Fe_qe.zip</a>
 

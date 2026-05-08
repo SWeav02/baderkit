@@ -180,7 +180,7 @@ def bader(
     elif print == "sel_spec":
         for species in indices:
             bader.write_species_volume(species=species)
-            
+
 
 class BadelfPrintOptions(str, Enum):
     all_atoms = "all_atoms"
@@ -530,7 +530,7 @@ def regrid(
     ),
 ):
     """
-    Creates a new grid file with a different voxel resolution. This is particularly useful for creating files with lower resolution for easier plotting. 
+    Creates a new grid file with a different voxel resolution. This is particularly useful for creating files with lower resolution for easier plotting.
     """
     from baderkit import Grid
 
@@ -634,6 +634,12 @@ def make_elf(
         ...,
         help="The path to the file containing the kinetic energy density"
     ),
+    use_spin: bool = typer.Option(
+        False,
+        "--use-spin",
+        "-s",
+        help="If set, corrects the prefactor for a single spin rather than the total charge-density"
+        ),
     output_path: Path = typer.Option(
         None,
         "--output-path",
@@ -657,42 +663,40 @@ def make_elf(
     ),
 ):
     """
-    Converts the provided file to another format.
+    Calculates the ELF from a charge density and kinetic energy density grid. This is useful, for example, for
+    calculating the spin-polarized ELF from Quantum Espresso outputs. For spin-polarized systems, the `use-spin`
+    parameter should be set to obtain proper values.
+
+    !!! Warning
+        While we have checked this method to confirm it nearly replicates QE's implementation, we
+        generally suggest using you ab-initio code's ELF method when possible.
     """
     from baderkit import Grid
-    from baderkit.global_numba.elf_construction import compute_elf
+    from baderkit.global_numba.elf_construction import compute_elf_from_grid
 
     # make sure files are paths
     charge_file = Path(charge_file)
     kinetic_file = Path(kinetic_file)
     # load grid dynamically
     charge_grid = Grid.from_dynamic(charge_file, format=input_format)
-    kinetic_grid = Grid.from_dynamic(kinetic_file, format=input_format)
-    
+    ked_grid = Grid.from_dynamic(kinetic_file, format=input_format)
+
     logging.info("Calculating ELF")
-    
-    lattice = charge_grid.matrix
-    elf = compute_elf(
-        rho=charge_grid.total,
-        tau=kinetic_grid.total,
-        lattice=lattice,
+
+    elf_grid = compute_elf_from_grid(
+        charge_grid=charge_grid,
+        ked_grid=ked_grid,
+        spin=use_spin,
         )
-    
-    elf_grid = Grid(
-        structure=charge_grid.structure,
-        data={"total": elf},
-        source_format=charge_grid.source_format,
-        data_type="elf",
-        )
-    
+
     if output_path is None:
         format = charge_grid.source_format
-        
+
         if format == Format.vasp:
             output_path = Path("ELFCAR")
         else:
             output_path = Path("elf").with_suffix(format.suffix)
-            
+
     # write file
     elf_grid.write(output_path, output_format)
 

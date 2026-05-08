@@ -76,16 +76,10 @@ It is common for systems to have differing ELF topologies in the spin-up and spi
         badelf_up = Badelf(
             charge_grid=charge_up,
             reference_grid=elf_up,
-            valence_counts={
-                "Fe": 16
-                }
             )
         badelf_down = Badelf(
             charge_grid=charge_down,
             reference_grid=elf_down,
-            valence_counts={
-                "Fe": 16
-                }
             )
         ```
 
@@ -132,7 +126,7 @@ And that's it! Try playing around with what else the `Badelf` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/spin_badelf_vasp.py" download>spin_badelf_vasp.py</a>
+Tutorial Script: <a href="/tutorial_scripts/vasp/spin_badelf.py" download>spin_badelf.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/Fe.zip" download>Fe.zip</a>
 

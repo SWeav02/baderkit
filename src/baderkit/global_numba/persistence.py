@@ -14,7 +14,6 @@ from baderkit.global_numba.basic import (
 )
 from baderkit.global_numba.basins import get_best_neighbor_with_shift
 from baderkit.global_numba.critical_points import (  # refine_critical_points_targeted,
-    is_ongrid_newton_crit,
     refine_critical_points,
 )
 from baderkit.global_numba.interpolation import linear_slice
@@ -587,7 +586,9 @@ def group_by_hill_climb(
         # make a union to the final neighbor
         label = extrema_labels[ext_idx]
         neigh_label = coords_to_flat(i, j, k, ny_nz, nz)
+
         union_with_shift1(labels, images, label, neigh_label, image)
+
 
     return labels, images
 
