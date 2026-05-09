@@ -497,7 +497,9 @@ def read_cube(
             # incomplete block or EOF
             logging.warn("End of file reached before expected")
         # reshape noting VASP's Fortran ordering
+        # arr = arr.reshape(shape, order="F")
         arr = arr.reshape(shape, order="F")
+        arr = np.transpose(arr, (2, 1, 0))
         arr = np.ascontiguousarray(arr)
 
         mm.close()
