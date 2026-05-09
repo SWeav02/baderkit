@@ -33,8 +33,10 @@ from baderkit.toolkit import Grid
 Self = TypeVar("Self", bound="MethodBase")
 
 # TODO:
-# 1. allow for setting periodic boundaries
-# 2. update bifurcation method
+# 1. Improve label initialization:
+    # - One idea is to first check within some distance to see if there is a
+    # voxel with a higher value than each potential maximum. If there is, we
+    # would follow the gradient path to the highest point.
 
 
 class MethodBase:

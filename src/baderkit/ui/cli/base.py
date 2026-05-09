@@ -640,6 +640,12 @@ def make_elf(
         "-s",
         help="If set, corrects the prefactor for a single spin rather than the total charge-density"
         ),
+    use_be: bool = typer.Option(
+        False,
+        "--use-be",
+        "-be",
+        help="If set, uses Becke and Edgecombes original ELF formulation based on Hartree-Fock theory instead of the definition adapted for DFT."       
+        ),
     output_path: Path = typer.Option(
         None,
         "--output-path",
@@ -687,6 +693,7 @@ def make_elf(
         charge_grid=charge_grid,
         ked_grid=ked_grid,
         spin=use_spin,
+        use_be=use_be,
         )
 
     if output_path is None:

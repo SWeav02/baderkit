@@ -31,7 +31,53 @@ def get_gradient_fft(
 
     return gx**2 + gy**2 + gz**2
 
-def calculate_elf(
+def calculate_elf_dft(
+        rho,
+        tau,
+        lattice,
+        spin,
+        ):
+    """Modern (DFT-consistent) ELF"""
+
+    grad_rho_sq = get_gradient_fft(
+        rho=rho,
+        lattice=lattice,
+    )
+
+    rho_limit = 1e-30
+    elf = np.zeros_like(rho)
+    mask = rho > rho_limit
+
+    rho_m = rho[mask]
+    tau_m = tau[mask]
+    grad_m = grad_rho_sq[mask]
+
+    # --- Weizsäcker kinetic energy ---
+    tau_w = grad_m / (8.0 * rho_m)
+
+    # --- Pauli kinetic energy ---
+    tau_p = tau_m - tau_w
+
+    # Optional stabilization (recommended)
+    tau_p = np.maximum(tau_p, 0.0)
+
+    # --- Thomas-Fermi kinetic energy ---
+    if not spin:
+        cf = (3.0/10.0) * (3.0 * np.pi**2)**(2.0/3.0)
+    else:
+        cf = (3.0/10.0) * (6.0 * np.pi**2)**(2.0/3.0)
+
+    tau_tf = cf * rho_m**(5.0/3.0)
+
+    # --- Dimensionless localization measure ---
+    chi = tau_p / tau_tf
+
+    # --- ELF ---
+    elf[mask] = 1.0 / (1.0 + chi**2)
+
+    return elf
+
+def calculate_elf_hf(
         rho,
         tau,
         lattice,
@@ -65,6 +111,7 @@ def compute_elf_from_grid(
         charge_grid,
         ked_grid,
         spin=True,
+        use_be=False,
         ):
     """
     ELF from BaderKit charge grids.
@@ -82,12 +129,20 @@ def compute_elf_from_grid(
     tau = ked_grid.total / (volume_bohr3)
 
     # calculate elf
-    elf = calculate_elf(
-        rho=rho,
-        tau=tau,
-        lattice=lattice_bohr,
-        spin=spin
-        )
+    if use_be:
+        elf = calculate_elf_hf(
+            rho=rho,
+            tau=tau,
+            lattice=lattice_bohr,
+            spin=spin
+            )
+    else:
+        elf = calculate_elf_dft(
+            rho=rho,
+            tau=tau,
+            lattice=lattice_bohr,
+            spin=spin
+            )
 
     # get Grid object
     elf_grid = Grid(
