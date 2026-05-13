@@ -93,8 +93,8 @@ class BaseElfAnalysis(BaseAnalysis):
     @classmethod
     def from_dynamic(
         cls,
-        charge_filename: Path | str,
-        reference_filename: Path | str,
+        charge_filename: Path | str | Grid,
+        reference_filename: Path | str | Grid,
         **kwargs,
     ) -> Self:
         """
@@ -106,9 +106,10 @@ class BaseElfAnalysis(BaseAnalysis):
         ----------
         charge_filename : Path | str
             The path to the file containing the charge density that will be
-            integrated.
+            integrated. Alternatively a Grid object can be provided.
         reference_filename : Path | None
             The path to the file that will be used for partitioning.
+            Alternatively a Grid object can be provided.
             If None, defaults to the total charge grid.
         total_charge_filename : Grid | None, optional
             The path to the file used for determining vacuum regions

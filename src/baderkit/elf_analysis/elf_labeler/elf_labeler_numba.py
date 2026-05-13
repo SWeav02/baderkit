@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
 
-from math import erf
-
 import numpy as np
-from numba import njit, prange, types
-from numpy.typing import NDArray
-from scipy.special import erf as scipy_erf
+from numba import njit, prange
 
 from baderkit.global_numba.interpolation import linear_slice
 from baderkit.global_numba.transforms import INT_TO_IMAGE
@@ -22,7 +18,7 @@ def get_core_dist_ratios(
     volume_bond_fracs,
 ):
 
-    basin_fracs = np.zeros(len(nna_indices), dtype=np.float64)
+    basin_fracs = np.zeros(len(basin_frac_coords), dtype=np.float64)
 
     for nna_idx in prange(len(nna_indices)):
         # skip cores
@@ -65,7 +61,7 @@ def get_core_dist_ratios(
             continue
         frac_mult = 1 / total_frac
         # update arrays
-        basin_fracs[nna_idx] = total_basin_frac * frac_mult
+        basin_fracs[local_idx] = total_basin_frac * frac_mult
 
     return basin_fracs
 
@@ -81,11 +77,10 @@ def get_core_dists(
     volume_bond_fracs,
 ):
 
-    basin_dists = np.zeros(len(nna_indices), dtype=np.float64)
+    basin_dists = np.zeros(len(basin_frac_coords), dtype=np.float64)
 
-    for nna_idx in prange(len(nna_indices)):
+    for local_idx in prange(len(basin_frac_coords)):
         # skip cores
-        local_idx = nna_indices[nna_idx]
         local_coords = basin_frac_coords[local_idx]
         local_cart_coords = local_coords @ matrix
         local_bond_frac = volume_bond_fracs[local_idx]
@@ -112,6 +107,6 @@ def get_core_dists(
             continue
         frac_mult = 1 / total_frac
         # update arrays
-        basin_dists[nna_idx] = weighted_dist * frac_mult
+        basin_dists[local_idx] = weighted_dist * frac_mult
 
     return basin_dists

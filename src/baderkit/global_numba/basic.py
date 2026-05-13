@@ -230,7 +230,7 @@ def merge_frac_coords_weighted(
         return np.array((total0, total1, total2), dtype=np.float64)
 
 
-@njit(parallel=True)
+@njit(parallel=True, cache=True)
 def get_transforms_in_radius(
     r: float,
     nx,
@@ -307,7 +307,7 @@ def get_transforms_in_radius(
     return offsets, dists
 
 
-@njit(parallel=True)
+@njit(parallel=True, cache=True)
 def get_transforms_in_voxels(
     r: int,
     nx,

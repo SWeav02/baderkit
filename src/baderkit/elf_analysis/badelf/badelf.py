@@ -271,7 +271,16 @@ class Badelf(BaseElfAnalysis):
 
         """
         if self._labeler is None:
-            self._labeler = self.elf_radii.labeler
+            if self.elf_radii is not None:
+                self._labeler = self.elf_radii.labeler
+            else:
+                self._labeler = ElfLabeler(
+                    charge_grid=self.charge_grid,
+                    total_charge_grid=self.total_charge_grid,
+                    reference_grid=self.reference_grid,
+                    cnn_kwargs=None,
+                    **self._kwargs,
+                )
         return self._labeler
 
     @property
@@ -290,7 +299,8 @@ class Badelf(BaseElfAnalysis):
             elif self.partition_method == "voronelf":
                 include_nnas = False
             else:
-                include_nnas = False
+                # we don't use the elf_radii and can just return None
+                return None
 
             self._elf_radii = ElfRadii(
                 charge_grid=self.charge_grid,

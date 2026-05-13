@@ -167,6 +167,8 @@ class MethodBase:
             use_minima=self.use_minima,
             matrix=self.reference_grid.matrix,
             max_cart_offset=0.5,
+            min_cart_offset=self.reference_grid.max_point_dist*2,
+            n_divide=3,
         )
         t1 = time.time()
 

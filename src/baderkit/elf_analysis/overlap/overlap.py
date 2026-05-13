@@ -9,7 +9,6 @@ from numpy.typing import NDArray
 from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.bader.bader import Bader
 from baderkit.global_numba.coord_env import is_along_bond_all
-from baderkit.global_numba.basic import merge_frac_coords_weighted
 from baderkit.toolkit import Grid, Structure
 
 from .overlap_numba import (
@@ -89,6 +88,13 @@ class BasinOverlap(BaseElfAnalysis):
         min_bond_angle: float = 135,
         **kwargs,
     ):
+        super().__init__(
+            charge_grid=charge_grid,
+            total_charge_grid=total_charge_grid,
+            reference_grid=reference_grid,
+            **kwargs,
+        )
+        
         self._min_bond_angle = min_bond_angle
 
         # create bader objects
@@ -101,13 +107,6 @@ class BasinOverlap(BaseElfAnalysis):
         )
 
         self.local_bader = Bader(
-            charge_grid=charge_grid,
-            total_charge_grid=total_charge_grid,
-            reference_grid=reference_grid,
-            **kwargs,
-        )
-
-        super().__init__(
             charge_grid=charge_grid,
             total_charge_grid=total_charge_grid,
             reference_grid=reference_grid,
@@ -185,26 +184,8 @@ class BasinOverlap(BaseElfAnalysis):
             is along a bond, and is particularly necessary for ring shaped covalent bonds.
 
         """
-        if self._local_maxima_center_frac is None:
-            weighted_frac = []
-            for coords in self.local_bader.maxima_betti_groups:
-                # get values at coords
-                values = self.reference_grid.total[
-                    coords[:,0],
-                    coords[:,1],
-                    coords[:,2],
-                    ]
-                frac_coords = coords / self.reference_grid.shape
 
-                weighted_frac.append(
-                    merge_frac_coords_weighted(
-                        frac_coords=frac_coords,
-                        values=values,
-                        )
-                    )
-            self._local_maxima_center_frac = np.array(weighted_frac)
-
-        return self._local_maxima_center_frac
+        return self.local_bader.maxima_center_frac
 
     @property
     def qtaim_maxima_frac(self) -> NDArray[np.float64]:

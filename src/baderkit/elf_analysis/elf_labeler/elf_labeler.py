@@ -13,7 +13,7 @@ from baderkit.toolkit import Grid, Structure
 
 from .elf_labeler_numba import (
     get_core_dist_ratios,
-    get_core_dists,
+    get_core_dists
 )
 from .enum_and_styling import FeatureType
 
@@ -30,8 +30,6 @@ class ElfLabeler(BaseElfAnalysis):
 
     """
 
-    spin_system = "total"
-
     _method_kwargs = [
         "polarization_cutoff",
     ]
@@ -40,13 +38,19 @@ class ElfLabeler(BaseElfAnalysis):
         "basin_types",
         "attractor_shapes",
         "heavily_polarized",
+        "basin_charges",
+        "basin_volumes",
+        "maxima_frac",
+        "local_maxima_center_frac",
+        "nearest_atoms",
+        "nearest_atom_species",
     ]
 
     _nna_results = [
-        "nna_bond_fracs",
-        "nna_neighbor_dists",
+        "dist_beyond_atoms",
         "nna_indices",
         "nna_formula",
+        "num_nnas",
         "nnas_per_formula",
         "nnas_per_reduced_formula",
         "species",
@@ -101,15 +105,6 @@ class ElfLabeler(BaseElfAnalysis):
             Keyword arguments to pass to the Bader class.
 
         """
-        # create bader objects
-        self._overlap = BasinOverlap(
-            charge_grid=charge_grid,
-            total_charge_grid=total_charge_grid,
-            reference_grid=reference_grid,
-            **kwargs,
-        )
-
-        self._elf_bader = self.overlap.local_bader
 
         super().__init__(
             charge_grid=charge_grid,
@@ -117,6 +112,17 @@ class ElfLabeler(BaseElfAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
+        
+        # create bader objects
+        self._overlap = BasinOverlap(
+            charge_grid=charge_grid,
+            total_charge_grid=total_charge_grid,
+            reference_grid=reference_grid,
+            spin_system=self.spin_system,
+            **kwargs,
+        )
+
+        self._elf_bader = self.overlap.local_bader
 
         self._polarization_cutoff = polarization_cutoff
 
@@ -217,6 +223,30 @@ class ElfLabeler(BaseElfAnalysis):
         """
 
         return self._elf_bader
+    
+    @property
+    def basin_charges(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The charge contained in each ELF basin
+
+        """
+        return self.elf_bader.basin_charges
+        
+    @property
+    def basin_volumes(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The volume contained in each ELF basin
+
+        """
+        return self.elf_bader.basin_volumes
 
     @property
     def maxima_frac(self) -> NDArray[np.float64]:
@@ -229,7 +259,33 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         return self.elf_bader.maxima_frac
+    
+    @property
+    def maxima_center_frac(self) -> NDArray[np.float64]:
+        """
 
+        Returns
+        -------
+        NDArray[np.float64]
+            The fractional coordinates of the "center of mass" for each maximum in
+            the localization function grid. This is used when determining if a basin
+            is along a bond, and is particularly necessary for ring shaped covalent bonds.
+
+        """
+        return self.overlap.local_maxima_center_frac
+    
+    @property
+    def maxima_elf_values(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The ELF value at each basins maximum
+
+        """
+        return self.elf_bader.maxima_ref_values
+    
     @property
     def attractor_shapes(self) -> NDArray[str]:
         """
@@ -241,6 +297,18 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         return self.overlap.attractor_shapes
+    
+    @property
+    def attractor_depths(self) -> NDArray[np.float64]:
+        """
+        Difference in value from the maximum to the first value an attractor
+        connects to another.
+
+        Returns
+        NDArray[np.float64]
+            The depth of each local basin
+        """
+        return self.overlap.attractor_depths
 
     @property
     def basin_types(self) -> list[str]:
@@ -255,6 +323,35 @@ class ElfLabeler(BaseElfAnalysis):
         if self._basin_types is None:
             self._label_basins()
         return [i.value for i in self._basin_types]
+    
+    @property
+    def nearest_atoms(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The closest atom to each basin measured from the center of mass.
+
+        """
+        return self.elf_bader.basin_atoms
+    
+    @property
+    def nearest_atom_species(self) -> list[str]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The type of atom to each basin measured from the center of mass.
+
+        """
+        if self._nearest_atom_species is None:
+            species = []
+            for i in self.elf_bader.basin_atoms:
+                species.append(self.elf_bader.structure[i].specie.symbole)
+            self._nearest_atom_species = species
+        return self._nearest_atom_species
 
     @property
     def nna_indices(self) -> NDArray[int]:
@@ -263,8 +360,7 @@ class ElfLabeler(BaseElfAnalysis):
         Returns
         -------
         NDArray[int]
-            The indices of the basins in the structure that are assigned as
-            non-nuclear attractors.
+            The basin indices assigned as non-nuclear attractors
 
         """
         if self._nna_indices is None:
@@ -278,6 +374,58 @@ class ElfLabeler(BaseElfAnalysis):
             )
         return self._nna_indices
 
+    @property
+    def basin_dists_beyond_atoms(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The distance beyond each atoms radius at which each basin's maximum
+            is located. For features at or below the atoms radius this is 0.0
+
+        """
+
+        if self._dist_beyond_atoms is None:
+            fracs = get_core_dist_ratios(
+                labels=self.elf_bader.maxima_basin_labels,
+                basin_frac_coords=self.elf_bader.maxima_frac,
+                atom_frac_coords=self.elf_bader.structure.frac_coords,
+                matrix=self.reference_grid.matrix,
+                nna_indices=self.nna_indices,
+                core_basins=self.overlap.core_basins,
+                volume_bond_fracs=self.overlap.volume_bond_fractions,
+            )
+            self._dist_beyond_atoms = fracs * self.nearest_atom_dists
+        return self._dist_beyond_atoms
+    
+    @property
+    def basin_atom_dists(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[float]
+            The distance from each basin to its nearest neighbors. This is a
+            weighted average based on the degree of overlap the QTAIM atom's have
+            with this basin.
+
+        """
+
+        if self._nearest_atom_dists is None:
+            fracs = get_core_dists(
+                labels=self.elf_bader.maxima_basin_labels,
+                basin_frac_coords=self.elf_bader.maxima_frac,
+                atom_frac_coords=self.elf_bader.structure.frac_coords,
+                matrix=self.reference_grid.matrix,
+                nna_indices=self.nna_indices,
+                core_basins=self.overlap.core_basins,
+                volume_bond_fracs=self.overlap.volume_bond_fractions,
+            )
+            self._nearest_atom_dists = fracs * self.nearest_atom_dists
+        return self._nearest_atom_dists
+    
+        
     @property
     def heavily_polarized(self) -> NDArray[bool]:
         """
@@ -295,56 +443,24 @@ class ElfLabeler(BaseElfAnalysis):
                 self.overlap.polarization_indexes > self.polarization_cutoff
             )
         return self._heavily_polarized
-
+    
+    ###########################################################################
+    # NNA properties
+    ###########################################################################
+    
     @property
-    def nna_radii(self) -> NDArray[float]:
+    def max_nna_dist(self) -> float:
         """
 
         Returns
         -------
-        NDArray[float]
-            The radius of each non-nuclear attractor calculated as a weighted
-            average of the radii between the NNA and the atoms that own some
-            portion of its charge.
+        float
+            The maximum distance that any NNA in the system sits from its
+            neighboring atoms.
 
         """
-
-        if self._nna_bond_fracs is None:
-            fracs = get_core_dist_ratios(
-                labels=self.elf_bader.maxima_basin_labels,
-                basin_frac_coords=self.elf_bader.maxima_frac,
-                atom_frac_coords=self.elf_bader.structure.frac_coords,
-                matrix=self.reference_grid.matrix,
-                nna_indices=self.nna_indices,
-                core_basins=self.overlap.core_basins,
-                volume_bond_fracs=self.overlap.volume_bond_fractions,
-            )
-            self._nna_bond_fracs = fracs * self.nna_neighbor_dists
-        return self._nna_bond_fracs
-
-    @property
-    def nna_neighbor_dists(self):
-        """
-
-        Returns
-        -------
-        NDArray[float]
-            The distance to the nearest neighbors of each non-nuclear attractor
-            calculated as a weighted average between the NNA and each atom that
-            owns some portion of its charge
-
-        """
-        if self._nna_neighbor_dists is None:
-            self._nna_neighbor_dists = get_core_dists(
-                labels=self.elf_bader.maxima_basin_labels,
-                basin_frac_coords=self.elf_bader.maxima_frac,
-                atom_frac_coords=self.elf_bader.structure.frac_coords,
-                matrix=self.reference_grid.matrix,
-                nna_indices=self.nna_indices,
-                core_basins=self.overlap.core_basins,
-                volume_bond_fracs=self.overlap.volume_bond_fractions,
-            )
-        return self._nna_neighbor_dists
+        if self.nna_indices:
+            return self.nearest_atom_dists.max()
 
     @property
     def num_nnas(self) -> int:
@@ -356,7 +472,7 @@ class ElfLabeler(BaseElfAnalysis):
             The number of non-nuclear attractor sites in the structure
 
         """
-        return len(self.nna_structure) - len(self.structure)
+        return len(self.nna_indices)
 
     @property
     def nna_formula(self):

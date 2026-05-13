@@ -507,14 +507,13 @@ def read_cube(
     # infer sig figs before converting units
     sig_figs = infer_significant_figures(arr)
     
-    # convert bohr units
-    if bohr_units:
-        arr *= 1.88973**3
-    
     # check for ELF-like data. If charge-like, convert units
     eps = 0.01
     if not (arr.max() <= 1.0 + eps and arr.min() >= 0.0 - eps):
         arr *= structure.volume
+        # convert bohr units
+        if bohr_units:
+            arr *= 1.88973**3
     
     data = {}
     data["total"] = arr
@@ -596,7 +595,7 @@ def read_xsf(
         a = np.fromstring(f.readline(), sep=" ")
         b = np.fromstring(f.readline(), sep=" ")
         c = np.fromstring(f.readline(), sep=" ")
-        grid_lattice = np.array((a,b,c),dtype=float)
+
         # The next line is the start of the data. Get the exact byte position
         data_start_offset = f.tell()
 
@@ -656,13 +655,12 @@ def read_xsf(
 
     shape = np.array(arr.shape)
     
-    # convert bohr units
-    arr *= 1.88973**3
-    
     # check for ELF-like data. If charge-like, convert units
     eps = 0.01
     if not (arr.max() <= 1.0 + eps and arr.min() >= 0.0 - eps):
         arr *= structure.volume
+        # convert bohr units
+        arr *= 1.88973**3
 
     data = {}
     data["total"] = round_to_sig_figs(arr, sig_figs)

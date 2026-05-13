@@ -11,9 +11,9 @@ def get_gradient_fft(
     recip_lattice = 2 * np.pi * np.linalg.inv(lattice).T
 
     nx, ny, nz = rho.shape
-    kx = np.fft.fftfreq(nx, d=1./nx)
-    ky = np.fft.fftfreq(ny, d=1./ny)
-    kz = np.fft.fftfreq(nz, d=1./nz)
+    kx = np.fft.fftfreq(nx, d=1.0/nx)
+    ky = np.fft.fftfreq(ny, d=1.0/ny)
+    kz = np.fft.fftfreq(nz, d=1.0/nz)
 
     Kx, Ky, Kz = np.meshgrid(kx, ky, kz, indexing='ij')
 
@@ -31,87 +31,66 @@ def get_gradient_fft(
 
     return gx**2 + gy**2 + gz**2
 
-def calculate_elf_dft(
-        rho,
-        tau,
-        lattice,
-        spin,
-        ):
-    """Modern (DFT-consistent) ELF"""
+def get_derivatives_fft(rho, lattice):
+    reciprocal = 2.0 * np.pi * np.linalg.inv(lattice).T
 
-    grad_rho_sq = get_gradient_fft(
-        rho=rho,
-        lattice=lattice,
-    )
+    nx, ny, nz = rho.shape
+    kx = np.fft.fftfreq(nx, d=1.0 / nx)
+    ky = np.fft.fftfreq(ny, d=1.0 / ny)
+    kz = np.fft.fftfreq(nz, d=1.0 / nz)
 
-    rho_limit = 1e-30
-    elf = np.zeros_like(rho)
-    mask = rho > rho_limit
+    K = np.stack(np.meshgrid(kx, ky, kz, indexing="ij"), axis=-1)
+    G = K @ reciprocal
 
-    rho_m = rho[mask]
-    tau_m = tau[mask]
-    grad_m = grad_rho_sq[mask]
+    Gx, Gy, Gz = G[..., 0], G[..., 1], G[..., 2]
+    G2 = Gx**2 + Gy**2 + Gz**2
 
-    # --- Weizsäcker kinetic energy ---
-    tau_w = grad_m / (8.0 * rho_m)
+    rho_g = fftn(rho)
 
-    # --- Pauli kinetic energy ---
-    tau_p = tau_m - tau_w
+    gx = ifftn(1j * Gx * rho_g).real
+    gy = ifftn(1j * Gy * rho_g).real
+    gz = ifftn(1j * Gz * rho_g).real
+    grad_sq = gx**2 + gy**2 + gz**2
 
-    # Optional stabilization (recommended)
-    tau_p = np.maximum(tau_p, 0.0)
+    laplacian = ifftn(-G2 * rho_g).real
 
-    # --- Thomas-Fermi kinetic energy ---
-    if not spin:
-        cf = (3.0/10.0) * (3.0 * np.pi**2)**(2.0/3.0)
-    else:
-        cf = (3.0/10.0) * (6.0 * np.pi**2)**(2.0/3.0)
+    return grad_sq, laplacian
 
-    tau_tf = cf * rho_m**(5.0/3.0)
-
-    # --- Dimensionless localization measure ---
-    chi = tau_p / tau_tf
-
-    # --- ELF ---
-    elf[mask] = 1.0 / (1.0 + chi**2)
-
-    return elf
-
-def calculate_elf_hf(
+def calculate_elf_qe(
         rho,
         tau,
         lattice,
         spin,
         ):
     """Calculate ELF using QE method"""
-    grad_rho_sq = get_gradient_fft(
+    grad_rho_sq, laplacian = get_derivatives_fft(
         rho=rho,
         lattice=lattice,
         )
-
-    # set proper prefactor
+    
+    pi_sq = np.pi**2
+    
+    tau_corr = laplacian / 2
+    
+    tau_bos = (1/4) * (grad_rho_sq / rho)
+    
     if not spin:
-        fac = 5.0 / (3.0 * (6.0 * np.pi**2)**(2.0/3.0))
+        dh = 0.2/pi_sq * (3*pi_sq*rho)**(5.0/3.0)
     else:
-        fac = 5.0 / (3.0 * (3.0 * np.pi**2)**(2.0/3.0))
-    rho_limit = 1e-30
-    stability_shift = 1e-5
-    elf = np.zeros_like(rho)
-    mask = rho > rho_limit
-
-    # D = (fac / rho^(5/3)) * (tau - 0.25 * |grad rho|^2 / rho + 1e-5)
-    d = (fac / (rho[mask]**(5.0/3.0))) * \
-        (tau[mask] - 0.25 * grad_rho_sq[mask] / rho[mask] + stability_shift)
+        dh = 0.2/pi_sq * (6*pi_sq*rho)**(5.0/3.0)
+        
+    dh[rho <= 0.0] = 0.0
+    
+    D = (tau + tau_corr - tau_bos) / np.maximum(dh, 1e-08)
 
     # ELF = 1 / (1 + d^2)
-    elf[mask] = 1.0 / (1.0 + d**2)
+    elf = 1.0 / (1.0 + D**2)
     return elf
 
 def compute_elf_from_grid(
         charge_grid,
         ked_grid,
         spin=True,
-        use_be=False,
         ):
     """
     ELF from BaderKit charge grids.
@@ -129,20 +108,13 @@ def compute_elf_from_grid(
     tau = ked_grid.total / (volume_bohr3)
 
     # calculate elf
-    if use_be:
-        elf = calculate_elf_hf(
-            rho=rho,
-            tau=tau,
-            lattice=lattice_bohr,
-            spin=spin
-            )
-    else:
-        elf = calculate_elf_dft(
-            rho=rho,
-            tau=tau,
-            lattice=lattice_bohr,
-            spin=spin
-            )
+    elf = calculate_elf_qe(
+        rho=rho,
+        tau=tau,
+        lattice=lattice_bohr,
+        spin=spin
+        )
+
 
     # get Grid object
     elf_grid = Grid(

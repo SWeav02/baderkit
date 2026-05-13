@@ -17,15 +17,13 @@ from baderkit.toolkit import Grid, Structure
 # # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="BaseAnalysis")
 
-# TODO:
-# - Add handling of non-nuclear attractors (e.g. those in Li metal)
 
-
-class NumpyEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if hasattr(obj, "tolist"):
-            return obj.tolist()
-        return super().default(obj)
+def serialize(obj):
+    if hasattr(obj, "tolist"):
+        return obj.tolist()
+    if hasattr(obj, "as_dict"):
+        return obj.as_dict()
+    return obj
 
 
 class BaseAnalysis(ABC):
@@ -266,6 +264,18 @@ class BaseAnalysis(ABC):
     ###########################################################################
     # Calculated Properties
     ###########################################################################
+    
+    @property
+    def spin_system(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            The spin system of the charge density in this calculation, i.e. polarized, not polarized, up, or down.
+
+        """
+        return self.charge_grid.spin_system
 
     @property
     def vacuum_charge(self) -> float:
@@ -344,7 +354,7 @@ class BaseAnalysis(ABC):
     @classmethod
     def from_vasp(
         cls,
-        charge_filename: Path | str = "CHGCAR",
+        charge_filename: Path | str | Grid = "CHGCAR",
         **kwargs,
     ) -> Self:
         """
@@ -354,7 +364,7 @@ class BaseAnalysis(ABC):
         ----------
         charge_filename : Path | str, optional
             The path to the CHGCAR like file that will be used for integrating charge.
-            The default is "CHGCAR".
+            The default is "CHGCAR". Alternatively a Grid object can be provided.
         total_charge_filename : Grid | None, optional
             The path to the CHGCAR like file used for determining vacuum regions
             in the system. For pseudopotential codes this represents the total
@@ -444,7 +454,7 @@ class BaseAnalysis(ABC):
     @classmethod
     def from_dynamic(
         cls,
-        charge_filename: Path | str,
+        charge_filename: Path | str | Grid,
         total_charge_filename: Path | None | str = None,
         reference_filename: Path | None | str = None,
         format: Literal["vasp", "cube", None] = None,
@@ -498,17 +508,24 @@ class BaseAnalysis(ABC):
             A BaseAnalysis class object.
 
         """
-        charge_grid = Grid.from_dynamic(
-            charge_filename, format=format, total_only=total_only
-        )
+        if isinstance(charge_filename, Grid):
+            charge_grid = charge_filename
+        else:
+            charge_grid = Grid.from_dynamic(
+                charge_filename, format=format, total_only=total_only
+            )
         if total_charge_filename is None:
             total_charge_grid = None
+        elif isinstance(total_charge_filename, Grid):
+            total_charge_filename = total_charge_filename
         else:
             total_charge_grid = Grid.from_dynamic(
                 total_charge_filename, format=format, total_only=total_only
             )
         if reference_filename is None:
             reference_grid = None
+        elif isinstance(reference_filename, Grid):
+            reference_grid = reference_filename
         else:
             reference_grid = Grid.from_dynamic(
                 reference_filename, format=format, total_only=total_only
@@ -543,14 +560,17 @@ class BaseAnalysis(ABC):
     def _get_kwargs(self) -> dict:
         method_kwargs = {"version": metadata.version("baderkit")}
         method_kwargs.update(
-            self._to_dict(self._base_method_kwargs + self._method_kwargs)
+            self._to_dict(
+                self._base_method_kwargs + self._method_kwargs,
+                serializable=True,
+                )
         )
         for i in self._sub_methods:
             method = getattr(self, i)
             method_kwargs.update(method._get_kwargs())
         return method_kwargs
 
-    def to_dict(self) -> dict:
+    def to_dict(self, serializable: bool = False) -> dict:
         """
 
         Gets a summary dictionary of the analysis.
@@ -560,13 +580,14 @@ class BaseAnalysis(ABC):
         results = {"method_kwargs": self._get_kwargs()}
 
         for i in self._summary_props:
-            results[i] = self._to_dict(getattr(self, f"_{i}"))
+            results[i] = self._to_dict(getattr(self, f"_{i}"), serializable=serializable)
 
         return results
 
     def _to_dict(
         self,
         props: list[str],
+        serializable: bool,
     ):
         """
         A helper function to pull a list of properties into a dictionary for
@@ -587,7 +608,11 @@ class BaseAnalysis(ABC):
         """
         results = {}
         for prop in props:
-            results[prop] = getattr(self, prop, None)
+            if serializable:
+                result = serialize(getattr(self, prop, None))
+            else:
+                result = getattr(self, prop, None)
+            results[prop] = result
         return results
 
     def to_json(self, **kwargs) -> str:
@@ -606,7 +631,7 @@ class BaseAnalysis(ABC):
             A JSON string representation of the BadELF results.
 
         """
-        return json.dumps(self.to_dict(use_json=True, **kwargs), cls=NumpyEncoder)
+        return json.dumps(self.to_dict(serializable=True))
 
     def write_json(self, filepath: Path | str, **kwargs) -> None:
         """
@@ -622,7 +647,7 @@ class BaseAnalysis(ABC):
         """
         filepath = Path(filepath)
         with open(filepath, "w") as json_file:
-            json.dump(self.to_dict(**kwargs), json_file, cls=NumpyEncoder, indent=4)
+            json.dump(self.to_dict(serializable=True, **kwargs), json_file, indent=4)
 
     ###########################################################################
     # Volume Writing Methods

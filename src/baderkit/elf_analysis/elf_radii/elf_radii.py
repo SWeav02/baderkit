@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 
-from pathlib import Path
 from typing import TypeVar
 
 import numpy as np
@@ -31,6 +30,8 @@ class ElfRadii(BaseElfAnalysis):
     (ELF, ELI-D, LOL, etc.).
 
     """
+    
+    spin_system = "total"
 
     _method_kwargs = ["include_nnas", "cnn_kwargs"]
 
@@ -40,7 +41,9 @@ class ElfRadii(BaseElfAnalysis):
         "atom_bond_types",
         "all_radii",
         "all_bond_types",
-        "bonding_pairs",
+        "site_indices",
+        "neigh_indices",
+        "neighbor_images",
     ]
 
     _nonsummary_results = [
@@ -310,22 +313,75 @@ class ElfRadii(BaseElfAnalysis):
     ###########################################################################
     # Radii Properties
     ###########################################################################
+    
     @property
-    def bonding_pairs(self) -> (NDArray[int], NDArray[int]):
+    def site_indices(self) -> NDArray[int]:
         """
 
         Returns
         -------
-        (NDArray[int], NDArray[int])
-            A tuple where the first object is a Nx2 array representing the
-            site/neighbor atom indices involved in each bond and the second object
-            is a Nx3 array representing the periodic image the neighbor atom
-            sits in.
+        NDArray[int]
+            An Nx2 array representing the site/neighbor atom indices involved in 
+            each bond.
 
         """
-        if self._bonding_pairs is None:
+        if self._site_indices is None:
             self._get_radii()
-        return self._bonding_pairs
+        return self._site_indices
+    
+    @property
+    def site_frac_coords(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The fractional coordinates of the atom where each bond starts
+
+        """
+        return self.structure.frac_coords[self.site_indices]
+    
+    @property
+    def neigh_indices(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            An Nx2 array representing the site/neighbor atom indices involved in 
+            each bond.
+
+        """
+        if self._neigh_indices is None:
+            self._get_radii()
+        return self._neigh_indices
+    
+    @property
+    def neigh_frac_coords(self) -> NDArray[float]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            The fractional coordinates of the atom where each bond ends. These
+            are frequently outside the bounds of the unit cell.
+
+        """
+        return self.structure.frac_coords[self.neigh_indices] + self.neighbor_images
+    
+    @property
+    def neighbor_images(self) -> NDArray[int]:
+        """
+
+        Returns
+        -------
+        NDArray[int]
+            An Nx3 array representing the periodic images the neighbor atoms sit in.
+
+        """
+        if self._neighbor_images is None:
+            self._get_radii()
+        return self._neighbor_images
 
     @property
     def all_radii(self) -> NDArray[float]:
@@ -979,9 +1035,9 @@ class ElfRadii(BaseElfAnalysis):
         plane_vectors = plane_vectors[sorted_indices]
         neigh_coords = neigh_coords[sorted_indices]
 
-        self._bonding_pairs = np.column_stack((site_indices, neigh_indices)), (
-            neigh_coords // 1
-        ).astype(int)
+        self._site_indices = site_indices
+        self._neigh_indices = neigh_indices
+        self._neighbor_images = (neigh_coords // 1).astype(int)
         self._pair_dists = pair_dists
         self._all_radii = radii
         self._all_bond_types = all_bond_types

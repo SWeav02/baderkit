@@ -97,6 +97,7 @@ class Grid(VolumetricData):
         data_type: DataType = DataType.charge,
         distance_matrix: NDArray[float] = None,
         sig_figs: int = None,
+        spin_system: str = "not polarized",
         **kwargs,
     ):
         # The following is copied directly from pymatgen, but replaces their
@@ -121,6 +122,7 @@ class Grid(VolumetricData):
         self.ypoints = np.linspace(0.0, 1.0, num=self.dim[1])
         self.zpoints = np.linspace(0.0, 1.0, num=self.dim[2])
         self.name = "VolumetricData"
+        self.spin_system = spin_system
 
         # The rest of this is new for BaderKit methods
         if source_format is None:
@@ -745,82 +747,6 @@ class Grid(VolumetricData):
 
         return self
 
-    # def get_points_in_radius(
-    #     self,
-    #     point: NDArray,
-    #     radius: float,
-    # ) -> NDArray[int]:
-    #     """
-    #     Gets the indices of the points in a radius around a point
-
-    #     Parameters
-    #     ----------
-    #     radius : float
-    #         The radius in cartesian distance units to find indices around the
-    #         point.
-    #     point : NDArray
-    #         The indices of the point to perform the operation on.
-
-    #     Returns
-    #     -------
-    #     NDArray[int]
-    #         The point indices in the sphere around the provided point.
-
-    #     """
-    #     point = np.array(point)
-    #     # Get the distance from each point to the origin
-    #     point_distances = self.point_dists
-
-    #     # Get the indices that are within the radius
-    #     sphere_indices = np.where(point_distances <= radius)
-    #     sphere_indices = np.column_stack(sphere_indices)
-
-    #     # Get indices relative to the point
-    #     sphere_indices = sphere_indices + point
-    #     # adjust points to wrap around grid
-    #     # line = [[round(float(a % b), 12) for a, b in zip(position, grid_data.shape)]]
-    #     new_x = (sphere_indices[:, 0] % self.shape[0]).astype(int)
-    #     new_y = (sphere_indices[:, 1] % self.shape[1]).astype(int)
-    #     new_z = (sphere_indices[:, 2] % self.shape[2]).astype(int)
-    #     sphere_indices = np.column_stack([new_x, new_y, new_z])
-    #     # return new_x, new_y, new_z
-    #     return sphere_indices
-
-    # def get_transformations_in_radius(self, radius: float) -> NDArray[int]:
-    #     """
-    #     Gets the transformations required to move from a point to the points
-    #     surrounding it within the provided radius
-
-    #     Parameters
-    #     ----------
-    #     radius : float
-    #         The radius in cartesian distance units around the voxel.
-
-    #     Returns
-    #     -------
-    #     NDArray[int]
-    #         An array of transformations to add to a point to get to each of the
-    #         points within the radius surrounding it.
-
-    #     """
-    #     # Get voxels around origin
-    #     voxel_distances = self.point_dists
-    #     # sphere_grid = np.where(voxel_distances <= radius, True, False)
-    #     # eroded_grid = binary_erosion(sphere_grid)
-    #     # shell_indices = np.where(sphere_grid!=eroded_grid)
-    #     shell_indices = np.where(voxel_distances <= radius)
-    #     # Now we want to translate these indices to next to the corner so that
-    #     # we can use them as transformations to move a voxel to the edge
-    #     final_shell_indices = []
-    #     for a, x in zip(self.shape, shell_indices):
-    #         new_x = x - a
-    #         abs_new_x = np.abs(new_x)
-    #         new_x_filter = abs_new_x < x
-    #         final_x = np.where(new_x_filter, new_x, x)
-    #         final_shell_indices.append(final_x)
-
-    #     return np.column_stack(final_shell_indices)
-
     def get_radial_neighbor_transforms(self, r: float) -> tuple:
         """
         Gets the transformations from each grid point to its neighbors within a
@@ -970,6 +896,7 @@ class Grid(VolumetricData):
             data_aug=aug_up_data,
             data_type=self.data_type,
             source_format=self.source_format,
+            spin_system="up",
         )
         spin_down_grid = Grid(
             structure=self.structure.copy(),
@@ -977,6 +904,7 @@ class Grid(VolumetricData):
             data_aug=aug_down_data,
             data_type=self.data_type,
             source_format=self.source_format,
+            spin_system="down",
         )
 
         return spin_up_grid, spin_down_grid
@@ -1304,6 +1232,7 @@ class Grid(VolumetricData):
         data_type: str | DataType = None,
         total_only: bool = True,
         poscar_file: str | Path = None,
+        spin_system: str = None,
         **kwargs,
     ) -> Self:
         """
@@ -1344,6 +1273,10 @@ class Grid(VolumetricData):
         )
         if poscar_file is not None:
             structure = Structure.from_file(poscar_file)
+        
+        if spin_system is None:
+            spin_system = "not polarized" if total_only else "polarized"
+        
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
         return cls(

@@ -11,6 +11,7 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from baderkit._base_analysis import BaseAnalysis
+from baderkit.global_numba.basic import merge_frac_coords_weighted
 from baderkit.global_numba.basins import (
     get_edges_w_images,
     get_min_avg_surface_dists,
@@ -91,6 +92,7 @@ class Bader(BaseAnalysis):
 
     _maxima_results = [
         "maxima_frac",
+        "maxima_center_frac",
         "maxima_cart",
         "maxima_vox",
         "maxima_charge_values",
@@ -404,6 +406,39 @@ class Bader(BaseAnalysis):
         if self._maxima_frac is None:
             self._run_maxima_bader()
         return self._maxima_frac
+    
+    @property
+    def maxima_center_frac(self) -> NDArray[np.float64]:
+        """
+
+        Returns
+        -------
+        NDArray[np.float64]
+            The fractional coordinates of the "center of mass" for each maximum. 
+            This is used when calculating the distance to each atom and is important
+            in systems where some basins do not have point attractors (e.g. ELF, LOL, etc.)
+
+        """
+        if self._maxima_center_frac is None:
+            weighted_frac = []
+            for coords in self.maxima_betti_groups:
+                # get values at coords
+                values = self.reference_grid.total[
+                    coords[:,0],
+                    coords[:,1],
+                    coords[:,2],
+                    ]
+                frac_coords = coords / self.reference_grid.shape
+
+                weighted_frac.append(
+                    merge_frac_coords_weighted(
+                        frac_coords=frac_coords,
+                        values=values,
+                        )
+                    )
+            self._maxima_center_frac = np.array(weighted_frac)
+
+        return self._maxima_center_frac
 
     @property
     def maxima_cart(self) -> NDArray[float]:
@@ -2031,7 +2066,7 @@ class Bader(BaseAnalysis):
                 )
                 f.write(line + "\n")
 
-    def to_dict(self, include_minima: bool = False) -> dict:
+    def to_dict(self, include_minima: bool = False, **kwargs) -> dict:
         """
         Converts the Bader object to a dictionary.
 
@@ -2041,7 +2076,7 @@ class Bader(BaseAnalysis):
             A dictionary representation of the Bader object.
 
         """
-        results = super().to_dict()
+        results = super().to_dict(**kwargs)
         if include_minima:
             results["minima_results"] = self._to_dict(self._minima_results)
             results["saddle_results"] = self._to_dict(self._saddle_results)
