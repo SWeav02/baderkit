@@ -37,22 +37,26 @@ class ElfLabeler(BaseElfAnalysis):
     _basin_results = [
         "basin_types",
         "attractor_shapes",
+        "attractor_depths",
         "heavily_polarized",
         "basin_charges",
         "basin_volumes",
+        "basin_atom_dists",
+        "basin_dists_beyond_atoms",
         "maxima_frac",
-        "local_maxima_center_frac",
+        "maxima_center_frac",
+        "maxima_elf_values",
         "nearest_atoms",
         "nearest_atom_species",
     ]
 
     _nna_results = [
-        "dist_beyond_atoms",
         "nna_indices",
         "nna_formula",
         "num_nnas",
         "nnas_per_formula",
         "nnas_per_reduced_formula",
+        "max_nna_dist",
         "species",
     ]
 
@@ -349,7 +353,7 @@ class ElfLabeler(BaseElfAnalysis):
         if self._nearest_atom_species is None:
             species = []
             for i in self.elf_bader.basin_atoms:
-                species.append(self.elf_bader.structure[i].specie.symbole)
+                species.append(self.elf_bader.structure[i].specie.symbol)
             self._nearest_atom_species = species
         return self._nearest_atom_species
 
@@ -386,7 +390,7 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
 
-        if self._dist_beyond_atoms is None:
+        if self._basin_dists_beyond_atoms is None:
             fracs = get_core_dist_ratios(
                 labels=self.elf_bader.maxima_basin_labels,
                 basin_frac_coords=self.elf_bader.maxima_frac,
@@ -396,8 +400,8 @@ class ElfLabeler(BaseElfAnalysis):
                 core_basins=self.overlap.core_basins,
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
             )
-            self._dist_beyond_atoms = fracs * self.nearest_atom_dists
-        return self._dist_beyond_atoms
+            self._basin_dists_beyond_atoms = fracs * self.basin_atom_dists
+        return self._basin_dists_beyond_atoms
     
     @property
     def basin_atom_dists(self) -> NDArray[float]:
@@ -412,8 +416,8 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
 
-        if self._nearest_atom_dists is None:
-            fracs = get_core_dists(
+        if self._basin_atom_dists is None:
+            dists = get_core_dists(
                 labels=self.elf_bader.maxima_basin_labels,
                 basin_frac_coords=self.elf_bader.maxima_frac,
                 atom_frac_coords=self.elf_bader.structure.frac_coords,
@@ -422,8 +426,8 @@ class ElfLabeler(BaseElfAnalysis):
                 core_basins=self.overlap.core_basins,
                 volume_bond_fracs=self.overlap.volume_bond_fractions,
             )
-            self._nearest_atom_dists = fracs * self.nearest_atom_dists
-        return self._nearest_atom_dists
+            self._basin_atom_dists = dists
+        return self._basin_atom_dists
     
         
     @property
@@ -459,8 +463,8 @@ class ElfLabeler(BaseElfAnalysis):
             neighboring atoms.
 
         """
-        if self.nna_indices:
-            return self.nearest_atom_dists.max()
+        if self.num_nnas > 0:
+            return self.basin_atom_dists.max()
 
     @property
     def num_nnas(self) -> int:

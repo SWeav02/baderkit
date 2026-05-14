@@ -141,6 +141,7 @@ class Bader(BaseAnalysis):
         "atom_avg_surface_distances",
         "atom_surface_areas",
         "atom_contact_surface_areas",
+        "total_electron_number",
     ]
 
     _nonsummary_results = [

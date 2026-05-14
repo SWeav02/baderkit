@@ -48,8 +48,8 @@ class BaseElfAnalysis(BaseAnalysis):
     @classmethod
     def from_vasp(
         cls,
-        charge_filename: Path | str = "CHGCAR",
-        reference_filename: Path | str = "ELFCAR",
+        charge_grid : Path | str = "CHGCAR",
+        reference_grid: Path | str = "ELFCAR",
         **kwargs,
     ) -> Self:
         """
@@ -57,13 +57,13 @@ class BaseElfAnalysis(BaseAnalysis):
 
         Parameters
         ----------
-        charge_filename : Path | str, optional
+        charge_grid : Path | str, optional
             The path to the CHGCAR like file that will be used for integrating charge.
             The default is "CHGCAR".
-        reference_filename : Path | None | str
+        reference_grid : Path | None | str
             The path to CHGCAR like file that will be used for partitioning.
             If None, the total charge file will be used for partitioning.
-        total_charge_filename : Grid | None, optional
+        total_charge_grid : Grid | None, optional
             The path to the CHGCAR like file used for determining vacuum regions
             in the system. For pseudopotential codes this represents the total
             electron density and should be provided whenever possible.
@@ -88,13 +88,13 @@ class BaseElfAnalysis(BaseAnalysis):
             A BaseAnalysis class object.
 
         """
-        return cls.from_dynamic(charge_filename, reference_filename=reference_filename, format="vasp", **kwargs)
+        return cls.from_dynamic(charge_grid, reference_grid=reference_grid, format="vasp", **kwargs)
 
     @classmethod
     def from_dynamic(
         cls,
-        charge_filename: Path | str | Grid,
-        reference_filename: Path | str | Grid,
+        charge_grid: Path | str | Grid,
+        reference_grid: Path | str | Grid,
         **kwargs,
     ) -> Self:
         """
@@ -104,14 +104,14 @@ class BaseElfAnalysis(BaseAnalysis):
 
         Parameters
         ----------
-        charge_filename : Path | str
+        charge_grid : Path | str
             The path to the file containing the charge density that will be
             integrated. Alternatively a Grid object can be provided.
-        reference_filename : Path | None
+        reference_grid : Path | None
             The path to the file that will be used for partitioning.
             Alternatively a Grid object can be provided.
             If None, defaults to the total charge grid.
-        total_charge_filename : Grid | None, optional
+        total_charge_grid : Grid | None, optional
             The path to the file used for determining vacuum regions
             in the system. For pseudopotential codes this represents the total
             electron density and should be provided whenever possible.
@@ -141,7 +141,7 @@ class BaseElfAnalysis(BaseAnalysis):
 
         """
         return super().from_dynamic(
-            charge_filename=charge_filename,
-            reference_filename=reference_filename,
+            charge_grid=charge_grid,
+            reference_grid=reference_grid,
             **kwargs,
             )

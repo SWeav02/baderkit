@@ -44,6 +44,8 @@ class ElfRadii(BaseElfAnalysis):
         "site_indices",
         "neigh_indices",
         "neighbor_images",
+        "site_frac_coords",
+        "neigh_frac_coords",
     ]
 
     _nonsummary_results = [
@@ -414,7 +416,7 @@ class ElfRadii(BaseElfAnalysis):
             all_types = self.all_bond_types
             atom_radii = np.empty(len(self.structure), dtype=np.float64)
             atom_bond_types = []
-            site_indices = self.bonding_pairs[0][:, 0]
+            site_indices = self.site_indices
             for i in range(len(self.structure)):
                 idx = np.searchsorted(site_indices, i)
                 atom_radii[i] = all_radii[idx]
@@ -790,7 +792,7 @@ class ElfRadii(BaseElfAnalysis):
                 incremental=False,
             )
             vertices = halfspace.intersections
-
+            
             # Get one plane for each unique bond with this atom at the center.
             # This reduces the number of calculations we need to perform
             unique_equiv = inverse[lower:upper]

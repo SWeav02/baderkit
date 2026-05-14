@@ -293,14 +293,24 @@ def find_site_in_tol(
 
     return index, in_tol
 
-
 @njit(cache=True)
-def get_canonical_displacement(bond_displacement, tol):
+def get_canonical_displacement(bond_displacement, tol=1e-12):
+    # preserve components that are exactly ±1 (within tolerance)
+    preserve = np.zeros(3, dtype=np.int64)
+    for i in range(3):
+        if abs(abs(bond_displacement[i]) - 1.0) < tol:
+            preserve[i] = 1 if bond_displacement[i] > 0 else -1
+
     # wrap into cell
     bond_displacement -= np.round(bond_displacement)
 
     # quantize to tolerance
     v = np.round(bond_displacement / tol).astype(np.int64)
+
+    # restore preserved ±1 directions
+    for i in range(3):
+        if preserve[i] != 0:
+            v[i] = preserve[i]
 
     # choose lexicographically positive representative
     if v[0] < 0 or (v[0] == 0 and v[1] < 0) or (v[0] == 0 and v[1] == 0 and v[2] < 0):

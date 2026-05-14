@@ -70,6 +70,15 @@ class BaseAnalysis(ABC):
     ]
     _method_kwargs = []
 
+    _base_summary_props = [
+        "valence_counts",
+        "spin_system",
+        "num_vacuum",
+        "vacuum_charge",
+        "vacuum_volume",
+        "structure",
+        ]
+
     _summary_props = []
 
     _sub_methods = []
@@ -354,7 +363,7 @@ class BaseAnalysis(ABC):
     @classmethod
     def from_vasp(
         cls,
-        charge_filename: Path | str | Grid = "CHGCAR",
+        charge_grid: Path | str | Grid = "CHGCAR",
         **kwargs,
     ) -> Self:
         """
@@ -362,15 +371,15 @@ class BaseAnalysis(ABC):
 
         Parameters
         ----------
-        charge_filename : Path | str, optional
+        charge_grid : Path | str, optional
             The path to the CHGCAR like file that will be used for integrating charge.
             The default is "CHGCAR". Alternatively a Grid object can be provided.
-        total_charge_filename : Grid | None, optional
+        total_charge_grid : Grid | None, optional
             The path to the CHGCAR like file used for determining vacuum regions
             in the system. For pseudopotential codes this represents the total
             electron density and should be provided whenever possible.
             If None, defaults to the charge_grid.
-        reference_filename : Path | None | str, optional
+        reference_grid : Path | None | str, optional
             The path to CHGCAR like file that will be used for partitioning.
             If None, the total charge file will be used for partitioning.
         pseudopotential_filename : Path | None | str | dict, optional
@@ -393,7 +402,7 @@ class BaseAnalysis(ABC):
             A BaseAnalysis class object.
 
         """
-        return cls.from_dynamic(charge_filename, format="vasp", **kwargs)
+        return cls.from_dynamic(charge_grid, format="vasp", **kwargs)
 
     @classmethod
     def from_cube(cls, **kwargs) -> Self:
@@ -402,14 +411,14 @@ class BaseAnalysis(ABC):
 
         Parameters
         ----------
-        charge_filename : Path | str, optional
+        charge_grid : Path | str, optional
             The path to the .cube like file that will be used for integrating charge.
-        total_charge_filename : Grid | None, optional
+        total_charge_grid : Grid | None, optional
             The path to the .cube like file used for determining vacuum regions
             in the system. For pseudopotential codes this represents the total
             electron density and should be provided whenever possible.
             If None, defaults to the charge_grid.
-        reference_filename : Path | None | str, optional
+        reference_grid : Path | None | str, optional
             The path to .cube file that will be used for partitioning.
             If None, the total charge file will be used for partitioning.
         **kwargs : dict
@@ -430,14 +439,14 @@ class BaseAnalysis(ABC):
 
         Parameters
         ----------
-        charge_filename : Path | str, optional
+        charge_grid : Path | str, optional
             The path to the .xsf like file that will be used for integrating charge.
-        total_charge_filename : Grid | None, optional
+        total_charge_grid : Grid | None, optional
             The path to the .xsf like file used for determining vacuum regions
             in the system. For pseudopotential codes this represents the total
             electron density and should be provided whenever possible.
             If None, defaults to the charge_grid.
-        reference_filename : Path | None | str, optional
+        reference_grid : Path | None | str, optional
             The path to .xsf file that will be used for partitioning.
             If None, the total charge file will be used for partitioning.
         **kwargs : dict
@@ -454,9 +463,9 @@ class BaseAnalysis(ABC):
     @classmethod
     def from_dynamic(
         cls,
-        charge_filename: Path | str | Grid,
-        total_charge_filename: Path | None | str = None,
-        reference_filename: Path | None | str = None,
+        charge_grid: Path | str | Grid,
+        total_charge_grid: Path | None | str | Grid = None,
+        reference_grid: Path | None | str | Grid = None,
         format: Literal["vasp", "cube", None] = None,
         pseudopotential_filename: Path | None | list | str | bool = None,
         total_only: bool = True,
@@ -470,15 +479,15 @@ class BaseAnalysis(ABC):
 
         Parameters
         ----------
-        charge_filename : Path | str
+        charge_grid : Path | str
             The path to the file containing the charge density that will be
             integrated.
-        total_charge_filename : Grid | None, optional
+        total_charge_grid : Grid | None, optional
             The path to the file used for determining vacuum regions
             in the system. For pseudopotential codes this represents the total
             electron density and should be provided whenever possible.
             If None, defaults to the charge_grid.
-        reference_filename : Path | None | str, optional
+        reference_grid : Path | None | str, optional
             The path to the file that will be used for partitioning.
             If None, defaults to the total charge grid.
         pseudopotential_filename : Path | None | list | str | dict, optional
@@ -508,27 +517,27 @@ class BaseAnalysis(ABC):
             A BaseAnalysis class object.
 
         """
-        if isinstance(charge_filename, Grid):
-            charge_grid = charge_filename
+        if isinstance(charge_grid, Grid):
+            charge_grid = charge_grid
         else:
             charge_grid = Grid.from_dynamic(
-                charge_filename, format=format, total_only=total_only
+                charge_grid, format=format, total_only=total_only
             )
-        if total_charge_filename is None:
+        if total_charge_grid is None:
             total_charge_grid = None
-        elif isinstance(total_charge_filename, Grid):
-            total_charge_filename = total_charge_filename
+        elif isinstance(total_charge_grid, Grid):
+            total_charge_grid = total_charge_grid
         else:
             total_charge_grid = Grid.from_dynamic(
-                total_charge_filename, format=format, total_only=total_only
+                total_charge_grid, format=format, total_only=total_only
             )
-        if reference_filename is None:
+        if reference_grid is None:
             reference_grid = None
-        elif isinstance(reference_filename, Grid):
-            reference_grid = reference_filename
+        elif isinstance(reference_grid, Grid):
+            reference_grid = reference_grid
         else:
             reference_grid = Grid.from_dynamic(
-                reference_filename, format=format, total_only=total_only
+                reference_grid, format=format, total_only=total_only
             )
 
         if valence_counts is None:
@@ -579,7 +588,7 @@ class BaseAnalysis(ABC):
 
         results = {"method_kwargs": self._get_kwargs()}
 
-        for i in self._summary_props:
+        for i in self._summary_props + ["base_summary_props"]:
             results[i] = self._to_dict(getattr(self, f"_{i}"), serializable=serializable)
 
         return results

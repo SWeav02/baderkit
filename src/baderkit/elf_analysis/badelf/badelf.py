@@ -46,6 +46,7 @@ class Badelf(BaseElfAnalysis):
         "min_surface_distances",
         "avg_surface_distances",
         "maxima_elf_values",
+        "total_electron_number",
     ]
 
     _nna_results = [
@@ -53,12 +54,13 @@ class Badelf(BaseElfAnalysis):
         "all_nna_dims",
         "all_nna_dim_cutoffs",
         "num_nnas",
+        "nna_formula",
         "nnas_per_formula",
         "nnas_per_reduced_formula",
+        "nna_structure",
     ]
 
     _nonsummary_results = [
-        "nna_structure",
         "partitioning_planes",
         "atom_labels",
         "elf_radii",
@@ -428,11 +430,10 @@ class Badelf(BaseElfAnalysis):
             return None, None, None
 
         if self._partitioning_planes is None:
-            logging.info("Finding partitioning planes")
+            # logging.info("Finding partitioning planes")
 
             # get bonding information
-            bond_pairs = self.elf_radii.bonding_pairs
-            site_indices = bond_pairs[0][:, 0]
+            site_indices = self.elf_radii.site_indices
             # neigh_indices = bond_pairs[:,1]
             plane_points, plane_vectors = self.elf_radii.voronoi_planes
 
@@ -554,16 +555,19 @@ class Badelf(BaseElfAnalysis):
 
     @property
     def oxidation_states(self) -> NDArray[np.float64]:
+        
         if not self.valence_counts:
             return None
-        oxi_state_data = []
-        for site, site_charge in zip(self.nna_structure, self.atom_charges):
-            element_str = site.specie.name
-            oxi_state = self.valence_counts.get(element_str, 0.0) - site_charge
-            oxi_state_data.append(oxi_state)
-
-        return np.array(oxi_state_data)
-
+        if self._oxidation_states is None:
+            oxi_state_data = []
+            for site, site_charge in zip(self.nna_structure, self.atom_charges):
+                element_str = site.specie.symbol
+                oxi_state = self.valence_counts.get(element_str, 0.0) - site_charge
+                oxi_state_data.append(oxi_state)
+            self._oxidation_states = np.array(oxi_state_data)
+        
+        return self._oxidation_states
+    
     @property
     def min_surface_distances(self) -> NDArray:
         """
