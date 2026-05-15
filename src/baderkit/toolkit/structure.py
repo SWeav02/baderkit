@@ -11,6 +11,8 @@ from pymatgen.core import Structure as PymatgenStructure
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.util.typing import CompositionLike
 
+from baderkit.global_numba.largest_dist import largest_empty_sphere
+
 # This allows for Self typing and is compatible with python versions before 3.11
 Self = TypeVar("Self", bound="Structure")
 
@@ -304,6 +306,23 @@ class Structure(PymatgenStructure):
     @property
     def site_symbols(self):
         return np.array([i.specie.symbol for i in self])
+    
+    @property
+    def farthest_point(self) -> tuple[float, NDArray[float]]:
+        """
+
+        Returns
+        -------
+        tuple(float, NDArray[float]
+            The maximum distance away from any atom in the system and the corresponding
+            point. Note that generally this may be one point of several in systems
+            with symmetry.
+
+        """
+        
+        dist, point = largest_empty_sphere(self.lattice.matrix, self.frac_coords)
+        return dist, point
+        
 
     def to(self, filename: str | Path = "", fmt: str = "", **kwargs) -> str | None:
         """
