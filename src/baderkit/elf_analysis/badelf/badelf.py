@@ -845,7 +845,7 @@ class Badelf(BaseElfAnalysis):
 
         if self.partition_method == "zero-flux":
             # we are done here and can assign charges/volumes immediately
-            self._atom_labels = None
+            self._atom_labels = self.bader.atom_labels
             self._atom_charges, self._atom_volumes = self._get_zero_flux_assignments()
 
         else:

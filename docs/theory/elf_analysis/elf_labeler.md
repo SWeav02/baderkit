@@ -1,4 +1,4 @@
-# ELF Labeler
+# ELF Labeler - Theory
 
 Our classification of ELF basins into various Lewis-like chemical features is based on three metrics.
 

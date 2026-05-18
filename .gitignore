@@ -5,3 +5,4 @@ src/baderkit/trame
 build
 ~/sync_files.py
 .vscode
+uv.lock

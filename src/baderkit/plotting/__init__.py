@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 
+from .toolkit import GridPlotter, StructurePlotter
 from .bader import BaderPlotter
-from .grid import GridPlotter
-from .structure import StructurePlotter
+from .elf_analysis import (
+    BadelfPlotter
+    )

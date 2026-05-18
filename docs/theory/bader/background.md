@@ -1,4 +1,4 @@
-# Background
+# Bader - Theory
 
 In chemistry and materials science, we often find ourselves talking about the 
 oxidation state of a given atom. We discuss the atom as if it has taken or given 

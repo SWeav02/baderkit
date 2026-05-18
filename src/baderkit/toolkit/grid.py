@@ -1653,3 +1653,17 @@ class Grid(VolumetricData):
         method_name = output_format.writer
         # write the grid
         getattr(self, method_name)(filename, **kwargs)
+        
+    ###########################################################################
+    # Plotting
+    ###########################################################################
+    def to_plotter(self, **kwargs):
+        """
+
+        Returns
+        -------
+        A GridPlotter object for visualization.
+        """
+        
+        from baderkit.plotting import GridPlotter
+        return GridPlotter(self, **kwargs)

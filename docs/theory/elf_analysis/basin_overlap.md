@@ -1,9 +1,9 @@
-# QTAIM/Local Overlap
+# QTAIM/ELF Overlap - Theory
 
 All of our ELF analysis methods start from the QTAIM/ELF overlap theory developed by [Raub and Jansen](https://link.springer.com/article/10.1007/s002140100268) and [Wagner et. al.](https://pubs.acs.org/doi/10.1021/acs.inorgchem.5b00135). Any localization function such as the ELF, ELI-D, or LOL can be used. We will use ELF as a general term here.
 
 ## Overlap Definition
-First the electron charge density $\rho$ and ELF $\sigma$ are separated into Bader basins $\Omega^\rho_i$ and $\Omega^\sigma_j$ respectively. Here $i$ and $j$ refer to the basin indices. Typically, $\rho$ is topologically simple and each $\Omega^\rho_i$ corresponds to a single atom in the system. The $\rho$ is usually much more complex and each $\Omega^\sigma_j$ basin corresponds to some chemical feature such as an atomic shell, covalent bond, lone-pair, or other non-nuclear attractors (NNAs). These basins can be overlayed to construct overlap basins.
+First, the electron charge density $\rho$ and ELF $\sigma$ are separated into Bader basins $\Omega^\rho_i$ and $\Omega^\sigma_j$ respectively. Here $i$ and $j$ refer to the basin indices. Typically, $\rho$ is topologically simple and each $\Omega^\rho_i$ corresponds to a single atom in the system. The $\rho$ is usually much more complex and each $\Omega^\sigma_j$ basin corresponds to some chemical feature such as an atomic shell, covalent bond, lone-pair, or other non-nuclear attractors (NNAs). These basins can be overlayed to construct overlap basins.
 
 $$
 \Omega_s=\Omega^\rho_i\ \cap \Omega^\sigma_j\

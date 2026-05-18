@@ -1,6 +1,8 @@
-# Methods and Benchmarks
+# BadELF - Methods
 
-We provide several methods for partitioning the ELF. In general, the "zero-flux" method is sufficient and is the most akin to Bader charge analysis. However, in systems with covalent/metallic bonds, these basins must be divided by somewhat arbitrary metrics (e.g. electronegativity, atomic distance, etc.). In these case the other methods may be more appropriate as they rigorously divide covalent/metallic bonds along weighted voronoi-like planes.
+The methods in the [Bader section](../../../bader/background.md) refer to various algorithms that all strive to separate the charge density at zero-flux surfaces. This works quite well, as the basins created this way nearly always have maxima centered at atom nuclei. In contrast, the ELF often contains many additional maxima that are far from nuclei (i.e. non-nuclear attractors or NNA). Therefore, a new issue is created in that one must decide how these basins should be split to the nearby atoms.
+
+We provide several methods for partitioning the ELF. In general, the "zero-flux" method which uses the Bader class under the hood is sufficient. In this case, case NNAs are separated by somewhat arbitrary metrics (e.g. electronegativity, atomic distance, etc.). Alternatively, we methods which use weighted voronoi-like planes to more rigorously divide NNAs and the original 'BadELF' method which was a hybrid of the two.
 
 ## Methods
 

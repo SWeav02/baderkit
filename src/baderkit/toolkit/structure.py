@@ -351,3 +351,17 @@ class Structure(PymatgenStructure):
             filename = Path(filename)
             filename = str(filename.resolve())
         return super().to(filename=filename, fmt=fmt, **kwargs)
+    
+    ###########################################################################
+    # Plotting
+    ###########################################################################
+    def to_plotter(self, **kwargs):
+        """
+
+        Returns
+        -------
+        A GridPlotter object for visualization.
+        """
+        
+        from baderkit.plotting import StructurePlotter
+        return StructurePlotter(self, **kwargs)

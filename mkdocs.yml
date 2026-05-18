@@ -26,6 +26,8 @@ theme:
       accent: deep purple
 
   features:
+      - navigation.tabs
+      - navigation.tabs.sticky
       - content.code.annotate
       - content.code.copy
 
@@ -62,20 +64,23 @@ markdown_extensions:
       generic: true
   
 nav:
-  - Introduction: index.md
-  - Basic Usage: usage.md
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting_started/installation.md
+    - Basic Usage: getting_started/usage.md
+    - Plotting: getting_started/plotting.md
   - Theory and Methods:
-    - Bader:
-      - Theory: theory/bader/background.md
-      - Methods: theory/bader/methods.md
-    - Elf Analysis:
-      - BasinOverlap: theory/elf_analysis/basin_overlap.md
-      - ElfLabeler: theory/elf_analysis/elf_labeler.md
-      - ElfRadii: theory/elf_analysis/elf_radii.md
-      - BadELF:
-          - Background: theory/elf_analysis/badelf/background.md
-          - Methods: theory/elf_analysis/badelf/methods.md
-    - CriticalPoints: theory/critical_points/usage.md
+    - Theory:
+      - Bader: theory/bader/background.md
+      - ELF: theory/elf_analysis/elf.md
+      - QTAIM/ELF Overlap: theory/elf_analysis/basin_overlap.md
+      - ELF Labeler: theory/elf_analysis/elf_labeler.md
+      - ELF Radii: theory/elf_analysis/elf_radii.md
+      - BadELF: theory/elf_analysis/badelf/background.md
+      - Critical Points: theory/critical_points/usage.md
+    - Methods:
+      - Bader: theory/bader/methods.md
+      - BadELF: theory/elf_analysis/badelf/methods.md
   - API Reference: 
     - Utilities:
       - Structure: api_reference/utilities/structure.md
@@ -85,10 +90,8 @@ nav:
     - Elf Analysis:
       - BasinOverlap: api_reference/elf_analysis/basin_overlap.md
       - ElfLabeler: api_reference/elf_analysis/labeler.md
-      - SpinElfLabeler: api_reference/elf_analysis/labeler_spin.md
       - ElfRadii: api_reference/elf_analysis/elf_radii.md
       - Badelf: api_reference/elf_analysis/badelf.md
-      - SpinBadelf: api_reference/elf_analysis/badelf_spin.md
     - Plotting:
       - StructurePlotter: api_reference/plotting/structure.md
       - GridPlotter: api_reference/plotting/grid.md
@@ -104,11 +107,7 @@ nav:
       - 'Elf Radii: Ionic Radii': tutorials/vasp/elf_radii.md
     - QE:
       - 'Bader: Oxidation States': tutorials/qe/bader.md
-      - 'BadELF: Electride Charges': tutorials/qe/badelf.md
-      - 'BadELF: Spin Separated Charge': tutorials/qe/badelf_spin.md
-      - 'Elf Labeler: Bond Order': tutorials/qe/bond_order.md
-      - 'Basin Overlap: Polarization Index': tutorials/qe/polarization_index.md
-      - 'Elf Radii: Ionic Radii': tutorials/qe/elf_radii.md
+      - 'Elf Analysis': tutorials/qe/elf_analysis.md
     - Other:
       - 'Bader: Custom File Formats': tutorials/other/other_formats.md
   - Citing: citing.md

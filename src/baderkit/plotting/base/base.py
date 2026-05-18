@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+from abc import ABC
 import io
 import multiprocessing as mp
 import sys
@@ -25,7 +26,7 @@ def _export_html(queue: Queue, plotter: pv.Plotter):
     queue.put(plotter.export_html(filename=None))
 
 
-class VtkPlotter:
+class VtkPlotter(ABC):
 
     def __init__(
         self,
@@ -44,7 +45,8 @@ class VtkPlotter:
         **kwargs,
     ):
         """
-        The base class that all other plotter classes inherit from
+        The base class that all other plotter classes inherit from. It is an
+        abstract class that should not be called directly.
 
         Parameters
         ----------

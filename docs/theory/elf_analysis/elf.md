@@ -1,4 +1,4 @@
-# The Electron Localization Function
+# ELF - Theory
 
 The Electron Localization Function (ELF), as its name suggests, is a measure of the localization of electrons in a system. It was originally developed in 1990 by [Becke and Edgecombe](https://doi.org/10.1063/1.458517) and was very quickly adopted as a tool for the qualitative and quantitative analysis of chemical features and bonding.
 

@@ -1,4 +1,4 @@
-# Methods and Benchmarks
+# Bader - Methods
 
 Through the years, several methods for performing grid-based Bader assignment have been
 developed. BaderKit includes each of the methods available in the Henkelman group's code

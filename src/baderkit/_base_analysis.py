@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import importlib
 import copy
 import json
 import logging
@@ -724,3 +725,25 @@ class BaseAnalysis(ABC):
 
         # write file
         grid.write(filename=filename, output_format=output_format, **writer_kwargs)
+        
+    ###########################################################################
+    # Plotting
+    ###########################################################################
+    def to_plotter(self, **kwargs):
+        """
+
+        Returns
+        -------
+        A BaderKit Plotter object for visualization.
+        """
+        
+        # check for an existing plotter
+        class_name = self.__class__.__name__ + "Plotter"
+        # import method
+        mod = importlib.import_module(f"baderkit.plotting")
+        PlotterClass = getattr(mod, class_name, None)
+        if PlotterClass is not None:
+            return PlotterClass(self, **kwargs)
+        
+        raise NotImplementedError("No Plotter has been implemented for the {self.__class__.__name__} class")
+    

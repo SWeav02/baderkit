@@ -437,7 +437,7 @@ class GridPlotter(StructurePlotter):
 
         # save and extract surface
         self._structured_grid = structured_grid
-        self._surface = structured_grid.extract_surface()
+        self._surface = structured_grid.extract_surface(algorithm="dataset_surface")
 
     def add_slice(
         self,
@@ -613,3 +613,5 @@ class GridPlotter(StructurePlotter):
         else:
             image = p.get_plot_screenshot(return_image=True, **write_kwargs)
             return image
+
+    

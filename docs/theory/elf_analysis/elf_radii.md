@@ -1,8 +1,8 @@
-# Elf Radii
+# ELF Radii - Theory
 
 In the original [BadELF paper](https://pubs.acs.org/doi/10.1021/jacs.3c10876), we noted that the ELF provides a very convenient metric for calculating ionic radii. In particular, we noted that we could use the ELF to calculate ionic radii that on average closely matched the tables of Shannon and Prewitt. Unlike these tables however, this method provides the exact radius in a given system.
 
-![radii_comparison](/images/radii_comparison.png)
+![radii_comparison](/images/radii_comparison.png){ width=60% }
 
 The original method worked by determining the minimum closest to the center of the bond. This prevented it from being used for covalent bonds. With the development of the `ElfLabeler` we have updated the method to adapt based on the bonding environment. We consider four scenarios.
 1. Ionic Bonds
