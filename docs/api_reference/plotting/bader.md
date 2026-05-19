@@ -1,1 +1,1 @@
-::: src.baderkit.plotting.bader.BaderPlotter
+::: src.baderkit.plotting.BaderPlotter

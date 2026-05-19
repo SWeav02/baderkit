@@ -8,24 +8,15 @@ plotter = bader.to_plotter()
 
 This will run the Bader analysis and open a simple plotting window displaying a VTK plot of your object similar to below. The plotter can then be updated directly by changing its class properties. For more details see our [plotting tutorial](/baderkit/tutorials/other/plotting) and [Plotting API](/baderkit/api_reference/plotting/structure)
 
-```Bash
-plotter.visible_bader_basins = []
-plotter.visible_atom_basins = [0]
-```
+## Implemented Plotters
 
-Similarly, you can change the isosurface value and color.
-
-```Bash
-# display full volume of atom
-plotter.iso_val = 0.00001
-# use a solid color instead of a colormap
-plotter.use_solid_cap_color = True
-plotter.use_solid_surface_color = True
-# set the color of the isosurface and caps
-plotter.cap_color = "yellow"
-plotter.surface_color = "yellow"
-# Make the surface appear solid
-plotter.cap_opacity = 1.0
-plotter.surface_opacity = 1.0
-```
+| Class Name | Implemented |
+|------------|-------------|
+| Structure  |:material-checkbox-marked-circle:{.green-check}|
+| Grid  |:material-checkbox-marked-circle:{.green-check}|
+| Bader  |:material-checkbox-marked-circle:{.green-check}|
+| Badelf  |:material-checkbox-marked-circle:{.green-check}|
+| ElfLabeler       |:material-close-box:{.red-x}|
+| ElfRadii       |:material-close-box:{.red-x}|
+| BasinOverlap       |:material-close-box:{.red-x}|
 

@@ -4,6 +4,7 @@ from abc import ABC
 
 import numpy as np
 
+from baderkit.toolkit.structure import Structure
 from ..toolkit import GridPlotter
 
 class BaseAnalysis(GridPlotter, ABC):
@@ -14,6 +15,7 @@ class BaseAnalysis(GridPlotter, ABC):
     def __init__(
         self,
         base_analysis,
+        structure: Structure = None,
         grid_name: str = "reference_grid",
         **grid_kwargs,
     ):
@@ -24,6 +26,9 @@ class BaseAnalysis(GridPlotter, ABC):
         """
         # apply StructurePlotter kwargs
         grid = getattr(base_analysis, grid_name)
+        if structure:
+            grid = grid.copy()
+            grid.structure = structure.copy()
         super().__init__(grid=grid, **grid_kwargs)
         
         self._grid_name = grid_name

@@ -12,6 +12,18 @@ from .structure import StructurePlotter
 
 
 class GridPlotter(StructurePlotter):
+    """
+    A convenience class for creating plots of crystal structures and isosurfaces
+    using pyvista's package for VTK.
+
+    Parameters
+    ----------
+    grid : Grid
+        The Grid object to use for isosurfaces. The structure will be pulled
+        from this grid.
+
+    """
+    
     def __init__(
         self,
         grid: Grid,
@@ -27,22 +39,6 @@ class GridPlotter(StructurePlotter):
         iso_value=None,
         **structure_kwargs,
     ):
-        """
-        A convenience class for creating plots of crystal structures and isosurfaces
-        using pyvista's package for VTK.
-
-        Parameters
-        ----------
-        grid : Grid
-            The Grid object to use for isosurfaces. The structure will be pulled
-            from this grid.
-
-        Returns
-        -------
-        None.
-
-        """
-
         self.grid = grid
         self._show_surface = show_surface
         self._show_caps = show_caps
@@ -335,6 +331,7 @@ class GridPlotter(StructurePlotter):
             "pbr": self.pbr,
             "name": "iso",
             "color": self.surface_color,
+            "ambient": self.ambient,
         }
 
         if not self.use_solid_surface_color:
@@ -360,6 +357,7 @@ class GridPlotter(StructurePlotter):
             "pbr": self.pbr,
             "name": "cap",
             "color": self.cap_color,
+            "ambient": self.ambient,
         }
         if not self.use_solid_cap_color:
             cap_kwargs.update(
@@ -491,6 +489,7 @@ class GridPlotter(StructurePlotter):
             clim=(self.min_val, self.max_val),
             show_scalar_bar=False,
             name=name,
+            ambient=self.ambient,
         )
 
     def remove_slice(self, key):
@@ -552,6 +551,7 @@ class GridPlotter(StructurePlotter):
             cmap=self.colormap,
             clim=(self.min_val, self.max_val),
             show_scalar_bar=False,
+            ambient=self.ambient,
         )
 
         origin, normal = self._slice_planes[name]
@@ -597,6 +597,7 @@ class GridPlotter(StructurePlotter):
                 rgb=True,
                 name="atom_glyphs",
                 pbr=self.pbr,
+                ambient=self.ambient,
             )
         else:
             # otherwise, remove all atoms from the plot

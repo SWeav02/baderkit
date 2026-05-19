@@ -14,6 +14,16 @@ from ..base import VtkPlotter
 
 
 class StructurePlotter(VtkPlotter):
+    """
+    A convenience class for creating plots of crystal structures using
+    pyvista's package for VTK.
+
+    Parameters
+    ----------
+    structure : Structure
+        The pymatgen Structure object to plot.
+
+    """
 
     def __init__(
         self,
@@ -25,25 +35,9 @@ class StructurePlotter(VtkPlotter):
         atom_colors=None,
         **kwargs,
     ):
-        """
-        A convenience class for creating plots of crystal structures using
-        pyvista's package for VTK.
-
-        Parameters
-        ----------
-        structure : Structure
-            The pymatgen Structure object to plot.
-        off_screen : bool, optional
-            Whether or not the plotter should be in offline mode. The default is False.
-        qt_plotter : bool, optional
-            Whether or not the plotter will use pyvistaqt for qt applications
-        qt_frame
-            If using pyvistaqt, the QFrame to link the plotter to.
-
-        """
-
+        
         # create initial class variables
-        self._visible_atoms = np.array([1 for i in range(len(structure))], dtype=float)
+        self._atom_opacities = np.array([1 for i in range(len(structure))], dtype=float)
         self._wrap_atoms = wrap_atoms
         self._atom_metallicness = atom_metallicness
         self._radii_scale = radii_scale
@@ -83,7 +77,7 @@ class StructurePlotter(VtkPlotter):
     # Properties and Setters
     ###########################################################################
     @property
-    def visible_atoms(self) -> NDArray[float]:
+    def atom_opacities(self) -> NDArray[float]:
         """
 
         Returns
@@ -93,21 +87,21 @@ class StructurePlotter(VtkPlotter):
             if desired.
 
         """
-        return self._visible_atoms
+        return self._atom_opacities
 
-    @visible_atoms.setter
-    def visible_atoms(self, visible_atoms: NDArray[float]):
+    @atom_opacities.setter
+    def atom_opacities(self, atom_opacities: NDArray[float]):
 
         # convert to array
-        visible_atoms = np.array(visible_atoms, dtype=np.float64)
+        atom_opacities = np.array(atom_opacities, dtype=np.float64)
 
         # make sure we have the write shape
         assert (
-            self.visible_atoms.shape == visible_atoms.shape
+            self.atom_opacities.shape == atom_opacities.shape
         ), "Length match the number of atoms"
 
         # set visible atoms
-        self._visible_atoms = visible_atoms
+        self._atom_opacities = atom_opacities
         # update
         self._update_site_meshes()
 
@@ -226,7 +220,7 @@ class StructurePlotter(VtkPlotter):
 
         """
         # construct a pandas dataframe for each atom
-        visible = self.visible_atoms > 0
+        visible = self.atom_opacities > 0
         atom_df = pd.DataFrame(
             {
                 "Label": self.structure.labels,
@@ -240,7 +234,7 @@ class StructurePlotter(VtkPlotter):
     @atom_df.setter
     def atom_df(self, atom_df: pd.DataFrame):
         # set each property from the dataframe
-        self.visible_atoms = atom_df["Visible"]
+        self.atom_opacities = atom_df["Visible"]
         self.atom_colors = atom_df["Color"]
         self.atom_radii = atom_df["Radius"]
 
@@ -275,7 +269,7 @@ class StructurePlotter(VtkPlotter):
             # get atom colors
             atom_colors = self.atom_colors[self._map_wrapped_to_atoms]
             # get alpha values
-            alpha = self.visible_atoms[self._map_wrapped_to_atoms]
+            alpha = self.atom_opacities[self._map_wrapped_to_atoms]
             # get radii
             radii = self.atom_radii[self._map_wrapped_to_atoms] * self.radii_scale
         else:
@@ -284,7 +278,7 @@ class StructurePlotter(VtkPlotter):
             # get atom colors
             atom_colors = self.atom_colors
             # get alpha values
-            alpha = self.visible_atoms
+            alpha = self.atom_opacities
             # get radii
             radii = self.atom_radii * self.radii_scale
 
@@ -307,6 +301,7 @@ class StructurePlotter(VtkPlotter):
             rgb=True,
             name="atom_glyphs",
             pbr=self.pbr,
+            ambient=self.ambient,
         )
 
     def _create_plot(self) -> pv.Plotter:

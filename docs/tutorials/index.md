@@ -15,18 +15,12 @@ This module provides tutorials showing the complete process from start to finish
 
 ### Quantum Espresso
 
-- [SSSP Database](https://legacy.materialscloud.org/discover/sssp/table/efficiency#sssp-license): A curacted collection of pseudopotentials. All QE tutorials in this module use the SSSP precision pbesol PPs. Please cite this tool and the original PP if used in publication.
-    
-    The full database of pbesol PPs (precision) can be also be downloaded and extracted as follows.
-    ```
-    wget https://archive.materialscloud.org/api/records/rcyfm-68h65/files/SSSP_1.3.0_PBEsol_precision.tar.gz/content -O sssp_efficiency.tar.gz
-    wget https://archive.materialscloud.org/api/records/rcyfm-68h65/files/SSSP_1.3.0_PBE_precision.json/content -O SSSP_1.3.0_PBE_precision.json
+- [pslibrary](https://dalcorso.github.io/pslibrary/): High-quality pseudopotentials for a variety of functionals. The pbesol pseudopotentials were used throughout this tutorial. Please cite this tool if used in publication.
 
-    tar -xvf sssp_efficiency.tar.gz
-    ```
+- [SSSP Database](https://legacy.materialscloud.org/discover/sssp/table/efficiency#sssp-license): A curacted collection of pseudopotentials. All QE tutorials in this module use the SSSP precision pbesol PPs. Please cite this tool and the original PP if used in publication.
 
     !!! Warning
-        Only PAW PPs can be used when reconstructing the total charge density in QE. Many of the SSSP efficiency PPs and several SSSP precision PPs are ultrasoft PPs and should not be used for Bader analysis.
+        Only PAW PPs can be used when reconstructing the total charge density in QE. Many of the SSSP PPs are ultrasoft PPs and should not be used for Bader analysis.
 
 - [Quantum Espresso Input Generator](https://qeinputgenerator.materialscloud.io/): A tool for generating input files for QE. The input files used in these tutorials were generated using the QE input generator on materialscloud.io using the `fast` protocol, then updated with desired PPs and paths. Please cite as described if used in publication.
 

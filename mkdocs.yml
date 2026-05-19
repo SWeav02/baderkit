@@ -109,7 +109,8 @@ nav:
       - 'Bader: Oxidation States': tutorials/qe/bader.md
       - 'Elf Analysis': tutorials/qe/elf_analysis.md
     - Other:
-      - 'Bader: Custom File Formats': tutorials/other/other_formats.md
+      - 'Custom File Formats': tutorials/other/other_formats.md
+      - 'Plotting' : tutorials/other/plotting.md
   - Citing: citing.md
 
 plugins:
@@ -121,10 +122,9 @@ plugins:
       handlers:
         python:
           options:
-#            show_source: false
+            inherited_members: true
             docstring_style: numpy
             docstring_section_style: table
-            #parameter_headings: false
 
 extra_css:
   - css/mkdocstrings.css

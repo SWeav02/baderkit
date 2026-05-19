@@ -1,1 +1,1 @@
-::: src.baderkit.plotting.structure.StructurePlotter
+::: src.baderkit.plotting.StructurePlotter

@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 import pyvista as pv
+import vtk
 from numpy.typing import NDArray
 from pyvistaqt import BackgroundPlotter, QtInteractor
 
@@ -41,6 +42,7 @@ class VtkPlotter(ABC):
         show_axes=True,
         parallel_projection=True,
         pbr=False,
+        ambient=0.1,
         camera_dist: float = None,
         **kwargs,
     ):
@@ -72,6 +74,7 @@ class VtkPlotter(ABC):
         self._show_axes = show_axes
         self._parallel_projection = parallel_projection
         self._pbr = pbr
+        self._ambient = ambient
 
         # generate initial plotter
         self._suppressing = False
@@ -209,6 +212,26 @@ class VtkPlotter(ABC):
         self._pbr = pbr
         # pbr is set when adding a mesh, so we need to rebuild
         self.soft_rebuild()
+        
+    @property
+    def ambient(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The amount of ambient light reaching the structure. Ranges from
+            0 to 1.
+
+        """
+        return self._ambient
+
+    @ambient.setter
+    def ambient(self, ambient: float):
+        for actor in self.plotter.actors.values():
+            if getattr(actor, "prop", None) is not None:
+                actor.prop.ambient = ambient
+        self._ambient = ambient
 
     def set_camera_to_hkl(self, h, k, l, rotation=0.0, dist=None):
         normal = self.structure.get_cart_from_miller(h, k, l)
@@ -314,10 +337,7 @@ class VtkPlotter(ABC):
             for j in (-1, 0, 1):
                 for k in (-1, 0, 1):
                     shift = np.array((i, j, k), dtype=float)
-                    try:
-                        coords = frac_coords + shift
-                    except:
-                        breakpoint()
+                    coords = frac_coords + shift
 
                     # point-wise interior test
                     interior = np.all((coords > tol) & (coords < 1 - tol), axis=1)
@@ -377,37 +397,102 @@ class VtkPlotter(ABC):
             line_width=self.lattice_thickness,
             color="k",
             name="lattice",
+            ambient=self.ambient,
         )
-
-    def _add_axes_widget(self, plotter, show_axes: bool):
-        # lattice[0] = a-vector, lattice[1] = b-vector, lattice[2] = c-vector
-        lattice = self.structure.lattice.matrix
-
-        # 2. Construct the 4x4 transformation matrix
-        # The columns of the upper-left 3x3 represent where the unit X, Y, Z go.
-        # We transpose the lattice matrix to put vectors in columns.
-        matrix = np.eye(4)
-        matrix[:3, :3] = lattice.T
-
-        scale = [1 / np.linalg.norm(a) for a in lattice]
-
-        # 3. Create the AxesAssembly
-        # We pass our calculated matrix to 'user_matrix'
-        axes = pv.AxesAssembly(
-            user_matrix=matrix,
-            scale=scale,
-            labels=["a", "b", "c"],
-            # label_color="black",
-            label_size=24,
+        
+    def _add_axes_widget(self, plotter, show_axes):
+        """Construct a custom oblique lattice axes widget."""
+        lattice = np.asarray(self.structure.lattice.matrix, dtype=float)
+        
+        assembly = vtk.vtkPropAssembly()
+        origin = np.zeros(3)
+        labels = ["a", "b", "c"]
+        colors = ["red", "green", "blue"]
+        
+        for vec, label, color in zip(lattice, labels, colors):
+            # get normalized lattice direction
+            direction = vec / np.linalg.norm(vec)
+            
+            # Create arrow mesh
+            arrow = pv.Arrow(
+                start=origin,
+                direction=direction,
+                tip_length=0.22,
+                tip_radius=0.1,
+                shaft_radius=0.04,
+            )
+            # add to vtk assembly
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputData(arrow)
+            actor = vtk.vtkActor()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(pv.Color(color).float_rgb)
+            assembly.AddPart(actor)
+            
+            # Create Caption
+            caption = vtk.vtkCaptionActor2D()
+            caption.SetCaption(label)
+            
+            # place at end of arrow and remove default offset
+            caption.SetAttachmentPoint(direction[0], direction[1], direction[2])
+            caption.Setdirection(0.0, 0.0)
+            
+            # Remove border and leader line
+            caption.BorderOff()
+            caption.LeaderOff()
+            caption.ThreeDimensionalLeaderOff()
+            
+            # Remove padding to border
+            caption.SetPadding(0)
+            
+            # Set color, font, etc.
+            text_prop = caption.GetCaptionTextProperty()
+            text_prop.SetColor(pv.Color(color).float_rgb)
+            text_prop.SetFontSize(16)
+            text_prop.BoldOn()
+            text_prop.ShadowOff()
+            text_prop.SetJustificationToCentered()
+            text_prop.SetVerticalJustificationToBottom()
+            
+            # Keep text size set
+            caption.GetTextActor().SetTextScaleModeToNone()
+            
+            # add to vtk assembly
+            assembly.AddPart(caption)
+            
+        # Add center ball
+        ball = pv.Sphere(radius=0.1, center=origin)
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputData(ball)
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(pv.Color("light grey").float_rgb)
+        assembly.AddPart(actor)
+        
+        # Add a box to keep widget centered
+        bounds_size = 2.1
+        box = pv.Cube(
+          center=(0, 0, 0),
+          x_length=bounds_size,
+          y_length=bounds_size,
+          z_length=bounds_size,
         )
-
+        box_mapper = vtk.vtkPolyDataMapper()
+        box_mapper.SetInputData(box)
+        box_actor = vtk.vtkActor()
+        box_actor.SetMapper(box_mapper)
+        box_actor.GetProperty().SetOpacity(0.0)  # fully invisible
+        assembly.AddPart(box_actor)
+        
+        # Add widget
         plotter.add_orientation_widget(
-            axes,
+            assembly,
             viewport=(0.0, 0.0, 0.25, 0.25),
             interactive=False,
         )
-        plotter.show_axes = self.show_axes
-
+        
+        plotter.show_axes = show_axes
+    
     def _create_plotter(self) -> pv.Plotter:
         if self.plotter is not None:
             return self.plotter
