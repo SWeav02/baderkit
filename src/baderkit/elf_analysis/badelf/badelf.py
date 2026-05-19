@@ -75,7 +75,7 @@ class Badelf(BaseElfAnalysis):
         "nna_results",
     ]
 
-    _sub_methods = ["elf_radii"]
+    _sub_methods = ["elf_radii", "labeler"]
 
     def __init__(
         self,

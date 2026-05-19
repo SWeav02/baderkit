@@ -10,8 +10,8 @@ total.write_vasp("CHGCAR_sum")
 
 # create bader object
 bader = Bader.from_vasp(
-    charge_filename="CHGCAR",
-    total_charge_filename="CHGCAR_sum",
+    charge_grid="CHGCAR",
+    total_charge_grid="CHGCAR_sum",
     pseudopotential_filename="POTCAR"
     )
 

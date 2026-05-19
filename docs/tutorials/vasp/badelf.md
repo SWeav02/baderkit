@@ -23,6 +23,7 @@ The `Badelf` class includes several methods for calculating oxidation states in 
     ```
     Global Parameters
     LELF = True         # Write ELFCAR file
+    LAECHG = True         # Write AECCAR files
     EDIFF  = 1E-06        # SCF energy convergence, in eV
     ENCUT  = 520
 
@@ -60,8 +61,9 @@ The `Badelf` class includes several methods for calculating oxidation states in 
 
         ```Python
         badelf = Badelf.from_vasp(
-        charge_filename="CHGCAR",
-        reference_filename="ELFCAR",
+        charge_grid="CHGCAR",
+        reference_grid="ELFCAR",
+        total_charge_grid="CHGCAR_sum",
         pseudopotential_filename="POTCAR"
         )
         ```
@@ -109,10 +111,16 @@ The `Badelf` class includes several methods for calculating oxidation states in 
         conda activate baderkit
         ```
 
+    2. We recommend using the reconstructed total charge density as a reference for Bader partitioning when possible. In VASP we can construct this from the AECCAR files.
+
+        ```Bash
+        baderkit sum AECCAR0 AECCAR2
+        ```
+
     3. Run the Badelf analysis.
 
         ```Bash
-        baderkit badelf CHGCAR ELFCAR
+        baderkit badelf CHGCAR ELFCAR -tot CHGCAR_sum
         ```
 
         You should see logging information printed to the console and once complete a `badelf.json` file will be written which summarizes the results of the calculation.
@@ -121,7 +129,7 @@ And that's it! Try playing around with what else the `Badelf` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/electride_charge.py" download>electride_charge.py</a>
+Tutorial Script: <a href="/baderkit/tutorial_scripts/vasp/electrides_charge.py" download>electrides_charge.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/Ca2N.zip" download>Ca2N.zip</a>
 

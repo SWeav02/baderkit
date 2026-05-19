@@ -42,7 +42,8 @@ class VtkPlotter(ABC):
         show_axes=True,
         parallel_projection=True,
         pbr=False,
-        ambient=0.1,
+        light_color="white",
+        light_intensity=0.2,
         camera_dist: float = None,
         **kwargs,
     ):
@@ -74,7 +75,9 @@ class VtkPlotter(ABC):
         self._show_axes = show_axes
         self._parallel_projection = parallel_projection
         self._pbr = pbr
-        self._ambient = ambient
+        self._light = pv.Light(light_type="headlight")
+        self._light_color = pv.Color(light_color)
+        self._light_intensity = light_intensity
 
         # generate initial plotter
         self._suppressing = False
@@ -153,6 +156,42 @@ class VtkPlotter(ABC):
     def background_color(self, background_color: str):
         self.plotter.set_background(background_color)
         self._background_color = background_color
+        
+    @property
+    def light_color(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            The color of the light shining on the scene as a hex code, rgb array, 
+            or color string.
+
+        """
+        return self._light_color
+
+    @light_color.setter
+    def light_color(self, light_color: str):
+        color = pv.Color(light_color)
+        self._light.SetColor(color.float_rgb)
+        self._light_color = color
+        
+    @property
+    def light_intensity(self) -> float:
+        """
+
+        Returns
+        -------
+        str
+            The intensity of the light on the scene from 0-1
+
+        """
+        return self._light_intensity
+
+    @light_intensity.setter
+    def light_intensity(self, light_intensity: float):
+        self._light.SetIntensity(light_intensity)
+        self._light_intensity = light_intensity
 
     @property
     def show_axes(self) -> bool:
@@ -212,26 +251,6 @@ class VtkPlotter(ABC):
         self._pbr = pbr
         # pbr is set when adding a mesh, so we need to rebuild
         self.soft_rebuild()
-        
-    @property
-    def ambient(self) -> float:
-        """
-
-        Returns
-        -------
-        float
-            The amount of ambient light reaching the structure. Ranges from
-            0 to 1.
-
-        """
-        return self._ambient
-
-    @ambient.setter
-    def ambient(self, ambient: float):
-        for actor in self.plotter.actors.values():
-            if getattr(actor, "prop", None) is not None:
-                actor.prop.ambient = ambient
-        self._ambient = ambient
 
     def set_camera_to_hkl(self, h, k, l, rotation=0.0, dist=None):
         normal = self.structure.get_cart_from_miller(h, k, l)
@@ -397,7 +416,6 @@ class VtkPlotter(ABC):
             line_width=self.lattice_thickness,
             color="k",
             name="lattice",
-            ambient=self.ambient,
         )
         
     def _add_axes_widget(self, plotter, show_axes):
@@ -435,7 +453,7 @@ class VtkPlotter(ABC):
             
             # place at end of arrow and remove default offset
             caption.SetAttachmentPoint(direction[0], direction[1], direction[2])
-            caption.Setdirection(0.0, 0.0)
+            caption.SetPosition(0.0, 0.0)
             
             # Remove border and leader line
             caption.BorderOff()
@@ -535,6 +553,9 @@ class VtkPlotter(ABC):
         # set camera perspective type
         if self.parallel_projection:
             plotter.renderer.enable_parallel_projection()
+            
+        # add light
+        plotter.add_light(self._light)
 
         return plotter
 

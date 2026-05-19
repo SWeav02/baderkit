@@ -35,7 +35,7 @@ It is common for systems to have differing ELF topologies in the spin-up and spi
     NGZF   = 30
     ```
 
-3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary. We recommend using a POTCAR with extra valence electrons such as 'Fe_sv' to ensure the ELF contains some core electrons.
+3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary. You MUST use a POTCAR with extra valence electrons such as 'Fe_sv' to ensure the ELF contains some core electrons or you will overestimate the electron counts.
 
 4. Run VASP. Depending on your system how you do this may vary. On our system we use the following command.
 
@@ -94,8 +94,8 @@ It is common for systems to have differing ELF topologies in the spin-up and spi
     
         You should see logging information as BaderKit runs, then outputs similar to the following:
             ```
-            Spin-up metal bond population: 1.336115618
-            Spin-down metal bond population: 0.9357502685
+            Spin-up metal bond population: 0.9585707826
+            Spin-down metal bond population: 1.317401248
             ```
 
 === "Command Line"
@@ -126,7 +126,7 @@ And that's it! Try playing around with what else the `Badelf` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/spin_badelf.py" download>spin_badelf.py</a>
+Tutorial Script: <a href="/baderkit/tutorial_scripts/vasp/spin_badelf.py" download>spin_badelf.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/Fe.zip" download>Fe.zip</a>
 

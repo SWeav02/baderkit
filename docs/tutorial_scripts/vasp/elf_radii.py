@@ -11,9 +11,9 @@ total.write_vasp("CHGCAR_sum")
 
 # load radii method
 elf_radii = ElfRadii.from_vasp(
-    charge_filename="CHGCAR",
-    reference_filename="ELFCAR",
-    total_charge_filename="CHGCAR_sum",
+    charge_grid="CHGCAR",
+    reference_grid="ELFCAR",
+    total_charge_grid="CHGCAR_sum",
     pseudopotential_filename="POTCAR"
     )
 

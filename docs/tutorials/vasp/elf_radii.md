@@ -69,9 +69,9 @@ Ionic and covalent radii are typically determined from tabulated data such as th
 
         ```Python
         elf_radii = ElfRadii.from_vasp(
-            charge_filename="CHGCAR",
-            reference_filename="ELFCAR",
-            total_charge_filename="CHGCAR_sum",
+            charge_grid="CHGCAR",
+            reference_grid="ELFCAR",
+            total_charge_grid="CHGCAR_sum",
             pseudopotential_filename="POTCAR"
             )
         ```
@@ -121,6 +121,6 @@ And that's it! Try playing around with what else the `ElfRadii` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/elf_radii.py" download>elf_radii.py</a>
+Tutorial Script: <a href="/baderkit/tutorial_scripts/vasp/elf_radii.py" download>elf_radii.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl_radii.zip" download>NaCl_radii.zip</a>

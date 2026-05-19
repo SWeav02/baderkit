@@ -8,11 +8,10 @@ badelf = Badelf.from_vasp()
 # create badelf plot
 plotter = badelf.to_plotter()
 
-# PLOT SETTINGS #
-
 # use physical rendering
 plotter.pbr = True
-plotter.atom_metallicness = 0.5
+plotter.light_intensity = 1.0
+plotter.atom_metallicness = 0.25
 
 # show electride basin and hide electride dummy atom
 plotter.visible_atom_basins = [3]

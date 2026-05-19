@@ -24,6 +24,8 @@ def serialize(obj):
         return obj.tolist()
     if hasattr(obj, "as_dict"):
         return obj.as_dict()
+    if isinstance(obj, list):
+        obj = [serialize(i) for i in obj]
     return obj
 
 
@@ -577,6 +579,8 @@ class BaseAnalysis(ABC):
         )
         for i in self._sub_methods:
             method = getattr(self, i)
+            if method is None:
+                continue
             method_kwargs.update(method._get_kwargs())
         return method_kwargs
 
@@ -591,7 +595,6 @@ class BaseAnalysis(ABC):
 
         for i in self._summary_props + ["base_summary_props"]:
             results[i] = self._to_dict(getattr(self, f"_{i}"), serializable=serializable)
-
         return results
 
     def _to_dict(

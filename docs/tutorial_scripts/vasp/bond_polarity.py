@@ -24,9 +24,9 @@ for folder in folders:
     
     # load labeler
     labeler = ElfLabeler.from_vasp(
-        charge_filename=folder / "CHGCAR",
-        reference_filename=folder / "ELFCAR",
-        total_charge_filename=folder / "CHGCAR_sum",
+        charge_grid=folder / "CHGCAR",
+        reference_grid=folder / "ELFCAR",
+        total_charge_grid=folder / "CHGCAR_sum",
         pseudopotential_filename=folder / "POTCAR"
         )
     
@@ -34,7 +34,7 @@ for folder in folders:
     basin_type = None
     basin_idx = None
     for idx, i in enumerate(labeler.basin_types):
-        if "bond" in i:
+        if "ionic" in i or "covalent" in i:
             basin_type = i
             basin_idx = idx
             break

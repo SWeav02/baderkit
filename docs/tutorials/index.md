@@ -9,20 +9,20 @@ This module provides tutorials showing the complete process from start to finish
 
 ### VASP
 
-- [VASPKIT](https://vaspkit.com/): A useful tool for preparing input files and post-processing of VASP calculations.
+- [VASPKIT](https://vaspkit.com/): A tool for preparing input files and post-processing of VASP calculations.
 
-- [VASP Wiki](https://vasp.at/wiki/Welcome): VASP's primary repository of documentation.
+- [VASP Wiki](https://vasp.at/wiki/Welcome): VASP's primary documentation.
 
-### Quantum Espresso
+### Quantum ESPRESSO
 
-- [pslibrary](https://dalcorso.github.io/pslibrary/): High-quality pseudopotentials for a variety of functionals. The pbesol pseudopotentials were used throughout this tutorial. Please cite this tool if used in publication.
+- [pslibrary](https://dalcorso.github.io/pslibrary/): High-quality pseudopotentials for a variety of functionals.
 
-- [SSSP Database](https://legacy.materialscloud.org/discover/sssp/table/efficiency#sssp-license): A curacted collection of pseudopotentials. All QE tutorials in this module use the SSSP precision pbesol PPs. Please cite this tool and the original PP if used in publication.
+- [SSSP Database](https://legacy.materialscloud.org/discover/sssp/table/efficiency#sssp-license): A curacted collection of pseudopotentials. 
 
     !!! Warning
         Only PAW PPs can be used when reconstructing the total charge density in QE. Many of the SSSP PPs are ultrasoft PPs and should not be used for Bader analysis.
 
-- [Quantum Espresso Input Generator](https://qeinputgenerator.materialscloud.io/): A tool for generating input files for QE. The input files used in these tutorials were generated using the QE input generator on materialscloud.io using the `fast` protocol, then updated with desired PPs and paths. Please cite as described if used in publication.
+- [Quantum ESPRESSO Input Generator](https://qeinputgenerator.materialscloud.io/): A tool for generating input files for QE. The input files used in these tutorials were generated using the QE input generator on materialscloud.io using the `fast` protocol, then updated with desired PPs and paths. Please cite as described if used in publication.
 
 - [Quantum ESPRESSO Documentation](https://www.quantum-espresso.org/documentation/): QE's primary repository of documentation.
 

@@ -91,7 +91,7 @@ This tutorial provides a basic example of calculating oxidation states using VAS
         ```
     
         You should see logging information as BaderKit runs, then the oxidation states of each atom in the structure:
-            `array([ 0.86225884 -0.86225546])`
+            `array([ 0.86221034 -0.86220696])`
 
 === "Command Line"
 
@@ -110,7 +110,7 @@ This tutorial provides a basic example of calculating oxidation states using VAS
     3. Run the Bader analysis.
 
         ```Bash
-        baderkit bader CHGCAR -ref CHGCAR_sum
+        baderkit bader CHGCAR -tot CHGCAR_sum
         ```
 
         You should see logging information printed to the console and once complete a `bader.json` file will be written which summarizes the results of the calculation.
@@ -119,6 +119,6 @@ And that's it! Try playing around with what else the `Bader` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/oxidation_states.py" download>oxidation_states.py</a>
+Tutorial Script: <a href="/baderkit/tutorial_scripts/vasp/oxidation_states.py" download>oxidation_states.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl.zip" download>NaCl.zip</a>

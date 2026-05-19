@@ -301,7 +301,6 @@ class StructurePlotter(VtkPlotter):
             rgb=True,
             name="atom_glyphs",
             pbr=self.pbr,
-            ambient=self.ambient,
         )
 
     def _create_plot(self) -> pv.Plotter:

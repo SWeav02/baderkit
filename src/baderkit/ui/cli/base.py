@@ -143,9 +143,9 @@ def bader(
 
     # instance bader
     bader = Bader.from_dynamic(
-        charge_filename=charge_file,
-        total_charge_filename=total_charge_file,
-        reference_filename=reference_file,
+        charge_grid=charge_file,
+        total_charge_grid=total_charge_file,
+        reference_grid=reference_file,
         pseudopotential_filename=pseudopotential_file,
         method=method,
         format=format,
@@ -213,8 +213,13 @@ def badelf(
         "-tot",
         help="The path to the total charge file",
     ),
+    pseudopotential_file: list[Path] = typer.Option(
+        None,
+        "--pseudopotentials" "-pp",
+        help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
+    ),
     method: BadelfMethod = typer.Option(
-        BadelfMethod.zero_flux,
+        BadelfMethod.badelf,
         "--method",
         "-m",
         help="The method to use for separating atoms and electrides",
@@ -247,9 +252,10 @@ def badelf(
 
     # instance bader
     badelf = Badelf.from_dynamic(
-        charge_filename=charge_file,
-        total_charge_filename=total_charge_file,
-        reference_filename=reference_file,
+        charge_grid=charge_file,
+        total_charge_grid=total_charge_file,
+        reference_grid=reference_file,
+        pseudopotential_filename=pseudopotential_file,
         partition_method=method,
         elf_labeler={"method": bader_method},
         # format=format,
@@ -298,6 +304,11 @@ def label(
         "-tot",
         help="The path to the total charge file",
     ),
+    pseudopotential_file: list[Path] = typer.Option(
+        None,
+        "--pseudopotentials" "-pp",
+        help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
+    ),
     method: Method = typer.Option(
         Method.default,
         "--method",
@@ -326,9 +337,10 @@ def label(
 
     # instance bader
     labeler = ElfLabeler.from_dynamic(
-        charge_filename=charge_file,
-        total_charge_filename=total_charge_file,
-        reference_filename=reference_file,
+        charge_grid=charge_file,
+        total_charge_grid=total_charge_file,
+        reference_grid=reference_file,
+        pseudopotential_filename=pseudopotential_file,
         method=method,
         # format=format,
     )
@@ -362,6 +374,11 @@ def overlap(
         "-tot",
         help="The path to the total charge file",
     ),
+    pseudopotential_file: list[Path] = typer.Option(
+        None,
+        "--pseudopotentials" "-pp",
+        help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
+    ),
     method: Method = typer.Option(
         Method.default,
         "--method",
@@ -378,9 +395,10 @@ def overlap(
 
     # instance bader
     overlap = BasinOverlap.from_dynamic(
-        charge_filename=charge_file,
-        total_charge_filename=total_charge_file,
-        reference_filename=reference_file,
+        charge_grid=charge_file,
+        total_charge_grid=total_charge_file,
+        reference_grid=reference_file,
+        pseudopotential_filename=pseudopotential_file,
         method=method,
     )
     # write summary
@@ -401,6 +419,11 @@ def radii(
         "--total-charge-file",
         "-tot",
         help="The path to the total charge file",
+    ),
+    pseudopotential_file: list[Path] = typer.Option(
+        None,
+        "--pseudopotentials" "-pp",
+        help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
     ),
     method: Method = typer.Option(
         Method.default,
@@ -424,9 +447,10 @@ def radii(
 
     # instance bader
     radii = ElfRadii.from_dynamic(
-        charge_filename=charge_file,
-        total_charge_filename=total_charge_file,
-        reference_filename=reference_file,
+        charge_grid=charge_file,
+        total_charge_grid=total_charge_file,
+        reference_grid=reference_file,
+        pseudopotential_filename=pseudopotential_file,
         method=method,
         include_nnas=include_nnas,
     )

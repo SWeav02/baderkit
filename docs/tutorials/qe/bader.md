@@ -1,6 +1,6 @@
 This tutorial provides a basic example of calculating oxidation states using Quantum Espresso and BaderKit.
 
-## Quantum Espresso
+## Quantum ESPRESSO
 
 1. Create an input file for an electronic relaxation. Here we provide an example for the NaCl structure which we named `scf.in` on our system. While you can use any name, we like to use the `.in` suffix for clarity.
     ```
@@ -113,8 +113,8 @@ This tutorial provides a basic example of calculating oxidation states using Qua
 
         ```Python
         bader = Bader.from_cube(
-            charge_filename="chg.cube",
-            total_charge_filename="tot_chg.cube",
+            charge_grid="chg.cube",
+            total_charge_grid="tot_chg.cube",
         )
         ```
 
@@ -124,7 +124,7 @@ This tutorial provides a basic example of calculating oxidation states using Qua
         ```
     
         You should see logging information as BaderKit runs, then the oxidation states of each atom in the structure:
-            `array([ 0.86285438 -0.86280059])`
+            `array([ 0.86352566 -0.86353298])`
     
     !!! Tip
         If you get `None` BaderKit likely can't find your pseudopotentials. Made sure they are in the active directory or you point to them using the `pseudopotential_filename` tag.
@@ -140,7 +140,7 @@ This tutorial provides a basic example of calculating oxidation states using Qua
     2. Run the Bader analysis.
 
         ```Bash
-        baderkit bader chg.cube -ref tot_chg.cube
+        baderkit bader chg.cube -tot tot_chg.cube
         ```
 
         You should see logging information printed to the console and once complete a `bader.json` file will be written which summarizes the results of the calculation.
@@ -149,6 +149,6 @@ And that's it! Try playing around with what else the `Bader` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/qe/oxidation_states.py" download>oxidation_states.py</a>
+Tutorial Script: <a href="/baderkit/tutorial_scripts/qe/oxidation_states.py" download>oxidation_states.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/NaCl_qe.zip" download>NaCl_qe.zip</a>

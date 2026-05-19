@@ -72,9 +72,9 @@ The `ElfLabeler` class can be used to automatically identify various chemical fe
 
         ```Python
         labeler = ElfLabeler.from_vasp(
-            charge_filename="CHGCAR",
-            reference_filename="ELFCAR",
-            total_charge_filename="CHGCAR_sum",
+            charge_grid="CHGCAR",
+            reference_grid="ELFCAR",
+            total_charge_grid="CHGCAR_sum",
             pseudopotential_filename="POTCAR"
             )
 
@@ -95,7 +95,7 @@ The `ElfLabeler` class can be used to automatically identify various chemical fe
         You should see logging information as BaderKit runs, then outputs similar to the following:
         
         ```
-        Bond Order: 1.3742746666
+        Bond Order: 1.13237058575
         ```
         
         Note that the BO is lower than the formal value of 2. This is because the CO bond is partially ionic in nature, with Oxygen taking the dominant share.
@@ -126,6 +126,6 @@ And that's it! Try playing around with what else the `ElfLabeler` class offers.
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/electrides_vasp.py" download>bond_order.py</a>
+Tutorial Script: <a href="/baderkit/tutorial_scripts/vasp/bond_order.py" download>bond_order.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/CO2.zip" download>CO2.zip</a>

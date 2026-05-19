@@ -331,7 +331,6 @@ class GridPlotter(StructurePlotter):
             "pbr": self.pbr,
             "name": "iso",
             "color": self.surface_color,
-            "ambient": self.ambient,
         }
 
         if not self.use_solid_surface_color:
@@ -357,7 +356,6 @@ class GridPlotter(StructurePlotter):
             "pbr": self.pbr,
             "name": "cap",
             "color": self.cap_color,
-            "ambient": self.ambient,
         }
         if not self.use_solid_cap_color:
             cap_kwargs.update(
@@ -489,7 +487,6 @@ class GridPlotter(StructurePlotter):
             clim=(self.min_val, self.max_val),
             show_scalar_bar=False,
             name=name,
-            ambient=self.ambient,
         )
 
     def remove_slice(self, key):
@@ -551,7 +548,6 @@ class GridPlotter(StructurePlotter):
             cmap=self.colormap,
             clim=(self.min_val, self.max_val),
             show_scalar_bar=False,
-            ambient=self.ambient,
         )
 
         origin, normal = self._slice_planes[name]
@@ -597,7 +593,6 @@ class GridPlotter(StructurePlotter):
                 rgb=True,
                 name="atom_glyphs",
                 pbr=self.pbr,
-                ambient=self.ambient,
             )
         else:
             # otherwise, remove all atoms from the plot

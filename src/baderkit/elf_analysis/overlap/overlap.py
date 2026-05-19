@@ -519,7 +519,8 @@ class BasinOverlap(BaseElfAnalysis):
                 if self.core_basins[feature_idx] == -1:
                     continue
                 # otherwise, assign the charge to the dominant atom
-                atom = int(self.bond_fractions[feature_idx][:, 0])
+                atom = int(self.bond_fractions[feature_idx][:, 0][0])
+
                 core_charges[atom] += self.local_bader.basin_charges[feature_idx]
             self._atom_core_populations = core_charges
         return self._atom_core_populations.round(6)
@@ -543,7 +544,7 @@ class BasinOverlap(BaseElfAnalysis):
                 if self.core_basins[feature_idx] == -1:
                     continue
                 # otherwise, assign the charge to the dominant atom
-                atom = int(self.bond_fractions[feature_idx][:, 0])
+                atom = int(self.bond_fractions[feature_idx][:, 0][0])
                 core_volumes[atom] += self.local_bader.basin_volumes[feature_idx]
             self._atom_core_volumes = core_volumes
         return self._atom_core_volumes.round(6)

@@ -66,7 +66,7 @@ The `BasinOverlap` class is the basis for most other ELF analysis methods. A key
     NGZF   = 70
     ```
 
-3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary. We recommend using pseudopotentials with some core electrons such as 'Si_sv' and 'Se_sv' to properly separate the core region in the ELF.
+3. Create your `POTCAR`. We cannot provide an example for this as the files are proprietary. We MUST use pseudopotentials with some core electrons such as 'Si_sv_GW' and 'Se_sv_GW' to properly separate the core region in the ELF.
 
 4. Run VASP. Depending on your system how you do this may vary. On our system we use the following command.
 
@@ -113,15 +113,17 @@ The `BasinOverlap` class is the basis for most other ELF analysis methods. A key
             
             # load labeler
             labeler = ElfLabeler.from_vasp(
-                charge_filename=folder / "CHGCAR",
-                reference_filename=folder / "ELFCAR",
-                total_charge_filename=folder / "CHGCAR_sum",
+                charge_grid=folder / "CHGCAR",
+                reference_grid=folder / "ELFCAR",
+                total_charge_grid=folder / "CHGCAR_sum",
                 pseudopotential_filename=folder / "POTCAR"
                 )
             
             # get the first basin corresponding to a bond
+            basin_type = None
+            basin_idx = None
             for idx, i in enumerate(labeler.basin_types):
-                if "bond" in i:
+                if "ionic" in i or "covalent" in i:
                     basin_type = i
                     basin_idx = idx
                     break
@@ -145,7 +147,7 @@ The `BasinOverlap` class is the basis for most other ELF analysis methods. A key
         You should see logging information as BaderKit runs, then outputs similar to the following:
         
         ```
-        SiO2 Bond Polarity: 0.8609 -> ionic bond
+        SiO2 Bond Polarity: 0.8647 -> ionic shell
         SiSe2 Bond Polarity: 0.4514 -> covalent bond
         ```
         
@@ -180,6 +182,6 @@ And that's it! Try playing around with what else the `ElfLabeler` and `BasinOver
 
 ## Download Resources
 
-Tutorial Script: <a href="/tutorial_scripts/vasp/electrides_vasp.py" download>polarization_index.py</a>
+Tutorial Script: <a href="/baderkit/tutorial_scripts/vasp/bond_polarity.py" download>bond_polarity.py</a>
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/polarization_index.zip" download>polarization_index.zip</a>
