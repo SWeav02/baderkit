@@ -36,6 +36,7 @@ class ElfLabeler(BaseElfAnalysis):
 
     _basin_results = [
         "basin_types",
+        "types_in_system",
         "attractor_shapes",
         "attractor_depths",
         "heavily_polarized",
@@ -64,6 +65,7 @@ class ElfLabeler(BaseElfAnalysis):
         "label_structure",
         "nna_structure",
         "along_bond",
+        "type_basin_labels",
     ]
 
     _reset_props = _basin_results + _nna_results + _nonsummary_results
@@ -327,6 +329,38 @@ class ElfLabeler(BaseElfAnalysis):
         if self._basin_types is None:
             self._label_basins()
         return [i.value for i in self._basin_types]
+    
+    @property
+    def types_in_system(self) -> list[str]:
+        """
+
+        Returns
+        -------
+        list[str]
+            The types of chemical features found in the system.
+
+        """
+        if self._types_in_system is None:
+            self._types_in_system = np.unique(self.basin_types).tolist()
+        return self._types_in_system
+    
+    @property
+    def type_basin_labels(self) -> NDArray[int]:
+        """
+        
+        Returns
+        -------
+        NDArray[int]
+            An array with the same shape as the data where each entry represents
+            the type of chemical feature the point is assigned to. The labels
+            are in the same order as the types_in_system property.
+        
+        """
+        if self._type_basin_labels is None:
+            types, inverse = np.unique(self.basin_types, return_inverse=True)
+            inverse = np.append(inverse, len(self.maxima_frac))
+            self._type_basin_labels = inverse[self.elf_bader.maxima_basin_labels]
+        return self._type_basin_labels
     
     @property
     def nearest_atoms(self) -> NDArray[int]:

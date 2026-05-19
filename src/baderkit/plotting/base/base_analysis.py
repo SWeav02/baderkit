@@ -51,7 +51,7 @@ class BaseAnalysis(GridPlotter, ABC):
             # create settings property
             alt_name = self._alt_label_names.get(label_grid_str, label_grid_str)
             self._make_visible_property(alt_name)
-            
+
         # set visible basins
         self._update_plotter_mask()
 
@@ -105,7 +105,7 @@ class BaseAnalysis(GridPlotter, ABC):
             values = set(values)
             setattr(self, f"_visible_{prop_name}", values)
             self._update_plotter_mask()
-    
+
         setattr(self, f"_visible_{prop_name}", set())
         setattr(type(self), f"visible_{prop_name}", prop)
 

@@ -41,6 +41,6 @@ surface.
 
 Since the development of their original algorithm the Henkelman group and others have
 developed several improved methods for performing this steepest ascent. Each has
-its own advantages and disadvantages. We recommend reading through our [Methods and Benchmarks](/baderkit/bader/methods)
+its own advantages and disadvantages. We recommend reading through our [Methods and Benchmarks](../methods)
 page to determine the best one for your use case.
     

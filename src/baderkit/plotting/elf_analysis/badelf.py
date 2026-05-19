@@ -8,7 +8,7 @@ from ..base.base_analysis import BaseAnalysis
 
 class BadelfPlotter(BaseAnalysis):
     """
-    A convenience class for creating plots of individual Bader basins
+    A convenience class for creating plots of individual BadELF basins
     using pyvista's package for VTK.
 
     Parameters

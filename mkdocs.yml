@@ -96,6 +96,8 @@ nav:
       - StructurePlotter: api_reference/plotting/structure.md
       - GridPlotter: api_reference/plotting/grid.md
       - BaderPlotter: api_reference/plotting/bader.md
+      - BadelfPlotter: api_reference/plotting/badelf.md
+      - ElfLabelerPlotter: api_reference/plotting/elf_labeler.md
   - Tutorials: 
     - tutorials/index.md
     - VASP:

@@ -6,7 +6,7 @@ We provide several methods for partitioning the ELF. In general, the "zero-flux"
 
 ## Methods
 
-=== "zero-flux (default)"
+=== "zero-flux"
 
     **Key Takeaway:** *Fastest method with some potential interstitial bias.*
     
