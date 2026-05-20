@@ -1,6 +1,6 @@
 {
     "method_kwargs": {
-        "version": "0.9.1",
+        "version": "0.10.0",
         "vacuum_tol": 0.001,
         "polarization_cutoff": 0.5,
         "min_bond_angle": 135,
