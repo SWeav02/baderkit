@@ -1,1 +1,1 @@
-::: src.baderkit.plotting.core.plotter.GridPlotter
+::: src.baderkit.plotting.GridPlotter

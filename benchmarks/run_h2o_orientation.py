@@ -5,7 +5,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from baderkit.core import Bader, Grid
+from baderkit import Bader, Grid
 
 base_dir = Path(".")
 

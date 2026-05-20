@@ -1,0 +1,1 @@
+::: src.baderkit.toolkit.structure.Structure

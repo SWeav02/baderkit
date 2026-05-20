@@ -26,6 +26,8 @@ theme:
       accent: deep purple
 
   features:
+      - navigation.tabs
+      - navigation.tabs.sticky
       - content.code.annotate
       - content.code.copy
 
@@ -62,33 +64,56 @@ markdown_extensions:
       generic: true
   
 nav:
-  - Introduction: index.md
-  - Bader:
-      - Quick Start: bader/usage.md
-      - Background: bader/background.md
-      - Methods: bader/methods.md
-  - BadELF:
-      - Quick Start: badelf/usage.md
-      - Background: badelf/background.md
-      - Methods: badelf/methods.md
-  - ElfLabeler:
-      - Quick Start: elf_labeler/usage.md
-      - Background: elf_labeler/background.md
-  - CriticalPoints:
-      - Quick Start: critical_points/usage.md
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting_started/installation.md
+    - Basic Usage: getting_started/usage.md
+    - Plotting: getting_started/plotting.md
+  - Theory and Methods:
+    - Theory:
+      - Bader: theory/bader/background.md
+      - ELF: theory/elf_analysis/elf.md
+      - QTAIM/ELF Overlap: theory/elf_analysis/basin_overlap.md
+      - ELF Labeler: theory/elf_analysis/elf_labeler.md
+      - ELF Radii: theory/elf_analysis/elf_radii.md
+      - BadELF: theory/elf_analysis/badelf/background.md
+      - Critical Points: theory/critical_points/usage.md
+    - Methods:
+      - Bader: theory/bader/methods.md
+      - BadELF: theory/elf_analysis/badelf/methods.md
   - API Reference: 
-    - Core:
-      - Bader: api_reference/core/bader.md
-      - Grid: api_reference/core/grid.md
-      - ElfLabeler: api_reference/core/labeler.md
-      - SpinElfLabeler: api_reference/core/labeler_spin.md
-      - Badelf: api_reference/core/badelf.md
-      - SpinBadelf: api_reference/core/badelf_spin.md
+    - Utilities:
+      - Structure: api_reference/utilities/structure.md
+      - Grid: api_reference/utilities/grid.md
+    - Bader: 
+      - Bader: api_reference/bader/bader.md
+    - Elf Analysis:
+      - BasinOverlap: api_reference/elf_analysis/basin_overlap.md
+      - ElfLabeler: api_reference/elf_analysis/labeler.md
+      - ElfRadii: api_reference/elf_analysis/elf_radii.md
+      - Badelf: api_reference/elf_analysis/badelf.md
     - Plotting:
-      - Structure: api_reference/plotting/structure.md
-      - Grid: api_reference/plotting/grid.md
-      - Bader: api_reference/plotting/bader.md
-  - Examples: examples.md
+      - StructurePlotter: api_reference/plotting/structure.md
+      - GridPlotter: api_reference/plotting/grid.md
+      - BaderPlotter: api_reference/plotting/bader.md
+      - BadelfPlotter: api_reference/plotting/badelf.md
+      - ElfLabelerPlotter: api_reference/plotting/elf_labeler.md
+  - Tutorials: 
+    - tutorials/index.md
+    - VASP:
+      - 'Bader: Oxidation States': tutorials/vasp/bader.md
+      - 'BadELF: Electride Charges': tutorials/vasp/badelf.md
+      - 'BadELF: Spin Separated Charge': tutorials/vasp/badelf_spin.md
+      - 'Elf Labeler: Bond Order': tutorials/vasp/bond_order.md
+      - 'Basin Overlap: Polarization Index': tutorials/vasp/polarization_index.md
+      - 'Elf Radii: Ionic Radii': tutorials/vasp/elf_radii.md
+    - QE:
+      - 'Bader: Oxidation States': tutorials/qe/bader.md
+      - 'Elf Analysis': tutorials/qe/elf_analysis.md
+    - Other:
+      - 'Custom File Formats': tutorials/other/other_formats.md
+      - 'Plotting' : tutorials/other/plotting.md
+  - Citing: citing.md
 
 plugins:
   - search
@@ -99,10 +124,9 @@ plugins:
       handlers:
         python:
           options:
-#            show_source: false
+            inherited_members: true
             docstring_style: numpy
             docstring_section_style: table
-            #parameter_headings: false
 
 extra_css:
   - css/mkdocstrings.css
