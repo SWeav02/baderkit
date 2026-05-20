@@ -1,13 +1,9 @@
 # -*- coding: utf-8 -*-
 
-import os
 import shutil
-import subprocess
-import sys
 import time
 from pathlib import Path
 
-import pytest
 from typer.testing import CliRunner
 
 from baderkit.ui.cli.base import baderkit_app
@@ -82,9 +78,9 @@ def test_bader():
         result = runner.invoke(
             app=baderkit_app,
             args=[
-                "run",
+                "bader",
                 "CHGCAR",
-                "-ref",
+                "-tot",
                 "CHGCAR",
                 "-m",
                 "ongrid",

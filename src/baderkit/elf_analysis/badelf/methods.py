@@ -9,12 +9,11 @@ class classproperty(property):
 
 
 # We list all options for methods here so that they are consistent everywhere
-class BaderMethod(str, Enum):
-    weight = "weight"
-    ongrid = "ongrid"
-    neargrid = "neargrid"
-    neargrid_weight = "neargrid-weight"
+class BadelfMethod(str, Enum):
+    badelf = "badelf"
+    voronelf = "voronelf"
+    zero_flux = "zero-flux"
 
     @classproperty
     def default(cls):
-        return cls.neargrid_weight
+        return cls.badelf

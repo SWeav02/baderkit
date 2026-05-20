@@ -18,7 +18,7 @@ TEST_CHGCAR_HDF5 = TEST_FOLDER / "CHGCAR.hdf5"
 def test_read_radii_from_file():
     # test default read ins
     radii = ElfRadii.from_vasp(
-        charge_filename=TEST_CHGCAR, reference_filename=TEST_ELFCAR, total_only=False
+        charge_grid=TEST_CHGCAR, reference_grid=TEST_ELFCAR, total_only=False
     )
 
     assert radii.charge_grid.diff is not None
@@ -26,9 +26,7 @@ def test_read_radii_from_file():
 
 def test_writing_radii(tmp_path):
     # read in radii
-    radii = ElfRadii.from_vasp(
-        charge_filename=TEST_CHGCAR, reference_filename=TEST_ELFCAR
-    )
+    radii = ElfRadii.from_vasp(charge_grid=TEST_CHGCAR, reference_grid=TEST_ELFCAR)
 
     # write results files
     radii.write_json(tmp_path / "radii.json")

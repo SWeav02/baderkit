@@ -10,7 +10,8 @@ from pathlib import Path
 
 import typer
 
-from baderkit.bader.methods import Method
+from baderkit.bader.methods import BaderMethod
+from baderkit.elf_analysis.badelf.methods import BadelfMethod
 from baderkit.global_numba.file_parsers import Format
 
 baderkit_app = typer.Typer(rich_markup_mode="markdown")
@@ -88,8 +89,8 @@ def bader(
         "--pseudopotentials" "-pp",
         help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
     ),
-    method: Method = typer.Option(
-        Method.default,
+    method: BaderMethod = typer.Option(
+        BaderMethod.default,
         "--method",
         "-m",
         help="The method to use for separating bader basins",
@@ -194,12 +195,6 @@ class BadelfPrintOptions(str, Enum):
     sel_spec = "sel_spec"
 
 
-class BadelfMethod(str, Enum):
-    badelf = "badelf"
-    voronelf = "voronelf"
-    zero_flux = "zero-flux"
-
-
 @baderkit_app.command(no_args_is_help=True)
 def badelf(
     charge_file: Path = typer.Argument(
@@ -222,14 +217,14 @@ def badelf(
         help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
     ),
     method: BadelfMethod = typer.Option(
-        BadelfMethod.badelf,
+        BadelfMethod.default,
         "--method",
         "-m",
         help="The method to use for separating atoms and electrides",
         case_sensitive=False,
     ),
-    bader_method: Method = typer.Option(
-        Method.default,
+    bader_method: BaderMethod = typer.Option(
+        BaderMethod.default,
         "--bader-method",
         "-bm",
         help="The method to use for bader portions of the algorithm",
@@ -312,8 +307,8 @@ def label(
         "--pseudopotentials" "-pp",
         help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
     ),
-    method: Method = typer.Option(
-        Method.default,
+    method: BaderMethod = typer.Option(
+        BaderMethod.default,
         "--method",
         "-m",
         help="The bader method to use for partitioning the ELF",
@@ -383,8 +378,8 @@ def overlap(
         "--pseudopotentials" "-pp",
         help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
     ),
-    method: Method = typer.Option(
-        Method.default,
+    method: BaderMethod = typer.Option(
+        BaderMethod.default,
         "--method",
         "-m",
         help="The bader method to use for partitioning the ELF",
@@ -430,8 +425,8 @@ def radii(
         "--pseudopotentials" "-pp",
         help="The path to pseudopotential files for calculating oxidation states. If None, the current directory will be searched for files with common pseudopotential names (POTCAR, .UPF, .xml). Multiple files can be specified by calling this parameter multiple times (e.g. -pp file1 -pp file2 etc.)",
     ),
-    method: Method = typer.Option(
-        Method.default,
+    method: BaderMethod = typer.Option(
+        BaderMethod.default,
         "--method",
         "-m",
         help="The bader method to use for partitioning the ELF",

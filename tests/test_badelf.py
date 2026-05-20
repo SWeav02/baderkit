@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from baderkit.elf_analysis import Badelf
+from baderkit.elf_analysis.badelf.methods import BadelfMethod
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"
@@ -20,7 +21,7 @@ TEST_CHGCAR_HDF5 = TEST_FOLDER / "CHGCAR.hdf5"
 def test_read_badelf_from_file():
     # test default read ins
     badelf = Badelf.from_vasp(
-        charge_filename=TEST_CHGCAR, reference_filename=TEST_ELFCAR, total_only=False
+        charge_grid=TEST_CHGCAR, reference_grid=TEST_ELFCAR, total_only=False
     )
 
     assert badelf.charge_grid.diff is not None
@@ -28,9 +29,7 @@ def test_read_badelf_from_file():
 
 def test_writing_badelf(tmp_path):
     # read in badelf
-    badelf = Badelf.from_vasp(
-        charge_filename=TEST_CHGCAR, reference_filename=TEST_ELFCAR
-    )
+    badelf = Badelf.from_vasp(charge_grid=TEST_CHGCAR, reference_grid=TEST_ELFCAR)
 
     # write results files
     badelf.write_json(tmp_path / "badelf.json")
@@ -48,12 +47,12 @@ def test_writing_badelf(tmp_path):
 
 @pytest.mark.parametrize(
     "method",
-    ["badelf", "voronelf", "zero-flux"],
+    [i.value for i in BadelfMethod],
 )
 def test_running_badelf_methods(tmp_path, method):
     badelf = Badelf.from_vasp(
-        charge_filename=TEST_CHGCAR,
-        reference_filename=TEST_ELFCAR,
+        charge_grid=TEST_CHGCAR,
+        reference_grid=TEST_ELFCAR,
         partition_method=method,
     )
     with open(TEST_BADELF_FOLDER / method / "badelf.json", "r") as file:
@@ -74,7 +73,7 @@ def test_running_badelf_methods(tmp_path, method):
         atom_results = file.read()
 
     # make sure we find the electride site
-    assert badelf.badelf_up.num_nnas == 1
+    assert badelf.num_nnas == 1
 
     assert json_results == expected_json
 

@@ -18,7 +18,7 @@ TEST_CHGCAR_HDF5 = TEST_FOLDER / "CHGCAR.hdf5"
 def test_read_labeler_from_file():
     # test default read ins
     labeler = ElfLabeler.from_vasp(
-        charge_filename=TEST_CHGCAR, reference_filename=TEST_ELFCAR, total_only=False
+        charge_grid=TEST_CHGCAR, reference_grid=TEST_ELFCAR, total_only=False
     )
 
     assert labeler.charge_grid.diff is not None
@@ -26,9 +26,7 @@ def test_read_labeler_from_file():
 
 def test_writing_labeler(tmp_path):
     # read in labeler
-    labeler = ElfLabeler.from_vasp(
-        charge_filename=TEST_CHGCAR, reference_filename=TEST_ELFCAR
-    )
+    labeler = ElfLabeler.from_vasp(charge_grid=TEST_CHGCAR, reference_grid=TEST_ELFCAR)
 
     # write results files
     labeler.write_json(tmp_path / "labeler.json")

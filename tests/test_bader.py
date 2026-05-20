@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from baderkit import Bader, Grid
-from baderkit.bader.methods import Method
+from baderkit.bader.methods import BaderMethod
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_BADER_FOLDER = TEST_FOLDER / "bader"
@@ -42,9 +42,7 @@ def test_read_bader_from_file():
     bader = Bader.from_dynamic(TEST_CHGCAR_HDF5)
     assert bader.charge_grid.diff is not None
     # test reading in reference file
-    bader = Bader.from_dynamic(
-        charge_filename=TEST_CHGCAR, reference_filename=TEST_CHGCAR
-    )
+    bader = Bader.from_dynamic(charge_grid=TEST_CHGCAR, reference_grid=TEST_CHGCAR)
     assert bader.reference_grid.total is not None
 
 
@@ -73,7 +71,7 @@ def test_writing_bader(tmp_path):
 
 @pytest.mark.parametrize(
     "method",
-    [i.value for i in Method],
+    [i.value for i in BaderMethod],
 )
 def test_running_bader_methods(tmp_path, method):
     bader = Bader.from_dynamic(TEST_CHGCAR, method=method)

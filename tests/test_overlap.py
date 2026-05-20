@@ -18,7 +18,7 @@ TEST_CHGCAR_HDF5 = TEST_FOLDER / "CHGCAR.hdf5"
 def test_read_overlap_from_file():
     # test default read ins
     overlap = BasinOverlap.from_vasp(
-        charge_filename=TEST_CHGCAR, reference_filename=TEST_ELFCAR, total_only=False
+        charge_grid=TEST_CHGCAR, reference_grid=TEST_ELFCAR, total_only=False
     )
 
     assert overlap.charge_grid.diff is not None
@@ -27,7 +27,7 @@ def test_read_overlap_from_file():
 def test_writing_overlap(tmp_path):
     # read in overlap
     overlap = BasinOverlap.from_vasp(
-        charge_filename=TEST_CHGCAR, reference_filename=TEST_ELFCAR
+        charge_grid=TEST_CHGCAR, reference_grid=TEST_ELFCAR
     )
 
     # write results files

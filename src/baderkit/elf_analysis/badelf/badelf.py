@@ -26,6 +26,7 @@ from baderkit.toolkit import Grid, Structure
 from .badelf_numba import (
     get_badelf_assignments,
 )
+from .methods import BadelfMethod
 
 Self = TypeVar("Self", bound="Badelf")
 

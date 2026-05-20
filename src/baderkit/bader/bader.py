@@ -27,7 +27,7 @@ from baderkit.global_numba.persistence import (
 from baderkit.global_numba.transforms import IMAGE_TO_INT
 from baderkit.toolkit import Structure
 
-from .methods import Method
+from .methods import BaderMethod
 
 # This allows for Self typing and is compatible with python 3.10
 Self = TypeVar("Self", bound="Bader")
@@ -180,7 +180,7 @@ class Bader(BaseAnalysis):
 
     def __init__(
         self,
-        method: str | Method = Method.default,
+        method: str | BaderMethod = BaderMethod.default,
         nna_cutoff: float | bool = False,
         persistence_tol: float = 0.05,
         **kwargs,
@@ -188,11 +188,11 @@ class Bader(BaseAnalysis):
         super().__init__(**kwargs)
 
         # ensure the method is valid
-        valid_methods = [m.value for m in Method]
-        if isinstance(method, Method):
+        valid_methods = [m.value for m in BaderMethod]
+        if isinstance(method, BaderMethod):
             self._method = method
         elif method in valid_methods:
-            self._method = Method(method)
+            self._method = BaderMethod(method)
         else:
             raise ValueError(
                 f"Invalid method '{method}'. Available options are: {valid_methods}"
@@ -224,13 +224,13 @@ class Bader(BaseAnalysis):
         return self._method
 
     @method.setter
-    def method(self, value: str | Method):
-        # Support both Method instances and their string values
-        valid_values = [m.value for m in Method]
-        if isinstance(value, Method):
+    def method(self, value: str | BaderMethod):
+        # Support both BaderMethod instances and their string values
+        valid_values = [m.value for m in BaderMethod]
+        if isinstance(value, BaderMethod):
             self._method = value
         elif value in valid_values:
-            self._method = Method(value)
+            self._method = BaderMethod(value)
         else:
             raise ValueError(
                 f"Invalid method '{value}'. Available options are: {valid_values}"
@@ -264,7 +264,7 @@ class Bader(BaseAnalysis):
         return self._nna_cutoff
 
     @nna_cutoff.setter
-    def nna_cutoff(self, value: str | Method):
+    def nna_cutoff(self, value: str | BaderMethod):
         self._nna_cutoff = value
         # reset atom properties
         self._reset_properties(
@@ -303,7 +303,7 @@ class Bader(BaseAnalysis):
         return self._persistence_tol
 
     @persistence_tol.setter
-    def persistence_tol(self, value: str | Method):
+    def persistence_tol(self, value: str | BaderMethod):
         self._persistence_tol = value
         # reset atom properties
         self._reset_properties(
@@ -994,7 +994,7 @@ class Bader(BaseAnalysis):
         return self._persistence_tol
 
     @persistence_tol.setter
-    def persistence_tol(self, value: str | Method):
+    def persistence_tol(self, value: str | BaderMethod):
         self._persistence_tol = value
         # reset atom properties
         self._reset_properties(
@@ -1423,7 +1423,7 @@ class Bader(BaseAnalysis):
 
         """
 
-        return [i.value for i in Method]
+        return [i.value for i in BaderMethod]
 
     def _run_maxima_bader(self) -> None:
         """
