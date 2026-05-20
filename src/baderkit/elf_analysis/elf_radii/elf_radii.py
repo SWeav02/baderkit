@@ -509,6 +509,10 @@ class ElfRadii(BaseElfAnalysis):
             Whether or not each bond has been reversed.
 
         """
+        # Validate cubic spline coefficients
+        spline_data = self.reference_grid.cubic_spline_coeffs
+        if spline_data is None:
+            raise ValueError("Cubic spline coefficients not initialized. ")
 
         # calculate radii
         return get_all_atom_elf_radii(
@@ -518,7 +522,7 @@ class ElfRadii(BaseElfAnalysis):
             neigh_frac_coords=neigh_frac_coords,
             neigh_dists=pair_dists,
             reversed_bonds=reversed_bonds,
-            data=self.reference_grid.cubic_spline_coeffs,
+            data=spline_data,
             labels=self.local_basin_labels,
             label_map=self.label_atom_map,
             equivalent_atoms=self.structure.equivalent_atoms,
@@ -954,6 +958,14 @@ class ElfRadii(BaseElfAnalysis):
         unique_neigh_coords = (
             self.structure.frac_coords[unique_neigh_indices] + unique_neigh_images
         )
+
+        # Ensure all input arrays are C-contiguous for numba
+        unique_site_indices = np.ascontiguousarray(unique_site_indices)
+        unique_neigh_indices = np.ascontiguousarray(unique_neigh_indices)
+        unique_neigh_coords = np.ascontiguousarray(unique_neigh_coords)
+        unique_pair_dists = np.ascontiguousarray(unique_pair_dists)
+        is_reverse = np.ascontiguousarray(is_reverse)
+
         # get radii for each unique bond
         radii, fracs, all_bond_types = self._get_elf_radii_and_type(
             unique_site_indices,

@@ -453,7 +453,7 @@ class Bader(BaseAnalysis):
         """
         if self._maxima_cart is None:
             self._maxima_cart = self.reference_grid.frac_to_cart(self._maxima_frac)
-        return self._maxima_vox
+        return self._maxima_cart
 
     @property
     def maxima_charge_values(self) -> NDArray[float]:
