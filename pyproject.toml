@@ -24,7 +24,7 @@ name="baderkit"
 # Versions should comply with PEP 440:
 # https://www.python.org/dev/peps/pep-0440/
 # https://semver.org/
-version="0.9.1"
+version="0.10.0"
 
 # Maintainer info
 authors = [{name = "Sam M. Weaver", email = "sammweaver@gmail.com"}]
@@ -55,16 +55,16 @@ dependencies = [
     "pandas>=2.1.0,<3.0",
     "pymatgen>=2022.1.9,<=2025.10.7",
     "scipy>=1.7.2,<2.0",
-    "numba>=0.59.0,<=0.64.0",
+    "numba>=0.59.0,<=0.65.1",
     "typer>=0.6.1",
-    "rich>=11.0,<=14.3.3",
+    "rich>=11.0,<=15.0.0",
 ]
 
 
 [project.optional-dependencies]
 gui = [
     "pyvista>=0.47.0,<=0.48.4",
-    "pyvistaqt>=0.6.0,<=0.11.3",
+    "pyvistaqt>=0.6.0,<=0.11.4",
     "qtpy>=2.0.0,<3.0",
     "PyQt5"
 ]
