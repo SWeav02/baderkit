@@ -10,9 +10,9 @@ from baderkit.global_numba.basic import (
     coords_to_flat,
     dist,
     flat_to_coords,
-    get_transforms_in_voxels,
     get_transforms_in_radius,
-    wrap_point_w_shift
+    get_transforms_in_voxels,
+    wrap_point_w_shift,
 )
 from baderkit.global_numba.basins import get_best_neighbor_with_shift
 from baderkit.global_numba.critical_points import (  # refine_critical_points_targeted,
@@ -320,10 +320,10 @@ def group_by_low_approx_persistence(
 ):
     shape = np.array(data.shape)
     nx, ny, nz = data.shape
-    ny_nz = ny*nz
+    ny_nz = ny * nz
     extrema_frac = extrema_vox / shape
     num_extrema = len(extrema_values)
-    
+
     # determine the number of possible connections
     num_neighs = np.zeros(len(extrema_values), dtype=np.int64)
     for ext_idx in prange(num_extrema):
@@ -334,13 +334,15 @@ def group_by_low_approx_persistence(
         for si, sj, sk in transforms:
             if si == 0 and sj == 0 and sk == 0:
                 continue
-            ni, nj, nk, ssi, ssj, ssk = wrap_point_w_shift(i+si, j+sj, k+sk, nx, ny, nz)
-            neigh_value = data[ni,nj,nk]
+            ni, nj, nk, ssi, ssj, ssk = wrap_point_w_shift(
+                i + si, j + sj, k + sk, nx, ny, nz
+            )
+            neigh_value = data[ni, nj, nk]
             neigh_label = coords_to_flat(ni, nj, nk, ny_nz, nz)
             # skip neighbors that aren't local extrema
             if neigh_label != labels[neigh_label]:
                 continue
-            
+
             # skip neighbors with less extreme values
             if (
                 use_minima
@@ -378,13 +380,15 @@ def group_by_low_approx_persistence(
         for (si, sj, sk), dist in zip(transforms, transform_dists):
             if si == 0 and sj == 0 and sk == 0:
                 continue
-            ni, nj, nk, ssi, ssj, ssk = wrap_point_w_shift(i+si, j+sj, k+sk, nx, ny, nz)
-            neigh_value = data[ni,nj,nk]
+            ni, nj, nk, ssi, ssj, ssk = wrap_point_w_shift(
+                i + si, j + sj, k + sk, nx, ny, nz
+            )
+            neigh_value = data[ni, nj, nk]
             neigh_label = coords_to_flat(ni, nj, nk, ny_nz, nz)
             # skip neighbors that aren't local extrema
             if neigh_label != labels[neigh_label]:
                 continue
-            
+
             # skip neighbors with less extreme values
             if (
                 use_minima
@@ -395,10 +399,10 @@ def group_by_low_approx_persistence(
                 and neigh_label > ext_label
             ):
                 continue
-            
+
             # get neighbor frac coords
             neigh_frac = np.array((ni, nj, nk), dtype=np.float64) / shape
-            
+
             # wrap frac to be as close to our point as possible
             neigh_frac += ext_frac - neigh_frac
             neigh_vox = (neigh_frac * shape).astype(np.int64)
@@ -435,7 +439,9 @@ def group_by_low_approx_persistence(
                 saddle_coords[current_idx] = saddle_vox
                 image = IMAGE_TO_INT[ssi, ssj, ssk]
                 neigh_idx = np.searchsorted(extrema_labels, neigh_label)
-                saddle_connections[current_idx] = np.array((ext_idx, neigh_idx, 13, image), dtype=np.int16)
+                saddle_connections[current_idx] = np.array(
+                    (ext_idx, neigh_idx, 13, image), dtype=np.int16
+                )
                 saddle_values[current_idx] = conn_val
                 valid[current_idx] = True
                 current_idx += 1
@@ -630,7 +636,6 @@ def group_by_hill_climb(
 
         union_with_shift1(labels, images, label, neigh_label, image)
 
-
     return labels, images
 
 
@@ -696,18 +701,18 @@ def init_by_approx_persistence(
     # them. We merge these by taking a linear slice between each point using
     # cubic interpolation and combining those that have no minimum/maximum between
     # them.
-    
+
     # start from small distance and increase
     if min_cart_offset > max_cart_offset:
         dists = np.array([min_cart_offset])
     else:
         dists = np.linspace(min_cart_offset, max_cart_offset, n_divide)
     root_indices = np.arange(len(extrema_values))
-    
+
     interp_methods = ["cubic" for i in dists]
     # dists = np.append(dists, max_cart_offset)
     # interp_methods.append("cubic")
-    
+
     for max_cart, interp_method in zip(dists, interp_methods):
         # get transformations in radius
         transforms, transform_dists = get_transforms_in_radius(
@@ -716,8 +721,8 @@ def init_by_approx_persistence(
             ny=ny,
             nz=nz,
             lattice_matrix=matrix,
-            )
-        
+        )
+
         labels, images = group_by_low_approx_persistence(
             data=data,
             labels=labels,

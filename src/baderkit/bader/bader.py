@@ -174,8 +174,8 @@ class Bader(BaseAnalysis):
         + _nonsummary_results
     )
     _summary_props = [
-        "maxima_results",
         "atom_results",
+        "maxima_results",
     ]
 
     def __init__(
@@ -407,7 +407,7 @@ class Bader(BaseAnalysis):
         if self._maxima_frac is None:
             self._run_maxima_bader()
         return self._maxima_frac
-    
+
     @property
     def maxima_center_frac(self) -> NDArray[np.float64]:
         """
@@ -415,7 +415,7 @@ class Bader(BaseAnalysis):
         Returns
         -------
         NDArray[np.float64]
-            The fractional coordinates of the "center of mass" for each maximum. 
+            The fractional coordinates of the "center of mass" for each maximum.
             This is used when calculating the distance to each atom and is important
             in systems where some basins do not have point attractors (e.g. ELF, LOL, etc.)
 
@@ -425,18 +425,18 @@ class Bader(BaseAnalysis):
             for coords in self.maxima_betti_groups:
                 # get values at coords
                 values = self.reference_grid.total[
-                    coords[:,0],
-                    coords[:,1],
-                    coords[:,2],
-                    ]
+                    coords[:, 0],
+                    coords[:, 1],
+                    coords[:, 2],
+                ]
                 frac_coords = coords / self.reference_grid.shape
 
                 weighted_frac.append(
                     merge_frac_coords_weighted(
                         frac_coords=frac_coords,
                         values=values,
-                        )
                     )
+                )
             self._maxima_center_frac = np.array(weighted_frac)
 
         return self._maxima_center_frac
@@ -1289,7 +1289,7 @@ class Bader(BaseAnalysis):
 
         """
         if self._atom_avg_surface_distances is None:
-            self._get_basin_surface_distances()
+            self._get_atom_surface_distances()
         return self._atom_avg_surface_distances.round(10)
 
     @property

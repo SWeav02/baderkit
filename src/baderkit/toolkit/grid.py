@@ -1273,10 +1273,10 @@ class Grid(VolumetricData):
         )
         if poscar_file is not None:
             structure = Structure.from_file(poscar_file)
-        
+
         if spin_system is None:
             spin_system = "not polarized" if total_only else "polarized"
-        
+
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
         return cls(
@@ -1653,7 +1653,7 @@ class Grid(VolumetricData):
         method_name = output_format.writer
         # write the grid
         getattr(self, method_name)(filename, **kwargs)
-        
+
     ###########################################################################
     # Plotting
     ###########################################################################
@@ -1664,6 +1664,7 @@ class Grid(VolumetricData):
         -------
         A GridPlotter object for visualization.
         """
-        
+
         from baderkit.plotting import GridPlotter
+
         return GridPlotter(self, **kwargs)

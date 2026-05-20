@@ -5,7 +5,6 @@ from baderkit.elf_analysis import ElfLabeler
 from ..base.base_analysis import BaseAnalysis
 
 
-
 class ElfLabelerPlotter(BaseAnalysis):
     """
     A convenience class for creating plots of chemical feature basins
@@ -22,14 +21,14 @@ class ElfLabelerPlotter(BaseAnalysis):
         default is 'reference_grid'
 
     """
-    
+
     _label_grids = [
         "type_basin_labels",
-        ]
+    ]
     _alt_label_names = {
-        "type_basin_labels" : "chemical_features",
-        }
-    
+        "type_basin_labels": "chemical_features",
+    }
+
     def __init__(
         self,
         elf_labeler: ElfLabeler,
@@ -39,14 +38,14 @@ class ElfLabelerPlotter(BaseAnalysis):
 
         # get nna structure
         structure = elf_labeler.nna_structure
-        
+
         super().__init__(
-            base_analysis=elf_labeler, 
-            structure=structure, 
-            grid_name=grid_name, 
+            base_analysis=elf_labeler,
+            structure=structure,
+            grid_name=grid_name,
             **kwargs,
-            )
-        
+        )
+
     @property
     def chemical_features(self) -> list[str]:
         """

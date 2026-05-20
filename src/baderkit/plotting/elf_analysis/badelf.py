@@ -5,7 +5,6 @@ from baderkit.elf_analysis import Badelf
 from ..base.base_analysis import BaseAnalysis
 
 
-
 class BadelfPlotter(BaseAnalysis):
     """
     A convenience class for creating plots of individual BadELF basins
@@ -22,14 +21,14 @@ class BadelfPlotter(BaseAnalysis):
         default is 'reference_grid'
 
     """
-    
+
     _label_grids = [
         "atom_labels",
-        ]
+    ]
     _alt_label_names = {
-        "atom_labels" : "atom_basins",
-        }
-    
+        "atom_labels": "atom_basins",
+    }
+
     def __init__(
         self,
         badelf: Badelf,
@@ -39,10 +38,10 @@ class BadelfPlotter(BaseAnalysis):
 
         # get nna structure
         structure = badelf.nna_structure
-        
+
         super().__init__(
-            base_analysis=badelf, 
-            structure=structure, 
-            grid_name=grid_name, 
+            base_analysis=badelf,
+            structure=structure,
+            grid_name=grid_name,
             **kwargs,
-            )
+        )

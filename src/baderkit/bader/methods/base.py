@@ -34,9 +34,9 @@ Self = TypeVar("Self", bound="MethodBase")
 
 # TODO:
 # 1. Improve label initialization:
-    # - One idea is to first check within some distance to see if there is a
-    # voxel with a higher value than each potential maximum. If there is, we
-    # would follow the gradient path to the highest point.
+# - One idea is to first check within some distance to see if there is a
+# voxel with a higher value than each potential maximum. If there is, we
+# would follow the gradient path to the highest point.
 
 
 class MethodBase:
@@ -167,7 +167,7 @@ class MethodBase:
             use_minima=self.use_minima,
             matrix=self.reference_grid.matrix,
             max_cart_offset=0.5,
-            min_cart_offset=self.reference_grid.max_point_dist*2,
+            min_cart_offset=self.reference_grid.max_point_dist * 2,
             n_divide=3,
         )
         t1 = time.time()

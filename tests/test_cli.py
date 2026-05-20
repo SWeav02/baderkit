@@ -59,9 +59,15 @@ def test_convert():
         )
         assert result.exit_code == 0
         assert Path("CHGCAR.cube").exists()
-        # run convert from cube to vasp
+        # run convert from cube to xsf
         result = runner.invoke(
-            app=baderkit_app, args=["convert", "CHGCAR.cube", "CHGCAR_vasp", "vasp"]
+            app=baderkit_app, args=["convert", "CHGCAR.cube", "CHGCAR.xsf", "xsf"]
+        )
+        assert result.exit_code == 0
+        assert Path("CHGCAR.xsf").exists()
+        # run convert from xsf to vasp
+        result = runner.invoke(
+            app=baderkit_app, args=["convert", "CHGCAR.xsf", "CHGCAR_vasp", "vasp"]
         )
         assert result.exit_code == 0
         assert Path("CHGCAR_vasp").exists()
@@ -109,7 +115,6 @@ def test_badelf():
                 "ELFCAR",
                 "-m",
                 "zero-flux",
-                "-s",
                 "-p",
                 "sel_atoms",
                 "[0]",
@@ -117,7 +122,7 @@ def test_badelf():
         )
         time.sleep(0)
         assert result.exit_code == 0
-        assert Path("ELFCAR_a0_up").exists()
+        assert Path("ELFCAR_a0").exists()
 
 
 def test_labeler():
@@ -133,7 +138,6 @@ def test_labeler():
                 "label",
                 "CHGCAR",
                 "ELFCAR",
-                "-s",
                 "-p",
                 "sel",
                 "metallic bond",
@@ -141,7 +145,45 @@ def test_labeler():
         )
         time.sleep(0)
         assert result.exit_code == 0
-        assert Path("ELFCAR_Xm_up").exists()
+        assert Path("ELFCAR_Xm").exists()
+
+
+def test_radii():
+    # create a temporary folder to run the command in
+    with runner.isolated_filesystem():
+        # copy CHGCAR/ELFCAR over to temp path
+        shutil.copyfile(TEST_CHGCAR, "CHGCAR")
+        shutil.copyfile(TEST_ELFCAR, "ELFCAR")
+        # run sum
+        result = runner.invoke(
+            app=baderkit_app,
+            args=[
+                "radii",
+                "CHGCAR",
+                "ELFCAR",
+            ],
+        )
+        time.sleep(0)
+        assert result.exit_code == 0
+
+
+def test_overlap():
+    # create a temporary folder to run the command in
+    with runner.isolated_filesystem():
+        # copy CHGCAR/ELFCAR over to temp path
+        shutil.copyfile(TEST_CHGCAR, "CHGCAR")
+        shutil.copyfile(TEST_ELFCAR, "ELFCAR")
+        # run sum
+        result = runner.invoke(
+            app=baderkit_app,
+            args=[
+                "overlap",
+                "CHGCAR",
+                "ELFCAR",
+            ],
+        )
+        time.sleep(0)
+        assert result.exit_code == 0
 
 
 # TODO: I couldn't get this to run and be headless, so for now I'm going to

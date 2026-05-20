@@ -7,10 +7,10 @@ import pandas as pd
 import pyvista as pv
 from numpy.typing import NDArray
 
-from ..base.defaults import ATOM_COLORS
 from baderkit.toolkit.structure import Structure
 
 from ..base import VtkPlotter
+from ..base.defaults import ATOM_COLORS
 
 
 class StructurePlotter(VtkPlotter):
@@ -36,7 +36,7 @@ class StructurePlotter(VtkPlotter):
         atom_colors=None,
         **kwargs,
     ):
-        
+
         # create initial class variables
         self._atom_opacities = np.array([1 for i in range(len(structure))], dtype=float)
         self._wrap_atoms = wrap_atoms
@@ -210,7 +210,7 @@ class StructurePlotter(VtkPlotter):
         actor = self.plotter.actors["atom_glyphs"]
         actor.prop.metallic = atom_metallicness
         self._atom_metallicness = atom_metallicness
-        
+
     @property
     def atom_roughness(self) -> float:
         """

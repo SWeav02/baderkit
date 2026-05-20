@@ -23,7 +23,7 @@ class GridPlotter(StructurePlotter):
         from this grid.
 
     """
-    
+
     def __init__(
         self,
         grid: Grid,
@@ -609,5 +609,3 @@ class GridPlotter(StructurePlotter):
         else:
             image = p.get_plot_screenshot(return_image=True, **write_kwargs)
             return image
-
-    

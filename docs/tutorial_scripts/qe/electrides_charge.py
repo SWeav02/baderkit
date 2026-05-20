@@ -7,7 +7,7 @@ badelf = Badelf.from_cube(
     charge_filename="chg.cube",
     total_charge_filename="tot_chg.cube",
     reference_filename="elf.cube",
-    )
+)
 
 electride_structure = badelf.nna_structure
 electrides_per_formula = badelf.nnas_per_reduced_formula

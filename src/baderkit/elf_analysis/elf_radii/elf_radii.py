@@ -30,7 +30,7 @@ class ElfRadii(BaseElfAnalysis):
     (ELF, ELI-D, LOL, etc.).
 
     """
-    
+
     spin_system = "total"
 
     _method_kwargs = ["include_nnas", "cnn_kwargs"]
@@ -223,7 +223,7 @@ class ElfRadii(BaseElfAnalysis):
                     structure.append("x", frac)
             self._structure = structure
         return self._structure
-    
+
     @property
     def species(self) -> list[str]:
         """
@@ -315,7 +315,7 @@ class ElfRadii(BaseElfAnalysis):
     ###########################################################################
     # Radii Properties
     ###########################################################################
-    
+
     @property
     def site_indices(self) -> NDArray[int]:
         """
@@ -323,14 +323,14 @@ class ElfRadii(BaseElfAnalysis):
         Returns
         -------
         NDArray[int]
-            An Nx2 array representing the site/neighbor atom indices involved in 
+            An Nx2 array representing the site/neighbor atom indices involved in
             each bond.
 
         """
         if self._site_indices is None:
             self._get_radii()
         return self._site_indices
-    
+
     @property
     def site_frac_coords(self) -> NDArray[float]:
         """
@@ -342,7 +342,7 @@ class ElfRadii(BaseElfAnalysis):
 
         """
         return self.structure.frac_coords[self.site_indices]
-    
+
     @property
     def neigh_indices(self) -> NDArray[int]:
         """
@@ -350,14 +350,14 @@ class ElfRadii(BaseElfAnalysis):
         Returns
         -------
         NDArray[int]
-            An Nx2 array representing the site/neighbor atom indices involved in 
+            An Nx2 array representing the site/neighbor atom indices involved in
             each bond.
 
         """
         if self._neigh_indices is None:
             self._get_radii()
         return self._neigh_indices
-    
+
     @property
     def neigh_frac_coords(self) -> NDArray[float]:
         """
@@ -370,7 +370,7 @@ class ElfRadii(BaseElfAnalysis):
 
         """
         return self.structure.frac_coords[self.neigh_indices] + self.neighbor_images
-    
+
     @property
     def neighbor_images(self) -> NDArray[int]:
         """
@@ -792,7 +792,7 @@ class ElfRadii(BaseElfAnalysis):
                 incremental=False,
             )
             vertices = halfspace.intersections
-            
+
             # Get one plane for each unique bond with this atom at the center.
             # This reduces the number of calculations we need to perform
             unique_equiv = inverse[lower:upper]

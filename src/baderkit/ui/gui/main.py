@@ -99,7 +99,7 @@ class MainWindow(pvMainWindow):
             from baderkit.plotting import BadelfPlotter as Plotter
         elif analysis_type == "ElfLabeler":
             from baderkit.plotting import ElfLabelerPlotter as Plotter
-            
+
         self.bader_plotter = Plotter(
             bader,
             grid_name=self.data_source.currentText(),

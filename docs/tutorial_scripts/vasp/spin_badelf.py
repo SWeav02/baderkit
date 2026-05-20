@@ -15,11 +15,11 @@ elf_up, elf_down = polarized_elf.split_to_spin()
 badelf_up = Badelf(
     charge_grid=charge_up,
     reference_grid=elf_up,
-    )
+)
 badelf_down = Badelf(
     charge_grid=charge_down,
     reference_grid=elf_down,
-    )
+)
 
 # print useful info
 metal_bonds_up = badelf_up.nnas_per_reduced_formula

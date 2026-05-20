@@ -14,8 +14,8 @@ elf_radii = ElfRadii.from_vasp(
     charge_grid="CHGCAR",
     reference_grid="ELFCAR",
     total_charge_grid="CHGCAR_sum",
-    pseudopotential_filename="POTCAR"
-    )
+    pseudopotential_filename="POTCAR",
+)
 
 # get the radius of Na
 elf_radius = elf_radii.atom_radii[0]

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
-import importlib
 import copy
+import importlib
 import json
 import logging
 from abc import ABC
@@ -80,7 +80,7 @@ class BaseAnalysis(ABC):
         "vacuum_charge",
         "vacuum_volume",
         "structure",
-        ]
+    ]
 
     _summary_props = []
 
@@ -276,7 +276,7 @@ class BaseAnalysis(ABC):
     ###########################################################################
     # Calculated Properties
     ###########################################################################
-    
+
     @property
     def spin_system(self) -> str:
         """
@@ -494,13 +494,13 @@ class BaseAnalysis(ABC):
             The path to the file that will be used for partitioning.
             If None, defaults to the total charge grid.
         pseudopotential_filename : Path | None | list | str | dict, optional
-            The path(s) to the pseudopotentials used for calculating oxidation states. 
+            The path(s) to the pseudopotentials used for calculating oxidation states.
             If a single path is provided, only one pseudopotential will be read.
             If a list is provided, each will be read in order.
-            Alternatively, you can provide  a dictionary representing the valence 
-            counts of each atom in the system where each entry is the species 
-            symbol and each value is the number of electrons used for that species 
-            in the calculation. If None, any properties relying on valence counts 
+            Alternatively, you can provide  a dictionary representing the valence
+            counts of each atom in the system where each entry is the species
+            symbol and each value is the number of electrons used for that species
+            in the calculation. If None, any properties relying on valence counts
             will not be calculated.
         format : Literal["vasp", "cube", None], optional
             The format of the grids to read in. If None, the formats will be
@@ -575,7 +575,7 @@ class BaseAnalysis(ABC):
             self._to_dict(
                 self._base_method_kwargs + self._method_kwargs,
                 serializable=True,
-                )
+            )
         )
         for i in self._sub_methods:
             method = getattr(self, i)
@@ -594,7 +594,9 @@ class BaseAnalysis(ABC):
         results = {"method_kwargs": self._get_kwargs()}
 
         for i in self._summary_props + ["base_summary_props"]:
-            results[i] = self._to_dict(getattr(self, f"_{i}"), serializable=serializable)
+            results[i] = self._to_dict(
+                getattr(self, f"_{i}"), serializable=serializable
+            )
         return results
 
     def _to_dict(
@@ -728,7 +730,7 @@ class BaseAnalysis(ABC):
 
         # write file
         grid.write(filename=filename, output_format=output_format, **writer_kwargs)
-        
+
     ###########################################################################
     # Plotting
     ###########################################################################
@@ -739,7 +741,7 @@ class BaseAnalysis(ABC):
         -------
         A BaderKit Plotter object for visualization.
         """
-        
+
         # check for an existing plotter
         class_name = self.__class__.__name__ + "Plotter"
         # import method
@@ -747,6 +749,7 @@ class BaseAnalysis(ABC):
         PlotterClass = getattr(mod, class_name, None)
         if PlotterClass is not None:
             return PlotterClass(self, **kwargs)
-        
-        raise NotImplementedError("No Plotter has been implemented for the {self.__class__.__name__} class")
-    
+
+        raise NotImplementedError(
+            "No Plotter has been implemented for the {self.__class__.__name__} class"
+        )

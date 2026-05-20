@@ -7,7 +7,7 @@ labeler = ElfLabeler.from_cube(
     charge_filename="chg.cube",
     reference_filename="elf.cube",
     total_charge_filename="tot_chg.cube",
-    )
+)
 
 # get chemical features and each basins charge
 features = labeler.basin_types

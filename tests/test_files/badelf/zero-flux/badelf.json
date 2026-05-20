@@ -3,7 +3,8 @@
         "version": "0.9.1",
         "vacuum_tol": 0.001,
         "partition_method": "zero-flux",
-        "include_nnas": false,
+        "include_nnas": true,
+        "cnn_kwargs": null,
         "polarization_cutoff": 0.5,
         "min_bond_angle": 135,
         "method": "neargrid-weight",
@@ -12,53 +13,298 @@
     },
     "atom_results": {
         "atom_charges": [
-            8.6453822439,
-            8.6453822438,
-            7.3996519171,
-            0.0,
-            0.0,
-            0.0,
-            0.3095833259,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0
+            8.2930981697,
+            8.2930981697,
+            7.3512147278,
+            1.0625886637
         ],
         "atom_volumes": [
-            17.187663581,
-            17.187663581,
-            25.4714660882,
-            0.0,
-            0.0,
-            0.0,
-            11.9827298553,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0
+            9.8060783594,
+            9.8060783594,
+            24.1204207632,
+            28.0969456236
         ],
         "oxidation_states": null,
         "species": [
             "Ca",
             "Ca",
             "N",
-            "Xmcu",
-            "Xmcd",
-            "Xmcd",
-            "Xmcd",
-            "Xmcd",
-            "Xmcd",
-            "Xmcd",
-            "Xmcd",
-            "Xmcd"
-        ]
+            "Xmc"
+        ],
+        "min_surface_distances": [
+            0.9459388008,
+            0.9459388008,
+            1.1546815039,
+            1.2471185991
+        ],
+        "avg_surface_distances": [
+            1.2363553256,
+            1.2363553256,
+            2.6427070712,
+            2.8080856951
+        ],
+        "maxima_elf_values": [
+            0.8729,
+            0.8729,
+            0.8393,
+            0.84592
+        ],
+        "total_electron_number": 24.9999997309
     },
     "nna_results": {
-        "nna_dimensionality": 0,
-        "num_nnas": 9,
-        "nnas_per_formula": 0.3095833259,
-        "nnas_per_reduced_formula": 0.3095833259
+        "nna_dimensionality": 2,
+        "all_nna_dims": [
+            2,
+            0
+        ],
+        "all_nna_dim_cutoffs": [
+            0,
+            0.6171
+        ],
+        "num_nnas": 1,
+        "nna_formula": "Ca2 N1 e1",
+        "nnas_per_formula": 1.0625886637,
+        "nnas_per_reduced_formula": 1.0625886637,
+        "nna_structure": {
+            "@module": "baderkit.toolkit.structure",
+            "@class": "Structure",
+            "charge": 0.0,
+            "lattice": {
+                "matrix": [
+                    [
+                        3.537074,
+                        0.051133,
+                        5.740763
+                    ],
+                    [
+                        1.665193,
+                        3.120999,
+                        5.740763
+                    ],
+                    [
+                        0.083858,
+                        0.051133,
+                        6.74242
+                    ]
+                ],
+                "pbc": [
+                    true,
+                    true,
+                    true
+                ],
+                "a": 6.743134796764337,
+                "b": 6.74313445716597,
+                "c": 6.743135339310119,
+                "alpha": 30.92510983891399,
+                "beta": 30.925112844220386,
+                "gamma": 30.92511276952178,
+                "volume": 71.82952310534239
+            },
+            "properties": {},
+            "sites": [
+                {
+                    "species": [
+                        {
+                            "element": "Ca",
+                            "occu": 1
+                        }
+                    ],
+                    "abc": [
+                        0.731317,
+                        0.731317,
+                        0.731317
+                    ],
+                    "properties": {
+                        "label": "Ca"
+                    },
+                    "label": "Ca_1",
+                    "xyz": [
+                        3.865833076625,
+                        2.3572284900049993,
+                        13.327481516882
+                    ]
+                },
+                {
+                    "species": [
+                        {
+                            "element": "Ca",
+                            "occu": 1
+                        }
+                    ],
+                    "abc": [
+                        0.268683,
+                        0.268683,
+                        0.268683
+                    ],
+                    "properties": {
+                        "label": "Ca"
+                    },
+                    "label": "Ca_2",
+                    "xyz": [
+                        1.420291923375,
+                        0.8660365099949999,
+                        4.896464483118001
+                    ]
+                },
+                {
+                    "species": [
+                        {
+                            "element": "N",
+                            "occu": 1
+                        }
+                    ],
+                    "abc": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "properties": {
+                        "label": "N"
+                    },
+                    "label": "N",
+                    "xyz": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                },
+                {
+                    "species": [
+                        {
+                            "element": "Xmc",
+                            "oxidation_state": 0.0,
+                            "spin": null,
+                            "occu": 1
+                        }
+                    ],
+                    "abc": [
+                        0.5,
+                        0.5,
+                        0.5
+                    ],
+                    "properties": {
+                        "label": "Xmc"
+                    },
+                    "label": "Xmc0+",
+                    "xyz": [
+                        2.6430625,
+                        1.6116325,
+                        9.111973
+                    ]
+                }
+            ]
+        }
+    },
+    "base_summary_props": {
+        "valence_counts": null,
+        "spin_system": "total",
+        "num_vacuum": 0,
+        "vacuum_charge": 0.0,
+        "vacuum_volume": 0.0,
+        "structure": {
+            "@module": "baderkit.toolkit.structure",
+            "@class": "Structure",
+            "charge": 0.0,
+            "lattice": {
+                "matrix": [
+                    [
+                        3.537074,
+                        0.051133,
+                        5.740763
+                    ],
+                    [
+                        1.665193,
+                        3.120999,
+                        5.740763
+                    ],
+                    [
+                        0.083858,
+                        0.051133,
+                        6.74242
+                    ]
+                ],
+                "pbc": [
+                    true,
+                    true,
+                    true
+                ],
+                "a": 6.743134796764337,
+                "b": 6.74313445716597,
+                "c": 6.743135339310119,
+                "alpha": 30.92510983891399,
+                "beta": 30.925112844220386,
+                "gamma": 30.92511276952178,
+                "volume": 71.82952310534239
+            },
+            "properties": {},
+            "sites": [
+                {
+                    "species": [
+                        {
+                            "element": "Ca",
+                            "occu": 1
+                        }
+                    ],
+                    "abc": [
+                        0.731317,
+                        0.731317,
+                        0.731317
+                    ],
+                    "properties": {
+                        "label": "Ca"
+                    },
+                    "label": "Ca_1",
+                    "xyz": [
+                        3.865833076625,
+                        2.3572284900049993,
+                        13.327481516882
+                    ]
+                },
+                {
+                    "species": [
+                        {
+                            "element": "Ca",
+                            "occu": 1
+                        }
+                    ],
+                    "abc": [
+                        0.268683,
+                        0.268683,
+                        0.268683
+                    ],
+                    "properties": {
+                        "label": "Ca"
+                    },
+                    "label": "Ca_2",
+                    "xyz": [
+                        1.420291923375,
+                        0.8660365099949999,
+                        4.896464483118001
+                    ]
+                },
+                {
+                    "species": [
+                        {
+                            "element": "N",
+                            "occu": 1
+                        }
+                    ],
+                    "abc": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ],
+                    "properties": {
+                        "label": "N"
+                    },
+                    "label": "N",
+                    "xyz": [
+                        0.0,
+                        0.0,
+                        0.0
+                    ]
+                }
+            ]
+        }
     }
 }

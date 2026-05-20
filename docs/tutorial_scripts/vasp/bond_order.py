@@ -14,8 +14,8 @@ labeler = ElfLabeler.from_vasp(
     charge_grid="CHGCAR",
     reference_grid="ELFCAR",
     total_charge_grid="CHGCAR_sum",
-    pseudopotential_filename="POTCAR"
-    )
+    pseudopotential_filename="POTCAR",
+)
 
 # get chemical features and each basins charge
 features = labeler.basin_types

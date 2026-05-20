@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from baderkit import Grid, Bader
+from baderkit import Bader, Grid
 
 # write total charge density
 core_grid = Grid.from_vasp("AECCAR0")
@@ -12,8 +12,8 @@ total.write_vasp("CHGCAR_sum")
 bader = Bader.from_vasp(
     charge_grid="CHGCAR",
     total_charge_grid="CHGCAR_sum",
-    pseudopotential_filename="POTCAR"
-    )
+    pseudopotential_filename="POTCAR",
+)
 
 # print oxidation states
 print(bader.oxidation_states)

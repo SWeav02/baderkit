@@ -43,7 +43,7 @@ class BasinTab(qw.QWidget):
 
         # resize columns
         self.table.resizeColumnsToContents()
-        
+
         # Don't allow editing
         self.table.setEditTriggers(qw.QAbstractItemView.NoEditTriggers)
 
@@ -57,19 +57,21 @@ class BasinTab(qw.QWidget):
             [i for i, button in self.atom_visibility.items() if button.isChecked()],
             "visible_atom_basins",
         )
-        
+
     def set_feature_basins(self):
         self.main.set_property(
             [i for i, button in self.feature_visibility.items() if button.isChecked()],
             "visible_chemical_features",
         )
-        
+
     def get_table_widget(self):
         analysis_type = self.main.analysis_type.currentText()
         if analysis_type == "Bader" or analysis_type == "BadELF":
             table = qw.QTableWidget()
             table.setColumnCount(5)
-            table.setHorizontalHeaderLabels(["Label", "Visible", "Charge", "Volume", "Coord"])
+            table.setHorizontalHeaderLabels(
+                ["Label", "Visible", "Charge", "Volume", "Coord"]
+            )
             table.setAlternatingRowColors(True)
             return table
         elif analysis_type == "ElfLabeler":
@@ -78,7 +80,7 @@ class BasinTab(qw.QWidget):
             table.setHorizontalHeaderLabels(["Label", "Visible"])
             table.setAlternatingRowColors(True)
             return table
-    
+
     def create_table_rows(self):
         bader = self.main.bader
         analysis_type = self.main.analysis_type.currentText()
@@ -88,52 +90,50 @@ class BasinTab(qw.QWidget):
             else:
                 structure = bader.nna_structure
             self.atom_visibility = {}
-    
+
             # create a table row for each atom
             for i, site in enumerate(structure):
                 # create row
                 self.table.insertRow(i)
-                
+
                 # get data
                 charge = str(round(bader.atom_charges[i], 4))
                 volume = str(round(bader.atom_volumes[i], 4))
                 coords = "(" + ", ".join(f"{x:.3f}" for x in site.frac_coords) + ")"
-    
+
                 # create a widget for visibility
                 visible_widget = qw.QCheckBox()
                 self.atom_visibility[i] = visible_widget
-                
+
                 # connect checkbox
                 visible_widget.toggled.connect(self.set_atom_basins)
-                
+
                 # create table items
                 self.table.setItem(i, 0, qw.QTableWidgetItem(site.label))
                 self.table.setCellWidget(i, 1, centered_widget(visible_widget))
                 self.table.setItem(i, 2, qw.QTableWidgetItem(charge))
                 self.table.setItem(i, 3, qw.QTableWidgetItem(volume))
                 self.table.setItem(i, 4, qw.QTableWidgetItem(coords))
-                
+
         elif analysis_type == "ElfLabeler":
             features = bader.types_in_system
             self.feature_visibility = {}
-    
+
             # create a table row for each atom
             for i, feature in enumerate(features):
                 # create row
                 self.table.insertRow(i)
-    
+
                 # create a widget for visibility
                 visible_widget = qw.QCheckBox()
                 self.feature_visibility[i] = visible_widget
-                
+
                 # connect checkbox
                 visible_widget.toggled.connect(self.set_feature_basins)
-                
+
                 # create table items
                 self.table.setItem(i, 0, qw.QTableWidgetItem(feature))
                 self.table.setCellWidget(i, 1, centered_widget(visible_widget))
-            
-        
 
     # # Iterate all items and delete their widgets
     # def clear_table_widgets(self):

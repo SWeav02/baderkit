@@ -33,6 +33,7 @@ def version():
 
     print(f"Installed version: v{baderkit.__version__}")
 
+
 class PrintOptions(str, Enum):
     all_atoms = "all_atoms"
     sel_atoms = "sel_atoms"
@@ -58,9 +59,11 @@ def float_or_bool(value: str):
     except ValueError:
         raise typer.BadParameter("Value must be a float or a boolean.")
 
+
 ###############################################################################
 # Main Method Commands
 ###############################################################################
+
 
 @baderkit_app.command(no_args_is_help=True)
 def bader(
@@ -358,6 +361,7 @@ def label(
     elif print == "sel":
         labeler.write_features_by_type(features)
 
+
 @baderkit_app.command(no_args_is_help=True)
 def overlap(
     charge_file: Path = typer.Argument(
@@ -404,6 +408,7 @@ def overlap(
     # write summary
     overlap.write_json("overlap.json")
 
+
 @baderkit_app.command(no_args_is_help=True)
 def radii(
     charge_file: Path = typer.Argument(
@@ -436,8 +441,8 @@ def radii(
         False,
         "--include-nnas",
         "-nna",
-        help="Whether or not to treat non-nuclear attractors (metals, electrides, etc.) as quasi-atoms."
-        )
+        help="Whether or not to treat non-nuclear attractors (metals, electrides, etc.) as quasi-atoms.",
+    ),
 ):
     """
     Calculates the ionic/covalent radii for each atom in the system and writes the results to `radii.json`.
@@ -457,9 +462,11 @@ def radii(
     # write summary
     radii.write_json("radii.json")
 
+
 ###############################################################################
 # Utility Commands
 ###############################################################################
+
 
 @baderkit_app.command(no_args_is_help=True)
 def sum(
@@ -650,6 +657,7 @@ def split(
     spin_up.write(filename=output_up, output_format=output_format)
     spin_down.write(filename=output_down, output_format=output_format)
 
+
 @baderkit_app.command(no_args_is_help=True)
 def make_elf(
     charge_file: Path = typer.Argument(
@@ -657,15 +665,14 @@ def make_elf(
         help="The path to the file containing the charge density",
     ),
     kinetic_file: Path = typer.Argument(
-        ...,
-        help="The path to the file containing the kinetic energy density"
+        ..., help="The path to the file containing the kinetic energy density"
     ),
     use_spin: bool = typer.Option(
         False,
         "--use-spin",
         "-s",
-        help="If set, corrects the prefactor for a single spin rather than the total charge-density"
-        ),
+        help="If set, corrects the prefactor for a single spin rather than the total charge-density",
+    ),
     output_path: Path = typer.Option(
         None,
         "--output-path",
@@ -713,7 +720,7 @@ def make_elf(
         charge_grid=charge_grid,
         ked_grid=ked_grid,
         spin=use_spin,
-        )
+    )
 
     if output_path is None:
         format = charge_grid.source_format
@@ -779,8 +786,8 @@ def gui():
         import qtpy
     except:
         logging.warning(
-    r'Please run `pip install baderkit\[gui]` (or `pip install "baderkit\[gui]"` depending on the OS/shell).'
-)
+            r'Please run `pip install baderkit\[gui]` (or `pip install "baderkit\[gui]"` depending on the OS/shell).'
+        )
         return
 
     from baderkit.ui.gui.main import run_app

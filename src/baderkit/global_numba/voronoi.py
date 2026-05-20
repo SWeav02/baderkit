@@ -293,6 +293,7 @@ def find_site_in_tol(
 
     return index, in_tol
 
+
 @njit(cache=True)
 def get_canonical_displacement(bond_displacement, tol=1e-12):
     # preserve components that are exactly ±1 (within tolerance)

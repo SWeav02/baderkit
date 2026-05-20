@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from numba import njit
 from numpy.typing import NDArray
-from pymatgen.core import Lattice, Structure, Element
+from pymatgen.core import Element, Lattice, Structure
 from pymatgen.io.vasp import Poscar, Potcar
 
 
@@ -21,7 +21,7 @@ class Format(str, Enum):
     vasp = "vasp"
     cube = "cube"
     hdf5 = "hdf5"
-    xsf  = "xsf"
+    xsf = "xsf"
 
     @property
     def writer(self):
@@ -29,7 +29,7 @@ class Format(str, Enum):
             Format.vasp: "write_vasp",
             Format.cube: "write_cube",
             Format.hdf5: "to_hdf5",
-            Format.xsf:  "write_xsf",
+            Format.xsf: "write_xsf",
         }[self]
 
     @property
@@ -38,16 +38,16 @@ class Format(str, Enum):
             Format.vasp: "from_vasp",
             Format.cube: "from_cube",
             Format.hdf5: "from_hdf5",
-            Format.xsf:  "from_xsf",
+            Format.xsf: "from_xsf",
         }[self]
-    
+
     @property
     def suffix(self):
         return {
             Format.vasp: "",
             Format.cube: ".cube",
             Format.hdf5: ".h5",
-            Format.xsf:  ".xsf",
+            Format.xsf: ".xsf",
         }[self]
 
 
@@ -139,9 +139,8 @@ def detect_volume_format(filename: str | Path):
 
             upper_lines = [line.upper() for line in first_lines]
 
-            if (
-                any("PRIMVEC" in line for line in upper_lines)
-                or any("BEGIN_DATAGRID_3D" in line for line in upper_lines)
+            if any("PRIMVEC" in line for line in upper_lines) or any(
+                "BEGIN_DATAGRID_3D" in line for line in upper_lines
             ):
                 source_format = Format.xsf
 
@@ -186,15 +185,13 @@ def detect_volume_format(filename: str | Path):
                     source_format = Format.hdf5
 
         except Exception:
-            logging.warning(
-                """
+            logging.warning("""
                 Tried to detect HDF5 format, but h5py is not installed.
                 To read HDF5 files, install with:
                     conda install h5py
                 or:
                     pip install h5py
-                """
-            )
+                """)
 
     # -------------------------------------------------------------------------
     # Final check
@@ -205,9 +202,11 @@ def detect_volume_format(filename: str | Path):
 
     return source_format
 
+
 ###############################################################################
 # Read Methods
 ###############################################################################
+
 
 def read_vasp(filename, total_only: bool):
     path = Path(filename)
@@ -413,6 +412,7 @@ def read_vasp(filename, total_only: bool):
 
     return structure, data, data_aug, sig_figs
 
+
 def read_cube(
     filename: str | Path,
 ):
@@ -506,7 +506,7 @@ def read_cube(
 
     # infer sig figs before converting units
     sig_figs = infer_significant_figures(arr)
-    
+
     # check for ELF-like data. If charge-like, convert units
     eps = 0.01
     if not (arr.max() <= 1.0 + eps and arr.min() >= 0.0 - eps):
@@ -514,14 +514,15 @@ def read_cube(
         # convert bohr units
         if bohr_units:
             arr *= 1.88973**3
-    
+
     data = {}
     data["total"] = arr
-    
+
     # apply sig figs to array
     data["total"] = round_to_sig_figs(data["total"], sig_figs)
 
     return structure, data, ion_charges, origin, sig_figs
+
 
 def read_xsf(
     filename: str | Path,
@@ -548,7 +549,7 @@ def read_xsf(
         a = np.fromstring(f.readline(), sep=" ")
         b = np.fromstring(f.readline(), sep=" ")
         c = np.fromstring(f.readline(), sep=" ")
-        lattice_matrix = np.array((a,b,c),dtype=float)
+        lattice_matrix = np.array((a, b, c), dtype=float)
 
         # find PRIMCOORD line
         primcoord_idx = None
@@ -649,12 +650,12 @@ def read_xsf(
     ###########################################################################
     # Convert density -> vasp conventions
     ###########################################################################
-    
+
     # infer sig figs before conversion
     sig_figs = infer_significant_figures(arr)
 
     shape = np.array(arr.shape)
-    
+
     # check for ELF-like data. If charge-like, convert units
     eps = 0.01
     if not (arr.max() <= 1.0 + eps and arr.min() >= 0.0 - eps):
@@ -667,9 +668,11 @@ def read_xsf(
 
     return structure, data, origin, sig_figs
 
+
 ###############################################################################
 # Write Methods
 ###############################################################################
+
 
 @njit(cache=True)
 def format_fortran(mant, exp):
@@ -790,6 +793,7 @@ def write_vasp(
                 ]
                 file.writelines(aug_lines)
 
+
 def write_cube(
     filename: str | Path,
     grid,
@@ -875,6 +879,7 @@ def write_cube(
             # join 6 entries per line, then join lines and add final newline
             rows = ("".join(formatted[i : i + 6]) for i in range(0, len(formatted), 6))
             file.write("\n".join(rows) + "\n")
+
 
 def write_xsf(
     filename: str | Path,

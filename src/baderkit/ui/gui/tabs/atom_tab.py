@@ -56,7 +56,7 @@ class AtomsTab(qw.QWidget):
             plot_prop="atom_metallicness",
         )
         form_layout.addRow("Metallicity", self.metallicity)
-        
+
         self.roughness = DoubleSpinBox(
             min_value=0.0,
             max_value=1.0,

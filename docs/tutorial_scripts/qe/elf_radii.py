@@ -7,7 +7,7 @@ elf_radii = ElfRadii.from_cube(
     charge_filename="chg.cube",
     reference_filename="elf.cube",
     total_charge_filename="tot_chg.cube",
-    )
+)
 
 # get the radius of Na
 elf_radius = elf_radii.atom_radii[0]

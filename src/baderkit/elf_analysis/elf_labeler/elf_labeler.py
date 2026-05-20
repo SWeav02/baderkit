@@ -6,15 +6,12 @@ from typing import TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
-from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.bader.bader import Bader
+from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.elf_analysis.overlap.overlap import BasinOverlap
 from baderkit.toolkit import Grid, Structure
 
-from .elf_labeler_numba import (
-    get_core_dist_ratios,
-    get_core_dists
-)
+from .elf_labeler_numba import get_core_dist_ratios, get_core_dists
 from .enum_and_styling import FeatureType
 
 Self = TypeVar("Self", bound="ElfLabeler")
@@ -118,7 +115,7 @@ class ElfLabeler(BaseElfAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
-        
+
         # create bader objects
         self._overlap = BasinOverlap(
             charge_grid=charge_grid,
@@ -229,7 +226,7 @@ class ElfLabeler(BaseElfAnalysis):
         """
 
         return self._elf_bader
-    
+
     @property
     def basin_charges(self) -> NDArray[np.float64]:
         """
@@ -241,7 +238,7 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         return self.elf_bader.basin_charges
-        
+
     @property
     def basin_volumes(self) -> NDArray[np.float64]:
         """
@@ -265,7 +262,7 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         return self.elf_bader.maxima_frac
-    
+
     @property
     def maxima_center_frac(self) -> NDArray[np.float64]:
         """
@@ -279,7 +276,7 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         return self.overlap.local_maxima_center_frac
-    
+
     @property
     def maxima_elf_values(self) -> NDArray[np.float64]:
         """
@@ -291,7 +288,7 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         return self.elf_bader.maxima_ref_values
-    
+
     @property
     def attractor_shapes(self) -> NDArray[str]:
         """
@@ -303,7 +300,7 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         return self.overlap.attractor_shapes
-    
+
     @property
     def attractor_depths(self) -> NDArray[np.float64]:
         """
@@ -329,7 +326,7 @@ class ElfLabeler(BaseElfAnalysis):
         if self._basin_types is None:
             self._label_basins()
         return [i.value for i in self._basin_types]
-    
+
     @property
     def types_in_system(self) -> list[str]:
         """
@@ -343,25 +340,25 @@ class ElfLabeler(BaseElfAnalysis):
         if self._types_in_system is None:
             self._types_in_system = np.unique(self.basin_types).tolist()
         return self._types_in_system
-    
+
     @property
     def type_basin_labels(self) -> NDArray[int]:
         """
-        
+
         Returns
         -------
         NDArray[int]
             An array with the same shape as the data where each entry represents
             the type of chemical feature the point is assigned to. The labels
             are in the same order as the types_in_system property.
-        
+
         """
         if self._type_basin_labels is None:
             types, inverse = np.unique(self.basin_types, return_inverse=True)
             inverse = np.append(inverse, len(self.maxima_frac))
             self._type_basin_labels = inverse[self.elf_bader.maxima_basin_labels]
         return self._type_basin_labels
-    
+
     @property
     def nearest_atoms(self) -> NDArray[int]:
         """
@@ -373,7 +370,7 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         return self.elf_bader.basin_atoms
-    
+
     @property
     def nearest_atom_species(self) -> list[str]:
         """
@@ -436,7 +433,7 @@ class ElfLabeler(BaseElfAnalysis):
             )
             self._basin_dists_beyond_atoms = fracs * self.basin_atom_dists
         return self._basin_dists_beyond_atoms
-    
+
     @property
     def basin_atom_dists(self) -> NDArray[float]:
         """
@@ -462,8 +459,7 @@ class ElfLabeler(BaseElfAnalysis):
             )
             self._basin_atom_dists = dists
         return self._basin_atom_dists
-    
-        
+
     @property
     def heavily_polarized(self) -> NDArray[bool]:
         """
@@ -481,11 +477,11 @@ class ElfLabeler(BaseElfAnalysis):
                 self.overlap.polarization_indexes > self.polarization_cutoff
             )
         return self._heavily_polarized
-    
+
     ###########################################################################
     # NNA properties
     ###########################################################################
-    
+
     @property
     def max_nna_dist(self) -> float:
         """
@@ -564,7 +560,7 @@ class ElfLabeler(BaseElfAnalysis):
                 self.nnas_per_formula / formula_reduction_factor
             )
         return round(self._nnas_per_reduced_formula, 10)
-    
+
     @property
     def species(self) -> list[str]:
         """

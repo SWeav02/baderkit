@@ -5,13 +5,15 @@ from abc import ABC
 import numpy as np
 
 from baderkit.toolkit.structure import Structure
+
 from ..toolkit import GridPlotter
 
+
 class BaseAnalysis(GridPlotter, ABC):
-    
-    _label_grids = [] # e.g. maxima_basin_labels
-    _alt_label_names = {} # e.g. "maxima_basin_labels" : "bader_basins
-    
+
+    _label_grids = []  # e.g. maxima_basin_labels
+    _alt_label_names = {}  # e.g. "maxima_basin_labels" : "bader_basins
+
     def __init__(
         self,
         base_analysis,
@@ -30,12 +32,12 @@ class BaseAnalysis(GridPlotter, ABC):
             grid = grid.copy()
             grid.structure = structure.copy()
         super().__init__(grid=grid, **grid_kwargs)
-        
+
         self._grid_name = grid_name
-        
+
         # set base analysis class
         setattr(self, base_analysis.__class__.__name__.lower(), base_analysis)
-        
+
         # pad label grids
         for label_grid_str in self._label_grids:
             label_grid = getattr(base_analysis, label_grid_str, None)
@@ -83,13 +85,13 @@ class BaseAnalysis(GridPlotter, ABC):
     ###########################################################################
     # Utilities
     ###########################################################################
-            
+
     def _make_visible_property(
         self,
         prop_name: str,
     ):
         item_description = " ".join(prop_name.split("_"))
-    
+
         @property
         def prop(self) -> set[int]:
             f"""
@@ -99,7 +101,7 @@ class BaseAnalysis(GridPlotter, ABC):
                 The set of {item_description} indices currently visible.
             """
             return getattr(self, f"_visible_{prop_name}")
-    
+
         @prop.setter
         def prop(self, values: set[int]):
             values = set(values)
@@ -124,17 +126,16 @@ class BaseAnalysis(GridPlotter, ABC):
 
         for label_name in self._label_grids:
             visible_values = getattr(
-                self,
-                f"_visible_{self._alt_label_names.get(label_name, label_name)}"
+                self, f"_visible_{self._alt_label_names.get(label_name, label_name)}"
             )
-        
+
             mask = np.isin(
-                getattr(self,  f"_{label_name}"),
+                getattr(self, f"_{label_name}"),
                 list(visible_values),
             )
-        
+
             visible_masks.append(mask)
-        
+
         hidden_mask = ~np.logical_or.reduce(visible_masks)
         self._hidden_mask = hidden_mask
         # NOTE: using hide_cells works, but results in some funky artifacting.

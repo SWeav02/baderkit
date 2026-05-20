@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 
 from pathlib import Path
+
 from baderkit.elf_analysis import ElfLabeler
 
-
-folders = [
-    Path("SiO2"),
-    Path("SiSe2")
-    ]
+folders = [Path("SiO2"), Path("SiSe2")]
 
 # lists to hold bond information
 bond_types = []
@@ -20,7 +17,7 @@ for folder in folders:
         charge_filename=folder / "chg.cube",
         reference_filename=folder / "elf.cube",
         total_charge_filename=folder / "tot_chg.cube",
-        )
+    )
 
     # get the first basin corresponding to a bond
     basin_type = None

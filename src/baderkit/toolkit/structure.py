@@ -306,7 +306,7 @@ class Structure(PymatgenStructure):
     @property
     def site_symbols(self):
         return np.array([i.specie.symbol for i in self])
-    
+
     @property
     def farthest_point(self) -> tuple[float, NDArray[float]]:
         """
@@ -319,10 +319,9 @@ class Structure(PymatgenStructure):
             with symmetry.
 
         """
-        
+
         dist, point = largest_empty_sphere(self.lattice.matrix, self.frac_coords)
         return dist, point
-        
 
     def to(self, filename: str | Path = "", fmt: str = "", **kwargs) -> str | None:
         """
@@ -351,7 +350,7 @@ class Structure(PymatgenStructure):
             filename = Path(filename)
             filename = str(filename.resolve())
         return super().to(filename=filename, fmt=fmt, **kwargs)
-    
+
     ###########################################################################
     # Plotting
     ###########################################################################
@@ -362,6 +361,7 @@ class Structure(PymatgenStructure):
         -------
         A GridPlotter object for visualization.
         """
-        
+
         from baderkit.plotting import StructurePlotter
+
         return StructurePlotter(self, **kwargs)

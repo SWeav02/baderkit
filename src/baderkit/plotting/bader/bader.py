@@ -5,7 +5,6 @@ from baderkit.bader.bader import Bader
 from ..base.base_analysis import BaseAnalysis
 
 
-
 class BaderPlotter(BaseAnalysis):
     """
     A convenience class for creating plots of individual Bader basins
@@ -26,21 +25,21 @@ class BaderPlotter(BaseAnalysis):
     None.
 
     """
-    
+
     _label_grids = [
         "maxima_basin_labels",
         "atom_labels",
-        ]
+    ]
     _alt_label_names = {
-        "maxima_basin_labels" : "bader_basins",
-        "atom_labels" : "atom_basins",
-        }
-    
+        "maxima_basin_labels": "bader_basins",
+        "atom_labels": "atom_basins",
+    }
+
     def __init__(
         self,
         bader: Bader,
         grid_name: str = "reference_grid",
         **kwargs,
     ):
-        
+
         super().__init__(base_analysis=bader, grid_name=grid_name, **kwargs)

@@ -8,6 +8,7 @@ from baderkit.toolkit import Grid
 
 Self = TypeVar("Self", bound="BaseElfAnalysis")
 
+
 class BaseElfAnalysis(BaseAnalysis):
 
     def __init__(
@@ -15,7 +16,7 @@ class BaseElfAnalysis(BaseAnalysis):
         charge_grid: Grid,
         reference_grid: Grid,
         **kwargs,
-            ):
+    ):
         """
         A wrapper class for elf analysis methods that makes the reference
         grid explicitly required.
@@ -34,12 +35,8 @@ class BaseElfAnalysis(BaseAnalysis):
 
         """
         super().__init__(
-            charge_grid=charge_grid,
-            reference_grid=reference_grid,
-            **kwargs
-            )
-
-
+            charge_grid=charge_grid, reference_grid=reference_grid, **kwargs
+        )
 
     ###########################################################################
     # From Methods
@@ -48,7 +45,7 @@ class BaseElfAnalysis(BaseAnalysis):
     @classmethod
     def from_vasp(
         cls,
-        charge_grid : Path | str = "CHGCAR",
+        charge_grid: Path | str = "CHGCAR",
         reference_grid: Path | str = "ELFCAR",
         **kwargs,
     ) -> Self:
@@ -88,7 +85,9 @@ class BaseElfAnalysis(BaseAnalysis):
             A BaseAnalysis class object.
 
         """
-        return cls.from_dynamic(charge_grid, reference_grid=reference_grid, format="vasp", **kwargs)
+        return cls.from_dynamic(
+            charge_grid, reference_grid=reference_grid, format="vasp", **kwargs
+        )
 
     @classmethod
     def from_dynamic(
@@ -144,4 +143,4 @@ class BaseElfAnalysis(BaseAnalysis):
             charge_grid=charge_grid,
             reference_grid=reference_grid,
             **kwargs,
-            )
+        )

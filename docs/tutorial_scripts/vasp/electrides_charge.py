@@ -14,8 +14,8 @@ badelf = Badelf.from_vasp(
     charge_grid="CHGCAR",
     reference_grid="ELFCAR",
     total_charge_grid="CHGCAR_sum",
-    pseudopotential_filename="POTCAR"
-    )
+    pseudopotential_filename="POTCAR",
+)
 
 electride_structure = badelf.nna_structure
 electrides_per_formula = badelf.nnas_per_reduced_formula

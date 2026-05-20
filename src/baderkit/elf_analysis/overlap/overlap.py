@@ -6,8 +6,8 @@ from typing import TypeVar
 import numpy as np
 from numpy.typing import NDArray
 
-from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.bader.bader import Bader
+from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.global_numba.coord_env import is_along_bond_all
 from baderkit.toolkit import Grid, Structure
 
@@ -94,7 +94,7 @@ class BasinOverlap(BaseElfAnalysis):
             reference_grid=reference_grid,
             **kwargs,
         )
-        
+
         self._min_bond_angle = min_bond_angle
 
         # create bader objects
@@ -234,7 +234,7 @@ class BasinOverlap(BaseElfAnalysis):
             # non-zero entries in each row of our overlap_matrix
             self._atomicities = np.array([len(i) for i in self.bond_fractions])
         return self._atomicities
-    
+
     @property
     def significant_local_contributors(self) -> list[NDArray[int]]:
         """
@@ -246,11 +246,11 @@ class BasinOverlap(BaseElfAnalysis):
             the indices of the atoms that overlap to a significant degree (>5%).
 
         """
-        
+
         if self._significant_local_contributors is None:
             contributors = []
             for i in self.bond_fractions:
-                contributors.append(i[:,0].astype(int))
+                contributors.append(i[:, 0].astype(int))
             self._significant_local_contributors = contributors
         return self._significant_local_contributors
 
@@ -779,12 +779,7 @@ class BasinOverlap(BaseElfAnalysis):
             tol=tol,
         )
 
-    def _assign_cores(
-        self,
-        core_tol=0.01,
-        lone_pair_tol=0.05,
-        core_dist_tol=0.2
-    ):
+    def _assign_cores(self, core_tol=0.01, lone_pair_tol=0.05, core_dist_tol=0.2):
         # create tracker for which basins are part of each atoms core
         cores = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         lone_pairs = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
@@ -801,10 +796,10 @@ class BasinOverlap(BaseElfAnalysis):
                 # BUGFIX: If there is only one basin in a shell, we base whether it is
                 # a core or lone-pair on its distance
                 if len(local_indices) == 1:
-                    if dist <= core_dist_tol and overlap_fracs[0]>1.0-core_tol:
+                    if dist <= core_dist_tol and overlap_fracs[0] > 1.0 - core_tol:
                         cores[local_indices[0]] = atom_idx
                         continue
-                    elif overlap_fracs[0]>1.0-lone_pair_tol:
+                    elif overlap_fracs[0] > 1.0 - lone_pair_tol:
                         lone_pairs[local_indices[0]] = atom_idx
                         continue
 

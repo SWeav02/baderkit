@@ -11,8 +11,8 @@ from pymatgen.analysis.local_env import CrystalNN
 from scipy.ndimage import label
 from tqdm import tqdm
 
-from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.bader import Bader
+from baderkit.elf_analysis.base_elf_analysis import BaseElfAnalysis
 from baderkit.elf_analysis.elf_labeler.elf_labeler import ElfLabeler
 from baderkit.elf_analysis.elf_labeler.enum_and_styling import FeatureType
 from baderkit.elf_analysis.elf_radii.elf_radii import ElfRadii
@@ -28,6 +28,9 @@ from .badelf_numba import (
 )
 
 Self = TypeVar("Self", bound="Badelf")
+
+
+# TODO: Include atom images
 
 
 class Badelf(BaseElfAnalysis):
@@ -298,11 +301,8 @@ class Badelf(BaseElfAnalysis):
         if self._elf_radii is None:
             if self.partition_method == "badelf":
                 include_nnas = False
-            elif self.partition_method == "voronelf":
-                include_nnas = False
             else:
-                # we don't use the elf_radii and can just return None
-                return None
+                include_nnas = True
 
             self._elf_radii = ElfRadii(
                 charge_grid=self.charge_grid,
@@ -555,7 +555,7 @@ class Badelf(BaseElfAnalysis):
 
     @property
     def oxidation_states(self) -> NDArray[np.float64]:
-        
+
         if not self.valence_counts:
             return None
         if self._oxidation_states is None:
@@ -565,9 +565,9 @@ class Badelf(BaseElfAnalysis):
                 oxi_state = self.valence_counts.get(element_str, 0.0) - site_charge
                 oxi_state_data.append(oxi_state)
             self._oxidation_states = np.array(oxi_state_data)
-        
+
         return self._oxidation_states
-    
+
     @property
     def min_surface_distances(self) -> NDArray:
         """
@@ -845,8 +845,18 @@ class Badelf(BaseElfAnalysis):
 
         if self.partition_method == "zero-flux":
             # we are done here and can assign charges/volumes immediately
-            self._atom_labels = self.bader.atom_labels
-            self._atom_charges, self._atom_volumes = self._get_zero_flux_assignments()
+            (
+                atom_labels,
+                atom_images,
+                atom_charges,
+                atom_volumes,
+                basin_atoms,
+                basin_atom_dists,
+            ) = self.bader.assign_basins_to_structure(self.nna_structure)
+            self._atom_labels = atom_labels
+            self._atom_images = atom_images
+            self._atom_charges = atom_charges
+            self._atom_volumes = atom_volumes
 
         else:
             # get bader basin labels
@@ -1132,9 +1142,7 @@ class Badelf(BaseElfAnalysis):
         to the partitioning surface.
 
         """
-        if self.partition_method == "zero-flux":
-            # we don't get atom labels in this method
-            return
+
         neigh_transforms, _ = self.charge_grid.point_neighbor_transforms
         edges = get_edges(
             labeled_array=self.atom_labels,
