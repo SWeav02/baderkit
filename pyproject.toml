@@ -66,7 +66,7 @@ gui = [
     "pyvista>=0.47.0,<=0.48.4",
     "pyvistaqt>=0.6.0,<=0.11.4",
     "qtpy>=2.0.0,<3.0",
-    "PyQt5; sys_platform != 'win32"
+    "PyQt5"
 ]
 
 # For development and testing. Taken straight from simmate
@@ -137,3 +137,6 @@ baderkit = [
 profile = "black"
 
 # -----------------------------------------------------------------------------
+
+[tool.uv]
+required-environments = "sys_platform == 'win32' and platform_machine == 'AMD64'"
