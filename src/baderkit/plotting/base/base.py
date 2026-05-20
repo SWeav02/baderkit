@@ -75,7 +75,25 @@ class VtkPlotter(ABC):
         self._show_axes = show_axes
         self._parallel_projection = parallel_projection
         self._pbr = pbr
-        self._light = pv.Light(light_type="headlight")
+        
+        if not pbr:
+            true_light_intensity = light_intensity / 2.0
+        else:
+            true_light_intensity = light_intensity
+        self._light = pv.Light(
+            light_type="headlight",
+            shadow_attenuation=0.0,
+            color=pv.Color(light_color),
+            intensity=true_light_intensity
+            )
+        self._pbr_light = pv.Light(
+            light_type="headlight",
+            shadow_attenuation=0.0,
+            color=pv.Color(light_color),
+            intensity=true_light_intensity
+            ) # additional light because pbr causes the light to be much more dim
+        if not pbr:
+            self._pbr_light.switch_off()
         self._light_color = pv.Color(light_color)
         self._light_intensity = light_intensity
 
@@ -174,6 +192,7 @@ class VtkPlotter(ABC):
     def light_color(self, light_color: str):
         color = pv.Color(light_color)
         self._light.SetColor(color.float_rgb)
+        self._pbr_light.SetColor(color.float_rgb)
         self._light_color = color
         
     @property
@@ -190,7 +209,15 @@ class VtkPlotter(ABC):
 
     @light_intensity.setter
     def light_intensity(self, light_intensity: float):
-        self._light.SetIntensity(light_intensity)
+        # if pbr is off, the light is reflected much more strongly. We divide
+        # by 2 for visual clarity
+        if not self.pbr:
+            true_light_intensity = light_intensity / 2.0
+        else:
+            true_light_intensity = light_intensity
+        
+        self._light.SetIntensity(true_light_intensity)
+        self._pbr_light.SetIntensity(true_light_intensity)
         self._light_intensity = light_intensity
 
     @property
@@ -249,6 +276,10 @@ class VtkPlotter(ABC):
     @pbr.setter
     def pbr(self, pbr: bool):
         self._pbr = pbr
+        if pbr:
+            self._pbr_light.switch_on()
+        else:
+            self._pbr_light.switch_off()
         # pbr is set when adding a mesh, so we need to rebuild
         self.soft_rebuild()
 
@@ -521,7 +552,11 @@ class VtkPlotter(ABC):
             plotter = pv.Plotter(off_screen=True)
         else:
             plotter = BackgroundPlotter()
+        # add light
+        plotter.add_light(self._light)
+        plotter.add_light(self._pbr_light)
         self.plotter = plotter
+        
         return plotter
 
     def _create_plot(self) -> pv.Plotter:
@@ -554,8 +589,8 @@ class VtkPlotter(ABC):
         if self.parallel_projection:
             plotter.renderer.enable_parallel_projection()
             
-        # add light
-        plotter.add_light(self._light)
+        # ensure lighting is correct for pbr setting
+        self.light_intensity = self.light_intensity
 
         return plotter
 

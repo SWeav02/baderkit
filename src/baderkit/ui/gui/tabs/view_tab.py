@@ -56,8 +56,21 @@ class ViewTab(qw.QWidget):
         self.basic_layout.addRow("Lattice Thickness", self.lattice_thickness)
 
         # background color
-        background_color = ColorPicker("#FFFFFF", plot_prop="background", main=main)
+        background_color = ColorPicker("#FFFFFF", plot_prop="background_color", main=main)
         self.basic_layout.addRow("Background Color", background_color)
+        
+        # Light Intensity and Color
+        light_color = ColorPicker("#FFFFFF", plot_prop="light_color", main=main)
+        self.basic_layout.addRow("Light Color", light_color)
+        
+        self.light_intensity = DoubleSpinBox(
+            min_value=0.01,
+            max_value=1.00,
+            plot_prop="light_intensity",
+            main=main,
+            current_value=1.0,
+        )
+        self.basic_layout.addRow("Light Intensity", self.light_intensity)
 
         # parallel perspective
         parallel_checkbox = qw.QCheckBox()

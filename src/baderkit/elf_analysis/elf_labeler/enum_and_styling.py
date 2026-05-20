@@ -17,7 +17,7 @@ class FeatureType(str, Enum):
     unknown = "unknown"
     ionic = "ionic bond"
     ionic_shell = "ionic shell"
-    core = "core"
+    core = "core shell"
     covalent = "covalent bond"
     metallic = "metallic bond"
     lone_pair = "lone-pair"

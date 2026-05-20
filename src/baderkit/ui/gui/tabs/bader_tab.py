@@ -4,7 +4,7 @@ from pathlib import Path
 from qtpy import QtCore as qc
 from qtpy import QtWidgets as qw
 
-from baderkit import Bader, Grid
+from baderkit import Grid, Bader
 from baderkit.ui.gui.widgets import (
     DoubleSpinBox,
     ErrorWindow,
@@ -35,6 +35,15 @@ class BaderTab(qw.QWidget):
         basic_layout = qw.QFormLayout()
         basic_box.setLayout(basic_layout)
         layout.addWidget(basic_box)
+        self.basic_layout = basic_layout
+        
+        # select calculation type
+        self.analysis_type = qw.QComboBox()
+        for source in ["Bader", "BadELF", "ElfLabeler"]:
+            self.analysis_type.addItem(source)
+        self.analysis_type.setCurrentText("Bader")
+        basic_layout.addRow("Analysis Type", self.analysis_type)
+        self.main.analysis_type = self.analysis_type
 
         # select data source
         self.data_source = qw.QComboBox()
@@ -63,11 +72,21 @@ class BaderTab(qw.QWidget):
         basic_layout.setAlignment(self.reference_filepicker, qc.Qt.AlignVCenter)
 
         # Add method dropdown
-        self.method_select = qw.QComboBox()
+        self.bader_method_select = qw.QComboBox()
         for method in Bader.all_methods():
-            self.method_select.addItem(method)
-        self.method_select.setCurrentText("weight")
-        basic_layout.addRow("Method", self.method_select)
+            self.bader_method_select.addItem(method)
+        self.bader_method_select.setCurrentText("neargrid-weight")
+        basic_layout.addRow("Bader Method", self.bader_method_select)
+
+        # Add badelf method dropdown
+        self.badelf_method_select = qw.QComboBox()
+        for method in ["badelf", "voronelf", "zero-flux"]:
+            self.badelf_method_select.addItem(method)
+        self.badelf_method_select.setCurrentText("badelf")
+        basic_layout.addRow("BadELF Method", self.badelf_method_select)
+        # only show if BadELF is selected analysis
+        self.analysis_type.currentTextChanged.connect(self.update_badelf_state)
+        self.update_badelf_state(self.analysis_type.currentText())
 
         # Add advanced options box
         advanced_box = qw.QGroupBox("Advanced Options")
@@ -108,9 +127,16 @@ class BaderTab(qw.QWidget):
         # If paths are valid, enable bader run button
         charge_path = Path(self.charge_filepicker.file_path())
         reference_path = Path(self.reference_filepicker.file_path())
+        total_charge_path = Path(self.total_filepicker.file_path())
+        
         valid_charge = charge_path.exists()
-        valid_reference = reference_path.exists() or not reference_path
-        if valid_charge and valid_reference:
+        if self.analysis_type == "BadELF" or self.analysis_type == "ElfLabeler":
+            valid_reference = reference_path.exists()
+        else:
+            valid_reference = reference_path.exists() or not reference_path
+        valid_total = total_charge_path.exists() or not total_charge_path    
+        
+        if valid_charge and valid_reference and valid_total:
             self.run_button.setEnabled(True)
         else:
             self.run_button.setEnabled(False)
@@ -126,12 +152,15 @@ class BaderTab(qw.QWidget):
                 charge_path=Path(self.charge_filepicker.file_path()),
                 total_path=Path(self.total_filepicker.file_path()),
                 reference_path=Path(self.reference_filepicker.file_path()),
-                method=self.method_select.currentText(),
+                analysis_type=self.analysis_type.currentText(),
+                bader_method=self.bader_method_select.currentText(),
+                badelf_method=self.badelf_method_select.currentText(),
                 vacuum_tol=self.vacuum_tol.value(),
                 basin_tol=self.basin_tol.value(),
             )
         except Exception as e:
             error = qc.Signal(str)
+            error.connect(self.on_bader_error)
             error.emit(f"Bader class failed to load with the following error:\n {e}")
             return
 
@@ -166,7 +195,31 @@ class BaderTab(qw.QWidget):
     def set_bader(self):
         # Must be set for method in main
         pass
-
+    
+    def update_badelf_state(self, text):
+        # disable badelf options if not selected
+        is_visible = text=="BadELF"
+        self.badelf_method_select.setDisabled(not is_visible)
+        row = self.basic_layout.labelForField(self.badelf_method_select)
+        reference_row = self.basic_layout.labelForField(self.reference_filepicker)
+        if is_visible:
+            # show badelf method
+            self.badelf_method_select.show()
+            row.show()
+        else:
+            # hide badelf method
+            row.hide()
+            self.badelf_method_select.hide()     
+            
+        if is_visible or text=="ElfLabeler":
+            # show reference grid as not optional
+            reference_row.setText("Reference File")
+        else:
+            # show reference grid as optional
+            reference_row.setText("Reference File (Optional)")
+            
+        # set reference grid as optional or not optional
+        
 
 class BaderWorker(qc.QObject):
     finished = qc.Signal(object)  # bader
@@ -177,7 +230,9 @@ class BaderWorker(qc.QObject):
         charge_path,
         total_path,
         reference_path,
-        method,
+        analysis_type,
+        bader_method,
+        badelf_method,
         vacuum_tol,
         basin_tol,
     ):
@@ -185,7 +240,9 @@ class BaderWorker(qc.QObject):
         self.charge_path = charge_path
         self.total_path = total_path
         self.reference_path = reference_path
-        self.method = method
+        self.analysis_type = analysis_type
+        self.bader_method = bader_method
+        self.badelf_method = badelf_method
         self.vacuum_tol = vacuum_tol
         self.basin_tol = basin_tol
 
@@ -209,17 +266,26 @@ class BaderWorker(qc.QObject):
         except Exception as e:
             self.error.emit(f"Grid failed to load with the following error:\n {e}")
             return
-
-        # create bader object
-        bader = Bader(
+        
+        if self.analysis_type == "Bader":
+            # create bader object
+            from baderkit.bader import Bader as BaderObject
+        elif self.analysis_type == "BadELF":
+            from baderkit.elf_analysis import Badelf as BaderObject
+        
+        elif self.analysis_type == "ElfLabeler":
+            from baderkit.elf_analysis import ElfLabeler as BaderObject
+            
+        bader = BaderObject(
             charge_grid=charge_grid,
             total_grid=total_grid,
             reference_grid=reference_grid,
-            method=self.method,
+            method=self.bader_method,
+            badelf_method=self.badelf_method,
             vacuum_tol=self.vacuum_tol,
             basin_tol=self.basin_tol,
         )
-
+            
         try:
             _ = bader.to_dict()  # force evaluation
         except Exception as e:

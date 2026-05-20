@@ -26,7 +26,7 @@ class BaseAnalysis(GridPlotter, ABC):
         """
         # apply StructurePlotter kwargs
         grid = getattr(base_analysis, grid_name)
-        if structure:
+        if structure is not None:
             grid = grid.copy()
             grid.structure = structure.copy()
         super().__init__(grid=grid, **grid_kwargs)

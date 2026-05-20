@@ -33,31 +33,31 @@ class ExportTab(qw.QWidget):
         settings_layout = qw.QVBoxLayout(settings)
         self.layout.addWidget(settings)
 
-        ###############
-        # Basin Export
-        ###############
-        # create box to surround basin export info
-        basin_group = qw.QGroupBox("Image Export")
-        basin_group_layout = qw.QVBoxLayout(basin_group)
-        settings_layout.addWidget(basin_group)
+        # ###############
+        # # Basin Export
+        # ###############
+        # # create box to surround basin export info
+        # basin_group = qw.QGroupBox("Basin Export")
+        # basin_group_layout = qw.QVBoxLayout(basin_group)
+        # settings_layout.addWidget(basin_group)
 
-        # create a form layout for settings
-        basin_form = qw.QWidget()
-        basin_form_layout = qw.QFormLayout()
-        basin_form.setLayout(basin_form_layout)
-        basin_group_layout.addWidget(basin_form)
+        # # create a form layout for settings
+        # basin_form = qw.QWidget()
+        # basin_form_layout = qw.QFormLayout()
+        # basin_form.setLayout(basin_form_layout)
+        # basin_group_layout.addWidget(basin_form)
 
-        # select data source
-        self.data_source = qw.QComboBox()
-        for source in ["Charge", "Reference"]:
-            self.data_source.addItem(source)
-        self.data_source.setCurrentText("Charge")
-        basin_form_layout.addRow("Grid", self.data_source)
+        # # select data source
+        # self.data_source = qw.QComboBox()
+        # for source in ["Charge", "Reference"]:
+        #     self.data_source.addItem(source)
+        # self.data_source.setCurrentText("Charge")
+        # basin_form_layout.addRow("Grid", self.data_source)
 
-        # export button
-        export_button = qw.QPushButton("Export Basins")
-        export_button.clicked.connect(self.export_basins)
-        basin_group_layout.addWidget(export_button)
+        # # export button
+        # export_button = qw.QPushButton("Export Basins")
+        # export_button.clicked.connect(self.export_basins)
+        # basin_group_layout.addWidget(export_button)
 
         ###############
         # Image Export
@@ -96,44 +96,46 @@ class ExportTab(qw.QWidget):
         # Make options visible
         self.layout.setCurrentIndex(1)
 
-    def export_basins(self):
-        format_filters = "VASP (*.vasp);;CUBE (*.cube);;HDF5 (*.hdf5)"
+    # The current basin export exports all basins which isn't very useful. I would
+    # want to update this to have the same options as the CLI
+    # def export_basins(self):
+    #     format_filters = "VASP (*.vasp);;CUBE (*.cube);;HDF5 (*.hdf5)"
 
-        # open dialog
-        filename, selected_filter = qw.QFileDialog.getSaveFileName(
-            self, "Export Basins", "", format_filters, options=qw.QFileDialog.Options()
-        )
-        if filename:
-            # Detect extension from filter if missing
-            if "." not in filename:
-                ext = (
-                    selected_filter.split("(")[1]
-                    .split(")")[0]
-                    .split()[0]
-                    .replace("*", "")
-                )
-                filename += ext
-            else:
-                ext = Path(filename).suffix
+    #     # open dialog
+    #     filename, selected_filter = qw.QFileDialog.getSaveFileName(
+    #         self, "Export Basins", "", format_filters, options=qw.QFileDialog.Options()
+    #     )
+    #     if filename:
+    #         # Detect extension from filter if missing
+    #         if "." not in filename:
+    #             ext = (
+    #                 selected_filter.split("(")[1]
+    #                 .split(")")[0]
+    #                 .split()[0]
+    #                 .replace("*", "")
+    #             )
+    #             filename += ext
+    #         else:
+    #             ext = Path(filename).suffix
 
-        # get bader and plotter objects
-        bader = self.main.bader
-        plotter = self.main.bader_plotter
+    #     # get bader and plotter objects
+    #     bader = self.main.bader
+    #     plotter = self.main.bader_plotter
 
-        # get mask where current selected basins are
-        basin_labels = bader.basin_labels
-        data_mask = np.isin(basin_labels, list(plotter.visible_bader_basins))
+    #     # get mask where current selected basins are
+    #     basin_labels = bader.basin_labels
+    #     data_mask = np.isin(basin_labels, list(plotter.visible_bader_basins))
 
-        # get a copy of the grid
-        if self.data_source.currentText == "Charge":
-            total = bader.charge_grid.total.copy()
-        else:
-            total = bader.reference_grid.total.copy()
-        total[~data_mask] = 0.0
-        temp_grid = Grid(bader.structure, data={"total": total})
+    #     # get a copy of the grid
+    #     if self.data_source.currentText == "Charge":
+    #         total = bader.charge_grid.total.copy()
+    #     else:
+    #         total = bader.reference_grid.total.copy()
+    #     total[~data_mask] = 0.0
+    #     temp_grid = Grid(bader.structure, data={"total": total})
 
-        # write to file
-        temp_grid.write(filename, output_format=ext.strip("."))
+    #     # write to file
+    #     temp_grid.write(filename, output_format=ext.strip("."))
 
     def export_image(self):
         # get possible extensions

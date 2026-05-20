@@ -18,8 +18,6 @@ from pyvistaqt import MainWindow as pvMainWindow
 from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
-from baderkit.plotting.core import BaderPlotter
-
 from .tabs import BaderTab, BasinTab, ExportTab, StyleTab
 
 
@@ -94,11 +92,23 @@ class MainWindow(pvMainWindow):
 
         # --- create plotter, ask it to attach to the container ---
         # otherwise reparent the interactor widget below.
-        self.bader_plotter = BaderPlotter(
+        analysis_type = self.analysis_type.currentText()
+        if analysis_type == "Bader":
+            from baderkit.plotting import BaderPlotter as Plotter
+        elif analysis_type == "BadELF":
+            from baderkit.plotting import BadelfPlotter as Plotter
+        elif analysis_type == "ElfLabeler":
+            from baderkit.plotting import ElfLabelerPlotter as Plotter
+            
+        self.bader_plotter = Plotter(
             bader,
             grid_name=self.data_source.currentText(),
             qt_plotter=True,
             qt_frame=container,
+            pbr=True,
+            light_intensity=1.0,
+            atom_metallicness=0.15,
+            atom_roughness=0.2,
         )
 
         # get the actual QWidget that must be inserted
@@ -154,12 +164,12 @@ def run_app():
     app = qw.QApplication(sys.argv)
 
     with importlib.resources.open_text(
-        "baderkit.plotting.gui.stylesheets", "custom.qss"
+        "baderkit.ui.gui.stylesheets", "custom.qss"
     ) as f:
         app.setStyleSheet(f.read())
 
     with importlib.resources.path(
-        "baderkit.plotting.gui.stylesheets", "logo.svg"
+        "baderkit.ui.gui.stylesheets", "logo.svg"
     ) as icon_path:
         icon = QIcon(str(icon_path))
     app.setWindowIcon(icon)

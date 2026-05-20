@@ -4,8 +4,8 @@ from pymatgen.core import Species
 from qtpy import QtWidgets as qw
 from qtpy.QtCore import Qt
 
-from baderkit.plotting.defaults import ATOM_COLORS
-from baderkit.plotting.gui.widgets import (
+from baderkit.plotting.base.defaults import ATOM_COLORS
+from baderkit.ui.gui.widgets import (
     ColorPicker,
     DoubleSpinBox,
     centered_widget,
@@ -42,7 +42,7 @@ class AtomsTab(qw.QWidget):
         self.settings_layout.addWidget(form)
 
         self.pbr = qw.QCheckBox()
-        self.pbr.setChecked(False)
+        self.pbr.setChecked(True)
         self.pbr.setSizePolicy(qw.QSizePolicy.Minimum, qw.QSizePolicy.Preferred)
         self.pbr.toggled.connect(self.set_pbr)
         form_layout.addRow("Physically Based Rendering", self.pbr)
@@ -51,10 +51,21 @@ class AtomsTab(qw.QWidget):
             min_value=0.0,
             max_value=1.0,
             step_size=0.01,
+            current_value=0.15,
             main=main,
             plot_prop="atom_metallicness",
         )
         form_layout.addRow("Metallicity", self.metallicity)
+        
+        self.roughness = DoubleSpinBox(
+            min_value=0.0,
+            max_value=1.0,
+            step_size=0.01,
+            current_value=0.2,
+            main=main,
+            plot_prop="atom_roughness",
+        )
+        form_layout.addRow("Roughness", self.roughness)
 
         # Create a tree that will hold the settings
         tree = qw.QTreeWidget()
@@ -191,14 +202,14 @@ class AtomsTab(qw.QWidget):
         radii = []
         for radius_widget in self.atom_radii:
             radii.append(radius_widget.value())
-        self.main.set_property(radii, "radii")
+        self.main.set_property(radii, "atom_radii")
 
     def set_colors(self):
         # get colors from each atom
         colors = []
         for color_widget in self.atom_colors:
             colors.append(color_widget.color())
-        self.main.set_property(colors, "colors")
+        self.main.set_property(colors, "atom_colors")
 
     def set_visibility(self):
         visible = []
@@ -207,7 +218,7 @@ class AtomsTab(qw.QWidget):
                 visible.append(1.0)
             else:
                 visible.append(0.0)
-        self.main.set_property(visible, "visible_atoms")
+        self.main.set_property(visible, "atom_opacities")
 
     # Iterate all items and delete their widgets
     def clear_tree_widgets(self):

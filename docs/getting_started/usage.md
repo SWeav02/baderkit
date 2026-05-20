@@ -111,3 +111,18 @@ Classes in BaderKit are constructed to follow the same usage pattern. Though we 
         ```bash
         baderkit methodname chargefile referencefile
         ```
+
+=== "GUI"
+
+    1. Activate your environment with BaderKit installed. If you are not using an
+    environment manager, skip to step 2.
+
+        ```bash
+        conda activate my_env
+        ```
+
+    2. Launch the GUI Applitcation
+
+        ```bash
+        baderkit gui
+        ```

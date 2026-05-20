@@ -111,6 +111,35 @@ QTreeWidget::item:selected {
     alternate-background-color: rgb(213, 204, 235);  /* lighter gray for alternate rows */
 }
 
+/* ### QTableWidget ### */
+
+QTableWidget {
+    background-color: rgb(252,250,255);
+    alternate-background-color: rgb(213, 204, 235);
+    color: rgb(30, 0, 40);
+    gridline-color: rgb(180, 170, 200);
+    selection-background-color: rgb(190, 175, 220);
+    selection-color: rgb(30, 0, 40);
+}
+
+/* table items */
+QTableWidget::item {
+    padding: 2px;
+}
+
+/* selected row/item */
+QTableWidget::item:selected {
+    background-color: rgb(190, 175, 220);
+    color: rgb(30, 0, 40);
+}
+
+/* header styling */
+QHeaderView::section {
+    background-color: rgb(230, 225, 245);
+    color: rgb(30, 0, 40);
+    padding: 4px;
+    border: 1px solid rgb(200, 190, 220);
+}
 
 QLineEdit {
     border: 1px solid gray;

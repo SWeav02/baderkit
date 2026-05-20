@@ -25,113 +25,134 @@ class BasinTab(qw.QWidget):
         empty_label.setAlignment(Qt.AlignCenter)
         self.stackedlayout.addWidget(empty_label)
 
-        # Create a tree that will hold the atom/basin selection
-        tree = qw.QTreeWidget()
-        tree.setColumnCount(4)
-        tree.setHeaderLabels(["Label", "Visible", "Charge", "Volume", "Coord"])
-        header = tree.header()
-        header.setSectionResizeMode(0, qw.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, qw.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, qw.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, qw.QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, qw.QHeaderView.ResizeToContents)
-        tree.setAlternatingRowColors(True)
-        self.stackedlayout.addWidget(tree)
-        self.tree = tree
+        # Create a table that will hold the basin selection
+        table = self.get_table_widget()
+        self.stackedlayout.addWidget(table)
+        self.table = table
 
     def set_bader(self):
 
-        # clear tree
-        self.clear_tree_widgets()
+        # clear table
+        self.table.clearContents()
+        self.table.setRowCount(0)
         # temporarily disable updates so that all updates appear at once
-        self.tree.setUpdatesEnabled(False)
+        self.table.setUpdatesEnabled(False)
 
-        bader = self.main.bader
-        structure = bader.structure
+        # create table
+        self.create_table_rows()
 
-        atom_trees = {}
-        atom_visibility = {}
-
-        # create a tree row for each atom
-        for i, site in enumerate(structure):
-            # get data
-            charge = str(round(bader.atom_charges[i], 4))
-            volume = str(round(bader.atom_volumes[i], 4))
-            coords = "(" + ", ".join(f"{x:.3f}" for x in site.frac_coords) + ")"
-
-            # create a widget for visibility
-            visible_widget = qw.QCheckBox()
-            if i == 0:
-                visible_widget.setChecked(True)
-            atom_visibility[i] = visible_widget
-
-            # make parent row
-            item = qw.QTreeWidgetItem(
-                self.tree, [site.label, "", charge, volume, coords]
-            )  # only string in first col
-            self.tree.addTopLevelItem(item)
-
-            # attach visibility widget
-            self.tree.setItemWidget(item, 1, centered_widget(visible_widget))
-
-            # store row
-            atom_trees[i] = item
-
-        # now add basins belonging to each atom
-        self.basin_visibility = []
-
-        for i, atom_idx in enumerate(bader.basin_atoms):
-            # get data
-            charge = str(round(bader.basin_charges[i], 4))
-            volume = str(round(bader.basin_volumes[i], 4))
-            coords = "(" + ", ".join(f"{x:.3f}" for x in bader.maxima_frac[i]) + ")"
-
-            # create a widget for visibility
-            visible_widget = qw.QCheckBox()
-            if atom_idx == 0:
-                visible_widget.setChecked(True)
-            self.basin_visibility.append(visible_widget)
-            # connect to setter
-            visible_widget.toggled.connect(self.set_plotter_basins)
-            # connect to parent atom
-            atom_visibility[atom_idx].toggled.connect(visible_widget.setChecked)
-
-            # make child row under the species row
-            basin_item = qw.QTreeWidgetItem(
-                atom_trees[atom_idx],
-                [f"basin {i}", "", charge, volume, coords],
-            )
-            self.tree.setItemWidget(basin_item, 1, centered_widget(visible_widget))
+        # resize columns
+        self.table.resizeColumnsToContents()
+        
+        # Don't allow editing
+        self.table.setEditTriggers(qw.QAbstractItemView.NoEditTriggers)
 
         # enable updates
-        self.tree.setUpdatesEnabled(True)
+        self.table.setUpdatesEnabled(True)
         # Make options visible
         self.stackedlayout.setCurrentIndex(1)
 
-    def set_plotter_basins(self):
+    def set_atom_basins(self):
         self.main.set_property(
-            [i for i, button in enumerate(self.basin_visibility) if button.isChecked()],
-            "visible_bader_basins",
+            [i for i, button in self.atom_visibility.items() if button.isChecked()],
+            "visible_atom_basins",
         )
+        
+    def set_feature_basins(self):
+        self.main.set_property(
+            [i for i, button in self.feature_visibility.items() if button.isChecked()],
+            "visible_chemical_features",
+        )
+        
+    def get_table_widget(self):
+        analysis_type = self.main.analysis_type.currentText()
+        if analysis_type == "Bader" or analysis_type == "BadELF":
+            table = qw.QTableWidget()
+            table.setColumnCount(5)
+            table.setHorizontalHeaderLabels(["Label", "Visible", "Charge", "Volume", "Coord"])
+            table.setAlternatingRowColors(True)
+            return table
+        elif analysis_type == "ElfLabeler":
+            table = qw.QTableWidget()
+            table.setColumnCount(5)
+            table.setHorizontalHeaderLabels(["Label", "Visible"])
+            table.setAlternatingRowColors(True)
+            return table
+    
+    def create_table_rows(self):
+        bader = self.main.bader
+        analysis_type = self.main.analysis_type.currentText()
+        if analysis_type == "Bader" or analysis_type == "BadELF":
+            if analysis_type == "Bader":
+                structure = bader.structure
+            else:
+                structure = bader.nna_structure
+            self.atom_visibility = {}
+    
+            # create a table row for each atom
+            for i, site in enumerate(structure):
+                # create row
+                self.table.insertRow(i)
+                
+                # get data
+                charge = str(round(bader.atom_charges[i], 4))
+                volume = str(round(bader.atom_volumes[i], 4))
+                coords = "(" + ", ".join(f"{x:.3f}" for x in site.frac_coords) + ")"
+    
+                # create a widget for visibility
+                visible_widget = qw.QCheckBox()
+                self.atom_visibility[i] = visible_widget
+                
+                # connect checkbox
+                visible_widget.toggled.connect(self.set_atom_basins)
+                
+                # create table items
+                self.table.setItem(i, 0, qw.QTableWidgetItem(site.label))
+                self.table.setCellWidget(i, 1, centered_widget(visible_widget))
+                self.table.setItem(i, 2, qw.QTableWidgetItem(charge))
+                self.table.setItem(i, 3, qw.QTableWidgetItem(volume))
+                self.table.setItem(i, 4, qw.QTableWidgetItem(coords))
+                
+        elif analysis_type == "ElfLabeler":
+            features = bader.types_in_system
+            self.feature_visibility = {}
+    
+            # create a table row for each atom
+            for i, feature in enumerate(features):
+                # create row
+                self.table.insertRow(i)
+    
+                # create a widget for visibility
+                visible_widget = qw.QCheckBox()
+                self.feature_visibility[i] = visible_widget
+                
+                # connect checkbox
+                visible_widget.toggled.connect(self.set_feature_basins)
+                
+                # create table items
+                self.table.setItem(i, 0, qw.QTableWidgetItem(feature))
+                self.table.setCellWidget(i, 1, centered_widget(visible_widget))
+            
+        
 
-    # Iterate all items and delete their widgets
-    def clear_tree_widgets(self):
-        top_items = [
-            self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())
-        ]
-        for item in top_items:
-            self._clear_item_widgets_recursive(item)
+    # # Iterate all items and delete their widgets
+    # def clear_table_widgets(self):
+    #     top_items = [
+    #         self.table.topLevelItem(i) for i in range(self.table.topLevelItemCount())
+    #     ]
+    #     for item in top_items:
+    #         self._clear_item_widgets_recursive(item)
 
-        # finally clear the items themselves
-        self.tree.clear()
+    #     # finally clear the items themselves
+    #     self.table.clear()
 
-    def _clear_item_widgets_recursive(self, item):
-        for col in range(self.tree.columnCount()):
-            widget = self.tree.itemWidget(item, col)
-            if widget:
-                self.tree.removeItemWidget(item, col)
-                widget.deleteLater()
+    # def _clear_item_widgets_recursive(self, item):
+    #     for col in range(self.table.columnCount()):
+    #         widget = self.table.itemWidget(item, col)
+    #         if widget:
+    #             self.table.removeItemWidget(item, col)
+    #             widget.deleteLater()
 
-        # recurse into children
-        for i in range(item.childCount()):
-            self._clear_item_widgets_recursive(item.child(i))
+    #     # recurse into children
+    #     for i in range(item.childCount()):
+    #         self._clear_item_widgets_recursive(item.child(i))

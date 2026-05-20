@@ -30,6 +30,7 @@ class StructurePlotter(VtkPlotter):
         structure: Structure,
         wrap_atoms=True,
         atom_metallicness=0.0,
+        atom_roughness=0.0,
         radii_scale=0.3,
         atom_radii=None,
         atom_colors=None,
@@ -40,6 +41,7 @@ class StructurePlotter(VtkPlotter):
         self._atom_opacities = np.array([1 for i in range(len(structure))], dtype=float)
         self._wrap_atoms = wrap_atoms
         self._atom_metallicness = atom_metallicness
+        self._atom_roughness = atom_roughness
         self._radii_scale = radii_scale
         radii = []
         for s in structure:
@@ -208,6 +210,25 @@ class StructurePlotter(VtkPlotter):
         actor = self.plotter.actors["atom_glyphs"]
         actor.prop.metallic = atom_metallicness
         self._atom_metallicness = atom_metallicness
+        
+    @property
+    def atom_roughness(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The amount of roughness in the atom display.
+
+        """
+        return self._atom_roughness
+
+    @atom_roughness.setter
+    def atom_roughness(self, atom_roughness: float):
+        # update all atoms
+        actor = self.plotter.actors["atom_glyphs"]
+        actor.prop.roughness = atom_roughness
+        self._atom_roughness = atom_roughness
 
     @property
     def atom_df(self) -> pd.DataFrame:
