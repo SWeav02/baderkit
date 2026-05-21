@@ -4,7 +4,6 @@ import math
 
 import numpy as np
 from numba import njit, prange
-from numpy.typing import NDArray
 
 from baderkit.global_numba.interpolation import interp_nearest, interp_spline
 
@@ -231,7 +230,10 @@ def get_elf_radius(
     resolution = 1e-8  # angstroms
     n = round(math.log(resolution * line_res) / math.log(1 / 2))
     step_mult = 1.0
-    for i in range(n):
+    i = 0
+    while (
+        i < n
+    ):  # numba seems to misinterperet range() when using parallel=True sometimes
         step_mult /= 2.0
         step = step_vec * step_mult
         # get value above and below
@@ -265,6 +267,7 @@ def get_elf_radius(
                 current_value = down_val
                 current_coord = dcoord
                 radius_index -= step_mult
+        i += 1
 
     # We now have a refined radius. Calculate the actual bond distance
     bond_frac = radius_index / (num_points - 1)

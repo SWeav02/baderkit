@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from numba import njit, prange, types
-from numpy.typing import NDArray
+from numba import njit, prange
 
 from baderkit.global_numba.transforms import IMAGE_TO_INT, INT_TO_IMAGE
 
@@ -438,120 +437,6 @@ def get_atom_charge_claims(
         connection_indices[idx] = index
 
     return charge_claims, access_numbers, connection_indices, species_nums
-
-
-# @njit(cache=True, parallel=True)
-# def get_unique_basins_w_images(
-#     atom_labels,
-#     atom_images,
-#     local_labels,
-#     local_images,
-#     num_atoms,
-#     num_local,
-#     local_frac,
-#     charge_frac,
-#         ):
-#     nx, ny, nz = atom_labels.shape
-#     labels_w_images = np.zeros((num_atoms, 27), dtype=np.bool_)
-#     for i in prange(nx):
-#         for j in range(ny):
-#             for k in range(nz):
-#                 atom_label = atom_labels[i,j,k]
-#                 local_label = local_labels[i,j,k]
-#                 # skip vacuum
-#                 if atom_label == num_atoms or local_label == num_local:
-#                     continue
-
-#                 # get the shift required to move the charge maximum into the
-#                 # same image as the local maximum
-#                 shift = np.round(local_frac[local_label] - charge_frac[atom_label]).astype(np.int64)
-
-#                 # get charge image relative to local basin
-#                 atom_image = INT_TO_IMAGE[atom_images[i,j,k]]
-#                 local_image = INT_TO_IMAGE[local_images[i,j,k]] + shift
-#                 mi, mj, mk = local_image - atom_image
-
-#                 image = IMAGE_TO_INT[mi, mj, mk]
-
-#                 labels_w_images[atom_label, image] = True
-#     # construct label map
-#     pairs = np.argwhere(labels_w_images)
-#     label_map = np.empty_like(labels_w_images, dtype=np.int16)
-#     for idx in prange(len(pairs)):
-#         i,j = pairs[idx]
-#         label_map[i,j] = idx
-#     return pairs, label_map
-
-
-# @njit(cache=True)
-# def get_overlap_counts(
-#     atom_labels: NDArray[np.int64],
-#     atom_images: NDArray[np.int64],
-#     local_labels: NDArray[np.int64],
-#     local_images: NDArray[np.int64],
-#     charge_data: NDArray[np.float64],
-#     local_frac: NDArray[np.float64],
-#     charge_frac: NDArray[np.float64],
-#     num_atoms: int,
-#     num_local: int,
-#         ):
-#     nx, ny, nz = local_labels.shape
-
-#     # get the total unique labels/images
-#     label_image_pairs, label_image_map = get_unique_basins_w_images(
-#         atom_labels=atom_labels,
-#         atom_images=atom_images,
-#         local_labels=local_labels,
-#         local_images=local_images,
-#         num_atoms=num_atoms,
-#         num_local=num_local,
-#         local_frac=local_frac,
-#         charge_frac=charge_frac,
-#         )
-
-#     # create array to track total populations
-#     overlap_counts = np.zeros((len(label_image_pairs), num_local), dtype=np.float64)
-
-#     # What we need:
-#     # Overlap labels (distinct types of overlap between charge/local)
-#     # Atoms overlapped with each local basin
-#     # Counts for atoms overlapped with each local basin
-
-#     # loop over each voxel and count the number of overlaps
-#     for i in range(nx):
-#         for j in range(ny):
-#             for k in range(nz):
-#                 # get the labels at this point
-#                 atom_label = atom_labels[i, j, k]
-#                 local_label = local_labels[i, j, k]
-
-#                 # skip points in vacuum
-#                 if atom_label == num_atoms or local_label == num_local:
-#                     continue
-
-#                 # get the shift required to move the charge maximum into the
-#                 # same image as the local maximum
-#                 shift = np.round(local_frac[local_label] - charge_frac[atom_label]).astype(np.int64)
-
-#                 # get charge image relative to local basin
-#                 atom_image = INT_TO_IMAGE[atom_images[i,j,k]]
-#                 local_image = INT_TO_IMAGE[local_images[i,j,k]] + shift
-#                 mi, mj, mk = local_image - atom_image
-
-#                 image = IMAGE_TO_INT[mi, mj, mk]
-
-#                 # add to our count
-#                 atom_pair = label_image_map[atom_label, image]
-#                 overlap_counts[atom_pair, local_label] += charge_data[i,j,k]
-
-#     return overlap_counts, label_image_pairs, label_image_map
-
-
-# TODO:
-# add images into this as well
-# calculate connection index
-# calculate nearest neighbor sharing
-# test with total charge densities
 
 
 @njit(cache=True)
