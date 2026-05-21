@@ -103,7 +103,6 @@ where = ["src"]
 # be effectively the opposite of .gitignore.
 [tool.setuptools]
 include-package-data = true
-package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 baderkit = [
@@ -141,4 +140,4 @@ profile = "black"
 
 [tool.uv]
 required-environments = "sys_platform == 'win32' and platform_machine == 'AMD64'"
-only-binary = ["numba"]
+no-build-package = ["numba"]
