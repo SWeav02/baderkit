@@ -42,7 +42,8 @@ def get_interior_basin_charges_and_volumes(
     return charges, volumes, vacuum_charge, vacuum_volume
 
 
-@njit(parallel=True, cache=True)
+# @njit(parallel=True, cache=True)
+@njit(cache=True)
 def get_edge_charges_volumes(
     reference_data,
     charge_data,
@@ -149,9 +150,14 @@ def get_edge_charges_volumes(
             continue
 
         # otherwise loop over each neighbor and consolidate charge
-        for neigh_idx in range(neigh_num):
+        neigh_idx = 0
+        while (
+            neigh_idx < neigh_num
+        ):  # range() with parallel=True seems to cause issues sometimes
+            # for neigh_idx in range(neigh_num):
             neigh = neighs[neigh_idx]
             flux = fluxes[neigh_idx]
+            neigh_idx += 1
             # if the neighbor has no charge in our flat array, it is not an edge
             if flat_charge[neigh] == 0.0:
                 ni, nj, nk = flat_to_coords(neigh, ny_nz, nz)
