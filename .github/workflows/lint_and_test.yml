@@ -63,12 +63,12 @@ jobs:
           python -m pip install -e .
           
       - name: Verify install
-          shell: bash -l {0}
-          run: |
-            which python
-            python --version
-            pip list | grep baderkit || true
-            python -c "import baderkit; print(baderkit.__file__)"
+        shell: bash -l {0}
+        run: |
+          which python
+          python --version
+          pip list | grep baderkit || true
+          python -c "import baderkit; print(baderkit.__file__)"
 
       # Run checks to see that baderkit & deps are installed correctly
       - name: Check conda info
