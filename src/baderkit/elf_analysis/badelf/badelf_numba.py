@@ -7,8 +7,7 @@ from numpy.typing import NDArray
 from baderkit.global_numba.voronoi import get_plane_dist
 
 
-# @njit(parallel=True, cache=True)
-@njit(cache=True)
+@njit(parallel=True, cache=True)
 def get_in_partition_assignments(
     data: NDArray,
     labels: NDArray,  # previous assignments
@@ -93,7 +92,8 @@ def get_in_partition_assignments(
                     labels[i, j, k] = current_site
 
     # assign charge/volume from whole assignments
-    for i in range(nx):
+    for i in [idx for idx in range(nx)]:
+        # for i in range(nx):
         for j in range(ny):
             for k in range(nz):
                 label = labels[i, j, k]
@@ -104,8 +104,7 @@ def get_in_partition_assignments(
     return labels, charges, volumes
 
 
-# @njit(parallel=True, cache=True)
-@njit(cache=True)
+@njit(parallel=True, cache=True)
 def get_outside_partition_assignments(
     data,
     labels,
