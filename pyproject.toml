@@ -103,6 +103,7 @@ where = ["src"]
 # be effectively the opposite of .gitignore.
 [tool.setuptools]
 include-package-data = true
+package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 baderkit = [
