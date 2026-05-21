@@ -55,15 +55,15 @@ jobs:
           channels: conda-forge
           activate-environment: baderkit_dev
           channel-priority: strict
-      # The lines "shell: bash -l {0}" ensure we use the created env below
+      # The lines "shell: bash -el {0}" ensure we use the created env below
       
       - name: Install BaderKit
-        shell: bash -l {0}
+        shell: bash -el {0}
         run: |
-          python -m pip install -e .
+          pip install -e .
           
       - name: Verify install
-        shell: bash -l {0}
+        shell: bash -el {0}
         run: |
           which python
           python --version
@@ -72,7 +72,7 @@ jobs:
 
       # Run checks to see that baderkit & deps are installed correctly
       - name: Check conda info
-        shell: bash -l {0}
+        shell: bash -el {0}
         run: |
           conda info
           conda list
@@ -85,7 +85,7 @@ jobs:
       - name: Run default tests
         shell: bash -el {0}
         run: |
-          python -m pytest -vv --durations=15
+          pytest -vv --durations=15
     # "-vv" makes the pytest output verbose so errors are more useful
     # and "duration=0" has pytest print how long every test took. We ask for
     # the 15 slowest ones.
