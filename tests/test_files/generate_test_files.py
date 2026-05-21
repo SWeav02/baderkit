@@ -10,11 +10,10 @@ from baderkit.elf_analysis.badelf.methods import BadelfMethod
 path = Path(".")
 
 # Bader
-bader = Bader.from_vasp(path / "CHGCAR")
 bader_path = path / "bader"
 for method in [i.value for i in BaderMethod]:
+    bader = Bader.from_vasp(path / "CHGCAR", method=method)
     subfolder = bader_path / method
-    bader.method = method
     bader.write_json(subfolder / "bader.json")
     bader.write_atom_tsv(subfolder / "bader_atoms.tsv")
     bader.write_basin_tsv(subfolder / "bader_basins.tsv")

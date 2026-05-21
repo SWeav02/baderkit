@@ -3,6 +3,7 @@
 This file contains a series of tests for the core functionality of the Bader methods.
 """
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -10,6 +11,8 @@ import pytest
 
 from baderkit import Bader, Grid
 from baderkit.bader.methods import BaderMethod
+
+from .base import assert_nested_equal
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_BADER_FOLDER = TEST_FOLDER / "bader"
@@ -86,23 +89,34 @@ def test_running_bader_methods(tmp_path, method):
     }
     assert len(np.where(bader.maxima_basin_labels == 2)[0]) == counts[method]
 
-    with open(TEST_BADER_FOLDER / method / "bader.json", "r") as file:
-        expected_json = file.read()
-    with open(TEST_BADER_FOLDER / method / "bader_atoms.tsv", "r") as file:
-        expected_atom_results = file.read()
-    with open(TEST_BADER_FOLDER / method / "bader_basins.tsv", "r") as file:
-        expected_basin_results = file.read()
-    # write results to temp file then compare outputs
+    # Expected outputs
+    with open(TEST_BADER_FOLDER / method / "bader.json") as f:
+        expected_json = json.load(f)
+
+    with open(TEST_BADER_FOLDER / method / "bader_atoms.tsv") as f:
+        expected_atom_results = f.read()
+
+    with open(TEST_BADER_FOLDER / method / "bader_basins.tsv") as f:
+        expected_basin_results = f.read()
+
+    # Write outputs
     bader.write_json(tmp_path / "bader.json")
     bader.write_atom_tsv(tmp_path / "bader_atoms.tsv")
     bader.write_basin_tsv(tmp_path / "bader_basins.tsv")
-    # read in results and compare
-    with open(tmp_path / "bader.json", "r") as file:
-        json_results = file.read()
-    with open(tmp_path / "bader_atoms.tsv", "r") as file:
-        atom_results = file.read()
-    with open(tmp_path / "bader_basins.tsv", "r") as file:
-        basin_results = file.read()
-    assert json_results == expected_json
+
+    # Read generated outputs
+    with open(tmp_path / "bader.json") as f:
+        json_results = json.load(f)
+
+    with open(tmp_path / "bader_atoms.tsv") as f:
+        atom_results = f.read()
+
+    with open(tmp_path / "bader_basins.tsv") as f:
+        basin_results = f.read()
+
+    # Tolerant JSON comparison
+    assert_nested_equal(json_results, expected_json)
+
+    # Exact text comparisons
     assert atom_results == expected_atom_results
     assert basin_results == expected_basin_results

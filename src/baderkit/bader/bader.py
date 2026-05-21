@@ -186,7 +186,6 @@ class Bader(BaseAnalysis):
         **kwargs,
     ):
         super().__init__(**kwargs)
-
         # ensure the method is valid
         valid_methods = [m.value for m in BaderMethod]
         if isinstance(method, BaderMethod):
@@ -264,7 +263,7 @@ class Bader(BaseAnalysis):
         return self._nna_cutoff
 
     @nna_cutoff.setter
-    def nna_cutoff(self, value: str | BaderMethod):
+    def nna_cutoff(self, value: float):
         self._nna_cutoff = value
         # reset atom properties
         self._reset_properties(
@@ -303,7 +302,7 @@ class Bader(BaseAnalysis):
         return self._persistence_tol
 
     @persistence_tol.setter
-    def persistence_tol(self, value: str | BaderMethod):
+    def persistence_tol(self, value: float):
         self._persistence_tol = value
         # reset atom properties
         self._reset_properties(
@@ -994,7 +993,7 @@ class Bader(BaseAnalysis):
         return self._persistence_tol
 
     @persistence_tol.setter
-    def persistence_tol(self, value: str | BaderMethod):
+    def persistence_tol(self, value: float):
         self._persistence_tol = value
         # reset atom properties
         self._reset_properties(

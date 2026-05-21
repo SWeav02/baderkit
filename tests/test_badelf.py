@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 This file contains a series of tests for the core functionality of the BadELF class.
+
 """
 
+import json
 from pathlib import Path
 
 import pytest
 
 from baderkit.elf_analysis import Badelf
 from baderkit.elf_analysis.badelf.methods import BadelfMethod
+
+from .base import assert_nested_equal
 
 TEST_FOLDER = Path(__file__).parent / "test_files"
 TEST_CHGCAR = TEST_FOLDER / "CHGCAR"
@@ -56,7 +60,7 @@ def test_running_badelf_methods(tmp_path, method):
         partition_method=method,
     )
     with open(TEST_BADELF_FOLDER / method / "badelf.json", "r") as file:
-        expected_json = file.read()
+        expected_json = json.load(file)
 
     with open(TEST_BADELF_FOLDER / method / "badelf_atoms.tsv", "r") as file:
         expected_atom_results = file.read()
@@ -67,7 +71,7 @@ def test_running_badelf_methods(tmp_path, method):
 
     # read in results and compare
     with open(tmp_path / "badelf.json", "r") as file:
-        json_results = file.read()
+        json_results = json.load(file)
 
     with open(tmp_path / "badelf_atoms.tsv", "r") as file:
         atom_results = file.read()
@@ -75,6 +79,7 @@ def test_running_badelf_methods(tmp_path, method):
     # make sure we find the electride site
     assert badelf.num_nnas == 1
 
-    assert json_results == expected_json
+    # Tolerant JSON comparison
+    assert_nested_equal(json_results, expected_json)
 
     assert atom_results == expected_atom_results

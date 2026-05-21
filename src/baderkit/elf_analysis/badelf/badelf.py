@@ -86,7 +86,7 @@ class Badelf(BaseElfAnalysis):
         reference_grid: Grid,
         charge_grid: Grid,
         total_charge_grid: Grid = None,
-        partition_method: Literal["badelf", "voronelf", "zero-flux"] = "badelf",
+        partition_method: str | BadelfMethod = BadelfMethod.default,
         shared_feature_splitting_method: Literal[
             "weighted_dist", "pauling", "equal", "dist", "nearest"
         ] = "weighted_dist",
@@ -155,13 +155,17 @@ class Badelf(BaseElfAnalysis):
             Any keywords to feed to the ElfRadii/ElfLabeler classes
         """
 
-        if partition_method not in ["badelf", "voronelf", "zero-flux"]:
+        # ensure the method is valid
+        valid_methods = [m.value for m in BadelfMethod]
+        if isinstance(partition_method, BadelfMethod):
+            self._partition_method = partition_method
+        elif partition_method in valid_methods:
+            self._partition_method = BadelfMethod(partition_method)
+        else:
             raise ValueError(
-                """The method setting you chose does not exist. Please select
-                  either 'badelf', 'voronelf', or 'zero-flux'.
-                  """
+                f"Invalid method '{partition_method}'. Available options are: {valid_methods}"
             )
-        self._partition_method = partition_method
+
         self._shared_feature_splitting_method = shared_feature_splitting_method
         self._kwargs = kwargs
 
@@ -185,7 +189,7 @@ class Badelf(BaseElfAnalysis):
         str
             The method to use for partitioning nnas from the nearby
             atoms.
-                'badelf' (default)
+                'badelf'
                     Separates nnas using zero-flux surfaces then uses
                     planes at atom radii to separate atoms. This may give more reasonable
                     results for atoms, particularly in ionic solids. Radii are
@@ -206,8 +210,16 @@ class Badelf(BaseElfAnalysis):
         return self._partition_method
 
     @partition_method.setter
-    def partition_method(self, value: str):
-        self._partition_method = value
+    def partition_method(self, value: str | BadelfMethod):
+        valid_methods = [m.value for m in BadelfMethod]
+        if isinstance(value, BadelfMethod):
+            self._partition_method = value
+        elif value in BadelfMethod:
+            self._partition_method = BadelfMethod(value)
+        else:
+            raise ValueError(
+                f"Invalid method '{value}'. Available options are: {valid_methods}"
+            )
         self._reset_properties()
 
     @property
@@ -667,8 +679,21 @@ class Badelf(BaseElfAnalysis):
         return round(self.atom_volumes.sum() + self.vacuum_volume, 10)
 
     ###########################################################################
-    # Assignment methods
+    # methods
     ###########################################################################
+
+    @staticmethod
+    def all_methods() -> list[str]:
+        """
+
+        Returns
+        -------
+        list[str]
+            A list of the available methods.
+
+        """
+
+        return [i.value for i in BadelfMethod]
 
     def _get_zero_flux_assignments(self) -> tuple[NDArray]:
         """
@@ -908,6 +933,7 @@ class Badelf(BaseElfAnalysis):
             transform_breaks = np.where(transform_dists[:-1] != transform_dists[1:])[0]
 
             # Now calculate labels, charges, and volumes assigned to each feature
+            breakpoint()
             labels, charges, volumes = get_badelf_assignments(
                 data=self.charge_grid.total,
                 labels=labels,
