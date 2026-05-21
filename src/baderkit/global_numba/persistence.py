@@ -4,12 +4,10 @@ import math
 
 import numpy as np
 from numba import njit, prange
-from numpy.typing import NDArray
 
 from baderkit.global_numba.basic import (
     coords_to_flat,
     dist,
-    flat_to_coords,
     get_transforms_in_radius,
     get_transforms_in_voxels,
     wrap_point_w_shift,
@@ -993,3 +991,275 @@ def get_persistence_groups(
             new_group[idx] = val
         array_groups.append(new_group)
     return array_groups
+
+
+###############################################################################
+# Saddles
+###############################################################################
+@njit(cache=True, parallel=True)
+def group_saddles_by_low_approx_persistence(
+    data,
+    basin_labels,
+    saddle_unions,
+    saddle_images,
+    saddle_indices,
+    saddle_mask,
+    saddle_values,
+    saddle_voxs,
+    root_indices,
+    transforms,
+    transform_dists,
+    use_minima,
+    persistence_tol,
+    matrix,
+):
+    shape = np.array(data.shape)
+    nx, ny, nz = data.shape
+    ny_nz = ny * nz
+
+    saddle_frac = saddle_voxs / shape
+    current_num_roots = len(root_indices)
+    current_saddle_indices = saddle_indices[root_indices]
+
+    # determine the number of possible connections for each current root
+    num_neighs = np.zeros(current_num_roots, dtype=np.int64)
+    for idx in prange(current_num_roots):
+        saddle_idx = root_indices[idx]
+        value = saddle_values[saddle_idx]
+        i, j, k = saddle_voxs[saddle_idx]
+        flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
+
+        # check for neighbors
+        for si, sj, sk in transforms:
+            if si == 0 and sj == 0 and sk == 0:
+                continue
+            ni, nj, nk, ssi, ssj, ssk = wrap_point_w_shift(
+                i + si, j + sj, k + sk, nx, ny, nz
+            )
+            # skip non-saddles
+            if not saddle_mask[ni, nj, nk]:
+                continue
+            neigh_value = data[ni, nj, nk]
+            neigh_flat_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
+
+            # skip neighbors with less extreme values
+            if (
+                use_minima
+                and neigh_value > value
+                or not use_minima
+                and neigh_value < value
+                or neigh_value == value
+                and neigh_flat_idx > flat_idx
+            ):
+                continue
+            # this is another maximum
+            num_neighs[idx] += 1
+
+    # create array for mapping starting points
+    total_possible = 0
+    init_indices = np.zeros(current_num_roots, dtype=np.int64)
+    for idx, num in enumerate(num_neighs):
+        init_indices[idx] = total_possible
+        total_possible += num
+
+    # create arrays to store counts so far and valid points
+    valid = np.zeros(total_possible, np.bool_)
+
+    # create arrays to store connection coords, connected saddles, and values
+    sub_saddle_coords = np.empty((total_possible, 3), dtype=np.float64)
+    sub_saddle_connections = np.empty((total_possible, 4), dtype=np.int16)
+    sub_saddle_values = np.empty(total_possible, dtype=np.float64)
+
+    for idx in prange(current_num_roots):
+        saddle_idx = root_indices[idx]
+        frac = saddle_frac[saddle_idx]
+        saddle_vox = saddle_voxs[saddle_idx]
+        value = saddle_values[saddle_idx]
+        i, j, k = saddle_vox
+        current_idx = init_indices[idx]
+        flat_idx = coords_to_flat(i, j, k, ny_nz, nz)
+
+        # check for neighbors
+        for (si, sj, sk), dist in zip(transforms, transform_dists):
+            if si == 0 and sj == 0 and sk == 0:
+                continue
+            ni, nj, nk, ssi, ssj, ssk = wrap_point_w_shift(
+                i + si, j + sj, k + sk, nx, ny, nz
+            )
+            # skip non-saddles
+            if not saddle_mask[ni, nj, nk]:
+                continue
+
+            neigh_value = data[ni, nj, nk]
+            neigh_flat_idx = coords_to_flat(ni, nj, nk, ny_nz, nz)
+
+            # skip neighbors with less extreme values
+            if (
+                use_minima
+                and neigh_value > value
+                or not use_minima
+                and neigh_value < value
+                or neigh_value == value
+                and neigh_flat_idx > flat_idx
+            ):
+                continue
+
+            # get neighbor frac coords
+            neigh_frac = np.array((ni, nj, nk), dtype=np.float64) / shape
+
+            # wrap frac to be as close to our point as possible
+            neigh_frac += frac - neigh_frac
+            neigh_vox = (neigh_frac * shape).astype(np.int64)
+
+            # get the value these saddles connect at
+            n_points = max(int(round(dist * 20)), 5)
+            conn_val, conn_frac = get_approx_saddle_val(
+                frac,
+                neigh_frac,
+                n_points,
+                data,
+                use_minima,
+                nx,
+                ny,
+                nz,
+                interp_method="cubic",
+            )
+
+            # get voxel coordinate of saddle point
+            sub_saddle_frac = frac + ((neigh_frac - frac) * conn_frac)
+            sub_saddle_vox = sub_saddle_frac * shape
+            # get persistence
+            persistence_score = get_persistence_value(
+                value,
+                neigh_value,
+                conn_val,
+                saddle_vox,
+                neigh_vox,
+                sub_saddle_vox,
+            )
+
+            # if our persistence is below our tolerance we add this saddle
+            if persistence_score < persistence_tol:
+                sub_saddle_coords[current_idx] = sub_saddle_vox
+                image = IMAGE_TO_INT[ssi, ssj, ssk]
+                neigh_idx = np.searchsorted(current_saddle_indices, neigh_flat_idx)
+                sub_saddle_connections[current_idx] = np.array(
+                    (idx, neigh_idx, 13, image), dtype=np.int16
+                )
+                sub_saddle_values[current_idx] = conn_val
+                valid[current_idx] = True
+                current_idx += 1
+
+    # get only valid connections
+    valid_indices = np.where(valid)[0]
+    sub_saddle_coords = sub_saddle_coords[valid_indices]
+    sub_saddle_connections = sub_saddle_connections[valid_indices]
+    sub_saddle_values = sub_saddle_values[valid_indices]
+
+    # get unions and images
+    unions1, images1 = group_by_persistence(
+        data=data,
+        extrema_vox=saddle_voxs[root_indices],
+        extrema_values=saddle_values[root_indices],
+        saddle_connections=sub_saddle_connections,
+        saddle_values=sub_saddle_values,
+        saddle_vox=sub_saddle_coords,
+        persistence_tol=persistence_tol,
+        matrix=matrix,
+        use_minima=use_minima,
+    )
+
+    # update labels and images
+    for idx, (root_idx, image) in enumerate(zip(unions1, images1)):
+        saddle_idx = root_indices[idx]
+        root_saddle_idx = root_indices[root_idx]
+        saddle_unions[saddle_idx] = root_saddle_idx
+        saddle_images[saddle_idx] = image
+
+    return saddle_unions, saddle_images
+
+
+@njit(cache=True)
+def remove_low_persistence_saddles(
+    data,
+    labels,
+    saddle_mask,
+    saddle_vox,
+    persistence_tol,
+    matrix,
+    max_cart_offset,
+    min_cart_offset,
+    n_divide,
+    use_minima=False,
+):
+    shape = np.array(data.shape, dtype=np.int64)
+    nx, ny, nz = shape
+    ny_nz = ny * nz
+
+    # create an array to store values at each maximum
+    saddle_values = np.empty(len(saddle_vox), dtype=np.float64)
+
+    # create array to store the flat index of each saddle
+    saddle_indices = np.empty(len(saddle_vox))
+    for idx, (i, j, k) in enumerate(saddle_vox):
+        saddle_indices[idx] = coords_to_flat(i, j, k, ny_nz, nz)
+        saddle_values[idx] = data[i, j, k]
+
+    # create array to track unions
+    unions = np.arange(len(saddle_vox))
+
+    # create a flat array of shifts for tracking wrapping around edges. These
+    # will initially all be (0,0,0)
+    images = np.zeros((len(saddle_vox), 3), dtype=np.int8)
+
+    ###########################################################################
+    # Combine low-persistence extrema
+    ###########################################################################
+    # With the right shape (e.g. highly anisotropic) a maximum/minimum may lay offgrid
+    # and cause two ongrid points to appear to be higher than the region around
+    # them. We merge these by taking a linear slice between each point using
+    # cubic interpolation and combining those that have no minimum/maximum between
+    # them.
+
+    # start from small distance and increase
+    if min_cart_offset > max_cart_offset:
+        dists = np.array([min_cart_offset])
+    else:
+        dists = np.linspace(min_cart_offset, max_cart_offset, n_divide)
+
+    root_indices = unions.copy()
+    for max_cart in dists:
+        # get transformations in radius
+        transforms, transform_dists = get_transforms_in_radius(
+            r=max_cart,
+            nx=nx,
+            ny=ny,
+            nz=nz,
+            lattice_matrix=matrix,
+        )
+        unions, images = group_saddles_by_low_approx_persistence(
+            data=data,
+            basin_labels=labels,
+            saddle_unions=unions,
+            saddle_images=images,
+            saddle_indices=saddle_indices,
+            saddle_mask=saddle_mask,
+            saddle_values=saddle_values,
+            saddle_voxs=saddle_vox,
+            root_indices=root_indices,
+            transforms=transforms,
+            transform_dists=transform_dists,
+            use_minima=use_minima,
+            persistence_tol=persistence_tol,
+            matrix=matrix,
+        )
+        roots, root_indices = update_extrema_roots(
+            np.arange(len(unions)), unions, images
+        )
+
+        # remove false saddles from mask
+        for idx, (root, (i, j, k)) in enumerate(zip(roots, saddle_vox)):
+            if root != idx:
+                saddle_mask[i, j, k] = False
+
+    return root_indices

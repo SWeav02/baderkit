@@ -25,6 +25,7 @@ from baderkit.global_numba.critical_points import (
 )
 from baderkit.global_numba.persistence import (
     init_by_approx_persistence,
+    remove_low_persistence_saddles,
 )
 from baderkit.global_numba.transforms import ALL_NEIGHBOR_TRANSFORMS
 from baderkit.toolkit import Grid
@@ -720,6 +721,15 @@ class MethodBase:
         )
         saddle_vox = np.argwhere(saddle_mask)
 
+        # get connections before refinement
+        saddle_connections = get_saddle_connections(
+            saddle_coords=saddle_vox,
+            data=self.reference_grid.total,
+            labels=self.labels,
+            images=self.images,
+            use_minima=self.use_minima,
+        )
+
         if self.use_minima:
             saddle_morses = np.array((1, 11, 21, 22), dtype=np.int64)
         else:
@@ -736,36 +746,56 @@ class MethodBase:
             max_change=100,
             max_iter=300,
             grad_tol=5e-4,
-            h=0.5,
-            eig_rel_tol=1e-03,
+            h=1.0,
+            eig_rel_tol=1e-4,
         )
 
-        success_indices = np.where(successes & np.isin(ctypes, saddle_morses))[0]
-        refined_coords = refined_coords[success_indices]
+        # correct_types = np.where(np.isin(ctypes, saddle_morses))[0]
+        # refined_coords = refined_coords[correct_types]
+        # successes = successes[correct_types]
+        # saddle_connections = saddle_connections[correct_types]
+
+        # failure_indices = np.where(~successes | np.isin(ctypes, saddle_morses, invert=True))[0]
+        # failure_indices = np.where(~successes)[0]
+        # refined_coords[failure_indices] = saddle_vox[failure_indices]
 
         shape = self.reference_grid.shape
-        rounded = np.round(refined_coords).astype(np.int64) % shape
-        _, indices = np.unique(rounded, return_index=True, axis=0)
-        rounded = rounded[indices]
-        # get important saddles
         important = remove_adjacent_saddles(
-            rounded,
-            self.reference_grid.shape,
+            refined_vox=refined_coords,
+            shape=shape,
         )
-        saddle_vox = rounded[important]
-        saddle_frac = saddle_vox / self.reference_grid.shape
+        refined_coords = refined_coords[important]
+        saddle_connections = saddle_connections[important]
+        # remove false saddles from mask
+        vox_subset = saddle_vox[important]
+        saddle_mask[:] = False
+        saddle_mask[
+            vox_subset[:, 0],
+            vox_subset[:, 1],
+            vox_subset[:, 2],
+        ] = True
 
-        saddle_connections = get_saddle_connections(
-            saddle_coords=saddle_vox,
+        rounded = np.round(refined_coords).astype(np.int64) % shape
+        saddle_vox = rounded
+
+        # remove low persistence saddles
+        important = remove_low_persistence_saddles(
             data=self.reference_grid.total,
             labels=self.labels,
-            images=self.images,
-            use_minima=self.use_minima,
+            saddle_mask=saddle_mask,
+            saddle_vox=saddle_vox,
+            persistence_tol=self.persistence_tol * 10,
+            matrix=self.reference_grid.matrix,
+            max_cart_offset=0.5,
+            min_cart_offset=self.reference_grid.max_point_dist * 2,
+            n_divide=3,
         )
 
+        saddle_vox = saddle_vox[important]
+
         self._saddle_vox = saddle_vox
-        self._saddle_frac = saddle_frac
-        self._saddle_connections = saddle_connections
+        self._saddle_frac = saddle_vox / shape
+        self._saddle_connections = saddle_connections[important]
 
         t1 = time.time()
         logging.info("Saddle Location Complete")

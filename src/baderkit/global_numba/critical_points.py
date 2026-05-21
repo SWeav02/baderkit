@@ -18,7 +18,7 @@ from baderkit.global_numba.transforms import (
     IMAGE_TO_INT,
     INT_TO_IMAGE,
 )
-from baderkit.global_numba.union_find import find_root, union, union_w_roots
+from baderkit.global_numba.union_find import find_root, union
 
 ###############################################################################
 # Ongrid saddle detection
@@ -687,73 +687,6 @@ def get_saddles_from_basins(
     return saddle_coords, saddle_connections
 
 
-# @njit(parallel=True, cache=True)
-# def remove_false_saddles(
-#     saddle_coords,
-#     labels: NDArray[np.int64],
-#     images: NDArray[np.int64],
-#     data: NDArray[np.float64],
-#     matrix,
-#     use_minima: bool = False,
-# ):
-#     nx, ny, nz = data.shape
-
-#     # Metric tensors
-#     G = matrix @ matrix.T
-#     inv_G = np.linalg.inv(G)
-#     lam = np.linalg.eigvalsh(G)
-
-#     lam_min = lam[0]
-#     lam_max = lam[2]
-
-#     frac_to_cart = np.sqrt(lam_max)
-#     H_frac_to_cart = 1.0 / lam_min
-
-#     # Voxel radius in Cartesian
-#     r_voxel_cart = 0.5 * frac_to_cart
-#     r_voxel_cart2 = r_voxel_cart * r_voxel_cart
-
-#     saddle_mask = np.zeros(len(saddle_coords), dtype=np.bool)
-#     for saddle_idx in prange(len(saddle_coords)):
-#         i, j, k = saddle_coords[saddle_idx]
-#         # check if a newton step would move outside the voxel and
-#         # get morse index
-#         morse_idx = is_ongrid_newton_crit(
-#             (i, j, k),
-#             data,
-#             r_voxel_cart2,
-#             inv_G,
-#             H_frac_to_cart,
-#         )
-
-#         if use_minima and morse_idx == 1 or not use_minima and morse_idx == 2:
-#             # this is a saddle
-#             saddle_mask[saddle_idx] = True
-
-#     # remove false saddles
-#     saddle_indices = np.where(saddle_mask)[0]
-#     saddle_coords = saddle_coords[saddle_indices]
-
-#     # get neighboring basins
-#     saddle_connections = get_saddle_connections(
-#         saddle_coords,
-#         data,
-#         labels=labels,
-#         images=images,
-#         use_minima=use_minima,
-#     )
-
-#     # remove false saddles
-#     true_saddles = np.where(
-#         saddle_connections[:, 0] != np.iinfo(saddle_connections.dtype).max
-#     )[0]
-#     # saddle_indices = saddle_indices[true_saddles]
-#     saddle_coords = saddle_coords[true_saddles]
-#     saddle_connections = saddle_connections[true_saddles]
-
-#     return saddle_coords, saddle_connections
-
-
 @njit(parallel=True, cache=True)
 def remove_false_saddles(
     saddle_coords,
@@ -765,52 +698,26 @@ def remove_false_saddles(
 ):
     nx, ny, nz = data.shape
 
-    # create trackers for saddles
-    saddle_mask = np.ones(len(saddle_coords), dtype=np.bool_)
-
-    # # Metric tensors
-    # G = matrix @ matrix.T
-    # inv_G = np.linalg.inv(G)
-    # lam = np.linalg.eigvalsh(G)
-
-    # lam_min = lam[0]
-    # lam_max = lam[2]
-
-    # frac_to_cart = np.sqrt(lam_max)
-    # H_frac_to_cart = 1.0 / lam_min
-
-    # # Voxel radius in Cartesian
-    # r_voxel_cart = 0.5 * frac_to_cart
-    # r_voxel_cart2 = r_voxel_cart * r_voxel_cart
-
     if use_minima:
         saddle_morses = np.array((1, 11, 21, 22), dtype=np.int64)
     else:
         saddle_morses = np.array((2, 10, 20, 21), dtype=np.int64)
 
-    # for saddle_idx in prange(len(saddle_coords)):
-    #     i, j, k = saddle_coords[saddle_idx]
-    #     # check if a newton step would move outside the voxel and
-    #     # get morse index
-    #     morse_idx = is_ongrid_newton_crit(
-    #         (i, j, k),
-    #         data,
-    #         r_voxel_cart2,
-    #         inv_G,
-    #         H_frac_to_cart,
-    #     )
-    #     if not morse_idx in saddle_morses:
-    #         # this is not a saddle
-    #         saddle_mask[saddle_idx] = False
+    # get connections before refining
+    saddle_connections = get_saddle_connections(
+        saddle_coords,
+        data,
+        labels=labels,
+        images=images,
+        use_minima=use_minima,
+    )
+    # remove any that fail
+    succeeded = np.where(saddle_connections[:, 0] != np.iinfo(np.int16).max)[0]
+    saddle_connections = saddle_connections[succeeded]
 
-    # for remaining possible saddles, we perform a full newton refinement to
-    # check if they're valid
-    # possible_saddles = np.where(saddle_mask)[0]
-    # possible_coords = saddle_coords[possible_saddles]
-    possible_coords = saddle_coords
     # try to refine for each type of saddle
     refined_vox, successes, ctypes = refine_critical_points(
-        critical_coords=possible_coords,
+        critical_coords=saddle_coords,
         data=data,
         matrix=matrix,
         target_indices=saddle_morses,
@@ -821,29 +728,8 @@ def remove_false_saddles(
         eig_rel_tol=0.001,
     )
 
-    # correct_ctypes = np.isin(ctypes, saddle_morses)
-    # The refinement seems to fail often in the ELF. This causes issues
-    # later on, so I'm removing this for now. Eventually, I need a better
-    # method as this results in far too many saddles.
-    # success_indices = np.where(successes)[0]
-
-    # success_indices = np.where(correct_ctypes)[0]
-    # refined_vox = refined_vox[success_indices]
-
-    # recalculate saddle connections
-    rounded_vox = np.round(refined_vox).astype(np.int64) % np.array(
-        data.shape, dtype=np.int64
-    )
-    saddle_connections = get_saddle_connections(
-        rounded_vox,
-        data,
-        labels=labels,
-        images=images,
-        use_minima=use_minima,
-    )
-    succeeded = np.where(saddle_connections[:, 0] != np.iinfo(np.int16).max)[0]
-    saddle_connections = saddle_connections[succeeded]
-    refined_vox = refined_vox[succeeded]
+    # refine positions
+    refined_vox = refined_vox
 
     return refined_vox, saddle_connections
 
@@ -853,16 +739,16 @@ def remove_adjacent_saddles(refined_vox, shape):
     unions = np.arange(len(refined_vox))
     # combine any that refined to be adjacent
     rounded_frac = refined_vox / shape
-    for ext_idx in range(len(unions)):
-        ext_frac = rounded_frac[ext_idx]
-        ext_vox = refined_vox[ext_idx]
-        for neigh_idx in range(ext_idx + 1, len(unions)):
+    for idx in range(len(unions)):
+        frac = rounded_frac[idx]
+        ext_vox = refined_vox[idx]
+        for neigh_idx in range(idx + 1, len(unions)):
             neigh_frac = rounded_frac[neigh_idx]
-            wrapped = neigh_frac - np.round(neigh_frac - ext_frac)
+            wrapped = neigh_frac - np.round(neigh_frac - frac)
             wrapped_vox = wrapped * shape
             offset = wrapped_vox - ext_vox
             if np.max(np.abs(offset)) < 1 + 1e-12:
-                union(unions, ext_idx, neigh_idx)
+                union(unions, idx, neigh_idx)
     # reduce to roots
     roots = unions.copy()
     for i in range(len(unions)):
@@ -1397,49 +1283,6 @@ def newton_refine_targeted(
         ctype = morse
 
     return coord, converged, ctype
-
-
-# @njit(parallel=True, cache=True)
-# def refine_critical_points_targeted(
-#     critical_coords,
-#     data,
-#     matrix,
-#     target_index,
-#     max_change=2.0,
-#     max_iter=30,
-#     grad_tol=1e-2,
-#     h=0.5,
-#     eig_rel_tol=1e-02,
-# ):
-
-#     G = matrix @ matrix.T
-#     inv_G = np.linalg.inv(G)
-
-#     # create arrays to store partial coordinates
-#     refined_coords = np.empty_like(critical_coords, dtype=np.float64)
-#     successes = np.zeros(len(critical_coords), dtype=np.bool_)
-#     ctypes = np.empty(len(critical_coords), dtype=np.int64)
-
-#     for coord_idx in prange(len(critical_coords)):
-#         coord = critical_coords[coord_idx]
-#         # refine
-#         new_coord, success, ctype = newton_refine_targeted(
-#             coord,
-#             data,
-#             inv_G,
-#             max_change,
-#             max_iter,
-#             grad_tol,
-#             h,
-#             eig_rel_tol,
-#             target_index,
-#         )
-#         ctypes[coord_idx] = ctype
-#         refined_coords[coord_idx] = new_coord
-#         if success and ctype == target_index:
-#             successes[coord_idx] = True
-
-#     return refined_coords, successes, ctypes
 
 
 @njit(parallel=True, cache=True)
