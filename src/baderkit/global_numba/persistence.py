@@ -1175,6 +1175,9 @@ def group_saddles_by_low_approx_persistence(
         root_saddle_idx = root_indices[root_idx]
         saddle_unions[saddle_idx] = root_saddle_idx
         saddle_images[saddle_idx] = image
+        # remove saddle from mask
+        i, j, k = saddle_voxs[saddle_idx]
+        saddle_mask[i, j, k] = False
 
     return saddle_unions, saddle_images
 
