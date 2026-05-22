@@ -15,7 +15,7 @@ import numpy as np
 import pandas as pd
 import psutil
 
-from baderkit.core import Bader, Grid
+from baderkit import Bader, Grid
 
 ###############################################################################
 # Function for tracking memory

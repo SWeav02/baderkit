@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
-try:
-    import pyvista as pv
-except:
-    raise Exception(
-        "Missing pyvista dependencies. Please run `pip install baderkit[gui]`"
-    )
 
-from .core import BaderPlotter, GridPlotter, StructurePlotter
+from .bader import BaderPlotter
+from .elf_analysis import (
+    BadelfPlotter,
+    ElfLabelerPlotter,
+)
+from .toolkit import GridPlotter, StructurePlotter

@@ -3,7 +3,7 @@
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from baderkit.core import Bader
+from baderkit import Bader
 
 methods = Bader.all_methods()
 

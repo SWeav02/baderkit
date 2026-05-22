@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from baderkit.core import Bader
+from baderkit import Bader
 
 ###############################################################################
 # Parameters
