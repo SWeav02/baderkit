@@ -8,10 +8,7 @@ from numba import njit, prange
 from baderkit.global_numba.interpolation import interp_nearest, interp_spline
 
 
-@njit(
-    parallel=True,
-    cache=True,
-)
+@njit(cache=True)
 def get_elf_radius(
     data,
     local_labels,
@@ -74,7 +71,7 @@ def get_elf_radius(
     values = np.empty(num_points, dtype=np.float64)
     labels = np.empty(num_points, dtype=np.int64)
     # calculate the positions, values, and labels along the line in parallel
-    for point_idx in prange(num_points):
+    for point_idx in range(num_points):
         point = atom_coords + float(point_idx) * step_vec
         x, y, z = point
         values[point_idx] = interp_spline(x, y, z, data)
