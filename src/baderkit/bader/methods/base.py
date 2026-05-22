@@ -766,17 +766,16 @@ class MethodBase:
         )
         refined_coords = refined_coords[important]
         saddle_connections = saddle_connections[important]
-        # remove false saddles from mask
-        vox_subset = saddle_vox[important]
-        saddle_mask[:] = False
-        saddle_mask[
-            vox_subset[:, 0],
-            vox_subset[:, 1],
-            vox_subset[:, 2],
-        ] = True
 
         rounded = np.round(refined_coords).astype(np.int64) % shape
         saddle_vox = rounded
+        # rebuild saddle mask
+        saddle_mask[:] = False
+        saddle_mask[
+            saddle_vox[:, 0],
+            saddle_vox[:, 1],
+            saddle_vox[:, 2],
+        ] = True
 
         # remove low persistence saddles
         important = remove_low_persistence_saddles(
