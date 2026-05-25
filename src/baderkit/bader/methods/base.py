@@ -777,6 +777,9 @@ class MethodBase:
             saddle_vox[:, 2],
         ] = True
 
+        # resort vox
+        saddle_vox = np.argwhere(saddle_mask)
+
         # remove low persistence saddles
         important = remove_low_persistence_saddles(
             data=self.reference_grid.total,

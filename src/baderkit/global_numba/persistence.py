@@ -1002,7 +1002,6 @@ def group_saddles_by_low_approx_persistence(
     basin_labels,
     saddle_unions,
     saddle_images,
-    saddle_indices,
     saddle_mask,
     saddle_values,
     saddle_voxs,
@@ -1019,7 +1018,11 @@ def group_saddles_by_low_approx_persistence(
 
     saddle_frac = saddle_voxs / shape
     current_num_roots = len(root_indices)
-    current_saddle_indices = saddle_indices[root_indices]
+
+    current_vox = saddle_voxs[root_indices]
+    current_saddle_indices = np.empty(len(current_vox), dtype=np.int64)
+    for idx, (i, j, k) in enumerate(current_vox):
+        current_saddle_indices[idx] = coords_to_flat(i, j, k, ny_nz, nz)
 
     # determine the number of possible connections for each current root
     num_neighs = np.zeros(current_num_roots, dtype=np.int64)
@@ -1143,6 +1146,7 @@ def group_saddles_by_low_approx_persistence(
                 sub_saddle_coords[current_idx] = sub_saddle_vox
                 image = IMAGE_TO_INT[ssi, ssj, ssk]
                 neigh_idx = np.searchsorted(current_saddle_indices, neigh_flat_idx)
+
                 sub_saddle_connections[current_idx] = np.array(
                     (idx, neigh_idx, 13, image), dtype=np.int16
                 )
@@ -1175,9 +1179,6 @@ def group_saddles_by_low_approx_persistence(
         root_saddle_idx = root_indices[root_idx]
         saddle_unions[saddle_idx] = root_saddle_idx
         saddle_images[saddle_idx] = image
-        # remove saddle from mask
-        i, j, k = saddle_voxs[saddle_idx]
-        saddle_mask[i, j, k] = False
 
     return saddle_unions, saddle_images
 
@@ -1197,19 +1198,17 @@ def remove_low_persistence_saddles(
 ):
     shape = np.array(data.shape, dtype=np.int64)
     nx, ny, nz = shape
-    ny_nz = ny * nz
 
     # create an array to store values at each maximum
     saddle_values = np.empty(len(saddle_vox), dtype=np.float64)
 
     # create array to store the flat index of each saddle
-    saddle_indices = np.empty(len(saddle_vox))
     for idx, (i, j, k) in enumerate(saddle_vox):
-        saddle_indices[idx] = coords_to_flat(i, j, k, ny_nz, nz)
         saddle_values[idx] = data[i, j, k]
 
     # create array to track unions
     unions = np.arange(len(saddle_vox))
+    saddle_indices = unions.copy()
 
     # create a flat array of shifts for tracking wrapping around edges. These
     # will initially all be (0,0,0)
@@ -1245,7 +1244,6 @@ def remove_low_persistence_saddles(
             basin_labels=labels,
             saddle_unions=unions,
             saddle_images=images,
-            saddle_indices=saddle_indices,
             saddle_mask=saddle_mask,
             saddle_values=saddle_values,
             saddle_voxs=saddle_vox,
@@ -1256,13 +1254,14 @@ def remove_low_persistence_saddles(
             persistence_tol=persistence_tol,
             matrix=matrix,
         )
-        roots, root_indices = update_extrema_roots(
-            np.arange(len(unions)), unions, images
-        )
+        # update roots
+        roots, root_indices = update_extrema_roots(saddle_indices, unions, images)
 
         # remove false saddles from mask
         for idx, (root, (i, j, k)) in enumerate(zip(roots, saddle_vox)):
             if root != idx:
                 saddle_mask[i, j, k] = False
+            else:
+                saddle_mask[i, j, k] = True
 
     return root_indices
