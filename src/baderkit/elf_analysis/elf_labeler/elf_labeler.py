@@ -613,8 +613,9 @@ class ElfLabeler(BaseElfAnalysis):
             along_bond = self.overlap.along_bond[feature_idx]
             heavily_polarized = self.heavily_polarized[feature_idx]
 
+            atomicity = self.overlap.atomicities[feature_idx]
             # check for ionic/covalent bond
-            if not shape == "cage" and along_bond:
+            if not shape == "cage" and along_bond and atomicity == 2:
                 if heavily_polarized:
                     types.append(FeatureType.ionic)
                 else:
