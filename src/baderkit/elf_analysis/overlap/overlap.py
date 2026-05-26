@@ -131,7 +131,7 @@ class BasinOverlap(BaseElfAnalysis):
                 "along_bond",
             ],
         )
-        
+
     @property
     def fraction_tol(self) -> float:
         return self._fraction_tol
@@ -244,7 +244,7 @@ class BasinOverlap(BaseElfAnalysis):
             # non-zero entries in each row of our overlap_matrix
             self._atomicities = np.array([len(i) for i in self.bond_fractions])
         return self._atomicities
-    
+
     @property
     def significant_local_contributors(self) -> list[NDArray[int]]:
         """
@@ -587,7 +587,7 @@ class BasinOverlap(BaseElfAnalysis):
         Returns
         -------
         list[NDArray[int]]
-            The local valence basins that border each atoms  This is
+            The local valence basins that border each atoms core. This is
             essentially the group of basins that include at least some of this
             atoms valence.
 
@@ -601,7 +601,7 @@ class BasinOverlap(BaseElfAnalysis):
                     if not self.core_basins[int(i[0])] == -1:
                         continue
                     access_set.append(i[:2])
-                access_set = np.array(access_set, dtype=int)
+                access_set = np.array(access_set, dtype=int, ndmin=2)
                 access_sets.append(access_set)
             self._atom_access_sets = access_sets
         return self._atom_access_sets
@@ -716,7 +716,6 @@ class BasinOverlap(BaseElfAnalysis):
         )
         order = np.argsort(index)
         equiv_species = order[inverse]
-
         (
             self._atom_charge_claims,
             self._atom_access_electron_numbers,
@@ -806,7 +805,10 @@ class BasinOverlap(BaseElfAnalysis):
                 # BUGFIX: If there is only one basin in a shell, we base whether it is
                 # a core or lone-pair on its distance
                 if len(local_indices) == 1:
-                    if dist <= core_dist_tol and overlap_fracs[0] > 1.0 - self.fraction_tol:
+                    if (
+                        dist <= core_dist_tol
+                        and overlap_fracs[0] > 1.0 - self.fraction_tol
+                    ):
                         cores[local_indices[0]] = atom_idx
                         continue
                     elif overlap_fracs[0] > 1.0 - self.fraction_tol:
@@ -824,7 +826,10 @@ class BasinOverlap(BaseElfAnalysis):
                 # we have highly ionic shared basins.
                 max_frac = overlap_fracs.max()
                 min_frac = overlap_fracs.min()
-                if max_frac < 1.0 - self.fraction_tol or min_frac > 1.0 - self.fraction_tol:
+                if (
+                    max_frac < 1.0 - self.fraction_tol
+                    or min_frac > 1.0 - self.fraction_tol
+                ):
                     continue
                 # otherwise, me may have a lone-pairs or shared basins.
                 # We only accept basins as lone-pairs if they have a significantly
