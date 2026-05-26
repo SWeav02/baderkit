@@ -86,6 +86,7 @@ class BasinOverlap(BaseElfAnalysis):
         total_charge_grid: Grid | None = None,
         nna_cutoff: float = 1.0,
         min_bond_angle: float = 135,
+        fraction_tol: float = 0.05,
         **kwargs,
     ):
         super().__init__(
@@ -96,6 +97,7 @@ class BasinOverlap(BaseElfAnalysis):
         )
 
         self._min_bond_angle = min_bond_angle
+        self._fraction_tol = fraction_tol
 
         # create bader objects
         self.qtaim_bader = Bader(
@@ -129,6 +131,15 @@ class BasinOverlap(BaseElfAnalysis):
                 "along_bond",
             ],
         )
+        
+    @property
+    def fraction_tol(self) -> float:
+        return self._fraction_tol
+
+    @fraction_tol.setter
+    def fraction_tol(self, value: float):
+        self._fraction_tol = value
+        self._reset_properties()
 
     ###########################################################################
     # Properties calculated by other classes
@@ -228,13 +239,12 @@ class BasinOverlap(BaseElfAnalysis):
             atoms due to the periodicity requirement.
 
         """
-        # TODO: Update with tolerance used for detecting cores/shared
         if self._atomicities is None:
             # The number of atoms contributing to each label is the number of
             # non-zero entries in each row of our overlap_matrix
             self._atomicities = np.array([len(i) for i in self.bond_fractions])
         return self._atomicities
-
+    
     @property
     def significant_local_contributors(self) -> list[NDArray[int]]:
         """
@@ -765,7 +775,7 @@ class BasinOverlap(BaseElfAnalysis):
             cell_volume=self.structure.volume,
         )
 
-    def _get_overlap_fractions(self, tol=0.001):
+    def _get_overlap_fractions(self):
         (
             self._bond_fractions,
             self._volume_bond_fractions,
@@ -776,10 +786,10 @@ class BasinOverlap(BaseElfAnalysis):
             self.overlap_volumes,
             num_atoms=len(self.reference_grid.structure),
             num_local=len(self.local_maxima_frac),
-            tol=tol,
+            tol=self.fraction_tol,
         )
 
-    def _assign_cores(self, core_tol=0.01, lone_pair_tol=0.05, core_dist_tol=0.2):
+    def _assign_cores(self, core_dist_tol=0.2):
         # create tracker for which basins are part of each atoms core
         cores = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         lone_pairs = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
@@ -796,16 +806,16 @@ class BasinOverlap(BaseElfAnalysis):
                 # BUGFIX: If there is only one basin in a shell, we base whether it is
                 # a core or lone-pair on its distance
                 if len(local_indices) == 1:
-                    if dist <= core_dist_tol and overlap_fracs[0] > 1.0 - core_tol:
+                    if dist <= core_dist_tol and overlap_fracs[0] > 1.0 - self.fraction_tol:
                         cores[local_indices[0]] = atom_idx
                         continue
-                    elif overlap_fracs[0] > 1.0 - lone_pair_tol:
+                    elif overlap_fracs[0] > 1.0 - self.fraction_tol:
                         lone_pairs[local_indices[0]] = atom_idx
                         continue
 
                 # if all members of this shell are almost entirely owned by this
                 # atom, we have a core
-                if np.all(overlap_fracs > 1.0 - core_tol):
+                if np.all(overlap_fracs > 1.0 - self.fraction_tol):
                     cores[local_indices] = atom_idx
                     continue
 
@@ -814,7 +824,7 @@ class BasinOverlap(BaseElfAnalysis):
                 # we have highly ionic shared basins.
                 max_frac = overlap_fracs.max()
                 min_frac = overlap_fracs.min()
-                if max_frac < 1.0 - lone_pair_tol or min_frac > 1.0 - lone_pair_tol:
+                if max_frac < 1.0 - self.fraction_tol or min_frac > 1.0 - self.fraction_tol:
                     continue
                 # otherwise, me may have a lone-pairs or shared basins.
                 # We only accept basins as lone-pairs if they have a significantly
