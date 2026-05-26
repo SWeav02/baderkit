@@ -68,4 +68,4 @@ And that's it! The plotter can do much more, so try messing around with it on yo
 
 VASP Inputs/Outputs: <a href="https://github.com/SWeav02/baderkit/releases/download/0.10.0/Ca2N.zip" download>Ca2N.zip</a>
 
-Tutorial Script: <a href="/tutorial_scripts/other/plotting.py" download>oxidation_states.py</a>
+Tutorial Script: <a href="/baderkit/tutorial_scripts/other/plotting.py" download>oxidation_states.py</a>
