@@ -731,7 +731,7 @@ class BasinOverlap(BaseElfAnalysis):
         )
         # get labels
         symbols = []
-        for idx, site in enumerate(self.qtaim_bader.structure):
+        for idx, site in enumerate(self.reference_grid.structure):
             species_num = species_nums[idx]
             species = site.specie.symbol
             symbols.append(f"CI{int(species_num)}{species}")
@@ -788,7 +788,7 @@ class BasinOverlap(BaseElfAnalysis):
             tol=self.weight_tol,
         )
 
-    def _assign_cores(self, core_dist_tol=0.2):
+    def _assign_cores(self, core_dist_tol=0.3):
         # create tracker for which basins are part of each atoms core
         cores = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         lone_pairs = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)

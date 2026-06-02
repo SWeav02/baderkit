@@ -124,7 +124,8 @@ class ElfLabeler(BaseElfAnalysis):
             spin_system=self.spin_system,
             **kwargs,
         )
-
+        
+        self._qtaim_bader = self.overlap.qtaim_bader
         self._elf_bader = self.overlap.local_bader
 
         self._polarization_cutoff = polarization_cutoff

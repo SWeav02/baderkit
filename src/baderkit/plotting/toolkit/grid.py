@@ -394,12 +394,13 @@ class GridPlotter(StructurePlotter):
 
     def _update_clims_cmaps(self):
         actors = ["iso", "cap"]
-        actors.extend([f"slice_{i}" for i in self._slice_meshes.keys()])
+        actors.extend([f"{i}" for i in self._slice_meshes.keys()])
         for actor_str in actors:
             actor = self.plotter.actors.get(actor_str, None)
             if actor is not None:
-                actor.prop.clim = (self.min_val, self.max_val)
-                actor.prop.cmap = self.colormap
+                actor.mapper.scalar_range = (self.min_val, self.max_val)
+                actor.mapper.lookup_table.cmap = self.colormap
+                
 
     def _make_structured_grid(self) -> pv.StructuredGrid:
         """
