@@ -214,8 +214,13 @@ def get_basin_fractions(
 
         charge_fracs = charge_counts / charge_counts.sum()
         volume_fracs = volume_counts / volume_counts.sum()
-        # remove fracs below cutoff
-        high_fracs = np.where((charge_fracs > tol) & (volume_fracs > tol))[0]
+        
+        # convert to weights
+        charge_weights = charge_fracs / charge_fracs.max()
+        volume_weights = volume_fracs / volume_fracs.max()
+        
+        # remove entries with weights below tol
+        high_fracs = np.where((charge_weights > tol) & (volume_weights > tol))[0]
         charge_fracs = charge_fracs[high_fracs]
         volume_fracs = volume_fracs[high_fracs]
         neighs = neighs[high_fracs]
@@ -278,7 +283,7 @@ def get_overlap_fractions(
     overlap_volumes,
     num_local,
     num_atoms,
-    tol=0.001,
+    tol,
 ):
 
     local_charge_frac, local_volume_frac = get_basin_fractions(

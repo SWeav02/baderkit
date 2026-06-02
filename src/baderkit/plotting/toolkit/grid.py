@@ -571,7 +571,7 @@ class GridPlotter(StructurePlotter):
             # get atom colors
             atom_colors = self.atom_colors[self._map_wrapped_to_atoms]
             # get alpha values
-            alpha = self.visible_atoms[self._map_wrapped_to_atoms]
+            alpha = self.atom_opacities[self._map_wrapped_to_atoms]
             # set alpha to zero at unwanted atoms
             alpha[~include_coords] = 0.0
             # update poly data scalars
@@ -596,9 +596,9 @@ class GridPlotter(StructurePlotter):
             )
         else:
             # otherwise, remove all atoms from the plot
-            visible = p.visible_atoms
+            visible = p.atom_opacities
             visible[:] = 0.0
-            p.visible_atoms = visible
+            p.atom_opacities = visible
 
         # set camera to be perpendicular
         p.set_camera_to_vector(origin=origin, normal=normal)

@@ -86,7 +86,7 @@ class BasinOverlap(BaseElfAnalysis):
         total_charge_grid: Grid | None = None,
         nna_cutoff: float = 1.0,
         min_bond_angle: float = 135,
-        fraction_tol: float = 0.05,
+        weight_tol: float = 0.5,
         **kwargs,
     ):
         super().__init__(
@@ -97,7 +97,7 @@ class BasinOverlap(BaseElfAnalysis):
         )
 
         self._min_bond_angle = min_bond_angle
-        self._fraction_tol = fraction_tol
+        self._weight_tol = weight_tol
 
         # create bader objects
         self.qtaim_bader = Bader(
@@ -133,12 +133,12 @@ class BasinOverlap(BaseElfAnalysis):
         )
 
     @property
-    def fraction_tol(self) -> float:
-        return self._fraction_tol
+    def weight_tol(self) -> float:
+        return self._weight_tol
 
-    @fraction_tol.setter
-    def fraction_tol(self, value: float):
-        self._fraction_tol = value
+    @weight_tol.setter
+    def weight_tol(self, value: float):
+        self._weight_tol = value
         self._reset_properties()
 
     ###########################################################################
@@ -785,7 +785,7 @@ class BasinOverlap(BaseElfAnalysis):
             self.overlap_volumes,
             num_atoms=len(self.reference_grid.structure),
             num_local=len(self.local_maxima_frac),
-            tol=self.fraction_tol,
+            tol=self.weight_tol,
         )
 
     def _assign_cores(self, core_dist_tol=0.2):
@@ -807,17 +807,17 @@ class BasinOverlap(BaseElfAnalysis):
                 if len(local_indices) == 1:
                     if (
                         dist <= core_dist_tol
-                        and overlap_fracs[0] > 1.0 - self.fraction_tol
+                        and overlap_fracs[0] > 1.0 - self.weight_tol
                     ):
                         cores[local_indices[0]] = atom_idx
                         continue
-                    elif overlap_fracs[0] > 1.0 - self.fraction_tol:
+                    elif overlap_fracs[0] > 1.0 - self.weight_tol:
                         lone_pairs[local_indices[0]] = atom_idx
                         continue
 
                 # if all members of this shell are almost entirely owned by this
                 # atom, we have a core
-                if np.all(overlap_fracs > 1.0 - self.fraction_tol):
+                if np.all(overlap_fracs > 1.0 - self.weight_tol):
                     cores[local_indices] = atom_idx
                     continue
 
@@ -827,8 +827,8 @@ class BasinOverlap(BaseElfAnalysis):
                 max_frac = overlap_fracs.max()
                 min_frac = overlap_fracs.min()
                 if (
-                    max_frac < 1.0 - self.fraction_tol
-                    or min_frac > 1.0 - self.fraction_tol
+                    max_frac < 1.0 - self.weight_tol
+                    or min_frac > 1.0 - self.weight_tol
                 ):
                     continue
                 # otherwise, me may have a lone-pairs or shared basins.
