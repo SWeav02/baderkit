@@ -460,6 +460,20 @@ class ElfLabeler(BaseElfAnalysis):
             )
             self._basin_atom_dists = dists
         return self._basin_atom_dists
+    
+    @property
+    def max_basin_dist(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The maximum distance that any basin in the system sits from nearby
+            atoms
+
+        """
+        if self.basin_atom_dists is not None:
+            return self.basin_atom_dists.max()
 
     @property
     def heavily_polarized(self) -> NDArray[bool]:
@@ -495,7 +509,7 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         if self.num_nnas > 0:
-            return self.basin_atom_dists.max()
+            return self.basin_atom_dists[self.nna_indices].max()
 
     @property
     def num_nnas(self) -> int:
