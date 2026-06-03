@@ -40,6 +40,7 @@ class ElfLabeler(BaseElfAnalysis):
         "basin_charges",
         "basin_volumes",
         "basin_atom_dists",
+        "max_basin_dist",
         "basin_dists_beyond_atoms",
         "maxima_frac",
         "maxima_center_frac",
