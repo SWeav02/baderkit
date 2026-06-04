@@ -544,6 +544,7 @@ def refine_fast_neargrid(
                     # relabel just this voxel then stop the loop
                     labels[i, j, k] = -current_label
                     images[flat_idx] = (wi, wj, wk)
+
                     break
 
                 # Otherwise, we have not reached a maximum and want to continue

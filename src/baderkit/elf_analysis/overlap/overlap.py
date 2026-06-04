@@ -271,9 +271,11 @@ class BasinOverlap(BaseElfAnalysis):
         Returns
         -------
         NDArray[np.int64]
-            An Nx4 array where each row represents a single overlap basin. The
-            columns represent the atom index, atom image, local basin index
-            and local basin image.
+            An Nx3 array where each row represents a single overlap basin. The
+            columns are:
+                0: The atom's index
+                1: The local basins index
+                2: The periodic image the local basin's maxima sits in relative to the atom
 
         """
         if self._overlap_table is None:
@@ -684,6 +686,10 @@ class BasinOverlap(BaseElfAnalysis):
 
     @property
     def atom_shell_groups(self) -> list[NDArray[int]]:
+        """
+        For each atom, a list of arrays where each array represents the indices
+        of the elf basins that are in a given shell.
+        """
         if self._atom_shell_groups is None:
             # get atom shells
             all_atom_shells, basin_dists = get_atom_shell_groups(
@@ -700,6 +706,10 @@ class BasinOverlap(BaseElfAnalysis):
 
     @property
     def atom_average_shell_dists(self) -> list[NDArray[float]]:
+        """
+        For each atom, an array where each entry represents the average distance
+        of the basins in each of the atoms shells.
+        """
         if self._atom_average_shell_dists is None:
             self.atom_shell_groups
         return self._atom_average_shell_dists
@@ -726,7 +736,7 @@ class BasinOverlap(BaseElfAnalysis):
             bond_fractions=self.bond_fractions,
             local_basin_charges=self.local_bader.basin_charges,
             equiv_species=equiv_species,
-            num_atoms=len(self.qtaim_maxima_frac),
+            num_atoms=len(self.reference_grid.structure),
             num_local=len(self.local_maxima_frac),
         )
         # get labels
@@ -747,12 +757,15 @@ class BasinOverlap(BaseElfAnalysis):
             num_local=len(self.local_maxima_frac),
         )
         # sort lexographically
+        # columns are:
+            # atom index
+            # local index
+            # local image
         overlap_table = overlap_table[
             np.lexsort(
                 (
-                    overlap_table[:, 3],  # lowest priority
+                    overlap_table[:, 2],  # lowest priority
                     overlap_table[:, 1],
-                    overlap_table[:, 2],
                     overlap_table[:, 0],  # highest priority
                 )
             )
@@ -794,10 +807,12 @@ class BasinOverlap(BaseElfAnalysis):
         lone_pairs = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         shared = np.zeros(len(self.local_maxima_frac), dtype=np.bool_)
 
+
         for atom_idx in range(len(self.atom_shell_groups)):
             atom_shells = self.atom_shell_groups[atom_idx]
             shell_dists = self.atom_average_shell_dists[atom_idx]
             local_overlap = self.qtaim_overlap_groups[atom_idx]
+            frac_coords = self.structure.frac_coords[atom_idx]
             for shell, dist in zip(atom_shells, shell_dists):
                 overlap_fracs = local_overlap[shell][:, 2]
                 local_indices = local_overlap[shell][:, 0].astype(int)
@@ -807,7 +822,8 @@ class BasinOverlap(BaseElfAnalysis):
                 if len(local_indices) == 1:
                     # BUGFIX: We want to use the distance from the weighted
                     # center of the basin in case it is marked as a ring
-                    dist = self.local_bader.basin_atom_dists[local_indices[0]]
+                    center_frac = self.local_bader.maxima_center_frac[local_indices[0]]
+                    dist, image = self.structure.lattice.get_distance_and_image(frac_coords, center_frac)
                     
                     if (
                         dist <= core_dist_tol

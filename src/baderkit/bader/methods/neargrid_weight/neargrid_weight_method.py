@@ -94,7 +94,7 @@ class NeargridWeightMethod(MethodBase):
         # include negative values so that we can mark points needing refinement
         dtype = get_lowest_int(len(self.extrema_vox) + 1)
         labels = labels.reshape(shape).astype(dtype)
-
+        
         logging.info("Starting Edge Refinement")
 
         # shift indices to start at 1

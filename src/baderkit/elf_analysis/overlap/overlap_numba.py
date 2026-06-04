@@ -6,33 +6,11 @@ from numba import njit, prange
 from baderkit.global_numba.transforms import IMAGE_TO_INT, INT_TO_IMAGE
 
 
-@njit(cache=True, parallel=True)
-def get_label_image_map(
-    labels,
-    images,
-    num_labels,
-):
-    nx, ny, nz = labels.shape
-    labels_w_images = np.zeros((num_labels, 27), dtype=np.bool_)
-    for i in prange(nx):
-        for j in range(ny):
-            for k in range(nz):
-                label = labels[i, j, k]
-                # skip vacuum
-                if label >= num_labels:
-                    continue
-
-                # get the image
-                image = images[i, j, k]
-
-                labels_w_images[label, image] = True
-    # construct label map
-    pairs = np.argwhere(labels_w_images)
-    label_map = np.empty_like(labels_w_images, dtype=np.int16)
-    for idx in prange(len(pairs)):
-        i, j = pairs[idx]
-        label_map[i, j] = idx
-    return pairs, label_map
+@njit(cache=True)
+def get_label_image_map(num_labels):
+    label_image_map = np.arange(num_labels * 27).reshape(num_labels, 27)
+    local_image_pairs = np.indices(label_image_map.shape).reshape(2, -1).T
+    return label_image_map, local_image_pairs
 
 
 @njit(cache=True)
@@ -41,7 +19,6 @@ def get_unique_overlaps(
     local_labels,
     atom_images,
     local_images,
-    atom_image_map,
     local_image_map,
     num_atoms,
     num_local,
@@ -55,6 +32,7 @@ def get_unique_overlaps(
     for i in range(nx):
         for j in range(ny):
             for k in range(nz):
+                # get atom/local basin labels
                 atom_label = atom_labels[i, j, k]
                 local_label = local_labels[i, j, k]
 
@@ -62,15 +40,23 @@ def get_unique_overlaps(
                 if atom_label >= num_atoms or local_label >= num_local:
                     continue
 
+                # get atom and local basin images
+                # thee maxima this point is assigned to lies in this image.
                 atom_image = atom_images[i, j, k]
                 local_image = local_images[i, j, k]
+                
+                # We need the local maxima relative to the atom maxima in the
+                # cell. We find the periodic image the local maximum would sit
+                # in if we the atomic maximum were shifted into the unit cell.
+                mi, mj, mk = INT_TO_IMAGE[local_image] - INT_TO_IMAGE[atom_image]
 
-                atom_pair = atom_image_map[atom_label, atom_image]
+                local_image = IMAGE_TO_INT[mi,mj,mk]
+
                 local_pair = local_image_map[local_label, local_image]
 
-                pair_val = szudzik_pair(atom_pair, local_pair)
+                pair_val = szudzik_pair(atom_label, local_pair)
                 atom_local_pairs.add(int(pair_val))
-
+                
     # convert set to array
     out = np.empty(len(atom_local_pairs), dtype=np.int64)
 
@@ -94,14 +80,7 @@ def get_overlap_table(
     nx, ny, nz = local_labels.shape
     # first we construct maps to and from each label/image pair to a
     # single index. This reduces the memory needed to find overlaps
-    atom_image_pairs, atom_image_map = get_label_image_map(
-        labels=atom_labels,
-        images=atom_images,
-        num_labels=num_atoms,
-    )
-    local_image_pairs, local_image_map = get_label_image_map(
-        labels=local_labels,
-        images=local_images,
+    local_image_map, local_image_pairs = get_label_image_map(
         num_labels=num_local,
     )
     atom_local_pairs = get_unique_overlaps(
@@ -109,19 +88,17 @@ def get_overlap_table(
         local_labels,
         atom_images,
         local_images,
-        atom_image_map,
         local_image_map,
         num_atoms,
         num_local,
     )
     # get the unique sets of charge/local pairs
-    unique_overlaps = np.empty((len(atom_local_pairs), 4), dtype=np.int64)
+    unique_overlaps = np.empty((len(atom_local_pairs), 3), dtype=np.int64)
     for idx in prange(len(atom_local_pairs)):
         pair_idx = atom_local_pairs[idx]
-        atom_pair, local_pair = szudzik_reverse(pair_idx)
-        atom_label, atom_image = atom_image_pairs[atom_pair]
+        atom_label, local_pair = szudzik_reverse(pair_idx)
         local_label, local_image = local_image_pairs[local_pair]
-        unique_overlaps[idx] = (atom_label, atom_image, local_label, local_image)
+        unique_overlaps[idx] = (atom_label, local_label, local_image)
     return unique_overlaps
 
 
@@ -141,25 +118,40 @@ def get_overlap_charge_volume(
     pair_volumes = np.zeros(len(unique_overlaps), dtype=np.float64)
     pair_labels = np.full(local_labels.shape, len(unique_overlaps), dtype=np.uint32)
     for idx in prange(len(unique_overlaps)):
-        atom_label, atom_image, local_label, local_image = unique_overlaps[idx]
+        atom_label, target_label, target_image = unique_overlaps[idx]
 
         for i in range(nx):
             for j in range(ny):
                 for k in range(nz):
+                    
                     if atom_labels[i, j, k] != atom_label:
                         continue
-                    if local_labels[i, j, k] != local_label:
+                    if local_labels[i, j, k] != target_label:
                         continue
-                    if atom_images[i, j, k] != atom_image:
+
+                    # get atom and local basin images
+                    # thee maxima this point is assigned to lies in this image.
+                    atom_image = atom_images[i, j, k]
+                    local_image = local_images[i, j, k]
+                    
+                    # We need the local maxima relative to the atom maxima in the
+                    # cell. We find the periodic image the local maximum would sit
+                    # in if we the atomic maximum were shifted into the unit cell.
+                    mi, mj, mk = INT_TO_IMAGE[local_image] - INT_TO_IMAGE[atom_image]
+                    pair_image = IMAGE_TO_INT[mi,mj,mk]
+                    
+                    # skip if this isn't the correct image
+                    if pair_image != target_image:
                         continue
-                    if local_images[i, j, k] != local_image:
-                        continue
+                    
+                    # assign charge/volume
                     pair_charges[idx] += charge_data[i, j, k]
                     pair_volumes[idx] += 1
                     pair_labels[i, j, k] = idx
 
     pair_charges /= nx * ny * nz
     pair_volumes = cell_volume * (pair_volumes / pair_volumes.sum())
+
     return pair_charges, pair_volumes, pair_labels
 
 
@@ -180,16 +172,16 @@ def get_basin_fractions(
 
     for idx in prange(num_basins):
         # get overlap basins that include this local basin
-        indices = np.where(overlap_table[:, 2] == idx)[0]
+        indices = np.where(overlap_table[:, 1] == idx)[0]
 
         # get the unique neighbors
         basin_neighs = set()
         for overlap_idx in indices:
-            neigh_label, neigh_image, _, basin_image = overlap_table[overlap_idx]
-            # shift to the label that is in the cell
-            mi, mj, mk = INT_TO_IMAGE[neigh_image] - INT_TO_IMAGE[basin_image]
+            atom_label, _, basin_image = overlap_table[overlap_idx]
+            # shift representation so that local basin is in the cell
+            mi, mj, mk = -INT_TO_IMAGE[basin_image]
             image = IMAGE_TO_INT[mi, mj, mk]
-            pair = szudzik_pair(neigh_label, image)
+            pair = szudzik_pair(atom_label, image)
             basin_neighs.add(int(pair))
         # convert to array
         neighs = np.empty(len(basin_neighs), dtype=np.int64)
@@ -203,11 +195,11 @@ def get_basin_fractions(
         charge_counts = np.zeros(len(neighs), dtype=np.float64)
         volume_counts = np.zeros(len(neighs), dtype=np.float64)
         for overlap_idx in indices:
-            neigh_label, neigh_image, _, basin_image = overlap_table[overlap_idx]
-            # shift to the label that is in the cell
-            mi, mj, mk = INT_TO_IMAGE[neigh_image] - INT_TO_IMAGE[basin_image]
+            atom_label, _, basin_image = overlap_table[overlap_idx]
+            # shift representation so that local basin is in the cell
+            mi, mj, mk = -INT_TO_IMAGE[basin_image]
             image = IMAGE_TO_INT[mi, mj, mk]
-            pair = int(szudzik_pair(neigh_label, image))
+            pair = int(szudzik_pair(atom_label, image))
             pair_idx = np.searchsorted(neighs, pair)
             charge_counts[pair_idx] += overlap_charges[overlap_idx]
             volume_counts[pair_idx] += overlap_volumes[overlap_idx]
@@ -242,6 +234,7 @@ def get_basin_fractions(
         basin_volume_frac[idx] = np.column_stack(
             (neigh_pairs[sorted_indices], volume_fracs)
         )
+
     return basin_charge_frac, basin_volume_frac
 
 
@@ -263,7 +256,8 @@ def get_qtaim_groups(
                 # skip if this isn't the current atom
                 if int(atom_idx) != idx:
                     continue
-                # otherwise we flip the image and add to our group
+                # otherwise we shift so that our atom is in the cell and the
+                # image is the image of the local basin
                 mi, mj, mk = -INT_TO_IMAGE[int(atom_image)]
                 image = IMAGE_TO_INT[mi, mj, mk]
                 group.append((float(local_idx), float(image), frac))
@@ -300,7 +294,7 @@ def get_overlap_fractions(
     return local_charge_frac, local_volume_frac, atom_groups
 
 
-@njit(cache=True)
+# @njit(cache=True)
 def get_atom_shell_groups(
     atom_local_groups, atom_frac_coords, local_frac_coords, matrix, tol=0.2
 ):
@@ -315,11 +309,13 @@ def get_atom_shell_groups(
             coord_groups.append([np.empty((0), dtype=np.int64)])
             basin_dists.append([0.0][1:])
             continue
+        
         neigh_dists = np.zeros(len(local_group), dtype=np.float64)
         for local_idx, (label, image, _) in enumerate(local_group):
             image1 = INT_TO_IMAGE[int(image)]
             local_frac = local_frac_coords[int(label)] + image1
             local_cart = local_frac @ matrix
+            
             offset = local_cart - atom_cart
             neigh_dists[local_idx] = np.linalg.norm(offset)
 
@@ -349,6 +345,7 @@ def get_atom_shell_groups(
 
         coord_groups.append(groups)
         basin_dists.append(average_dists)
+        
     return coord_groups, basin_dists
 
 
@@ -390,12 +387,14 @@ def get_atom_charge_claims(
             # claims
             local_overlap = bond_fractions[local_idx]
             for atom_idx, atom_image, frac in local_overlap:
+                # adjust the atom image to be relative to the current local basin image
+                atom_image = INT_TO_IMAGE[int(atom_image)]
+                mi, mj, mk = image + atom_image
+                actual_image = IMAGE_TO_INT[mi,mj,mk]
+                
                 # get atom shift
-                image1 = INT_TO_IMAGE[int(atom_image)]
-                mi, mj, mk = image + image1
-                actual_image = IMAGE_TO_INT[mi, mj, mk]
-                atom_claims[int(atom_idx), actual_image] += charge * frac
-
+                atom_claims[int(atom_idx), int(actual_image)] += charge * frac
+                
         # reduce to only atoms with claims
         atoms = np.argwhere(atom_claims > 0)
         flat_atom_claims = np.empty((len(atoms)), dtype=np.float64)
@@ -413,6 +412,7 @@ def get_atom_charge_claims(
                 atom_claims,
             )
         )
+        
 
         # calculate connection index. First we condense down to unique species
         species_claims = np.zeros(len(unique_species) + 1, dtype=np.float64)

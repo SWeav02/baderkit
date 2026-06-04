@@ -228,6 +228,19 @@ class ElfLabeler(BaseElfAnalysis):
         """
 
         return self._elf_bader
+    
+    @property
+    def qtaim_bader(self) -> Bader:
+        """
+
+        Returns
+        -------
+        Bader
+            The Bader class used to partition the charge density.
+
+        """
+
+        return self._qtaim_bader
 
     @property
     def basin_charges(self) -> NDArray[np.float64]:
