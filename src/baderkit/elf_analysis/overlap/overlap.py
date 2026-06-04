@@ -805,6 +805,10 @@ class BasinOverlap(BaseElfAnalysis):
                 # BUGFIX: If there is only one basin in a shell, we base whether it is
                 # a core or lone-pair on its distance
                 if len(local_indices) == 1:
+                    # BUGFIX: We want to use the distance from the weighted
+                    # center of the basin in case it is marked as a ring
+                    dist = self.local_bader.basin_atom_dists[local_indices[0]]
+                    
                     if (
                         dist <= core_dist_tol
                         and overlap_fracs[0] > 1.0 - self.weight_tol

@@ -1545,7 +1545,7 @@ class Bader(BaseAnalysis):
             nna_cutoff = 1.0
 
         # Get basin and atom frac coords
-        basins = self.maxima_frac  # (N_basins, 3)
+        basins = self.maxima_center_frac  # (N_basins, 3)
         atoms = structure.frac_coords  # (N_atoms, 3)
 
         # get lattice matrix and number of atoms/basins
