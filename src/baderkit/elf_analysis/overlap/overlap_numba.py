@@ -294,9 +294,9 @@ def get_overlap_fractions(
     return local_charge_frac, local_volume_frac, atom_groups
 
 
-# @njit(cache=True)
+@njit(cache=True)
 def get_atom_shell_groups(
-    atom_local_groups, atom_frac_coords, local_frac_coords, matrix, tol=0.2
+    atom_local_groups, atom_frac_coords, local_frac_coords, local_center_frac_coords, matrix, tol=0.2
 ):
     coord_groups = []
     basin_dists = []
@@ -313,8 +313,15 @@ def get_atom_shell_groups(
         neigh_dists = np.zeros(len(local_group), dtype=np.float64)
         for local_idx, (label, image, _) in enumerate(local_group):
             image1 = INT_TO_IMAGE[int(image)]
-            local_frac = local_frac_coords[int(label)] + image1
-            local_cart = local_frac @ matrix
+            # get frac coord that this image corresponds to
+            local_frac = local_frac_coords[int(label)]
+            # sometimes, this may not be the weighted center of the basin. In
+            # these cases it is better to use the actual center. This may cross
+            # a periodic boundary which we correct for here.
+            center_frac = local_center_frac_coords[int(label)]
+            comparison_frac = center_frac - np.round(center_frac - local_frac) + image1
+            
+            local_cart = comparison_frac @ matrix
             
             offset = local_cart - atom_cart
             neigh_dists[local_idx] = np.linalg.norm(offset)

@@ -86,7 +86,7 @@ class BasinOverlap(BaseElfAnalysis):
         total_charge_grid: Grid | None = None,
         nna_cutoff: float = 1.0,
         min_bond_angle: float = 135,
-        weight_tol: float = 0.5,
+        weight_tol: float = 0.3,
         **kwargs,
     ):
         super().__init__(
@@ -696,6 +696,7 @@ class BasinOverlap(BaseElfAnalysis):
                 atom_local_groups=self.qtaim_overlap_groups,
                 atom_frac_coords=self.reference_grid.structure.frac_coords,
                 local_frac_coords=self.local_maxima_frac,
+                local_center_frac_coords=self.local_bader.maxima_center_frac,
                 matrix=self.reference_grid.matrix,
                 tol=0.15,
             )
@@ -827,38 +828,29 @@ class BasinOverlap(BaseElfAnalysis):
                     
                     if (
                         dist <= core_dist_tol
-                        and overlap_fracs[0] > 1.0 - self.weight_tol
+                        and overlap_fracs[0] == 1.0
                     ):
                         cores[local_indices[0]] = atom_idx
                         continue
-                    elif overlap_fracs[0] > 1.0 - self.weight_tol:
+                    elif overlap_fracs[0] == 1.0:
                         lone_pairs[local_indices[0]] = atom_idx
                         continue
 
                 # if all members of this shell are almost entirely owned by this
                 # atom, we have a core
-                if np.all(overlap_fracs > 1.0 - self.weight_tol):
+                if np.all(overlap_fracs == 1.0):
                     cores[local_indices] = atom_idx
                     continue
 
-                # if none of the basins are above our threshold for lone-pairs
-                # they must all be shared. If all of them are above the threshold
-                # we have highly ionic shared basins.
-                max_frac = overlap_fracs.max()
-                min_frac = overlap_fracs.min()
-                if (
-                    max_frac < 1.0 - self.weight_tol
-                    or min_frac > 1.0 - self.weight_tol
-                ):
-                    continue
+
                 # otherwise, me may have a lone-pairs or shared basins.
-                # We only accept basins as lone-pairs if they have a significantly
-                # higher value than the other basins in this shell
-                # lone-pairs if there is also a basin that is significantly
-                # shared. This helps avoid misassigning highly ionic shared
-                # basins
+                # We only accept basins as lone-pairs if they are significantly
+                # less shared than the lowest fraction in this shell. This can
+                # happen with covalent bonds or heavily polarized bonds towards
+                # another atom.
+                min_frac = overlap_fracs.min()
                 for local_idx, local_frac in zip(local_indices, overlap_fracs):
-                    if (local_frac - min_frac) / min_frac > 0.2:
+                    if min_frac / local_frac < self.weight_tol:
                         lone_pairs[local_idx] = atom_idx
 
                 # anything left over is a shared basin

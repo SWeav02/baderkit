@@ -429,13 +429,13 @@ class Bader(BaseAnalysis):
                     coords[:, 2],
                 ]
                 frac_coords = coords / self.reference_grid.shape
-
-                weighted_frac.append(
-                    merge_frac_coords_weighted(
-                        frac_coords=frac_coords,
-                        values=values,
-                    )
+                
+                weighted = merge_frac_coords_weighted(
+                    frac_coords=frac_coords,
+                    values=values,
                 )
+
+                weighted_frac.append(weighted)
             self._maxima_center_frac = np.array(weighted_frac)
 
         return self._maxima_center_frac
