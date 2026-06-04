@@ -296,7 +296,7 @@ def get_overlap_fractions(
 
 @njit(cache=True)
 def get_atom_shell_groups(
-    atom_local_groups, atom_frac_coords, local_frac_coords, local_center_frac_coords, matrix, tol=0.2
+    atom_local_groups, atom_frac_coords, local_frac_coords, local_center_frac_coords, matrix, voxel_dist, tol=0.2
 ):
     coord_groups = []
     basin_dists = []
@@ -334,9 +334,13 @@ def get_atom_shell_groups(
         current_group = [neigh_indices[0]]
         for idx in neigh_indices[1:]:
             dist = neigh_dists[idx]
-            diff = (dist - current_val) / dist < tol
+            # BUGFIX: For coarse grids, we use the larger between the distance
+            # and the size of a voxel
+            vox_diff = (voxel_dist) / dist
+            rel_diff = (dist - current_val) / dist
+            in_shell = (rel_diff < tol or rel_diff < vox_diff)
             current_val = dist
-            if dist == 0 or diff:
+            if dist == 0 or in_shell:
                 current_group.append(idx)
             else:
                 # TODO: get actual labels rather than relative
