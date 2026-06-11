@@ -182,7 +182,7 @@ class Bader(BaseAnalysis):
         self,
         method: str | BaderMethod = BaderMethod.default,
         nna_cutoff: float | bool = False,
-        persistence_tol: float = 0.05,
+        persistence_tol: float = 0.5,
         **kwargs,
     ):
         super().__init__(**kwargs)
