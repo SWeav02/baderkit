@@ -25,6 +25,7 @@ from baderkit.global_numba.file_parsers import (
     read_cube,
     read_vasp,
     read_xsf,
+    read_elk,
 )
 from baderkit.global_numba.file_parsers import write_cube as write_cube_file
 from baderkit.global_numba.file_parsers import write_vasp as write_vasp_file
@@ -1347,8 +1348,8 @@ class Grid(VolumetricData):
         Parameters
         ----------
         grid_file : str | Path
-            The file the instance should be made from. Should be a gaussian
-            cube file.
+            The file the instance should be made from. Should be a XCrysDen xsf
+            file.
         data_type: str | DataType
             The type of data loaded from the file, either charge or elf. If
             None, the type will be guessed from the data range.
@@ -1367,6 +1368,69 @@ class Grid(VolumetricData):
         # check that file exists
         assert grid_file.exists(), f"No file with name {grid_file} found in directory"
         structure, data, origin, sig_figs = read_xsf(grid_file)
+        # TODO: Also save the ion charges/origin for writing later
+        t1 = time.time()
+        logging.info(f"Time: {round(t1-t0,2)}")
+        return cls(
+            structure=structure,
+            data=data,
+            data_type=data_type,
+            source_format=Format.xsf,
+            sig_figs=sig_figs,
+            **kwargs,
+        )
+    
+    @classmethod
+    def from_elk(
+        cls,
+        geometry_file: str | Path = "GEOMETRY.OUT",
+        grid_file: str | Path = "RHO3D.OUT",
+        spin_file: str | Path | None = "MAG3D.OUT",
+        data_type: str | DataType = None,
+        **kwargs,
+    ) -> Self:
+        """
+        Create a grid instance using elk OUT files.
+
+        Parameters
+        ----------
+        geometry_file : str | Path
+            The geometry output from elk
+        grid_file : str | Path
+            The file the instance should be made from.
+        spin_file : str | Path
+            The file containing spin polarization information if calculated. If
+            set to None, only the total charge density will be read.
+        data_type: str | DataType
+            The type of data loaded from the file, either charge or elf. If
+            None, the type will be guessed from the data range.
+            Defaults to None.
+        total_only: bool
+            If true, only the first set of data in the file will be read. This
+            increases speed and reduced memory usage for methods that do not
+            use the spin data.
+            Defaults to True.
+
+        Returns
+        -------
+        Self
+            Grid from the specified file.
+
+        """
+        logging.info(f"Loading {grid_file}")
+        t0 = time.time()
+        # make sure path is a Path object
+        geometry_file = Path(geometry_file)
+        grid_file = Path(grid_file)
+        if spin_file is not None:
+            spin_file = Path(spin_file)
+        # check that file exists
+        assert grid_file.exists(), f"No file with name {grid_file} found in directory"
+        structure, data, sig_figs = read_elk(
+            geometry_file,
+            grid_file,
+            spin_file,
+            )
         # TODO: Also save the ion charges/origin for writing later
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")

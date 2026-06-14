@@ -462,6 +462,61 @@ class BaseAnalysis(ABC):
 
         """
         return cls.from_dynamic(format="xsf", **kwargs)
+    
+    @classmethod
+    def from_elk(
+            cls,
+            geometry_file : Path | str = "GEOMETRY.OUT",
+            charge_grid : Path | str = "RHO3D.OUT",
+            reference_grid : Path | str | None = None,
+            spin_grid : Path | str = None,
+            **kwargs) -> Self:
+        """
+        Creates a Bader class object from elk .OUT files.
+
+        Parameters
+        ----------
+        geometry_file : Path | str, optional
+            The path to the GEOMETRY.OUT file representing the structure of the
+            system.
+        charge_grid : Path | str, optional
+            The path to the .OUT file that will be used for integrating charge.
+        spin_grid : Path | str, optional
+            For spin polarized calculations and task 73, elk will output a
+            MAG3D.OUT file which can be used to recover the spin-up/spin-down cahrge
+            density. Note that there is no equivalent for the ELF.
+            If None, only the total charge density will be loaded.
+        total_charge_grid : Grid | None, optional
+            ELK is an all electron code and the total charge grid should
+            typically not be supplied.
+        reference_grid : Path | None | str, optional
+            The path to the .OUT file that will be used for partitioning. As ELK
+            is an all-electron code, this should generally not be supplied for
+            charge density partitioning. It must be supplied for ELF analysis however.
+            If None, the total charge file will be used for partitioning.
+        **kwargs : dict
+            Keyword arguments to pass to the class.
+
+        Returns
+        -------
+        Self
+            A BaseAnalysis class object.
+
+        """
+        # we manually define the loading here because elk uses very different
+        # file style from other codes
+        charge_grid = Grid.from_elk(
+            geometry_file=geometry_file,
+            grid_file=charge_grid,
+            spin_file=spin_grid,
+            )        
+        if reference_grid is not None:
+            reference_grid = Grid.from_elk(
+                geometry_file=geometry_file,
+                grid_file=reference_grid,
+                spin_file=spin_grid,
+                )
+        return cls.from_dynamic(charge_grid=charge_grid, reference_grid=reference_grid, format="elk", **kwargs)
 
     @classmethod
     def from_dynamic(
