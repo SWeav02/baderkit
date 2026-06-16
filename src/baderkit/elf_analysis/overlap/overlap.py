@@ -752,9 +752,10 @@ class BasinOverlap(BaseElfAnalysis):
                 local_frac_coords=self.local_maxima_frac,
                 local_center_frac_coords=self.local_bader.maxima_center_frac,
                 matrix=self.reference_grid.matrix,
-                voxel_dist=2*self.reference_grid.max_point_dist, # max dist between two adjacent voxels
+                voxel_dist=2.2*self.reference_grid.max_point_dist, # max dist between two adjacent voxels + 10%
                 tol=0.15,
             )
+            
             self._atom_shell_groups = all_atom_shells
             self._atom_average_shell_dists = basin_dists
 

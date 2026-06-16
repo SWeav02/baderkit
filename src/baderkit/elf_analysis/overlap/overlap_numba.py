@@ -453,7 +453,7 @@ def get_atom_shell_groups(
             if dist <= 1e-12:
                 current_group.append(idx)
             
-            if dist > 1e-12 and in_shell:
+            elif dist > 1e-12 and in_shell:
                 current_group.append(idx)
             else:
                 # TODO: get actual labels rather than relative

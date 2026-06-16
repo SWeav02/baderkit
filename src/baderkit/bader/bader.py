@@ -421,7 +421,7 @@ class Bader(BaseAnalysis):
         """
         if self._maxima_center_frac is None:
             weighted_frac = []
-            for coords in self.maxima_betti_groups:
+            for coords, ref_coord in zip(self.maxima_betti_groups, self.maxima_frac):
                 # get values at coords
                 values = self.reference_grid.total[
                     coords[:, 0],
@@ -433,7 +433,10 @@ class Bader(BaseAnalysis):
                 weighted = merge_frac_coords_weighted(
                     frac_coords=frac_coords,
                     values=values,
+                    ref_coord=ref_coord,
+                    wrap=False,
                 )
+                weighted = np.round(weighted, 6)
 
                 weighted_frac.append(weighted)
             self._maxima_center_frac = np.array(weighted_frac)
