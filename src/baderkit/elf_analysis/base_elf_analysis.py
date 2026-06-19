@@ -88,14 +88,15 @@ class BaseElfAnalysis(BaseAnalysis):
         return cls.from_dynamic(
             charge_grid, reference_grid=reference_grid, format="vasp", **kwargs
         )
-    
+
     @classmethod
     def from_elk(
         cls,
-        geometry_file : Path | str = "GEOMETRY.OUT",
-        charge_grid : Path | str = "RHO3D.OUT",
-        reference_grid : Path | str = "ELF3D.OUT",
-        **kwargs) -> Self:
+        geometry_file: Path | str = "GEOMETRY.OUT",
+        charge_grid: Path | str = "RHO3D.OUT",
+        reference_grid: Path | str = "ELF3D.OUT",
+        **kwargs,
+    ) -> Self:
         """
         Creates a ELF analysis class object from ELK .OUT files. Note that spin
         polarized calculations can only be treated using the total charge density
@@ -131,7 +132,7 @@ class BaseElfAnalysis(BaseAnalysis):
             reference_grid=reference_grid,
             spin_grid=None,
             **kwargs,
-            )
+        )
 
     @classmethod
     def from_dynamic(

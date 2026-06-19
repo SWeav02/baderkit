@@ -23,9 +23,9 @@ from baderkit.global_numba.file_parsers import (
     detect_volume_format,
     infer_significant_figures,
     read_cube,
+    read_elk,
     read_vasp,
     read_xsf,
-    read_elk,
 )
 from baderkit.global_numba.file_parsers import write_cube as write_cube_file
 from baderkit.global_numba.file_parsers import write_vasp as write_vasp_file
@@ -47,6 +47,14 @@ class DataType(str, Enum):
             DataType.charge: "CHGCAR",
             DataType.elf: "ELFCAR",
         }[self]
+
+    def is_elf(self):
+        if self == DataType.charge:
+            return False
+        elif self == DataType.elf:
+            return True
+        else:
+            return None
 
 
 class Grid(VolumetricData):
@@ -138,8 +146,10 @@ class Grid(VolumetricData):
         self._cubic_spline_coeffs = None
 
         if data_type is None:
+            from baderkit.global_numba.file_parsers import check_elf
+
             # attempt to guess data type from data range
-            if self.total.max() <= 1 and self.total.min() >= 0:
+            if check_elf(self.total):
                 data_type = DataType.elf
             else:
                 data_type = DataType.charge
@@ -1267,16 +1277,25 @@ class Grid(VolumetricData):
         t0 = time.time()
         # get structure and data from file
         grid_file = Path(grid_file)
+
+        data_type = DataType(data_type) if data_type is not None else None
+        is_elf = data_type.is_elf if data_type is not None else None
+
         # check that file exists
         assert grid_file.exists(), f"No file with name {grid_file} found in directory"
-        structure, data, data_aug, sig_figs = read_vasp(
-            grid_file, total_only=total_only
+        structure, data, data_aug, sig_figs, is_elf = read_vasp(
+            grid_file,
+            total_only=total_only,
+            is_elf=is_elf,
         )
         if poscar_file is not None:
             structure = Structure.from_file(poscar_file)
 
         if spin_system is None:
             spin_system = "not polarized" if total_only else "polarized"
+
+        if is_elf:
+            data_type = DataType.elf
 
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -1320,9 +1339,16 @@ class Grid(VolumetricData):
         t0 = time.time()
         # make sure path is a Path object
         grid_file = Path(grid_file)
+        data_type = DataType(data_type) if data_type is not None else None
+        is_elf = data_type.is_elf if data_type is not None else None
         # check that file exists
         assert grid_file.exists(), f"No file with name {grid_file} found in directory"
-        structure, data, ion_charges, origin, sig_figs = read_cube(grid_file)
+        structure, data, ion_charges, origin, sig_figs, is_elf = read_cube(
+            grid_file,
+            is_elf=is_elf,
+        )
+        if is_elf:
+            data_type = DataType.elf
         # TODO: Also save the ion charges/origin for writing later
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -1365,9 +1391,16 @@ class Grid(VolumetricData):
         t0 = time.time()
         # make sure path is a Path object
         grid_file = Path(grid_file)
+        data_type = DataType(data_type) if data_type is not None else None
+        is_elf = data_type.is_elf if data_type is not None else None
         # check that file exists
         assert grid_file.exists(), f"No file with name {grid_file} found in directory"
-        structure, data, origin, sig_figs = read_xsf(grid_file)
+        structure, data, origin, sig_figs, is_elf = read_xsf(
+            grid_file,
+            is_elf=is_elf,
+        )
+        if is_elf:
+            data_type = DataType.elf
         # TODO: Also save the ion charges/origin for writing later
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")
@@ -1379,7 +1412,7 @@ class Grid(VolumetricData):
             sig_figs=sig_figs,
             **kwargs,
         )
-    
+
     @classmethod
     def from_elk(
         cls,
@@ -1419,6 +1452,8 @@ class Grid(VolumetricData):
         """
         logging.info(f"Loading {grid_file}")
         t0 = time.time()
+        data_type = DataType(data_type) if data_type is not None else None
+        is_elf = data_type.is_elf if data_type is not None else None
         # make sure path is a Path object
         geometry_file = Path(geometry_file)
         grid_file = Path(grid_file)
@@ -1426,11 +1461,14 @@ class Grid(VolumetricData):
             spin_file = Path(spin_file)
         # check that file exists
         assert grid_file.exists(), f"No file with name {grid_file} found in directory"
-        structure, data, sig_figs = read_elk(
+        structure, data, sig_figs, is_elf = read_elk(
             geometry_file,
             grid_file,
             spin_file,
-            )
+            is_elf=is_elf,
+        )
+        if is_elf:
+            data_type = DataType.elf
         # TODO: Also save the ion charges/origin for writing later
         t1 = time.time()
         logging.info(f"Time: {round(t1-t0,2)}")

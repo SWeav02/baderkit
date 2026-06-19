@@ -44,19 +44,19 @@ def get_unique_overlaps(
                 # thee maxima this point is assigned to lies in this image.
                 atom_image = atom_images[i, j, k]
                 local_image = local_images[i, j, k]
-                
+
                 # We need the local maxima relative to the atom maxima in the
                 # cell. We find the periodic image the local maximum would sit
                 # in if we the atomic maximum were shifted into the unit cell.
                 mi, mj, mk = INT_TO_IMAGE[local_image] - INT_TO_IMAGE[atom_image]
 
-                local_image = IMAGE_TO_INT[mi,mj,mk]
+                local_image = IMAGE_TO_INT[mi, mj, mk]
 
                 local_pair = local_image_map[local_label, local_image]
 
                 pair_val = szudzik_pair(atom_label, local_pair)
                 atom_local_pairs.add(int(pair_val))
-                
+
     # convert set to array
     out = np.empty(len(atom_local_pairs), dtype=np.int64)
 
@@ -123,7 +123,7 @@ def get_overlap_charge_volume(
         for i in range(nx):
             for j in range(ny):
                 for k in range(nz):
-                    
+
                     if atom_labels[i, j, k] != atom_label:
                         continue
                     if local_labels[i, j, k] != target_label:
@@ -133,17 +133,17 @@ def get_overlap_charge_volume(
                     # thee maxima this point is assigned to lies in this image.
                     atom_image = atom_images[i, j, k]
                     local_image = local_images[i, j, k]
-                    
+
                     # We need the local maxima relative to the atom maxima in the
                     # cell. We find the periodic image the local maximum would sit
                     # in if we the atomic maximum were shifted into the unit cell.
                     mi, mj, mk = INT_TO_IMAGE[local_image] - INT_TO_IMAGE[atom_image]
-                    pair_image = IMAGE_TO_INT[mi,mj,mk]
-                    
+                    pair_image = IMAGE_TO_INT[mi, mj, mk]
+
                     # skip if this isn't the correct image
                     if pair_image != target_image:
                         continue
-                    
+
                     # assign charge/volume
                     pair_charges[idx] += charge_data[i, j, k]
                     pair_volumes[idx] += 1
@@ -153,6 +153,7 @@ def get_overlap_charge_volume(
     pair_volumes = cell_volume * (pair_volumes / pair_volumes.sum())
 
     return pair_charges, pair_volumes, pair_labels
+
 
 @njit(parallel=True, cache=True)
 def get_qtaim_fractions(
@@ -199,11 +200,11 @@ def get_qtaim_fractions(
 
         charge_fracs = charge_counts / charge_counts.sum()
         volume_fracs = volume_counts / volume_counts.sum()
-        
+
         # convert to weights
         charge_weights = charge_fracs / charge_fracs.max()
         volume_weights = volume_fracs / volume_fracs.max()
-        
+
         # remove entries with weights below tol
         high_fracs = np.where((charge_weights > tol) & (volume_weights > tol))[0]
         charge_fracs = charge_fracs[high_fracs]
@@ -229,6 +230,7 @@ def get_qtaim_fractions(
         )
 
     return atom_charge_frac, atom_volume_frac
+
 
 @njit(parallel=True, cache=True)
 def get_basin_fractions(
@@ -281,11 +283,11 @@ def get_basin_fractions(
 
         charge_fracs = charge_counts / charge_counts.sum()
         volume_fracs = volume_counts / volume_counts.sum()
-        
+
         # convert to weights
         charge_weights = charge_fracs / charge_fracs.max()
         volume_weights = volume_fracs / volume_fracs.max()
-        
+
         # remove entries with weights below tol
         high_fracs = np.where((charge_weights > tol) & (volume_weights > tol))[0]
         charge_fracs = charge_fracs[high_fracs]
@@ -326,8 +328,7 @@ def get_qtaim_groups(
     for i in range(num_atoms):
         atom_frac.append(scratch.copy())
         atom_vol_frac.append(scratch.copy())
-        
-   
+
     for idx in prange(num_atoms):
         group = []
         # get charge fracs
@@ -349,7 +350,7 @@ def get_qtaim_groups(
         for group_idx, entry in enumerate(group):
             group_array[group_idx] = entry
         atom_frac[idx] = group_array
-        
+
         # get volume fracs
         group = []
         for local_idx, (local_fracs) in enumerate(local_volume_fractions):
@@ -403,7 +404,13 @@ def get_overlap_fractions(
 
 @njit(cache=True)
 def get_atom_shell_groups(
-    atom_local_groups, atom_frac_coords, local_frac_coords, local_center_frac_coords, matrix, voxel_dist, tol=0.2
+    atom_local_groups,
+    atom_frac_coords,
+    local_frac_coords,
+    local_center_frac_coords,
+    matrix,
+    voxel_dist,
+    tol=0.2,
 ):
     coord_groups = []
     basin_dists = []
@@ -416,7 +423,7 @@ def get_atom_shell_groups(
             coord_groups.append([np.empty((0), dtype=np.int64)])
             basin_dists.append([0.0][1:])
             continue
-        
+
         neigh_dists = np.zeros(len(local_group), dtype=np.float64)
         for local_idx, (label, image, _) in enumerate(local_group):
             image1 = INT_TO_IMAGE[int(image)]
@@ -427,9 +434,9 @@ def get_atom_shell_groups(
             # a periodic boundary which we correct for here.
             center_frac = local_center_frac_coords[int(label)]
             comparison_frac = center_frac - np.round(center_frac - local_frac) + image1
-            
+
             local_cart = comparison_frac @ matrix
-            
+
             offset = local_cart - atom_cart
             neigh_dists[local_idx] = np.linalg.norm(offset)
 
@@ -441,19 +448,21 @@ def get_atom_shell_groups(
         current_group = [neigh_indices[0]]
         for idx in neigh_indices[1:]:
             dist = neigh_dists[idx]
-            
-            # BUGFIX: For coarse grids, we use the larger between the distance
-            # and the size of a voxel
-            vox_diff = (voxel_dist) / dist
-            rel_diff = (dist - current_val) / dist
-            in_shell = (rel_diff < tol or rel_diff < vox_diff)
-            current_val = dist
+
             # if our dist is ~0, this is the central most shell and we don't
             # allow any other basins in the shell
             if dist <= 1e-12:
                 current_group.append(idx)
-            
-            elif dist > 1e-12 and in_shell:
+                continue
+
+            # BUGFIX: For coarse grids, we use the larger between the distance
+            # and the size of a voxel
+            vox_diff = (voxel_dist) / dist
+            rel_diff = (dist - current_val) / dist
+            in_shell = rel_diff < tol or rel_diff < vox_diff
+            current_val = dist
+
+            if dist > 1e-12 and in_shell:
                 current_group.append(idx)
             else:
                 # TODO: get actual labels rather than relative
@@ -469,7 +478,7 @@ def get_atom_shell_groups(
 
         coord_groups.append(groups)
         basin_dists.append(average_dists)
-        
+
     return coord_groups, basin_dists
 
 
@@ -503,7 +512,7 @@ def get_atom_charge_claims(
 
         # now find each atoms access claim
         atom_claims = np.zeros((num_atoms, 27), dtype=np.float64)
-        
+
         # BUGFIX: If we don't have an access set (which is a bug in itself) this will
         # throw an error. We ensure the proper shape beforehand
         if access_set.shape[1] == 2:
@@ -518,11 +527,11 @@ def get_atom_charge_claims(
                     # adjust the atom image to be relative to the current local basin image
                     atom_image = INT_TO_IMAGE[int(atom_image)]
                     mi, mj, mk = image + atom_image
-                    actual_image = IMAGE_TO_INT[mi,mj,mk]
-                    
+                    actual_image = IMAGE_TO_INT[mi, mj, mk]
+
                     # get atom shift
                     atom_claims[int(atom_idx), int(actual_image)] += charge * frac
-                    
+
         # reduce to only atoms with claims
         atoms = np.argwhere(atom_claims > 0)
         flat_atom_claims = np.empty((len(atoms)), dtype=np.float64)
@@ -540,7 +549,6 @@ def get_atom_charge_claims(
                 atom_claims,
             )
         )
-        
 
         # calculate connection index. First we condense down to unique species
         species_claims = np.zeros(len(unique_species) + 1, dtype=np.float64)

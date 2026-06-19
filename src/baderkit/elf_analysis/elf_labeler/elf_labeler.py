@@ -125,7 +125,7 @@ class ElfLabeler(BaseElfAnalysis):
             spin_system=self.spin_system,
             **kwargs,
         )
-        
+
         self._qtaim_bader = self.overlap.qtaim_bader
         self._elf_bader = self.overlap.local_bader
 
@@ -228,7 +228,7 @@ class ElfLabeler(BaseElfAnalysis):
         """
 
         return self._elf_bader
-    
+
     @property
     def qtaim_bader(self) -> Bader:
         """
@@ -474,7 +474,7 @@ class ElfLabeler(BaseElfAnalysis):
             )
             self._basin_atom_dists = dists
         return self._basin_atom_dists
-    
+
     @property
     def max_basin_dist(self) -> float:
         """

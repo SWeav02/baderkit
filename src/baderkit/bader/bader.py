@@ -429,7 +429,7 @@ class Bader(BaseAnalysis):
                     coords[:, 2],
                 ]
                 frac_coords = coords / self.reference_grid.shape
-                
+
                 weighted = merge_frac_coords_weighted(
                     frac_coords=frac_coords,
                     values=values,

@@ -462,15 +462,16 @@ class BaseAnalysis(ABC):
 
         """
         return cls.from_dynamic(format="xsf", **kwargs)
-    
+
     @classmethod
     def from_elk(
-            cls,
-            geometry_file : Path | str = "GEOMETRY.OUT",
-            charge_grid : Path | str = "RHO3D.OUT",
-            reference_grid : Path | str | None = None,
-            spin_grid : Path | str = None,
-            **kwargs) -> Self:
+        cls,
+        geometry_file: Path | str = "GEOMETRY.OUT",
+        charge_grid: Path | str = "RHO3D.OUT",
+        reference_grid: Path | str | None = None,
+        spin_grid: Path | str = None,
+        **kwargs,
+    ) -> Self:
         """
         Creates a Bader class object from elk .OUT files.
 
@@ -509,14 +510,19 @@ class BaseAnalysis(ABC):
             geometry_file=geometry_file,
             grid_file=charge_grid,
             spin_file=spin_grid,
-            )        
+        )
         if reference_grid is not None:
             reference_grid = Grid.from_elk(
                 geometry_file=geometry_file,
                 grid_file=reference_grid,
                 spin_file=spin_grid,
-                )
-        return cls.from_dynamic(charge_grid=charge_grid, reference_grid=reference_grid, format="elk", **kwargs)
+            )
+        return cls.from_dynamic(
+            charge_grid=charge_grid,
+            reference_grid=reference_grid,
+            format="elk",
+            **kwargs,
+        )
 
     @classmethod
     def from_dynamic(

@@ -400,7 +400,6 @@ class GridPlotter(StructurePlotter):
             if actor is not None:
                 actor.mapper.scalar_range = (self.min_val, self.max_val)
                 actor.mapper.lookup_table.cmap = self.colormap
-                
 
     def _make_structured_grid(self) -> pv.StructuredGrid:
         """
