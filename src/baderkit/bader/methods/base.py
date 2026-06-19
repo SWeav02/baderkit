@@ -693,7 +693,6 @@ class MethodBase:
             image_map=root_transforms,
             new_vacuum_label=len(self.charges),
         )
-
         # get final ongrid extrema groups
         self._generate_voxel_groups()
 

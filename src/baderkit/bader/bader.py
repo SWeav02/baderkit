@@ -182,7 +182,7 @@ class Bader(BaseAnalysis):
         self,
         method: str | BaderMethod = BaderMethod.default,
         nna_cutoff: float | bool = False,
-        persistence_tol: float = 0.05,
+        persistence_tol: float = 0.5,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -421,7 +421,7 @@ class Bader(BaseAnalysis):
         """
         if self._maxima_center_frac is None:
             weighted_frac = []
-            for coords in self.maxima_betti_groups:
+            for coords, ref_coord in zip(self.maxima_betti_groups, self.maxima_frac):
                 # get values at coords
                 values = self.reference_grid.total[
                     coords[:, 0],
@@ -430,12 +430,15 @@ class Bader(BaseAnalysis):
                 ]
                 frac_coords = coords / self.reference_grid.shape
 
-                weighted_frac.append(
-                    merge_frac_coords_weighted(
-                        frac_coords=frac_coords,
-                        values=values,
-                    )
+                weighted = merge_frac_coords_weighted(
+                    frac_coords=frac_coords,
+                    values=values,
+                    ref_coord=ref_coord,
+                    wrap=False,
                 )
+                weighted = np.round(weighted, 6)
+
+                weighted_frac.append(weighted)
             self._maxima_center_frac = np.array(weighted_frac)
 
         return self._maxima_center_frac
@@ -1545,6 +1548,7 @@ class Bader(BaseAnalysis):
             nna_cutoff = 1.0
 
         # Get basin and atom frac coords
+        # NOTE: Must be the same coord that images assign to, aka not the center_frac
         basins = self.maxima_frac  # (N_basins, 3)
         atoms = structure.frac_coords  # (N_atoms, 3)
 
@@ -1569,6 +1573,7 @@ class Bader(BaseAnalysis):
             # basin->atom shifts
             atom_fracs = atoms[basin_atoms]
             shifts = np.round(basins - atom_fracs).astype(int)
+
             return basin_atoms, basin_atom_dists, shifts
 
         basin_atoms, basin_atom_dists, shifts = get_atom_basins(atoms, basins)

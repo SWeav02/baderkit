@@ -1147,7 +1147,6 @@ def update_labels_and_images(
                 if label == vacuum_label:
                     labels[i, j, k] = new_vacuum_label
                     continue
-
                 # get the current shift
                 shift = INT_TO_IMAGE[images[i, j, k]]
                 # get the shift from this maxima to its root

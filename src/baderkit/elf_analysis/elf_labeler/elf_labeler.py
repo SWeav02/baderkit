@@ -40,6 +40,7 @@ class ElfLabeler(BaseElfAnalysis):
         "basin_charges",
         "basin_volumes",
         "basin_atom_dists",
+        "max_basin_dist",
         "basin_dists_beyond_atoms",
         "maxima_frac",
         "maxima_center_frac",
@@ -125,6 +126,7 @@ class ElfLabeler(BaseElfAnalysis):
             **kwargs,
         )
 
+        self._qtaim_bader = self.overlap.qtaim_bader
         self._elf_bader = self.overlap.local_bader
 
         self._polarization_cutoff = polarization_cutoff
@@ -226,6 +228,19 @@ class ElfLabeler(BaseElfAnalysis):
         """
 
         return self._elf_bader
+
+    @property
+    def qtaim_bader(self) -> Bader:
+        """
+
+        Returns
+        -------
+        Bader
+            The Bader class used to partition the charge density.
+
+        """
+
+        return self._qtaim_bader
 
     @property
     def basin_charges(self) -> NDArray[np.float64]:
@@ -461,6 +476,20 @@ class ElfLabeler(BaseElfAnalysis):
         return self._basin_atom_dists
 
     @property
+    def max_basin_dist(self) -> float:
+        """
+
+        Returns
+        -------
+        float
+            The maximum distance that any basin in the system sits from nearby
+            atoms
+
+        """
+        if self.basin_atom_dists is not None:
+            return self.basin_atom_dists.max()
+
+    @property
     def heavily_polarized(self) -> NDArray[bool]:
         """
 
@@ -494,7 +523,7 @@ class ElfLabeler(BaseElfAnalysis):
 
         """
         if self.num_nnas > 0:
-            return self.basin_atom_dists.max()
+            return self.basin_atom_dists[self.nna_indices].max()
 
     @property
     def num_nnas(self) -> int:

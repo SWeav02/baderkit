@@ -90,6 +90,51 @@ class BaseElfAnalysis(BaseAnalysis):
         )
 
     @classmethod
+    def from_elk(
+        cls,
+        geometry_file: Path | str = "GEOMETRY.OUT",
+        charge_grid: Path | str = "RHO3D.OUT",
+        reference_grid: Path | str = "ELF3D.OUT",
+        **kwargs,
+    ) -> Self:
+        """
+        Creates a ELF analysis class object from ELK .OUT files. Note that spin
+        polarized calculations can only be treated using the total charge density
+        and ELF, as ELK does not expose spin-polarized ELF.
+
+        Parameters
+        ----------
+        geometry_file : Path | str, optional
+            The path to the GEOMETRY.OUT file representing the structure of the
+            system.
+        charge_grid : Path | str, optional
+            The path to the .OUT file that will be used for integrating charge.
+        total_charge_grid : Grid | None, optional
+            ELK is an all electron code and the total charge grid should
+            typically not be supplied.
+        reference_grid : Path | None | str, optional
+            The path to the .OUT file that will be used for partitioning. As ELK
+            is an all-electron code, this should generally not be supplied for
+            charge density partitioning. It must be supplied for ELF analysis however.
+            If None, the total charge file will be used for partitioning.
+        **kwargs : dict
+            Keyword arguments to pass to the class.
+
+        Returns
+        -------
+        Self
+            A BaseAnalysis class object.
+
+        """
+        return super().from_elk(
+            geometry_file=geometry_file,
+            charge_grid=charge_grid,
+            reference_grid=reference_grid,
+            spin_grid=None,
+            **kwargs,
+        )
+
+    @classmethod
     def from_dynamic(
         cls,
         charge_grid: Path | str | Grid,

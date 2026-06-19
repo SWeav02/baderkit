@@ -33,6 +33,7 @@ class BasinOverlap(BaseElfAnalysis):
 
     _method_kwargs = [
         "min_bond_angle",
+        "weight_tol",
     ]
 
     _local_results = [
@@ -53,6 +54,7 @@ class BasinOverlap(BaseElfAnalysis):
         "atom_charge_claims",
         "atom_connection_indices",
         "atom_connection_index_labels",
+        "atom_shell_charges",
     ]
 
     _nonsummary_results = [
@@ -62,8 +64,10 @@ class BasinOverlap(BaseElfAnalysis):
         "overlap_labels",
         "local_maxima_center_frac",
         "bond_fractions",
+        "bond_fractions_by_species",
         "volume_bond_fractions",
-        "qtaim_overlap_groups",
+        "qtaim_overlap_fractions",
+        "qtaim_overlap_volume_fractions",
         "along_bond",
         "atom_access_sets",
         "atom_access_electron_numbers",
@@ -86,7 +90,8 @@ class BasinOverlap(BaseElfAnalysis):
         total_charge_grid: Grid | None = None,
         nna_cutoff: float = 1.0,
         min_bond_angle: float = 135,
-        fraction_tol: float = 0.05,
+        weight_tol: float = 0.01,
+        # TODO: separate basin/atom tolerances
         **kwargs,
     ):
         super().__init__(
@@ -97,7 +102,7 @@ class BasinOverlap(BaseElfAnalysis):
         )
 
         self._min_bond_angle = min_bond_angle
-        self._fraction_tol = fraction_tol
+        self._weight_tol = weight_tol
 
         # create bader objects
         self.qtaim_bader = Bader(
@@ -133,12 +138,12 @@ class BasinOverlap(BaseElfAnalysis):
         )
 
     @property
-    def fraction_tol(self) -> float:
-        return self._fraction_tol
+    def weight_tol(self) -> float:
+        return self._weight_tol
 
-    @fraction_tol.setter
-    def fraction_tol(self, value: float):
-        self._fraction_tol = value
+    @weight_tol.setter
+    def weight_tol(self, value: float):
+        self._weight_tol = value
         self._reset_properties()
 
     ###########################################################################
@@ -271,9 +276,11 @@ class BasinOverlap(BaseElfAnalysis):
         Returns
         -------
         NDArray[np.int64]
-            An Nx4 array where each row represents a single overlap basin. The
-            columns represent the atom index, atom image, local basin index
-            and local basin image.
+            An Nx3 array where each row represents a single overlap basin. The
+            columns are:
+                0: The atom's index
+                1: The local basins index
+                2: The periodic image the local basin's maxima sits in relative to the atom
 
         """
         if self._overlap_table is None:
@@ -342,6 +349,34 @@ class BasinOverlap(BaseElfAnalysis):
         return self._bond_fractions
 
     @property
+    def bond_fractions_by_species(self) -> list[NDArray[np.float64]]:
+        """
+
+        Returns
+        -------
+        list[NDArray[np.float64]]
+            A list with the same length as the number of local basins. Each entry
+            is an Nx2 array where N is the number of overlapping qtaim basins
+            and each entry is the species and the fractional charge claim of that species.
+
+        """
+        if self._bond_fractions_by_species is None:
+            bond_fracs_by_spec = []
+            # create model dict
+            species_dict = {}
+            for spec in self.structure.symbol_set:
+                species_dict[spec] = 0.0
+
+            for bond_frac in self.bond_fractions:
+                current_dict = species_dict.copy()
+                for i, _, frac in bond_frac:
+                    species = self.structure[int(i)].specie.symbol
+                    current_dict[species] += frac
+                bond_fracs_by_spec.append(current_dict)
+            self._bond_fractions_by_species = bond_fracs_by_spec
+        return self._bond_fractions_by_species
+
+    @property
     def volume_bond_fractions(self) -> list[NDArray[np.float64]]:
         """
 
@@ -360,7 +395,7 @@ class BasinOverlap(BaseElfAnalysis):
         return self._volume_bond_fractions
 
     @property
-    def qtaim_overlap_groups(self) -> list[NDArray[np.float64]]:
+    def qtaim_overlap_fractions(self) -> list[NDArray[np.float64]]:
         """
 
         Returns
@@ -373,9 +408,27 @@ class BasinOverlap(BaseElfAnalysis):
             coordinates).
 
         """
-        if self._qtaim_overlap_groups is None:
+        if self._qtaim_overlap_fractions is None:
             self._get_overlap_fractions()
-        return self._qtaim_overlap_groups
+        return self._qtaim_overlap_fractions
+
+    @property
+    def qtaim_overlap_volume_fractions(self) -> list[NDArray[np.float64]]:
+        """
+
+        Returns
+        -------
+        list[NDArray[np.float64]]
+            A list with the same length as the number of atoms. Each entry
+            represents the local basins that overlap with the qtaim atomic basin.
+            The entries are an Nx2 array where the columns are the local basin's
+            index and the local basin's periodic image (relative to the atoms
+            coordinates).
+
+        """
+        if self._qtaim_overlap_volume_fractions is None:
+            self._get_overlap_fractions()
+        return self._qtaim_overlap_volume_fractions
 
     @property
     def core_basins(self) -> NDArray[int]:
@@ -594,7 +647,7 @@ class BasinOverlap(BaseElfAnalysis):
         """
         if self._atom_access_sets is None:
             access_sets = []
-            for atom_fracs in self.qtaim_overlap_groups:
+            for atom_fracs in self.qtaim_overlap_fractions:
                 access_set = []
                 for i in atom_fracs:
                     # skip core
@@ -684,15 +737,26 @@ class BasinOverlap(BaseElfAnalysis):
 
     @property
     def atom_shell_groups(self) -> list[NDArray[int]]:
+        """
+        For each atom, a list of arrays where each array represents the indices
+        of the elf basins that are in a given shell. Note that the last shell
+        corresponds to the valence shell and includes all basins that are even
+        slightly shared with other atoms. Thus the shell may have a larger
+        charge than usually expected in cations of highly ionic systems.
+        """
         if self._atom_shell_groups is None:
             # get atom shells
             all_atom_shells, basin_dists = get_atom_shell_groups(
-                atom_local_groups=self.qtaim_overlap_groups,
+                atom_local_groups=self.qtaim_overlap_fractions,
                 atom_frac_coords=self.reference_grid.structure.frac_coords,
                 local_frac_coords=self.local_maxima_frac,
+                local_center_frac_coords=self.local_bader.maxima_center_frac,
                 matrix=self.reference_grid.matrix,
+                voxel_dist=2.2
+                * self.reference_grid.max_point_dist,  # max dist between two adjacent voxels + 10%
                 tol=0.15,
             )
+
             self._atom_shell_groups = all_atom_shells
             self._atom_average_shell_dists = basin_dists
 
@@ -700,9 +764,23 @@ class BasinOverlap(BaseElfAnalysis):
 
     @property
     def atom_average_shell_dists(self) -> list[NDArray[float]]:
+        """
+        For each atom, an array where each entry represents the average distance
+        of the basins in each of the atoms shells.
+        """
         if self._atom_average_shell_dists is None:
             self.atom_shell_groups
         return self._atom_average_shell_dists
+
+    @property
+    def atom_shell_charges(self) -> list[NDArray[float]]:
+        """
+        For each atom, an array where each entry is the total number of electrons
+        found in the corresponding shell.
+        """
+        if self._atom_shell_charges is None:
+            self._assign_cores()
+        return self._atom_shell_charges
 
     ###############################################################################
     # Methods to generate properties
@@ -726,12 +804,12 @@ class BasinOverlap(BaseElfAnalysis):
             bond_fractions=self.bond_fractions,
             local_basin_charges=self.local_bader.basin_charges,
             equiv_species=equiv_species,
-            num_atoms=len(self.qtaim_maxima_frac),
+            num_atoms=len(self.reference_grid.structure),
             num_local=len(self.local_maxima_frac),
         )
         # get labels
         symbols = []
-        for idx, site in enumerate(self.qtaim_bader.structure):
+        for idx, site in enumerate(self.reference_grid.structure):
             species_num = species_nums[idx]
             species = site.specie.symbol
             symbols.append(f"CI{int(species_num)}{species}")
@@ -747,12 +825,15 @@ class BasinOverlap(BaseElfAnalysis):
             num_local=len(self.local_maxima_frac),
         )
         # sort lexographically
+        # columns are:
+        # atom index
+        # local index
+        # local image
         overlap_table = overlap_table[
             np.lexsort(
                 (
-                    overlap_table[:, 3],  # lowest priority
+                    overlap_table[:, 2],  # lowest priority
                     overlap_table[:, 1],
-                    overlap_table[:, 2],
                     overlap_table[:, 0],  # highest priority
                 )
             )
@@ -778,71 +859,79 @@ class BasinOverlap(BaseElfAnalysis):
         (
             self._bond_fractions,
             self._volume_bond_fractions,
-            self._qtaim_overlap_groups,
+            self._qtaim_overlap_fractions,
+            self._qtaim_overlap_volume_fractions,
         ) = get_overlap_fractions(
             self.overlap_table,
             self.overlap_charges,
             self.overlap_volumes,
             num_atoms=len(self.reference_grid.structure),
             num_local=len(self.local_maxima_frac),
-            tol=self.fraction_tol,
+            basin_tol=self.weight_tol,
+            atom_tol=0.05,
         )
 
-    def _assign_cores(self, core_dist_tol=0.2):
+    def _assign_cores(self, core_dist_tol=0.3):
         # create tracker for which basins are part of each atoms core
         cores = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         lone_pairs = np.full(len(self.local_maxima_frac), -1, dtype=np.int64)
         shared = np.zeros(len(self.local_maxima_frac), dtype=np.bool_)
+        atom_shell_charges = []
 
         for atom_idx in range(len(self.atom_shell_groups)):
             atom_shells = self.atom_shell_groups[atom_idx]
             shell_dists = self.atom_average_shell_dists[atom_idx]
-            local_overlap = self.qtaim_overlap_groups[atom_idx]
-            for shell, dist in zip(atom_shells, shell_dists):
+            local_overlap = self.qtaim_overlap_fractions[atom_idx]
+            frac_coords = self.structure.frac_coords[atom_idx]
+            shell_charges = np.zeros(len(atom_shells), dtype=float)
+
+            for shell_idx, (shell, dist) in enumerate(zip(atom_shells, shell_dists)):
                 overlap_fracs = local_overlap[shell][:, 2]
                 local_indices = local_overlap[shell][:, 0].astype(int)
+
+                # add charges
+                local_basins = local_overlap[:, 0][shell].astype(int)
+                shell_charges[shell_idx] = self.local_bader.basin_charges[
+                    local_basins
+                ].sum()
 
                 # BUGFIX: If there is only one basin in a shell, we base whether it is
                 # a core or lone-pair on its distance
                 if len(local_indices) == 1:
-                    if (
-                        dist <= core_dist_tol
-                        and overlap_fracs[0] > 1.0 - self.fraction_tol
-                    ):
+                    # BUGFIX: We want to use the distance from the weighted
+                    # center of the basin in case it is marked as a ring
+                    center_frac = self.local_bader.maxima_center_frac[local_indices[0]]
+                    dist, image = self.structure.lattice.get_distance_and_image(
+                        frac_coords, center_frac
+                    )
+
+                    if dist <= core_dist_tol and overlap_fracs[0] == 1.0:
                         cores[local_indices[0]] = atom_idx
                         continue
-                    elif overlap_fracs[0] > 1.0 - self.fraction_tol:
+                    elif overlap_fracs[0] == 1.0:
                         lone_pairs[local_indices[0]] = atom_idx
                         continue
 
                 # if all members of this shell are almost entirely owned by this
                 # atom, we have a core
-                if np.all(overlap_fracs > 1.0 - self.fraction_tol):
+                if np.all(overlap_fracs == 1.0):
                     cores[local_indices] = atom_idx
                     continue
 
-                # if none of the basins are above our threshold for lone-pairs
-                # they must all be shared. If all of them are above the threshold
-                # we have highly ionic shared basins.
-                max_frac = overlap_fracs.max()
-                min_frac = overlap_fracs.min()
-                if (
-                    max_frac < 1.0 - self.fraction_tol
-                    or min_frac > 1.0 - self.fraction_tol
-                ):
-                    continue
                 # otherwise, me may have a lone-pairs or shared basins.
-                # We only accept basins as lone-pairs if they have a significantly
-                # higher value than the other basins in this shell
-                # lone-pairs if there is also a basin that is significantly
-                # shared. This helps avoid misassigning highly ionic shared
-                # basins
+                # We only accept basins as lone-pairs if they are significantly
+                # less shared than the lowest fraction in this shell. This can
+                # happen with covalent bonds or heavily polarized bonds towards
+                # another atom.
+                min_frac = overlap_fracs.min()
                 for local_idx, local_frac in zip(local_indices, overlap_fracs):
-                    if (local_frac - min_frac) / min_frac > 0.2:
+                    if min_frac / local_frac < self.weight_tol:
                         lone_pairs[local_idx] = atom_idx
+            atom_shell_charges.append(shell_charges)
 
-                # anything left over is a shared basin
+            # anything left over is a shared basin
         shared = (cores == -1) & (lone_pairs == -1)
 
         self._shared_basins = shared
         self._core_basins = cores
+        self._atom_shell_charges = atom_shell_charges

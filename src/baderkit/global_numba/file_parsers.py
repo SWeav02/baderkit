@@ -22,6 +22,7 @@ class Format(str, Enum):
     cube = "cube"
     hdf5 = "hdf5"
     xsf = "xsf"
+    elk = "elk"
 
     @property
     def writer(self):
@@ -39,6 +40,7 @@ class Format(str, Enum):
             Format.cube: "from_cube",
             Format.hdf5: "from_hdf5",
             Format.xsf: "from_xsf",
+            Format.elk: "from_elk",
         }[self]
 
     @property
@@ -48,6 +50,7 @@ class Format(str, Enum):
             Format.cube: ".cube",
             Format.hdf5: ".h5",
             Format.xsf: ".xsf",
+            Format.elk: ".OUT",
         }[self]
 
 
@@ -119,6 +122,19 @@ def infer_significant_figures(values, max_figs=20, sample_size=1000):
     return max_figs
 
 
+def check_elf(data: NDArray[float]):
+    # get the number of points outside the range of ELF
+    mask = data > 1.0
+    num_over = np.count_nonzero(mask)
+
+    # if less than 1% are above our range we consider the data to be ELF like.
+    # This helps for codes that sometimes give large values above expected (e.g. ELK)
+    num_points = np.prod(data.shape)
+    if num_over / num_points > 0.01:
+        return False
+    return True
+
+
 def detect_volume_format(filename: str | Path):
     filename = Path(filename)
     source_format = None
@@ -130,42 +146,65 @@ def detect_volume_format(filename: str | Path):
     try:
         with open(filename, "r") as f:
 
-            # Read first few lines for format detection
-            first_lines = [next(f).strip() for _ in range(20)]
+            # Read first few lines safely for format detection
+            first_lines = []
+            for _ in range(20):
+                line = f.readline()
+                if not line:
+                    break
+                first_lines.append(line.strip())
+
+            if first_lines:
+                # -----------------------------------------------------------------
+                # Check for Elk (.OUT)
+                # -----------------------------------------------------------------
+                # Elk grid files start with: "N1 N2 N3 : grid size"
+                first_line = first_lines[0]
+                if ":" in first_line:
+                    grid_tokens = first_line.split(":")[0].split()
+                    if len(grid_tokens) == 3:
+                        try:
+                            # Verify all three tokens before the colon are integers
+                            int(grid_tokens[0]), int(grid_tokens[1]), int(
+                                grid_tokens[2]
+                            )
+                            source_format = Format.elk
+                        except ValueError:
+                            pass
 
             # -----------------------------------------------------------------
             # Check for XSF
             # -----------------------------------------------------------------
+            if source_format is None and first_lines:
+                upper_lines = [line.upper() for line in first_lines]
 
-            upper_lines = [line.upper() for line in first_lines]
+                if any("PRIMVEC" in line for line in upper_lines) or any(
+                    "BEGIN_DATAGRID_3D" in line for line in upper_lines
+                ):
+                    source_format = Format.xsf
 
-            if any("PRIMVEC" in line for line in upper_lines) or any(
-                "BEGIN_DATAGRID_3D" in line for line in upper_lines
-            ):
-                source_format = Format.xsf
+                else:
+                    # -------------------------------------------------------------
+                    # Check VASP / CUBE
+                    # -------------------------------------------------------------
 
-            else:
-                # -------------------------------------------------------------
-                # Check VASP / CUBE
-                # -------------------------------------------------------------
+                    with open(filename, "r") as f2:
+                        # skip first two lines
+                        next(f2)
+                        next(f2)
 
-                with open(filename, "r") as f2:
-                    # skip first two lines
-                    next(f2)
-                    next(f2)
+                        # The third line of a VASP CHGCAR/ELFCAR has 3 values
+                        # corresponding to the first lattice vector.
+                        #
+                        # .cube files have 4 values corresponding to:
+                        # number of atoms + origin coordinates
+                        line_len = len(next(f2).split())
 
-                    # The third line of a VASP CHGCAR/ELFCAR has 3 values
-                    # corresponding to the first lattice vector.
-                    #
-                    # .cube files have 4 values corresponding to:
-                    # number of atoms + origin coordinates
-                    line_len = len(next(f2).split())
+                        if line_len == 3:
+                            source_format = Format.vasp
 
-                    if line_len == 3:
-                        source_format = Format.vasp
-
-                    elif line_len == 4:
-                        source_format = Format.cube
+                        elif line_len == 4:
+                            source_format = Format.cube
 
     except Exception:
         pass
@@ -208,7 +247,7 @@ def detect_volume_format(filename: str | Path):
 ###############################################################################
 
 
-def read_vasp(filename, total_only: bool):
+def read_vasp(filename, total_only: bool, is_elf: bool = None):
     path = Path(filename)
     ###########################################################################
     # Read Structure. Open in string read mode
@@ -410,11 +449,15 @@ def read_vasp(filename, total_only: bool):
     # calculate sig figs from total
     sig_figs = infer_significant_figures(data["total"])
 
-    return structure, data, data_aug, sig_figs
+    if is_elf is None:
+        is_elf = check_elf(data["total"])
+
+    return structure, data, data_aug, sig_figs, is_elf
 
 
 def read_cube(
     filename: str | Path,
+    is_elf: bool = None,
 ):
     # make sure file is a path object
     filename = Path(filename)
@@ -508,8 +551,9 @@ def read_cube(
     sig_figs = infer_significant_figures(arr)
 
     # check for ELF-like data. If charge-like, convert units
-    eps = 0.01
-    if not (arr.max() <= 1.0 + eps and arr.min() >= 0.0 - eps):
+    if is_elf is None:
+        is_elf = check_elf(arr)
+    if not is_elf:
         arr *= structure.volume
         # convert bohr units
         if bohr_units:
@@ -521,12 +565,10 @@ def read_cube(
     # apply sig figs to array
     data["total"] = round_to_sig_figs(data["total"], sig_figs)
 
-    return structure, data, ion_charges, origin, sig_figs
+    return structure, data, ion_charges, origin, sig_figs, is_elf
 
 
-def read_xsf(
-    filename: str | Path,
-):
+def read_xsf(filename: str | Path, is_elf: bool = None):
     filename = Path(filename)
 
     ###########################################################################
@@ -657,8 +699,9 @@ def read_xsf(
     shape = np.array(arr.shape)
 
     # check for ELF-like data. If charge-like, convert units
-    eps = 0.01
-    if not (arr.max() <= 1.0 + eps and arr.min() >= 0.0 - eps):
+    if is_elf is None:
+        is_elf = check_elf(arr)
+    if not is_elf:
         arr *= structure.volume
         # convert bohr units
         arr *= 1.88973**3
@@ -666,7 +709,160 @@ def read_xsf(
     data = {}
     data["total"] = round_to_sig_figs(arr, sig_figs)
 
-    return structure, data, origin, sig_figs
+    return structure, data, origin, sig_figs, is_elf
+
+
+def read_elk_geometry(filename):
+    """
+    Parses Elk's GEOMETRY.OUT file and returns a baderkit Structure object.
+    Converts lattice vectors from Bohr to Angstroms.
+    """
+    lattice_vectors = []
+    species_list = []
+    fractional_coords = []
+
+    BOHR_TO_ANGSTROM = 0.5291772109
+
+    with open(filename, "r") as f:
+        lines = [
+            line.strip()
+            for line in f
+            if line.strip() and not line.strip().startswith("!")
+        ]
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("avec"):
+            for _ in range(3):
+                i += 1
+                tokens = lines[i].split()
+                vector = [float(t) * BOHR_TO_ANGSTROM for t in tokens[:3]]
+                lattice_vectors.append(vector)
+        elif line.startswith("atoms"):
+            i += 1
+            nspecies = int(lines[i].split(":")[0].strip())
+            for _ in range(nspecies):
+                i += 1
+                spfname_part = lines[i].split(":")[0].strip().strip("'\"")
+                species_name = (
+                    spfname_part[:-3] if spfname_part.endswith(".in") else spfname_part
+                )
+
+                i += 1
+                natoms = int(lines[i].split(":")[0].strip())
+                for _ in range(natoms):
+                    i += 1
+                    tokens = lines[i].split()
+                    coords = [float(t) for t in tokens[:3]]
+                    species_list.append(species_name)
+                    fractional_coords.append(coords)
+        i += 1
+
+    return Structure(lattice_vectors, species_list, fractional_coords)
+
+
+def parse_elk_3d_file(input_file):
+    """
+    Parses any Elk 3D grid file. Dynamically detects if it is a scalar field
+    (4 columns) or a vector field (6 columns) and returns the grid dimensions
+    along with a list of data columns.
+    """
+    with open(input_file, "r") as f:
+        first_line = f.readline()
+        grid_tokens = first_line.split(":")[0].split()
+        n1, n2, n3 = int(grid_tokens[0]), int(grid_tokens[1]), int(grid_tokens[2])
+
+        data_cols = []
+        for line in f:
+            if line.strip():
+                parts = line.split()
+                if len(parts) >= 4:
+                    # Dynamically set up data tracks based on column count
+                    if not data_cols:
+                        num_data_fields = len(parts) - 3  # 1 for scalar, 3 for vector
+                        data_cols = [[] for _ in range(num_data_fields)]
+
+                    for j in range(num_data_fields):
+                        data_cols[j].append(float(parts[3 + j]))
+
+    return n1, n2, n3, data_cols
+
+
+def read_elk(
+    structure="GEOMETRY.OUT",
+    input_file="RHO3D.OUT",
+    spin_file="MAG3D.OUT",
+    is_elf: bool = None,
+):
+    # 1. Dynamically read the structure from GEOMETRY.OUT
+    structure = read_elk_geometry(structure)
+
+    # 2. Parse the total charge density
+    n1, n2, n3, data_total_cols = parse_elk_3d_file(input_file)
+    data_total = data_total_cols[0]
+    expected_points = (n1 + 1) * (n2 + 1) * (n3 + 1)
+
+    # Internal helper to handle Elk's grid wrapping and axis transpositions
+    def process_grid_data(flat_data, dataset_name):
+        if len(flat_data) == expected_points:
+            arr = np.array(flat_data).reshape((n3 + 1, n2 + 1, n1 + 1))
+            arr = arr[:n3, :n2, :n1]
+            return np.transpose(arr, (2, 1, 0))
+        elif len(flat_data) == n1 * n2 * n3:
+            arr = np.array(flat_data).reshape((n3, n2, n1))
+            return np.transpose(arr, (2, 1, 0))
+        else:
+            raise ValueError(
+                f"Data mismatch for '{dataset_name}'! Found {len(flat_data)} points. "
+                f"Expected {expected_points} or {n1 * n2 * n3}."
+            )
+
+    arr_total = process_grid_data(data_total, "total")
+
+    # Infer sig figs and data type (ELF-like vs Charge-like) using total array
+    sig_figs = infer_significant_figures(arr_total)
+    if is_elf is None:
+        is_elf = check_elf(arr_total)
+    if not is_elf:
+        arr_total *= 1.88972612456**3
+        arr_total *= structure.volume
+
+    data = {}
+    data["total"] = round_to_sig_figs(arr_total, sig_figs)
+
+    # 3. Process the spin polarization file if it exists
+    spin_path = Path(spin_file) if spin_file else None
+    if spin_path and spin_path.exists():
+        _, _, _, data_spin_cols = parse_elk_3d_file(spin_path)
+
+        # If it contains 3 data columns (mx, my, mz)
+        if len(data_spin_cols) == 3:
+            arr_mx = process_grid_data(data_spin_cols[0], "diff_x")
+            arr_my = process_grid_data(data_spin_cols[1], "diff_y")
+            arr_mz = process_grid_data(data_spin_cols[2], "diff_z")
+
+            # Smart Physics Check: If mx and my are zero, preserve the signed mz component
+            if np.allclose(arr_mx, 0, atol=1e-5) and np.allclose(arr_my, 0, atol=1e-5):
+                arr_diff = arr_mz
+            else:
+                # If non-collinear components exist, calculate the scalar vector magnitude
+                arr_diff = np.sqrt(arr_mx**2 + arr_my**2 + arr_mz**2)
+        else:
+            # Fallback if the file only contains a single data column
+            arr_diff = process_grid_data(data_spin_cols[0], "diff")
+
+        if not is_elf:
+            arr_diff *= 1.88972612456**3
+            arr_diff *= structure.volume
+
+        data["diff"] = round_to_sig_figs(arr_diff, sig_figs)
+    elif spin_path and not spin_path.exists():
+        print(
+            f"Warning: Spin file '{spin_file}' requested but not found. Skipping 'diff' dataset."
+        )
+
+    return structure, data, sig_figs, is_elf
 
 
 ###############################################################################

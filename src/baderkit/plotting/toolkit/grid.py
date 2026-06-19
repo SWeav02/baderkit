@@ -394,12 +394,12 @@ class GridPlotter(StructurePlotter):
 
     def _update_clims_cmaps(self):
         actors = ["iso", "cap"]
-        actors.extend([f"slice_{i}" for i in self._slice_meshes.keys()])
+        actors.extend([f"{i}" for i in self._slice_meshes.keys()])
         for actor_str in actors:
             actor = self.plotter.actors.get(actor_str, None)
             if actor is not None:
-                actor.prop.clim = (self.min_val, self.max_val)
-                actor.prop.cmap = self.colormap
+                actor.mapper.scalar_range = (self.min_val, self.max_val)
+                actor.mapper.lookup_table.cmap = self.colormap
 
     def _make_structured_grid(self) -> pv.StructuredGrid:
         """
@@ -571,7 +571,7 @@ class GridPlotter(StructurePlotter):
             # get atom colors
             atom_colors = self.atom_colors[self._map_wrapped_to_atoms]
             # get alpha values
-            alpha = self.visible_atoms[self._map_wrapped_to_atoms]
+            alpha = self.atom_opacities[self._map_wrapped_to_atoms]
             # set alpha to zero at unwanted atoms
             alpha[~include_coords] = 0.0
             # update poly data scalars
@@ -596,9 +596,9 @@ class GridPlotter(StructurePlotter):
             )
         else:
             # otherwise, remove all atoms from the plot
-            visible = p.visible_atoms
+            visible = p.atom_opacities
             visible[:] = 0.0
-            p.visible_atoms = visible
+            p.atom_opacities = visible
 
         # set camera to be perpendicular
         p.set_camera_to_vector(origin=origin, normal=normal)

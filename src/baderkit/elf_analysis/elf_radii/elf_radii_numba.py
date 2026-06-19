@@ -91,8 +91,7 @@ def get_elf_radius(
             label += possible_vals
 
         labels[point_idx] = label
-    # if label%(num_atoms+1) == 2:
-    #     breakpoint()
+
     # get the unique labels
     unique_labels = np.unique(labels)
     # TODO: If passes through vacuum, set to last point?
