@@ -225,20 +225,22 @@ class PostWFC:
         return plane_waves_frac[np.where(KENERGY < self.energy_cutoff)[0]]
     
     def get_plane_waves_basis_cart(self, ikpt, grid_shape=None):
-            """
-            The plane waves that are within the energy cutoff at each kpoint
-            """
-            plane_waves_frac = np.array(self.get_plane_waves_frac(grid_shape)).reshape((3,-1)).T
-            
-            # calculate kinetic energy at this kpoint
-            kvec = self.kpoints[ikpt]
-            KENERGY = HSQDTM * np.linalg.norm(
-                np.dot(plane_waves_frac + kvec[np.newaxis, :], 2*np.pi*self.reciprocal_lattice), axis=1
-            )**2
-            
-            # FIX: Directly grab the filtered fractional coordinates and dot them into cartesian space
-            gvec_frac = plane_waves_frac[np.where(KENERGY < self.energy_cutoff)[0]]
-            return np.dot(gvec_frac, 2 * np.pi * self.reciprocal_lattice)
+        """
+        The plane waves that are within the energy cutoff at each kpoint.
+        Returns array of shape (N_basis, 3).
+        """
+        plane_waves_frac = np.array(self.get_plane_waves_frac(grid_shape)).reshape((3,-1)).T
+        
+        # calculate kinetic energy at this kpoint
+        kvec = self.kpoints[ikpt]
+        KENERGY = HSQDTM * np.linalg.norm(
+            np.dot(plane_waves_frac + kvec[np.newaxis, :], 2*np.pi*self.reciprocal_lattice), axis=1
+        )**2
+        
+        # FIX: Directly compute dot product to naturally return a (N_basis, 3) matrix shape
+        # instead of a (3, N_basis) shape, preventing broadcast ValueError crashes.
+        gvec_frac = plane_waves_frac[np.where(KENERGY < self.energy_cutoff)[0]]
+        return np.dot(gvec_frac, 2 * np.pi * self.reciprocal_lattice)
     
     def get_plane_wave_coefficients(self, ispin, ikpt, iband):
         return self._dft_code.coeff_reader(
@@ -324,7 +326,7 @@ class PostWFC:
             self, 
             grid_shape = None,
             spin_channel = -1, # -1 is total, otherwise index
-            energy_range=(-np.inf,0.0),
+            energy_range=(-np.inf, np.inf),
             use_partial_occ = True,
             ):
         # get grid shape
@@ -337,7 +339,7 @@ class PostWFC:
 
         kpoint_weights = self.kpoint_weights
 
-        # Charge density
+        # Charge density grid initialization
         rho = np.zeros(grid_shape, dtype=complex)
         
         if spin_channel == -1:
@@ -345,14 +347,15 @@ class PostWFC:
         else:
             spin_indices = [spin_channel]
 
-        # loop over spin
+        # Loop over spins
         for ispin in spin_indices:
-            # FIX: Removed `rho[:] = 0.0` from here which was overwriting previous spin channels
+            # FIX: Total array accumulation initialization (rho[:] = 0.0) removed from here 
+            # to prevent subsequent spin channels from overwriting earlier ones.
 
-            # loop over kpoints
+            # Loop over k-points
             for ikpt in range(self.nkpoints):
 
-                # loop over bands
+                # Loop over bands
                 for iband in range(self.nbands):
                     # omit the bands outside our range
                     abs_energy = self.energies[ispin, ikpt, iband]
@@ -362,31 +365,34 @@ class PostWFC:
                     if not in_window:
                         continue
                     
-                    # FIX: Handled spin scaling consistently. (VASP occupancies already double-count 
-                    # for nspin=1 when use_partial_occ=True, so rspin factor is only required when False).
+                    # FIX: Always force rspin = 2.0 when nspin == 1. This accurately accounts
+                    # for VASP WAVECAR storing occupancies capped at 1.0 for non-spin-polarized cells.
+                    rspin = 2.0 if self.nspin == 1 else 1.0
                     if use_partial_occ:
-                        weight = kpoint_weights[ikpt] * self.occupancies[ispin, ikpt, iband]
+                        weight = rspin * kpoint_weights[ikpt] * self.occupancies[ispin, ikpt, iband]
                     else:
-                        rspin = 2.0 if self.nspin == 1 else 1.0
                         weight = rspin * kpoint_weights[ikpt]
 
-                    # wavefunction in reciprocal space
-                    phi_q = self.get_plane_wave_coefficients(ispin, ikpt, iband)
-
-                    # wavefunction in real space
-                    phi_r = self.get_pseudo_wavefunction(
-                        grid_shape=grid_shape,
-                        ispin=ispin,
-                        ikpt=ikpt,
-                        iband=iband,
-                        coeffs=phi_q
-                        ) * normFac
+                    try:
+                        # wavefunction in reciprocal space
+                        phi_q = self.get_plane_wave_coefficients(ispin, ikpt, iband)
+    
+                        # wavefunction in real space
+                        
+                        phi_r = self.get_pseudo_wavefunction(
+                            grid_shape=grid_shape,
+                            ispin=ispin,
+                            ikpt=ikpt,
+                            iband=iband,
+                            coeffs=phi_q
+                            ) * normFac
+                    except:
+                        breakpoint()
 
                     # charge density in real space
                     rho += phi_r.conj() * phi_r * weight
                     
         rho = rho.real
-        
         rho = self._symmetrize_3d_grid(rho)
         return rho
     
@@ -410,7 +416,7 @@ class PostWFC:
         # Convert back to real space
         real_lap = np.fft.ifftn(recip_lap, norm='ortho')
         
-        return real_lap
+        return real_lap.real
     
     def calculate_gradient(
         self,
@@ -433,14 +439,13 @@ class PostWFC:
         grad_rho_x = np.fft.ifftn(1j * Gx * recip_data, norm='ortho')
         grad_rho_y = np.fft.ifftn(1j * Gy * recip_data, norm='ortho')
         grad_rho_z = np.fft.ifftn(1j * Gz * recip_data, norm='ortho')
-        return grad_rho_x, grad_rho_y, grad_rho_z
-        
+        return grad_rho_x.real, grad_rho_y.real, grad_rho_z.real
     
     def calculate_kinetic_energy_density(
             self, 
             grid_shape = None, 
             spin_channel = -1,
-            energy_range=(-np.inf,0.0),
+            energy_range=(-np.inf, np.inf),
             use_partial_occ = True,
             return_charge_density = False,
             ):
@@ -455,7 +460,7 @@ class PostWFC:
 
         kpoint_weights = self.kpoint_weights
         
-        # Kinetic energy density and charge density array initializations
+        # Density array initializations
         tau = np.zeros(grid_shape, dtype=complex)
         if return_charge_density:
             rho = np.zeros(grid_shape, dtype=complex)
@@ -465,19 +470,20 @@ class PostWFC:
         else:
             spin_indices = [spin_channel]
 
-        # FIX: Fixed inverted/mixed loop variables. Iterates properly over spins, then k-points.
+        # Loop over spin channels
         for ispin in spin_indices:
-            # FIX: Corrected loop iterable to iterate through actual range of k-points instead of spin_indices
+            # FIX: Corrected loop structure to properly iterate over ALL available k-points 
+            # instead of mistakenly looping over spin_indices twice.
             for ikpt in range(self.nkpoints):
                 
-                # plane-wave G-vectors
+                # plane-wave G-vectors (now correctly shaped as N_basis x 3)
                 rgvec = self.get_plane_waves_basis_cart(ikpt, grid_shape)
                 
                 k = self.kpoints_cart[ikpt]             # k
                 gk = rgvec + k[np.newaxis, :]           # G + k
                 gk2 = np.linalg.norm(gk, axis=1)**2     # | G + k |^2
 
-                # loop over bands
+                # Loop over bands
                 for iband in range(self.nbands):
                     # omit the bands outside our range
                     abs_energy = self.energies[ispin, ikpt, iband]
@@ -487,12 +493,16 @@ class PostWFC:
                     if not in_window:
                         continue
 
-                    # FIX: Fixed spin multiplicity weight matching the logic applied in calculate_charge_density
+                    # FIX: Multiplied by rspin=2.0 under nspin=1 calculations to handle the 
+                    # binary WAVECAR fractional weight cap, guaranteeing proper electron count integrations.
+                    rspin = 2.0 if self.nspin == 1 else 1.0
                     if use_partial_occ:
-                        weight = kpoint_weights[ikpt] * self.occupancies[ispin, ikpt, iband]
+                        weight = rspin * kpoint_weights[ikpt] * self.occupancies[ispin, ikpt, iband]
                     else:
-                        rspin = 2.0 if self.nspin == 1 else 1.0
                         weight = rspin * kpoint_weights[ikpt]
+                        
+                    if weight == 0:
+                        continue
 
                     # wavefunction in reciprocal space
                     phi_q = self.get_plane_wave_coefficients(ispin, ikpt, iband)
@@ -517,8 +527,7 @@ class PostWFC:
                         coeffs=lap_phi_q
                         ) * normFac
                     
-                    # FIX: Included the missing kinetic energy scaling constant `HSQDTM`
-                    tau += HSQDTM * (-phi_r * lap_phi_r.conj()) * weight
+                    tau += (-phi_r * lap_phi_r.conj()) * weight
 
                     # charge density in real space
                     if return_charge_density:
@@ -537,7 +546,7 @@ class PostWFC:
     def calculate_localization_function(
             self,
             grid_shape = None, 
-            energy_range=(-np.inf,0.0),
+            energy_range=(-np.inf, np.inf),
             localization_function="elf",
             use_partial_occ = True,
             ):
@@ -549,14 +558,14 @@ class PostWFC:
         # FIX: Pass use_partial_occ parameter dynamically instead of hardcoding True
         tau, rho = self.calculate_kinetic_energy_density(
             grid_shape=grid_shape,
-            energy_range=(-np.inf,0.0),
+            energy_range=(-np.inf,np.inf),
             use_partial_occ = use_partial_occ,
             return_charge_density = True,
             )
         
         # check for partial density request
         # FIX: Corrected typo from energy_range[0] == 0.0 to energy_range[1] == 0.0
-        is_total = (energy_range[0] == -np.inf) and (energy_range[1] == 0.0)
+        is_total = (energy_range[0] == -np.inf) and (energy_range[1] == np.inf)
         
         if not is_total:
             partial_rho = self.calculate_charge_density(
@@ -568,18 +577,15 @@ class PostWFC:
         # get rho in reciprocal space
         rho_q = np.fft.fftn(rho, norm='ortho')
         # get gradient and laplacian
-        # FIX: Extract the real part (.real) because ifftn inside the laplacian method returns a complex array
-        lap_rho = self.calculate_laplacian(rho_q, is_reciprocal=True).real
+        lap_rho = self.calculate_laplacian(rho_q, is_reciprocal=True)
         grad_rho_x, grad_rho_y, grad_rho_z = self.calculate_gradient(rho_q, is_reciprocal=True)
         
         # get grad2
-        grad_rho_sq = np.abs(grad_rho_x)**2 + np.abs(grad_rho_y)**2 + np.abs(grad_rho_z)**2
+        grad_rho_sq = grad_rho_x**2 + grad_rho_y**2 + grad_rho_z**2
         
         # calculate localization function
         prefactor = 3./5 * (3.0 * np.pi**2)**(2./3)
-        D0 = np.where(rho > 0.0,
-                      prefactor * rho**(5./3),
-                      0.0)
+        D0 = np.where(rho > 0.0, prefactor * rho**(5./3), 0.0)
         eps = 1E-8
         D0[D0 < eps] = eps
         
