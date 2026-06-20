@@ -43,7 +43,6 @@ class PostWFC:
         
         self.scipy_workers = scipy_workers
         
-        # FIX: Corrected formula dependency grouping for the maximum FFT grid cutoff
         lattice_norm = np.linalg.norm(self._lattice, axis=1)
         CUTOFF = np.ceil(np.sqrt(energy_cutoff / HSQDTM) / (2 * np.pi / lattice_norm))
         self._minimum_fft_size = np.array(2 * CUTOFF + 1, dtype=int)
@@ -58,6 +57,9 @@ class PostWFC:
         self._elf = None
         self._lol = None
         self._elid = None
+        
+        # Internal cache to avoid recalculating the dynamic grid multiple times
+        self._grid_cache = {}
         
     @property
     def nspin(self):
@@ -172,9 +174,9 @@ class PostWFC:
             # partially occupied energies
             occupied_energies = energies[occupances >= max_occ]
             
+            # get last occupied orbital
             assert len(occupied_energies), "No occupied orbitals found in system"
             
-            # get last occupied orbital
             self._efermi = occupied_energies.max()
 
         return self._efermi
@@ -186,19 +188,22 @@ class PostWFC:
         if grid_shape is None:
             grid_shape = self._minimum_fft_size * 2
         
-        fx = [ii if ii < grid_shape[0] // 2 + 1 else ii - grid_shape[0]
-              for ii in range(grid_shape[0])]
-        fy = [jj if jj < grid_shape[1] // 2 + 1 else jj - grid_shape[1]
-              for jj in range(grid_shape[1])]
-        fz = [kk if kk < grid_shape[2] // 2 + 1 else kk - grid_shape[2]
-              for kk in range(grid_shape[2])]
+        grid_shape_tuple = tuple(grid_shape)
+        if grid_shape_tuple in self._grid_cache:
+            return self._grid_cache[grid_shape_tuple]
+        
+        Nx, Ny, Nz = grid_shape_tuple
+        fx = [ii if ii < Nx // 2 + 1 else ii - Nx for ii in range(Nx)]
+        fy = [jj if jj < Ny // 2 + 1 else jj - Ny for jj in range(Ny)]
+        fz = [kk if kk < Nz // 2 + 1 else kk - Nz for kk in range(Nz)]
 
         # plane-waves: Reciprocal coordinate
         # indexing = 'ij' so that outputs are of shape (ngrid[0], ngrid[1], ngrid[2])
-        gz, gy, gx = np.meshgrid(fx, fy, fz, indexing='ij')
+        # UPDATE: Adjusted to use the requested standard gx, gy, gz sequence unpacking pattern
+        gx, gy, gz = np.meshgrid(fx, fy, fz, indexing='ij')
 
+        self._grid_cache[grid_shape_tuple] = (gx, gy, gz)
         return gx, gy, gz
-    
 
     def plane_waves_cart(self, grid_shape=None):
         """
@@ -207,44 +212,56 @@ class PostWFC:
         gx, gy, gz = self.get_plane_waves_frac(grid_shape)
         
         reciprocal_lattice = self.reciprocal_lattice
+        # UPDATE: Order mapped to [gz, gy, gx] to perfectly align downstream coordinate projection logic
         cx, cy, cz = np.tensordot(
-            reciprocal_lattice * np.pi * 2, [gx, gy, gz], axes=(0, 0))
+            reciprocal_lattice * np.pi * 2, [gz, gy, gx], axes=(0, 0))
 
         return cx, cy, cz
     
-    def get_plane_waves_basis(self, ikpt, grid_shape=None):
+    def get_plane_waves_basis_idx(self, ikpt, grid_shape=None, expected_npw=None):
         """
-        The plane waves that are within the energy cutoff at each kpoint
+        Hoisted basis calculation gathering active indices and pre-wrapped grid keys once per kpoint.
+        Dynamically adjusts the basis size if a mismatch with the file coefficients is detected.
         """
-        plane_waves_frac = np.array(self.get_plane_waves_frac(grid_shape)).reshape((3,-1)).T
+        if grid_shape is None:
+            grid_shape = self._minimum_fft_size * 2
+        grid_shape_tuple = tuple(grid_shape)
+        
+        gx, gy, gz = self.get_plane_waves_frac(grid_shape_tuple)
+        plane_waves_frac = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=-1)
+        
+        # Map internal column representations back to [fz, fy, fx] alignment for correct energy filters
+        plane_waves_frac_conv = plane_waves_frac[:, [2, 1, 0]]
         
         # calculate kinetic energy at this kpoint
         kvec = self.kpoints[ikpt]
-        # Kinetic_Energy = (G + k)**2 / 2
-        # HSQDTM    =  hbar**2/(2*ELECTRON MASS)
-        KENERGY = HSQDTM * np.linalg.norm(
-            np.dot(plane_waves_frac + kvec[np.newaxis, :], 2*np.pi*self.reciprocal_lattice), axis=1
-        )**2
-        # find Gvectors where (G + k)**2 / 2 < ENCUT
-        return plane_waves_frac[np.where(KENERGY < self.energy_cutoff)[0]]
-    
-    def get_plane_waves_basis_cart(self, ikpt, grid_shape=None):
-        """
-        The plane waves that are within the energy cutoff at each kpoint.
-        Returns array of shape (N_basis, 3).
-        """
-        plane_waves_frac = np.array(self.get_plane_waves_frac(grid_shape)).reshape((3,-1)).T
+        k_shifted = plane_waves_frac_conv + kvec[np.newaxis, :]
+        k_cart = k_shifted @ (2 * np.pi * self.reciprocal_lattice)
+        KENERGY = HSQDTM * np.sum(k_cart**2, axis=1)
         
-        # calculate kinetic energy at this kpoint
-        kvec = self.kpoints[ikpt]
-        KENERGY = HSQDTM * np.linalg.norm(
-            np.dot(plane_waves_frac + kvec[np.newaxis, :], 2*np.pi*self.reciprocal_lattice), axis=1
-        )**2
+        # Standard mask based on target energy cutoff threshold
+        idx = np.where(KENERGY < self.energy_cutoff)[0]
         
-        # FIX: Directly compute dot product to naturally return a (N_basis, 3) matrix shape
-        # instead of a (3, N_basis) shape, preventing broadcast ValueError crashes.
-        gvec_frac = plane_waves_frac[np.where(KENERGY < self.energy_cutoff)[0]]
-        return np.dot(gvec_frac, 2 * np.pi * self.reciprocal_lattice)
+        # ---------------------------------------------------------------------
+        # CODE-AGNOSTIC ADJUSTMENT CHECK
+        # ---------------------------------------------------------------------
+        # If the file reader expects a different count due to boundary rounding,
+        # fallback to sorting by kinetic energy and slicing the exact N lowest states.
+        if expected_npw is not None and len(idx) != expected_npw:
+            idx = np.argsort(KENERGY)[:expected_npw]
+        
+        gvec_frac_conv = plane_waves_frac_conv[idx]
+        
+        grid_shape_arr = np.asarray(grid_shape_tuple)
+        gvec_wrapped = (gvec_frac_conv % grid_shape_arr[np.newaxis, :]).astype(int)
+        
+        return idx, gvec_wrapped
+
+    def get_plane_waves_basis_cart_from_idx(self, idx, grid_shape):
+        gx, gy, gz = self.get_plane_waves_frac(grid_shape)
+        plane_waves_frac = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], axis=-1)
+        plane_waves_frac_conv = plane_waves_frac[:, [2, 1, 0]]
+        return plane_waves_frac_conv[idx] @ (2 * np.pi * self.reciprocal_lattice)
     
     def get_plane_wave_coefficients(self, ispin, ikpt, iband):
         return self._dft_code.coeff_reader(
@@ -283,6 +300,8 @@ class PostWFC:
 
         if grid_shape is None:
             grid_shape = self._minimum_fft_size * 2
+        grid_shape_tuple = tuple(grid_shape)
+        Nx, Ny, Nz = grid_shape_tuple
         
         # By default, the WAVECAR only stores the periodic part of the Bloch
         # wavefunction. In order to get the full Bloch wavefunction, one need to
@@ -296,32 +315,29 @@ class PostWFC:
                                (
                                    # r
                                    np.mgrid[
-                                       0:grid_shape[0], 0:grid_shape[1], 0:grid_shape[2]
-                                   ].reshape((3, np.prod(grid_shape))).T /
-                                   grid_shape.astype(float) #+
+                                       0:Nx, 0:Ny, 0:Nz
+                                   ].reshape((3, Nx * Ny * Nz)).T /
+                                   np.array(grid_shape_tuple, dtype=float) #+
                                    # r0
                                    # np.array(r0, dtype=float)
                                ),
                                axis=1
-                           )).reshape(grid_shape)
+                           )).reshape(grid_shape_tuple)
         else:
             phase = 1.0
 
         # default normalization factor so that
         # \sum_{ijk} | \phi_{ijk} | ^ 2 = 1
-        normFac = np.sqrt(np.prod(grid_shape))
+        normFac = np.sqrt(Nx * Ny * Nz)
 
-        gvec = self.get_plane_waves_basis(ikpt, grid_shape)
+        idx, gvec_wrapped = self.get_plane_waves_basis_idx(ikpt, grid_shape_tuple)
 
-        phi_k = np.zeros(grid_shape, dtype=np.complex128)
-        grid_shape = np.asarray(grid_shape)
-        gvec %= grid_shape[np.newaxis, :]
+        phi_k = np.zeros(grid_shape_tuple, dtype=np.complex128)
 
         if coeffs is None:
             coeffs = self.get_plane_wave_coefficients(ispin, ikpt, iband)
             
-        phi_k[gvec[:, 0], gvec[:, 1], gvec[:, 2]
-              ] = coeffs
+        phi_k[gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = coeffs
 
         # perform complex2complex FFT
         with set_workers(self.scipy_workers):
@@ -338,15 +354,17 @@ class PostWFC:
         # get grid shape
         if grid_shape is None:
             grid_shape = self._minimum_fft_size * 2
+        grid_shape_tuple = tuple(grid_shape)
+        Nx, Ny, Nz = grid_shape_tuple
         
         # normalization factor so that
         # \sum_{ijk} | \phi_{ijk} | ^ 2 * volume / Ngrid = 1
-        normFac = np.sqrt(np.prod(grid_shape) / self.structure.volume)
+        normFac = np.sqrt((Nx * Ny * Nz) / self.structure.volume)
 
         kpoint_weights = self.kpoint_weights
 
         # Charge density grid initialization
-        rho = np.zeros(grid_shape, dtype=complex)
+        rho = np.zeros(grid_shape_tuple, dtype=float)
         
         if spin_channel == -1:
             spin_indices = [i for i in range(self.nspin)]
@@ -360,7 +378,11 @@ class PostWFC:
 
             # Loop over k-points
             for ikpt in range(self.nkpoints):
-
+                # Hoisted: Basis structural elements derived once per kpoint instead of inside the bands loop
+                idx, gvec_wrapped = self.get_plane_waves_basis_idx(ikpt, grid_shape_tuple)
+                
+                active_bands = []
+                weights = []
                 # Loop over bands
                 for iband in range(self.nbands):
                     # omit the bands outside our range
@@ -378,24 +400,31 @@ class PostWFC:
                         weight = rspin * kpoint_weights[ikpt] * self.occupancies[ispin, ikpt, iband]
                     else:
                         weight = rspin * kpoint_weights[ikpt]
-
+                    
+                    if weight > 0:
+                        active_bands.append(iband)
+                        weights.append(weight)
+                        
+                if not active_bands:
+                    continue
+                
+                n_active = len(active_bands)
+                weights = np.array(weights)[:, np.newaxis, np.newaxis, np.newaxis]
+                
+                # Vectorized Band Layout: Read and fill multidimensional arrays collectively
+                phi_k = np.zeros((n_active, Nx, Ny, Nz), dtype=np.complex128)
+                for b_idx, iband in enumerate(active_bands):
                     # wavefunction in reciprocal space
-                    phi_q = self.get_plane_wave_coefficients(ispin, ikpt, iband)
-
-                    # wavefunction in real space
+                    phi_k[b_idx, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = \
+                        self.get_plane_wave_coefficients(ispin, ikpt, iband)
+                
+                # Single multi-dimensional batch execution for wavefunctions in real space
+                with set_workers(self.scipy_workers):
+                    phi_r = ifftn(phi_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
                     
-                    phi_r = self.get_pseudo_wavefunction(
-                        grid_shape=grid_shape,
-                        ispin=ispin,
-                        ikpt=ikpt,
-                        iband=iband,
-                        coeffs=phi_q
-                        ) * normFac
-
-                    # charge density in real space
-                    rho += phi_r.conj() * phi_r * weight
+                # charge density in real space
+                rho += np.sum((phi_r.conj() * phi_r).real * weights, axis=0)
                     
-        rho = rho.real
         rho = self._symmetrize_3d_grid(rho)
         return rho
     
@@ -404,7 +433,6 @@ class PostWFC:
         data,
         is_reciprocal=False,
             ):
-        # FIX: Changed from uncallable method attribute `.T` to direct function call and tuple unpacking
         Gx, Gy, Gz = self.plane_waves_cart()
         # the norm squared of the G-vectors
         G2 = Gx**2 + Gy**2 + Gz**2
@@ -460,17 +488,19 @@ class PostWFC:
         # get grid shape
         if grid_shape is None:
             grid_shape = self._minimum_fft_size * 2
+        grid_shape_tuple = tuple(grid_shape)
+        Nx, Ny, Nz = grid_shape_tuple
 
         # normalization factor so that
         # \sum_{ijk} | \phi_{ijk} | ^ 2 * volume / Ngrid = 1
-        normFac = np.sqrt(np.prod(grid_shape) / self.structure.volume)
+        normFac = np.sqrt((Nx * Ny * Nz) / self.structure.volume)
 
         kpoint_weights = self.kpoint_weights
         
         # Density array initializations
-        tau = np.zeros(grid_shape, dtype=complex)
+        tau = np.zeros(grid_shape_tuple, dtype=float)
         if return_charge_density:
-            rho = np.zeros(grid_shape, dtype=complex)
+            rho = np.zeros(grid_shape_tuple, dtype=float)
             
         if spin_channel == -1:
             spin_indices = [i for i in range(self.nspin)]
@@ -479,18 +509,11 @@ class PostWFC:
 
         # Loop over spin channels
         for ispin in spin_indices:
-            # FIX: Corrected loop structure to properly iterate over ALL available k-points 
-            # instead of mistakenly looping over spin_indices twice.
             for ikpt in range(self.nkpoints):
                 
-                # plane-wave G-vectors (now correctly shaped as N_basis x 3)
-                rgvec = self.get_plane_waves_basis_cart(ikpt, grid_shape)
-                
-                k = self.kpoints_cart[ikpt]             # k
-                gk = rgvec + k[np.newaxis, :]           # G + k
-                gk2 = np.linalg.norm(gk, axis=1)**2     # | G + k |^2
-
-                # Loop over bands
+                active_bands = []
+                weights = []
+                # Loop over bands to gather targets first
                 for iband in range(self.nbands):
                     # omit the bands outside our range
                     abs_energy = self.energies[ispin, ikpt, iband]
@@ -500,51 +523,63 @@ class PostWFC:
                     if not in_window:
                         continue
 
-                    # FIX: Multiplied by rspin=2.0 under nspin=1 calculations to handle the 
-                    # binary WAVECAR fractional weight cap, guaranteeing proper electron count integrations.
                     rspin = 2.0 if self.nspin == 1 else 1.0
                     if use_partial_occ:
                         weight = rspin * kpoint_weights[ikpt] * self.occupancies[ispin, ikpt, iband]
                     else:
                         weight = rspin * kpoint_weights[ikpt]
                         
-                    if weight == 0:
-                        continue
-
-                    # wavefunction in reciprocal space
-                    phi_q = self.get_plane_wave_coefficients(ispin, ikpt, iband)
-
-                    # wavefunction in real space
-                    phi_r = self.get_pseudo_wavefunction(
-                        grid_shape=grid_shape,
-                        ispin=ispin,
-                        ikpt=ikpt,
-                        iband=iband,
-                        coeffs=phi_q
-                        ) * normFac
-
-                    # grad^2 \phi in reciprocal space
-                    lap_phi_q = -gk2 * phi_q
-                    # grad^2 \phi in real space
-                    lap_phi_r = self.get_pseudo_wavefunction(
-                        grid_shape=grid_shape,
-                        ispin=ispin,
-                        ikpt=ikpt,
-                        iband=iband,
-                        coeffs=lap_phi_q
-                        ) * normFac
+                    if weight > 0:
+                        active_bands.append(iband)
+                        weights.append(weight)
+                        
+                if not active_bands:
+                    continue
+                
+                n_active = len(active_bands)
+                weights = np.array(weights)[:, np.newaxis, np.newaxis, np.newaxis]
+                
+                # Gather all plane wave coefficients for active bands
+                coeffs_list = np.array([
+                    self.get_plane_wave_coefficients(ispin, ikpt, iband) for iband in active_bands
+                ])
+                
+                # INTERCEPT: Get the true number of plane waves returned by the data stream
+                actual_npw = coeffs_list.shape[1]
+                
+                # SELF-CORRECT: Pass actual_npw to perfectly sync basis dimensions on the boundary
+                idx, gvec_wrapped = self.get_plane_waves_basis_idx(ikpt, grid_shape_tuple, expected_npw=actual_npw)
+                rgvec = self.get_plane_waves_basis_cart_from_idx(idx, grid_shape_tuple)
+                
+                # Build G + k space mapping dynamically matching the synchronized dimension
+                k = self.kpoints_cart[ikpt]             # k
+                gk = rgvec + k[np.newaxis, :]           # G + k
+                gk2 = np.sum(gk**2, axis=1)             # | G + k |^2
+                
+                # grad^2 \phi in reciprocal space (Fast Broadcasting mapping)
+                lap_coeffs_list = -gk2[np.newaxis, :] * coeffs_list
+                
+                # wavefunction in real space (Vectorized Batch transformation)
+                phi_k = np.zeros((n_active, Nx, Ny, Nz), dtype=np.complex128)
+                phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = coeffs_list
+                with set_workers(self.scipy_workers):
+                    phi_r = ifftn(phi_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
+                
+                # grad^2 \phi in real space (Vectorized Batch transformation)
+                lap_phi_k = np.zeros((n_active, Nx, Ny, Nz), dtype=np.complex128)
+                lap_phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = lap_coeffs_list
+                with set_workers(self.scipy_workers):
+                    lap_phi_r = ifftn(lap_phi_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
                     
-                    tau += (-phi_r * lap_phi_r.conj()) * weight
+                tau += np.sum((-phi_r * lap_phi_r.conj()).real * weights, axis=0)
 
-                    # charge density in real space
-                    if return_charge_density:
-                        rho += phi_r.conj() * phi_r * weight
+                # charge density in real space
+                if return_charge_density:
+                    rho += np.sum((phi_r.conj() * phi_r).real * weights, axis=0)
 
         # symmetry averaging
-        tau = tau.real
         tau = self._symmetrize_3d_grid(tau)
         if return_charge_density:
-            rho = rho.real
             rho = self._symmetrize_3d_grid(rho)
             return tau, rho
             
@@ -561,10 +596,11 @@ class PostWFC:
         # get grid shape
         if grid_shape is None:
             grid_shape = self._minimum_fft_size * 2
+        grid_shape_tuple = tuple(grid_shape)
             
         # get total charge density and tau
         tau, rho = self.calculate_kinetic_energy_density(
-            grid_shape=grid_shape,
+            grid_shape=grid_shape_tuple,
             energy_range=(-np.inf, np.inf),
             spin_channel=-1,
             use_partial_occ = use_partial_occ,
@@ -576,7 +612,7 @@ class PostWFC:
         
         if not is_total:
             partial_rho = self.calculate_charge_density(
-                grid_shape=grid_shape,
+                grid_shape=grid_shape_tuple,
                 energy_range=energy_range,
                 spin_channel=spin_channel,
                 use_partial_occ = use_partial_occ,
@@ -704,6 +740,31 @@ class PostWFC:
             poscar_filename=poscar_filename,
             wavecar_filename=wavecar_filename,
             use_vasp4=use_vasp4
+            )
+        return cls(
+            structure=structure,
+            kpoints=kpoints,
+            occupancies=occs,
+            energies=bands,
+            energy_cutoff=encut,
+            dft_code=vasp,
+            dft_kwargs=vasp_dict,
+            efermi=efermi,
+            scipy_workers=scipy_workers,
+            )
+    
+    @classmethod
+    def from_qe(
+        cls,
+        save_directory: Path | str = Path("."),
+        scipy_workers: int = -1,
+            ):
+        
+        save_directory = Path(save_directory)        
+        vasp = DftMethod("qe")
+        
+        structure, kpoints, occs, bands, encut, efermi, vasp_dict = vasp.wf_reader(
+            save_directory
             )
         return cls(
             structure=structure,

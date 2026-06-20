@@ -16,12 +16,9 @@ def get_reciprocal_index(
         nbands,
         nspin
         ):
-    try:
-        assert 1 <= ispin <= nspin,  'Invalid spin index!'
-        assert 1 <= ikpt <= nkpts,  'Invalid kpoint index!'
-        assert 1 <= iband <= nbands+1, 'Invalid band index!'
-    except:
-        breakpoint()
+    assert 1 <= ispin <= nspin,  'Invalid spin index!'
+    assert 1 <= ikpt <= nkpts,  'Invalid kpoint index!'
+    assert 1 <= iband <= nbands+1, 'Invalid band index!'
 
     rec = 2 + (ispin - 1) * nkpts * (nbands + 1) + \
               (ikpt - 1) * (nbands + 1) + \
