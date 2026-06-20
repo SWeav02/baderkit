@@ -3,7 +3,8 @@
 from pathlib import Path
 
 import numpy as np
-from scipy.fftpack import ifftn
+from scipy.fft import fftn, ifftn
+from scipy.fft import set_workers
 
 from baderkit.post_wfc.wf_parsers.codes import DftMethod
 
@@ -22,6 +23,7 @@ class PostWFC:
         dft_code,
         dft_kwargs,
         efermi=None,
+        scipy_workers=-1,
         ):
         
         self._nspin = energies.shape[0]
@@ -38,6 +40,8 @@ class PostWFC:
         self._reciprocal_lattice = np.linalg.inv(structure.lattice.matrix).T
         self._dft_code = DftMethod(dft_code)
         self._dft_kwargs = dft_kwargs
+        
+        self.scipy_workers = scipy_workers
         
         # FIX: Corrected formula dependency grouping for the maximum FFT grid cutoff
         lattice_norm = np.linalg.norm(self._lattice, axis=1)
@@ -320,7 +324,9 @@ class PostWFC:
               ] = coeffs
 
         # perform complex2complex FFT
-        return ifftn(phi_k * normFac) * phase
+        with set_workers(self.scipy_workers):
+            pseudo_wfs = ifftn(phi_k * normFac) * phase
+        return pseudo_wfs
     
     def calculate_charge_density(
             self, 
@@ -373,21 +379,18 @@ class PostWFC:
                     else:
                         weight = rspin * kpoint_weights[ikpt]
 
-                    try:
-                        # wavefunction in reciprocal space
-                        phi_q = self.get_plane_wave_coefficients(ispin, ikpt, iband)
-    
-                        # wavefunction in real space
-                        
-                        phi_r = self.get_pseudo_wavefunction(
-                            grid_shape=grid_shape,
-                            ispin=ispin,
-                            ikpt=ikpt,
-                            iband=iband,
-                            coeffs=phi_q
-                            ) * normFac
-                    except:
-                        breakpoint()
+                    # wavefunction in reciprocal space
+                    phi_q = self.get_plane_wave_coefficients(ispin, ikpt, iband)
+
+                    # wavefunction in real space
+                    
+                    phi_r = self.get_pseudo_wavefunction(
+                        grid_shape=grid_shape,
+                        ispin=ispin,
+                        ikpt=ikpt,
+                        iband=iband,
+                        coeffs=phi_q
+                        ) * normFac
 
                     # charge density in real space
                     rho += phi_r.conj() * phi_r * weight
@@ -408,13 +411,15 @@ class PostWFC:
         
         if not is_reciprocal:
             # Convert data to reciprocal space
-            recip_data = np.fft.fftn(data, norm='ortho')
+            with set_workers(self.scipy_workers):
+                recip_data = fftn(data, norm='ortho')
         else:
             recip_data = data
         # Calculate laplacian in reciprocal space
         recip_lap = -G2 * recip_data
         # Convert back to real space
-        real_lap = np.fft.ifftn(recip_lap, norm='ortho')
+        with set_workers(self.scipy_workers):
+            real_lap = ifftn(recip_lap, norm='ortho')
         
         return real_lap.real
     
@@ -426,7 +431,8 @@ class PostWFC:
         
         if not is_reciprocal:
             # Convert data to reciprocal space
-            recip_data = np.fft.fftn(data, norm='ortho')
+            with set_workers(self.scipy_workers):
+                recip_data = fftn(data, norm='ortho')
         else:
             recip_data = data
 
@@ -436,9 +442,10 @@ class PostWFC:
         ########################################
         # FIX: Changed from uncallable method attribute `.T` to direct function call and tuple unpacking
         Gx, Gy, Gz = self.plane_waves_cart()
-        grad_rho_x = np.fft.ifftn(1j * Gx * recip_data, norm='ortho')
-        grad_rho_y = np.fft.ifftn(1j * Gy * recip_data, norm='ortho')
-        grad_rho_z = np.fft.ifftn(1j * Gz * recip_data, norm='ortho')
+        with set_workers(self.scipy_workers):
+            grad_rho_x = ifftn(1j * Gx * recip_data, norm='ortho')
+            grad_rho_y = ifftn(1j * Gy * recip_data, norm='ortho')
+            grad_rho_z = ifftn(1j * Gz * recip_data, norm='ortho')
         return grad_rho_x.real, grad_rho_y.real, grad_rho_z.real
     
     def calculate_kinetic_energy_density(
@@ -547,6 +554,7 @@ class PostWFC:
             self,
             grid_shape = None, 
             energy_range=(-np.inf, np.inf),
+            spin_channel=-1,
             localization_function="elf",
             use_partial_occ = True,
             ):
@@ -555,79 +563,91 @@ class PostWFC:
             grid_shape = self._minimum_fft_size * 2
             
         # get total charge density and tau
-        # FIX: Pass use_partial_occ parameter dynamically instead of hardcoding True
         tau, rho = self.calculate_kinetic_energy_density(
             grid_shape=grid_shape,
-            energy_range=(-np.inf,np.inf),
+            energy_range=(-np.inf, np.inf),
+            spin_channel=-1,
             use_partial_occ = use_partial_occ,
             return_charge_density = True,
             )
         
         # check for partial density request
-        # FIX: Corrected typo from energy_range[0] == 0.0 to energy_range[1] == 0.0
         is_total = (energy_range[0] == -np.inf) and (energy_range[1] == np.inf)
         
         if not is_total:
             partial_rho = self.calculate_charge_density(
                 grid_shape=grid_shape,
                 energy_range=energy_range,
+                spin_channel=spin_channel,
                 use_partial_occ = use_partial_occ,
                 )
             
         # get rho in reciprocal space
-        rho_q = np.fft.fftn(rho, norm='ortho')
-        # get gradient and laplacian
-        lap_rho = self.calculate_laplacian(rho_q, is_reciprocal=True)
+        with set_workers(self.scipy_workers):
+            rho_q = fftn(rho, norm='ortho')
+        # get gradient and laplacian (.real applied to discard vanishing complex numeric noise)
+        lap_rho = self.calculate_laplacian(rho_q, is_reciprocal=True).real
         grad_rho_x, grad_rho_y, grad_rho_z = self.calculate_gradient(rho_q, is_reciprocal=True)
         
-        # get grad2
-        grad_rho_sq = grad_rho_x**2 + grad_rho_y**2 + grad_rho_z**2
+        # get grad2 (using absolute values to keep the array strictly real-valued)
+        grad_rho_sq = np.abs(grad_rho_x)**2 + np.abs(grad_rho_y)**2 + np.abs(grad_rho_z)**2
         
-        # calculate localization function
+        # calculate localization function baseline factors
         prefactor = 3./5 * (3.0 * np.pi**2)**(2./3)
         D0 = np.where(rho > 0.0, prefactor * rho**(5./3), 0.0)
         eps = 1E-8
         D0[D0 < eps] = eps
         
-        if localization_function == "elf":
-            # Calculate chi
-            # D0 = T + TCORR - TBOS
-            # FIX: Prevent division-by-zero/NaN warnings in vacuum regions where rho is 0
+        # Normalize function string format to accept case-insensitive 'elid' or 'eli-d'
+        loc_func = localization_function.lower().replace("-", "")
+        
+        if loc_func == "elf":
+            # Calculate chi: D0 = T + TCORR - TBOS
             rho_safe = np.where(rho > 1e-14, rho, 1e-14)
             D = tau + 0.5 * lap_rho - 0.25 * grad_rho_sq / rho_safe
-            
             # calculate ELF kernel, including Savin's shifting constant
             X = (D + 2.871e-5) / D0
-        elif localization_function == "lol":
+        elif loc_func == "lol":
             X = tau / D0
+        elif loc_func == "elid":
+            # ELI-D formula: D * rho^(-8/3)
+            rho_safe = np.where(rho > 1e-14, rho, 1e-14)
+            D = tau + 0.5 * lap_rho - 0.25 * grad_rho_sq / rho_safe
+            X = D * (rho_safe ** (-8. / 3.))
         else:
             raise ValueError(f"Localization Function {localization_function} is not implemented.")
         
-        # calculate partial charge ratio
+        # calculate partial charge ratio adjustments
         if not is_total:
+            
+            partial_sum = partial_rho.sum()
+            if partial_sum < 1e-14:
+                raise ValueError("No populated states found in energy range")
+            
             nonzero_mask = rho > eps
             x = np.zeros_like(rho)
             x[nonzero_mask] = partial_rho[nonzero_mask] / rho[nonzero_mask]
             x = np.clip(x, 0.0, 1.0)
             
-            # CHANGE FROM ORIGINAL: Adjust normalization factor based on fraction of total charge
-            # FIX: Added safety check to avoid ZeroDivisionError if an empty energy range is specified
-            partial_sum = partial_rho.sum()
-            if partial_sum > 1e-14:
-                factor = rho.sum() / partial_sum
-                # FIX: Handled regions where the partial charge ratio `x` is 0 to avoid RuntimeWarnings
-                kerx = np.where(x > 0.0, X / (factor * x), np.inf)
+            factor = x * (rho.sum() / partial_sum)
+            if loc_func == "elid":
+                # Because ELI-D scales proportionally with localized states,
+                # partial ELI-D scales linearly with the orbital fraction window
+                kerx = X * factor
             else:
-                kerx = np.full_like(rho, np.inf)
+                # ELF and LOL kernels are inversely proportional to localizability
+                kerx = np.where(x > 0.0, X / factor, np.inf)
         else:
             kerx = X
             
-        # FIX: The Schmider-Becke definition of LOL is 1 / (1 + X), whereas ELF uses 1 / (1 + X^2).
-        # Conditionally mapping the activation function avoids squaring the LOL denominator.
-        if localization_function == "elf":
+        # Map to the final descriptor values
+        if loc_func == "elf":
             result = 1 / (1 + kerx**2)
-        elif localization_function == "lol":
+        elif loc_func == "lol":
             result = 1 / (1 + kerx)
+        elif loc_func == "elid":
+            # ELI-D maps directly to the raw kernel value
+            result = kerx
             
         return result
         
@@ -671,7 +691,8 @@ class PostWFC:
         cls,
         poscar_filename: Path | str = "POSCAR",
         wavecar_filename: Path | str = "WAVECAR",
-        use_vasp4: bool = False
+        scipy_workers: int = -1,
+        use_vasp4: bool = False,
             ):
         
         poscar_filename = Path(poscar_filename)
@@ -693,4 +714,5 @@ class PostWFC:
             dft_code=vasp,
             dft_kwargs=vasp_dict,
             efermi=efermi,
+            scipy_workers=scipy_workers,
             )
