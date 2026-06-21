@@ -1279,7 +1279,7 @@ class Grid(VolumetricData):
         grid_file = Path(grid_file)
 
         data_type = DataType(data_type) if data_type is not None else None
-        is_elf = data_type.is_elf if data_type is not None else None
+        is_elf = data_type.is_elf() if data_type is not None else None
 
         # check that file exists
         assert grid_file.exists(), f"No file with name {grid_file} found in directory"
@@ -1340,7 +1340,8 @@ class Grid(VolumetricData):
         # make sure path is a Path object
         grid_file = Path(grid_file)
         data_type = DataType(data_type) if data_type is not None else None
-        is_elf = data_type.is_elf if data_type is not None else None
+        is_elf = data_type.is_elf() if data_type is not None else None
+
         # check that file exists
         assert grid_file.exists(), f"No file with name {grid_file} found in directory"
         structure, data, ion_charges, origin, sig_figs, is_elf = read_cube(
@@ -1392,7 +1393,7 @@ class Grid(VolumetricData):
         # make sure path is a Path object
         grid_file = Path(grid_file)
         data_type = DataType(data_type) if data_type is not None else None
-        is_elf = data_type.is_elf if data_type is not None else None
+        is_elf = data_type.is_elf() if data_type is not None else None
         # check that file exists
         assert grid_file.exists(), f"No file with name {grid_file} found in directory"
         structure, data, origin, sig_figs, is_elf = read_xsf(
@@ -1453,7 +1454,7 @@ class Grid(VolumetricData):
         logging.info(f"Loading {grid_file}")
         t0 = time.time()
         data_type = DataType(data_type) if data_type is not None else None
-        is_elf = data_type.is_elf if data_type is not None else None
+        is_elf = data_type.is_elf() if data_type is not None else None
         # make sure path is a Path object
         geometry_file = Path(geometry_file)
         grid_file = Path(grid_file)

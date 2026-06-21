@@ -1,3 +1,4 @@
 # -*- coding: utf-8 -*-
 
-from .vasp_wavecar import read_vasp
+from .vasp import VaspParser
+from .qe import QeParser

@@ -27,14 +27,16 @@ class Structure(PymatgenStructure):
         self,
         lattice: Lattice,
         species: list[Species],
-        frac_coords: list[NDArray],
+        coords: list[NDArray],
         symmetry_kwargs: dict = {},
         **kwargs,
     ):
+
+        super().__init__(lattice, species, coords, **kwargs)
         # clean frac coords
-        for coord in frac_coords:
-            coord %= 1.0
-        super().__init__(lattice, species, frac_coords, **kwargs)
+        for idx in range(len(self)):
+            frac_coords = self[idx].frac_coords % 1.0
+            self[idx].frac_coords = frac_coords
         # add labels to sites. This is to add backwards compatability to the
         # relabel_sites method that doesn't exist in earlier versions of pymatgen
         for site in self:
