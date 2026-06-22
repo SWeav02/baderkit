@@ -161,7 +161,6 @@ class VaspParser(BaseWfcParser):
         Reconstructs the precise integer Miller indices (h, k, l) matching VASP's
         internal plane-wave ordering layout for a specific k-point.
         """
-        # Return from active memory cache layer if already constructed during lifecycle
         if ikpt in self._gvec_cache:
             return self._gvec_cache[ikpt]
 
@@ -172,8 +171,8 @@ class VaspParser(BaseWfcParser):
         # Kinetic energy factor matching standard VASP convention exactly
         HSQDTM = 3.8100198740807945
         
-        # Inverse real-space transpose matrix used to convert fractional indices to Cartesian A^-1
-        B_mat = np.linalg.inv(lattice).T
+        # FIX: Include the 2*pi factor to get true Cartesian coordinates in A^-1
+        B_mat = 2 * np.pi * np.linalg.inv(lattice).T
         
         # Determine the maximum safe bounding box coordinates via Cauchy-Schwarz projection
         R = np.sqrt(encut / HSQDTM)
@@ -206,10 +205,18 @@ class VaspParser(BaseWfcParser):
         
         gvectors = g_all[energies_all <= encut]
         
-        # Handle subtle boundary rounding conditions right at the energy cutoff envelope surface
+        # FIX: Avoid sorting the final gvectors array directly, which destroys the VASP FFT loop order.
+        # Instead, locate the exact indices matching the energy threshold limits to preserve native ordering.
         if len(gvectors) != expected_npw:
-            sorting_indices = np.argsort(energies_all)
-            gvectors = g_all[sorting_indices[:expected_npw]]
+            indices = np.where(energies_all <= encut)[0]
+            if len(indices) < expected_npw:
+                sorted_energies = np.sort(energies_all)
+                effective_cutoff = sorted_energies[expected_npw - 1]
+                indices = np.where(energies_all <= effective_cutoff)[0]
+            
+            # Truncate strictly to expected_npw while preserving the natural n3->n2->n1 loop order
+            indices = indices[:expected_npw]
+            gvectors = g_all[indices]
             
         self._gvec_cache[ikpt] = gvectors
         return gvectors

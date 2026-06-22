@@ -6,6 +6,7 @@ import numpy as np
 # BUILDING BLOCKS
 ###############################################################################
 
+EPS = 1e-30
 pi2 = np.pi ** 2
 
 def eli_heg(
@@ -22,7 +23,7 @@ def eli_heg(
     D0 = np.where(rho > 0.0, prefactor * rho**(5./3), 0.0)
         
     # ensure numerical stability
-    D0 = np.maximum(D0, 1e-08)
+    D0 = np.maximum(D0, EPS)
     
     return D0
     
@@ -37,11 +38,16 @@ def eli(
     tau_corr = lap_rho / 2
 
     # ensure numerical stability
-    rho = np.maximum(rho, 1e-08)
+    rho = np.maximum(rho, EPS)
     
     tau_bos = (1 / 4) * (grad_rho_sq / rho)
     
-    D = (tau + tau_corr - tau_bos)
+    # ensure tau_bos is less than tau
+    tau_w_corr = tau + tau_corr
+    
+    tau_bos = np.minimum(tau_w_corr, tau_bos)
+    
+    D = (tau_w_corr - tau_bos)
     
     return D
 
@@ -54,6 +60,7 @@ def elf_kernel(
     tau,
     lap_rho,
     grad_rho_sq,
+    savin_correction = True,
     single_channel = False,
         ):
     
@@ -62,23 +69,33 @@ def elf_kernel(
     
     # ELI
     D = eli(rho, tau, lap_rho, grad_rho_sq)
+    
+    if savin_correction:
+        X = (D + 2.871e-5) / D0
+    else:
+        X = D / D0
 
-    # ELF kernel with Savin shifting factor
-    X = (D + 2.871e-5) / D0
     return X
     
 
 def lol_kernel(
     rho,
     tau,
+    savin_correction = True,
     single_channel=False,
         ):
+    
+    # Enforce physical non-negativity to suppress numerical noise/oscillations in vacuum
+    tau = np.maximum(tau, 0.0)
     
     # HEG reference
     D0 = eli_heg(rho, single_channel)
     
-    # LOL kernel
-    X = tau / D0
+    if savin_correction:
+        # LOL kernel with savin shifting factor
+        X = (tau + 2.871e-5) / D0
+    else:
+        X = tau / D0
     return X
 
 def elid_kernel(
@@ -107,6 +124,7 @@ def elf(
     tau,
     lap_rho,
     grad_rho_sq,
+    savin_correction = True,
     single_channel = False,
         ):
     X = elf_kernel(
@@ -114,6 +132,7 @@ def elf(
         tau,
         lap_rho,
         grad_rho_sq,
+        savin_correction,
         single_channel,
         )
     return 1 / (1 + X**2)
@@ -121,11 +140,13 @@ def elf(
 def lol(
     rho,
     tau,
+    savin_correction = True,
     single_channel=False,
         ):
     X = lol_kernel(
         rho,
         tau,
+        savin_correction,
         single_channel,
         )
     return 1 / (1 + X)
