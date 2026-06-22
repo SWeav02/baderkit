@@ -359,6 +359,71 @@ class PostWFC:
                 
         return self._symmetrize_3d_grid(rho)
     
+    def calculate_kinetic_energy_density(self, grid_shape=None, spin_channel=-1, energy_range=(-np.inf, np.inf), use_partial_occ=True, return_charge_density=False):
+        """Computes full real-space non-negative electronic kinetic energy density profiles (tau)."""
+        if grid_shape is None: 
+            grid_shape = self._minimum_fft_size * 2
+        grid_shape_tuple = tuple(grid_shape)
+        Nx, Ny, Nz = grid_shape_tuple
+        normFac = np.sqrt((Nx * Ny * Nz) / self.structure.volume)
+        kpoint_weights = self.kpoint_weights
+        
+        tau = np.zeros(grid_shape_tuple, dtype=float)
+        rho = np.zeros(grid_shape_tuple, dtype=float) if return_charge_density else None
+        spin_indices = [i for i in range(self.nspin)] if spin_channel == -1 else [spin_channel]
+
+        for ispin in spin_indices:
+            for ikpt in range(self.nkpoints):
+                active_bands = []
+                weights = []
+                for iband in range(self.nbands):
+                    rel_energy = self.energies[ispin, ikpt, iband] - self.efermi
+                    if not (energy_range[0] <= rel_energy <= energy_range[1]): 
+                        continue
+                    rspin = 2.0 if self.nspin == 1 else 1.0
+                    weight = rspin * kpoint_weights[ikpt] * (self.occupancies[ispin, ikpt, iband] if use_partial_occ else 1.0)
+                    if weight > 0:
+                        active_bands.append(iband)
+                        weights.append(weight)
+                if not active_bands: 
+                    continue
+                
+                # Optimized batch reading extracts all active bands in a single file open transaction
+                coeffs_list = self._parser.read_coefficients_batch(ispin, ikpt, active_bands)
+                gvectors, gvec_wrapped = self.get_plane_waves_basis_idx(ikpt, grid_shape_tuple, expected_npw=coeffs_list.shape[1])
+                rgvec = self.get_plane_waves_basis_cart_from_idx(gvectors, grid_shape_tuple)
+                
+                # Construct absolute momentum vector components coordinates: K = G + k
+                k = self.kpoints_cart[ikpt]             
+                gk2 = np.sum((rgvec + k[np.newaxis, :])**2, axis=1)             
+                
+                # Integration by Parts identity transforms kinetic matrix elements into a Laplacian representation:
+                # tau(r) = sum( |Grad(psi)|^2 ) -> Re-mapped onto grid space fields via: -psi * Del^2(psi)*
+                lap_coeffs = -gk2[np.newaxis, :] * coeffs_list
+                
+                # Map raw state coefficients arrays collectives onto dense 3D frequency grid structures
+                phi_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
+                phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = coeffs_list
+                with set_workers(self.scipy_workers):
+                    phi_r = ifftn(phi_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
+                
+                # Map corresponding orbital Laplacian coefficients onto matching wrapped grid matrix structures
+                lap_phi_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
+                lap_phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = lap_coeffs
+                with set_workers(self.scipy_workers):
+                    lap_phi_r = ifftn(lap_phi_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
+                    
+                w_arr = np.array(weights)[:, np.newaxis, np.newaxis, np.newaxis]
+                # Accumulate kinetic density mapping terms (tau) in real space coordinates
+                tau += np.sum((-phi_r * lap_phi_r.conj()).real * w_arr, axis=0)
+                if return_charge_density:
+                    rho += np.sum((phi_r.conj() * phi_r).real * w_arr, axis=0)
+
+        tau = self._symmetrize_3d_grid(tau)
+        if return_charge_density: 
+            return tau, self._symmetrize_3d_grid(rho)
+        return tau
+    
     def calculate_localization_function(
             self, 
             grid_shape=None, 
