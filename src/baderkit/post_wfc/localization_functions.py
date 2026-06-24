@@ -6,262 +6,99 @@ import numpy as np
 # BUILDING BLOCKS
 ###############################################################################
 
-EPS = 1e-30
 pi2 = np.pi ** 2
 
-def eli_heg(
-    rho,
-    single_channel = False
-        ):
-    # select appropriate prefactor. This differs depending on if we are considering
-    # one spin channel or the combined KED/rho of both
+def eli_heg(rho, single_channel=False):
     if single_channel:
         prefactor = 3/5 * (6*pi2)**(2/3)
     else:
         prefactor = 3/5 * (3*pi2)**(2/3)
         
-    D0 = np.where(rho > 0.0, prefactor * rho**(5./3), 0.0)
-        
-    # ensure numerical stability
-    D0 = np.maximum(D0, EPS)
+    return np.where(rho > 0.0, prefactor * rho**(5./3), 0.0)
     
-    return D0
-    
-def eli(
-    rho,
-    tau,
-    lap_rho,
-    grad_rho_sq,
-        ):
-    
-    # ELI = tau + tau_correlation - tau_boson
+def eli(rho, tau, lap_rho, grad_rho_sq):
     tau_corr = lap_rho / 2
-
-    # ensure numerical stability
-    rho = np.maximum(rho, EPS)
     
-    tau_bos = (1 / 4) * (grad_rho_sq / rho)
+    # Safe division: only divide where rho > 0.0
+    tau_bos = np.divide(
+        0.25 * grad_rho_sq, 
+        rho, 
+        out=np.zeros_like(rho), 
+        where=rho > 0.0
+    )
     
-    # ensure tau_bos is less than tau
-    tau_w_corr = tau + tau_corr
+    return tau + tau_corr - tau_bos
     
-    tau_bos = np.minimum(tau_w_corr, tau_bos)
+    # tau_w_corr = tau + tau_corr
+    # tau_bos = np.minimum(tau_w_corr, tau_bos)
     
-    D = (tau_w_corr - tau_bos)
-    
-    return D
+    # D = (tau_w_corr - tau_bos)
+    # return D
 
 ###############################################################################
 # KERNELS
 ###############################################################################
 
-def elf_kernel(
-    rho,
-    tau,
-    lap_rho,
-    grad_rho_sq,
-    savin_correction = True,
-    single_channel = False,
-        ):
-    
-    # HEG reference
+def elf_kernel(rho, tau, lap_rho, grad_rho_sq, savin_correction=True, single_channel=False):
     D0 = eli_heg(rho, single_channel)
-    
-    # ELI
     D = eli(rho, tau, lap_rho, grad_rho_sq)
     
-    if savin_correction:
-        X = (D + 2.871e-5) / D0
-    else:
-        X = D / D0
+    numerator = (D + 2.871e-5) if savin_correction else D
 
+    # Safe division: only divide where D0 > 0.0
+    X = np.divide(
+        numerator, 
+        D0, 
+        out=np.zeros_like(numerator), 
+        where=D0 > 0.0
+    )
     return X
     
 
-def lol_kernel(
-    rho,
-    tau,
-    savin_correction = True,
-    single_channel=False,
-        ):
-    
-    # Enforce physical non-negativity to suppress numerical noise/oscillations in vacuum
+def lol_kernel(rho, tau, lap_rho, savin_correction=True, single_channel=False):
     tau = np.maximum(tau, 0.0)
-    
-    # HEG reference
+    tau_corr = lap_rho / 2
     D0 = eli_heg(rho, single_channel)
     
-    if savin_correction:
-        # LOL kernel with savin shifting factor
-        X = (tau + 2.871e-5) / D0
-    else:
-        X = tau / D0
+    numerator = (tau +tau_corr+ 2.871e-5) if savin_correction else tau + tau_corr
+    
+    # Safe division: only divide where D0 > 0.0
+    X = np.divide(
+        numerator, 
+        D0, 
+        out=np.zeros_like(numerator), 
+        where=D0 > 0.0
+    )
     return X
 
-def elid_kernel(
-    rho,
-    tau,
-    lap_rho,
-    grad_rho_sq,
-        ):
-    
-    # ELI
+def elid_kernel(rho, tau, lap_rho, grad_rho_sq):
     D = eli(rho, tau, lap_rho, grad_rho_sq)
     
-    # ELI-D
-    X = D * (rho ** (-8. / 3.))
+    # Avoid negative powers directly on 0.0 by using division instead
+    rho_power = rho ** (8. / 3.)
+    
+    # Safe division: D / (rho ** (8/3)) only where rho > 0.0
+    X = np.divide(
+        D, 
+        rho_power, 
+        out=np.zeros_like(D), 
+        where=rho > 0.0
+    )
     return X
 
 ###############################################################################
 # STANDARD LOCALIZATION FUNCTIONS
 ###############################################################################
-# These methods calculate the localization functions using the standard method
-# straight from the provided properties. One option for partitioned ELF is to
-# use these standard methods with the partial rho/tau
 
-def elf(
-    rho,
-    tau,
-    lap_rho,
-    grad_rho_sq,
-    savin_correction = True,
-    single_channel = False,
-        ):
-    X = elf_kernel(
-        rho,
-        tau,
-        lap_rho,
-        grad_rho_sq,
-        savin_correction,
-        single_channel,
-        )
-    return 1 / (1 + X**2)
+def elf(rho, tau, lap_rho, grad_rho_sq, savin_correction=True, single_channel=False):
+    X = elf_kernel(rho, tau, lap_rho, grad_rho_sq, savin_correction, single_channel)
+    elf_val = 1 / (1 + X**2)
+    return np.where(rho > 0.0, elf_val, 0.0)
 
-def lol(
-    rho,
-    tau,
-    savin_correction = True,
-    single_channel=False,
-        ):
-    X = lol_kernel(
-        rho,
-        tau,
-        savin_correction,
-        single_channel,
-        )
-    return 1 / (1 + X)
+def lol(rho, tau, savin_correction=True, single_channel=False):
+    X = lol_kernel(rho, tau, savin_correction, single_channel)
+    lol_val = 1 / (1 + X)
+    return np.where(rho > 0.0, lol_val, 0.0)
 
-def elid(
-    rho,
-    tau,
-    lap_rho,
-    grad_rho_sq
-        ):
-    X = elid_kernel(
-        rho, 
-        tau, 
-        lap_rho, 
-        grad_rho_sq,
-        )
-    return X
-
-###############################################################################
-# NORMALIZED PARTIAL LOCALIZATION FUNCTIONS
-###############################################################################
-# These methods take inspiration from the work of [Pilme](https://onlinelibrary.wiley.com/doi/10.1002/jcc.24672)
-# In Pilme's method, the localization function is first calculated for the total
-# system. Then, the ratio of partial charge density to the total charge density
-# is used to calculate a partial ELF.
-
-# This original implementation uses a factor of 2 so that the spin-separated
-# systems map back to the total if there is no polarization. However, this is
-# not fully satisfactory. If one chooses the total rho/tau as their "partial"
-# system, the factor of 2 results in the ELF denominator heavily decreasing,
-# artificially increasing the final value. To counteract this, we change the
-# # factor of 2 to the ratio of total charge to partial charge. This in effect
-# # creates an imaginary system with the same total charge as the original system,
-# # but with different occupations of the orbitals. In effect, this highlights
-# # how the localization would change if certain orbitals were or were not occupied
-# # while keeping the system uncharged.
-
-# def elf_relative(
-#     rho,
-#     tau,
-#     lap_rho,
-#     grad_rho_sq,
-#     partial_rho,
-#     partial_tau,
-#     partial_lap_rho,
-#     partial_grad_rho_sq,
-#     single_channel = False,
-#         ):
-#     # get total kernel
-#     X = elf_kernel(
-#         rho,
-#         tau,
-#         lap_rho,
-#         grad_rho_sq,
-#         single_channel,
-#         )
-#     # get partial kernel
-#     x = elf_kernel(
-#         partial_rho,
-#         partial_tau,
-#         partial_lap_rho,
-#         partial_grad_rho_sq,
-#         single_channel,
-#         )
-    
-#     # x is divided by X because the ELF should increase if as chi decreases i.e.
-#     # if x is smaller than X the relative ELF should be larger
-    
-#     return 1 / (1 + (x/X)**2)
-
-# def lol_relative(
-#     rho,
-#     tau,
-#     partial_rho,
-#     partial_tau,
-#     single_channel=False,
-#         ):
-#     # get total kernel
-#     X = lol_kernel(
-#         rho,
-#         tau,
-#         single_channel,
-#         )
-#     # get partial kernel
-#     x = lol_kernel(
-#         partial_rho,
-#         partial_tau,
-#         single_channel
-#         )
-    
-#     return 1 / (1 + (x/X))
-
-# def elid_relative(
-#     rho,
-#     tau,
-#     lap_rho,
-#     grad_rho_sq,
-#     partial_rho,
-#     partial_tau,
-#     partial_lap_rho,
-#     partial_grad_rho_sq,
-#         ):
-#     # get total kernel
-#     X = elid_kernel(
-#         rho, 
-#         tau, 
-#         lap_rho, 
-#         grad_rho_sq,
-#         )
-#     # get partial kernel
-#     x = elid_kernel(
-#         partial_rho, 
-#         partial_tau, 
-#         partial_lap_rho, 
-#         partial_grad_rho_sq,
-#         )
-    
-#     return (x/X)
+def elid(rho, tau, lap_rho, grad_rho_sq):
+    return elid_kernel(rho, tau, lap_rho, grad_rho_sq)

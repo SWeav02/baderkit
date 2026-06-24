@@ -6,6 +6,8 @@ from scipy.fft import fftn, ifftn, set_workers
 from scipy.integrate import trapezoid, cumulative_trapezoid
 
 from baderkit.post_wfc.wf_parsers.base import HSQDTM
+from baderkit.post_wfc.all_electron_references.reference_environment import AtomicReferenceEnvironment
+from baderkit.global_numba.file_parsers import load_pseudo
 
 # TODO:
 # Create method for plotting how much a state contributes or detracts from
@@ -20,7 +22,9 @@ class PostWFC:
     def __init__(
         self, 
         parser, 
-        scipy_workers: int = -1
+        valence_counts,
+        scipy_workers: int = -1,
+        **kwargs
         ):
         """Initializes properties and calculates necessary minimum FFT grid boundaries."""
         self._parser = parser
@@ -29,6 +33,14 @@ class PostWFC:
         self._lattice = self._structure.lattice.matrix               # Lattice row vectors in Angstroms
         self._reciprocal_lattice = np.linalg.inv(self._lattice).T   # Transpose of inverse cell matrix (B_mat without 2pi)
         self.scipy_workers = scipy_workers
+        
+        # valence counts
+        if valence_counts is False:
+            valence_counts = {}
+            # The user requests a full electron calculation
+            for site in self.structure:
+                valence_counts[site.specie.symbol] = getattr(site.specie, "number", 0)
+        self._valence_counts = valence_counts
         
         # Determine minimum grid dims to enclose the full plane-wave cutoff sphere without aliasing errors.
         # Max integer Miller component index along direction i requires: |n_i| <= R * ||a_i||
@@ -43,6 +55,25 @@ class PostWFC:
         self._kpoint_multiplicities = None
         self._kpoint_weights = None
         self._grid_cache = {}  # Internal cache to avoid rebuilding meshgrids across calculation calls
+        self._reference_environment = None # The equivalent non-bonding system
+        
+    @property
+    def valence_counts(self) -> dict | None:
+        """
+
+        Returns
+        -------
+        dict | None
+            A dictionary where each key is an atomic species in the system and each
+            value is the number of valence electrons used in the pseudo potential.
+            This is used for methods that calculate oxidation states.
+
+        """
+        return self._valence_counts
+
+    @valence_counts.setter
+    def valence_counts(self, value: dict):
+        self._valence_counts = value
         
     @property
     def nspin(self):
@@ -218,6 +249,15 @@ class PostWFC:
         if self._total_electrons is None:
             self._total_electrons = self.get_electrons_in_energy_range(-np.inf, np.inf)
         return self._total_electrons
+    
+    @property
+    def reference_environment(self):
+        if self._reference_environment is None:
+            self._reference_environment = AtomicReferenceEnvironment(
+                self.structure, 
+                self.valence_counts,
+                )
+        return self._reference_environment
         
     def get_plane_waves_frac(self, grid_shape=None):
         """Generates fractional coordinate arrays for plane waves in standard FFT wrapped frequency order."""
@@ -361,6 +401,9 @@ class PostWFC:
     
     def calculate_kinetic_energy_density(self, grid_shape=None, spin_channel=-1, energy_range=(-np.inf, np.inf), use_partial_occ=True, return_charge_density=False):
         """Computes full real-space non-negative electronic kinetic energy density profiles (tau)."""
+        # TODO: Add tag to determine if using canonical or shrodinger (-lap(rho)/2) form
+        # Change LOL/ELF calls to assume canonical rather than shrodinger
+        
         if grid_shape is None: 
             grid_shape = self._minimum_fft_size * 2
         grid_shape_tuple = tuple(grid_shape)
@@ -491,231 +534,305 @@ class PostWFC:
         return grad_x.real, grad_y.real, grad_z.real
         
     def calculate_state_rho_tau_contributions(
-            self, 
-            frac_coord, 
-            return_grad_rho_sq = True,
-            return_lap_rho = True,
-            spin_channel = -1, 
-            energy_range=None, 
-            num_points=2000, 
-            method = "gaussian",  # "gaussian", "methfessel-paxton", "fermi-dirac", "tetrahedron"
-            sigma=None,
-            temperature=None,  # Added to allow physical Kelvin inputs for Fermi-Dirac
-            ):
-        """
-        Computes the partial contributions to the charge density and kinetic
-        energy density at a single requested fractional coordinate using direct 
-        Fourier evaluation. Bypasses the expensive 3D FFT grid entirely.
-        
-        Supports Gaussian, Methfessel-Paxton, Fermi-Dirac, and Tetrahedron smearing methods.
-        """
-        method, sigma = self._get_default_sigma(method.lower(), sigma)
-
-        kpoint_weights = self.kpoint_weights
-        energies = self.energies
-        
-        tau = np.empty_like(energies, dtype=float)
-        rho = np.empty_like(energies, dtype=float)
-        
-        if return_grad_rho_sq:
-            grad_rho_sq = np.empty_like(energies, dtype=float)
-        if return_lap_rho:
-            lap_rho = np.empty_like(energies, dtype=float)
-            
-        spin_indices = [i for i in range(self.nspin)] if spin_channel == -1 else [spin_channel]
+                self, 
+                frac_coord, 
+                return_grad_rho_sq = True,
+                return_lap_rho = True,
+                spin_channel = -1, 
+                energy_range=None, 
+                num_points=2000, 
+                method = "gaussian", 
+                sigma=None,
+                ):
         
         grid_shape = self._minimum_fft_size * 2
-        norm_factor = 1.0 / np.sqrt(self.structure.volume)
+        nx, ny, nz = grid_shape
+        
+        # Target voxel mapping
+        ix = int(np.round(frac_coord[0] * nx)) % nx
+        iy = int(np.round(frac_coord[1] * ny)) % ny
+        iz = int(np.round(frac_coord[2] * nz)) % nz
+    
+        def point_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
+            c_grid = np.zeros((self.nbands, nx, ny, nz), dtype=complex)
+            for iband in range(self.nbands):
+                c_grid[iband, kx_idx, ky_idx, kz_idx] = coeffs_list[iband, :]
+            
+            psi_r_all = np.fft.ifftn(c_grid, axes=(1, 2, 3)) * (nx * ny * nz) * norm_factor
+            phi_at_point = psi_r_all[:, ix, iy, iz]
+            
+            rgvec = self.get_plane_waves_basis_cart_from_idx(gvectors, gshape)
+            k = self.kpoints_cart[ikpt]             
+            K_cart = rgvec + k[np.newaxis, :]             
+            gk2 = np.sum(K_cart**2, axis=1)             
+            
+            c_grid_lap = np.zeros((self.nbands, nx, ny, nz), dtype=complex)
+            for iband in range(self.nbands):
+                c_grid_lap[iband, kx_idx, ky_idx, kz_idx] = -gk2 * coeffs_list[iband, :]
+            
+            lap_psi_r_all = np.fft.ifftn(c_grid_lap, axes=(1, 2, 3)) * (nx * ny * nz) * norm_factor
+            lap_phi_at_point = lap_psi_r_all[:, ix, iy, iz]
+            
+            rho_bands = (phi_at_point.conj() * phi_at_point).real * weight
+            tau_bands = (-phi_at_point * lap_phi_at_point.conj()).real * weight
+            
+            # Pack metrics dynamically to keep indexes clean
+            metrics = [rho_bands, tau_bands]
+            
+            if return_grad_rho_sq or return_lap_rho:
+                grad_phi_at_point = np.zeros((self.nbands, 3), dtype=complex)
+                for idim in range(3):
+                    c_grid_grad = np.zeros((self.nbands, nx, ny, nz), dtype=complex)
+                    for iband in range(self.nbands):
+                        c_grid_grad[iband, kx_idx, ky_idx, kz_idx] = 1j * K_cart[:, idim] * coeffs_list[iband, :]
+                    grad_psi_r_all = np.fft.ifftn(c_grid_grad, axes=(1, 2, 3)) * (nx * ny * nz) * norm_factor
+                    grad_phi_at_point[:, idim] = grad_psi_r_all[:, ix, iy, iz]
+                
+                if return_grad_rho_sq:
+                    grad_rho_vec = 2.0 * (phi_at_point[:, np.newaxis].conj() * grad_phi_at_point).real
+                    grad_rho_sq_bands = np.sum(grad_rho_vec**2, axis=1) * weight
+                    metrics.append(grad_rho_sq_bands)
+                else:
+                    metrics.append(None)
+                    
+                if return_lap_rho:
+                    grad_psi_sq = np.sum(np.abs(grad_phi_at_point)**2, axis=1)
+                    lap_rho_bands = 2.0 * (grad_psi_sq + (phi_at_point.conj() * lap_phi_at_point).real) * weight
+                    metrics.append(lap_rho_bands)
+                else:
+                    metrics.append(None)
+                    
+            return metrics
+    
+        # Determine total tracking dimensions dynamically 
+        num_metrics = 4 if (return_grad_rho_sq or return_lap_rho) else 2
 
-        # Core loop runs efficiently over the Irreducible Brillouin Zone (IBZ) only
-        for ispin in spin_indices:
-            for ikpt in range(self.nkpoints):
-                active_bands = list(range(self.nbands))
-                rspin = 2.0 if self.nspin == 1 else 1.0
-                
-                # Tetrahedron method handles weights intrinsically via grid cell volumes,
-                # so kpoint_weight is omitted during this raw accumulation loop step.
-                weight = rspin * kpoint_weights[ikpt] if method.lower() != "tetrahedron" else rspin
-                
-                coeffs_list = self._parser.read_coefficients_batch(ispin, ikpt, active_bands)
-                gvectors, _ = self.get_plane_waves_basis_idx(ikpt, grid_shape, expected_npw=coeffs_list.shape[1])
-                rgvec = self.get_plane_waves_basis_cart_from_idx(gvectors, grid_shape)
-                
-                k = self.kpoints_cart[ikpt]             
-                gk2 = np.sum((rgvec + k[np.newaxis, :])**2, axis=1)             
-                lap_coeffs = -gk2[np.newaxis, :] * coeffs_list
-                
-                phases = np.exp(2j * np.pi * np.dot(gvectors, frac_coord))
-                
-                phi_at_point = np.dot(coeffs_list, phases) * norm_factor
-                lap_phi_at_point = np.dot(lap_coeffs, phases) * norm_factor
-                
-                tau[ispin, ikpt, :] = (-phi_at_point * lap_phi_at_point.conj()).real * weight
-                rho[ispin, ikpt, :] = (phi_at_point.conj() * phi_at_point).real * weight
-                
-                if return_grad_rho_sq or return_lap_rho:
-                    K_cart = rgvec + k[np.newaxis, :]
-                    phase_grad = 1j * K_cart * phases[:, np.newaxis]
-                    grad_phi_at_point = np.dot(coeffs_list, phase_grad) * norm_factor
-                    
-                    if return_grad_rho_sq:
-                        grad_rho_vector = 2.0 * (phi_at_point[:, np.newaxis].conj() * grad_phi_at_point).real
-                        grad_rho_sq[ispin, ikpt, :] = np.sum(grad_rho_vector**2, axis=1) * weight
-                        
-                    if return_lap_rho:
-                        grad_psi_sq = np.sum(np.abs(grad_phi_at_point)**2, axis=1)
-                        lap_rho[ispin, ikpt, :] = 2.0 * (grad_psi_sq + (phi_at_point.conj() * lap_phi_at_point).real) * weight
-                    
-        # Generate the energy grid
-        e_min, e_max = energy_range if energy_range is not None else self.energy_range
-        energy_grid = np.linspace(e_min, e_max, num_points)
+        energy_grid, smeared = self._execute_spectral_engine(
+            num_metrics=num_metrics, spin_channel=spin_channel, energy_range=energy_range, 
+            num_points=num_points, method=method, sigma=sigma, eval_callback=point_callback
+        )
         
-        # --- SMEARING ENGINE SELECTION ---
-        if method.lower() == "tetrahedron":
-            smear_matrix = self._get_tetrahedron_weights(energy_grid, spin_indices)
-        else:
-            bands = (self.energies - self.efermi)[spin_indices].ravel()
-            delta_E = energy_grid[:, None] - bands[None, :]
-            smear_matrix = self._get_smear_matrix(delta_E / sigma, method, sigma)
-        
-        # Flatten target metrics to align with the generated smear matrix columns
-        rho_vals = rho[spin_indices].ravel()
-        tau_vals = tau[spin_indices].ravel()
-        
-        rho_smeared = np.dot(smear_matrix, rho_vals)
-        tau_smeared = np.dot(smear_matrix, tau_vals)
-        
-        # --- GAUSSIAN POST-PROCESSING CONVOLUTION WINDOW ---
-        if method.lower() == "tetrahedron" and sigma > 0.0:
-            delta_e = energy_grid[1] - energy_grid[0]
-            n_kernel = int(np.ceil(4.0 * sigma / delta_e))
-            if n_kernel > 0:
-                x_kernel = np.arange(-n_kernel, n_kernel + 1) * delta_e
-                kernel = np.exp(-0.5 * (x_kernel / sigma)**2)
-                kernel /= np.sum(kernel)
-                
-                rho_smeared = np.convolve(rho_smeared, kernel, mode='same')
-                tau_smeared = np.convolve(tau_smeared, kernel, mode='same')
-        
-        results = [energy_grid, rho_smeared, tau_smeared]
-        
-        if return_grad_rho_sq:
-            grad_rho_sq_vals = grad_rho_sq[spin_indices].ravel()
-            grad_rho_sq_smeared = np.dot(smear_matrix, grad_rho_sq_vals)
-            if method.lower() == "tetrahedron" and sigma > 0.0 and n_kernel > 0:
-                grad_rho_sq_smeared = np.convolve(grad_rho_sq_smeared, kernel, mode='same')
-            results.append(grad_rho_sq_smeared)
-            
-        if return_lap_rho:
-            lap_rho_vals = lap_rho[spin_indices].ravel()
-            lap_rho_smeared = np.dot(smear_matrix, lap_rho_vals)
-            if method.lower() == "tetrahedron" and sigma > 0.0 and n_kernel > 0:
-                lap_rho_smeared = np.convolve(lap_rho_smeared, kernel, mode='same')
-            results.append(lap_rho_smeared)
-            
+        results = [energy_grid, smeared[0], smeared[1]]
+        if return_grad_rho_sq: results.append(smeared[2])
+        if return_lap_rho: results.append(smeared[3])
         return tuple(results)
     
-    def get_density_of_states(
-            self, 
-            spin_channel = -1, 
-            energy_range=None, 
-            num_points=2000, 
-            method="gaussian", 
-            sigma=None, 
-            temperature=None, # Added to allow physical Kelvin inputs for Fermi-Dirac
-            use_occupancies=False,
-            ):
+    def calculate_state_deformation_density(
+                self, 
+                frac_coord, 
+                spin_channel=-1,
+                energy_range=None, 
+                num_points=2000, 
+                method="gaussian", 
+                sigma=None
+                ):
         """
-        Constructs energy coordinate profiles outlining the Electronic Density of States (DOS).
-        Supports 'gaussian', 'methfessel-paxton', 'fermi-dirac', and 'tetrahedron' smearing methods.
-        For 'tetrahedron', an optional Gaussian post-smoothing can be applied via the 'sigma' parameter.
-        """
-        method, sigma = self._get_default_sigma(method.lower(), sigma)
+        Calculates the step-by-step delta deformation density spectrum matching the exact
+        non-linear charge accumulation tracks of the true crystal states.
         
-        kpt_weights = self.kpoint_weights
-        bands = self.energies - self.efermi
+        Automatically masks out high-energy steps that exceed the physical capacity 
+        of the reference atomic basis pool and emits a tracking warning.
+        """
+        reference_env = self.reference_environment
+
+        # 1. Resolve formal smearing parameters using your native routing tool
+        formal_method, formal_sigma = self._get_default_sigma(method, sigma)
         e_min, e_max = energy_range if energy_range is not None else self.energy_range
-        energy_grid = np.linspace(e_min, e_max, num_points)
         
-        if spin_channel == 1 and self.nspin == 1:
-            spin_channel = 0
-
-        spin_all = spin_channel if spin_channel != -1 else list(range(self.nspin))
+        # 2. Automatically calculate background charge accumulated up to e_min
+        start_charge = self.get_electrons_in_energy_range(
+            -np.inf, e_min, num_points=num_points, method=method, sigma=sigma
+        )
         
-        if spin_channel == -1 and self.nspin == 1:
-            factor = 2
-        else:
-            factor = 1
+        # 3. Compute natively smeared crystal profiles simultaneously
+        egrid, dos = self.get_density_of_states(
+            spin_channel=spin_channel, 
+            energy_range=(e_min, e_max), 
+            num_points=num_points, 
+            method=method, 
+            sigma=sigma,
+            use_occupancies=False
+        )
+        
+        _, rho_crys, _ = self.calculate_state_rho_tau_contributions(
+            frac_coord=frac_coord, 
+            return_grad_rho_sq=False, 
+            return_lap_rho=False,
+            spin_channel=spin_channel, 
+            energy_range=(e_min, e_max), 
+            num_points=num_points, 
+            method=method,
+            sigma=sigma
+        )
+        
+        # 4. Convert the continuous spectral DOS into exact cell charge boundaries
+        delta_e = egrid[1] - egrid[0]
+        q_bounds = np.zeros(len(dos) + 1)
+        q_bounds[0] = start_charge
+        q_bounds[1:] = start_charge + np.cumsum(dos) * delta_e
+        
+        # 5. Extract the matching sequential reference steps from the environment
+        delta_rho_ref_steps = reference_env.calculate_sequential_reference_deltas(
+            frac_coord=frac_coord, q_bounds=q_bounds
+        )
+        
+        # 6. Direct Point-by-Point Spectral Subtraction
+        deformation_profile = rho_crys - (delta_rho_ref_steps / delta_e)
+        
+        # 7. Dynamic Capacity Checking & Saturation Masking
+        max_capacity_charge = reference_env.get_maximum_cell_charge_capacity()
+        
+        # Check against the upper charge bound of each discrete energy interval
+        invalid_mask = q_bounds[1:] > max_capacity_charge
+        
+        if np.any(invalid_mask):
+            first_invalid_idx = np.where(invalid_mask)[0][0]
+            meaningless_energy_threshold = egrid[first_invalid_idx]
             
-        if method.lower() == "tetrahedron":
-            smear_matrix = self._get_tetrahedron_weights(energy_grid, spin_all)
-            if use_occupancies:
-                w_t = self.occupancies[spin_all].ravel() * factor
+            print(f"========================================================================\n"
+                  f"WARNING: Reference atomic basis set capacity exceeded!\n"
+                  f"Orbital saturation occurs at total cell charge: {max_capacity_charge:.4f} e-\n"
+                  f"Energy values above {meaningless_energy_threshold:.4f} eV are unphysical.\n"
+                  f"Masking subsequent deformation steps to 0.0.\n"
+                  f"========================================================================")
+            
+            # Force the net delta to zero for all saturated intervals
+            deformation_profile[invalid_mask] = 0.0
+            
+        return egrid, deformation_profile
+    
+    def get_density_of_states(
+                self, 
+                spin_channel = -1, 
+                energy_range=None, 
+                num_points=2000, 
+                method="gaussian", 
+                sigma=None, 
+                use_occupancies=False,
+                ):
+            """
+            Constructs energy coordinate profiles outlining the Electronic Density of States (DOS).
+            Supports 'gaussian', 'methfessel-paxton', 'fermi-dirac', 'tetrahedron', and 'none' methods.
+            For 'tetrahedron', an optional Gaussian post-smoothing can be applied via the 'sigma' parameter.
+            """
+            method, sigma = self._get_default_sigma(method, sigma)
+            
+            kpt_weights = self.kpoint_weights
+            bands = self.energies - self.efermi
+            e_min, e_max = energy_range if energy_range is not None else self.energy_range
+            energy_grid = np.linspace(e_min, e_max, num_points)
+            
+            if spin_channel == 1 and self.nspin == 1:
+                spin_channel = 0
+    
+            spin_all = spin_channel if spin_channel != -1 else list(range(self.nspin))
+            
+            if spin_channel == -1 and self.nspin == 1:
+                factor = 2
             else:
-                w_t = np.ones(len(spin_all) * self.nkpoints * self.nbands) * factor
-        else:
-            bands_flat = bands[spin_all].ravel()
-            if use_occupancies:
-                w_t = (self.occupancies[spin_all] * kpt_weights[None, :, None]).ravel() * factor
-            else:
-                w_t = (np.ones_like(bands[spin_all]) * kpt_weights[None, :, None]).ravel() * factor
-            smear_matrix = self._get_smear_matrix((energy_grid[:, None] - bands_flat[None, :]) / sigma, method, sigma)
-        
-        dos = np.dot(smear_matrix, w_t)
-        
-        if method.lower() == "tetrahedron" and sigma > 0.0:
-            delta_e = energy_grid[1] - energy_grid[0]
-            n_kernel = int(np.ceil(4.0 * sigma / delta_e))
-            if n_kernel > 0:
-                x_kernel = np.arange(-n_kernel, n_kernel + 1) * delta_e
-                kernel = np.exp(-0.5 * (x_kernel / sigma)**2)
-                kernel /= np.sum(kernel)
-                dos = np.convolve(dos, kernel, mode='same')
+                factor = 1
                 
-        return energy_grid, dos
-
-    def _get_default_sigma(self, method, sigma):
-        shorthands = {
-            "gaussian": "gaussian",
-            "methfessel-paxton": "methfessel-paxton",
-            "mp": "methfessel-paxton",
-            "fermi-dirac": "fermi-dirac",
-            "fm": "fermi-dirac",
-            "tetrahedron": "tetrahedron",
-            "tet": "tetrahedron",
-            }
-        formal_method = shorthands.get(method, None)
-        if method is None:
-            raise ValueError(f"Unknown smearing method: '{method}'")
+            if method == "tetrahedron":
+                smear_matrix = self._get_tetrahedron_weights(energy_grid, spin_all)
+                if use_occupancies:
+                    w_t = self.occupancies[spin_all].ravel() * factor
+                else:
+                    w_t = np.ones(len(spin_all) * self.nkpoints * self.nbands) * factor
+            else:
+                # Flatten bands and build weights identically across all continuum & delta methods
+                bands_flat = bands[spin_all].ravel()
+                if use_occupancies:
+                    w_t = (self.occupancies[spin_all] * kpt_weights[None, :, None]).ravel() * factor
+                else:
+                    w_t = (np.ones_like(bands[spin_all]) * kpt_weights[None, :, None]).ravel() * factor
+                
+                # INTERCEPT HERE: Handle sharp delta-binning cleanly
+                if method == "none":
+                    delta_e = energy_grid[1] - energy_grid[0]
+                    
+                    # Fast vectorized nearest-neighbor grid index projection
+                    closest_idx = np.round((bands_flat - e_min) / delta_e).astype(int)
+                    valid_mask = (closest_idx >= 0) & (closest_idx < num_points)
+                    
+                    smear_matrix = np.zeros((num_points, len(bands_flat)))
+                    if len(bands_flat) > 0:
+                        # 1.0 / delta_e scale enforces perfect preservation of integrated total state counts
+                        smear_matrix[closest_idx[valid_mask], np.where(valid_mask)[0]] = 1.0 / delta_e
+                else:
+                    # Continuous analytical broadening tracks
+                    smear_matrix = self._get_smear_matrix((energy_grid[:, None] - bands_flat[None, :]) / sigma, method, sigma)
+            
+            dos = np.dot(smear_matrix, w_t)
+            
+            if method == "tetrahedron" and sigma > 0.0:
+                delta_e = energy_grid[1] - energy_grid[0]
+                n_kernel = int(np.ceil(4.0 * sigma / delta_e))
+                if n_kernel > 0:
+                    x_kernel = np.arange(-n_kernel, n_kernel + 1) * delta_e
+                    kernel = np.exp(-0.5 * (x_kernel / sigma)**2)
+                    kernel /= np.sum(kernel)
+                    dos = np.convolve(dos, kernel, mode='same')
+                    
+            return energy_grid, dos
+    
+    def get_electrons_in_energy_range(self, e_min, e_max, num_points=2000, method="gaussian", sigma=None):
+            """Integrates occupied DOS profiles across designated energy limits windows relative to the Fermi Level."""
+            bands = self.energies - self.efermi
+            
+            # Resolve the formal method identifier and default sigma values
+            method, sigma = self._get_default_sigma(method, sigma)
+            
+            # Handle asymptotic bounds limitations by padding extreme values past band margins safely
+            if e_min == -np.inf: 
+                pad = 0.1 if method == "none" else (1.0 if method == "tetrahedron" else 5 * sigma)
+                e_min = np.min(bands) - pad
+                
+            if e_max == np.inf: 
+                pad = 0.1 if method == "none" else (1.0 if method == "tetrahedron" else 5 * sigma)
+                e_max = np.max(bands) + pad
+            
+            # Leverages our updated unified DOS generator with occupancies turned on
+            egrid, dens = self.get_density_of_states(
+                spin_channel=-1, 
+                energy_range=(e_min, e_max), 
+                num_points=num_points, 
+                method=method, 
+                sigma=sigma, 
+                use_occupancies=True
+            )
+            
+            # Evaluate total accumulated valence electrons within target bounds using numerical integration
+            return trapezoid(dens, egrid)
+    
+    def find_energy_for_electron_count(self, target_electrons, e_min=-np.inf, assume_full_occupancy=False, num_points=5000, method="gaussian", sigma=0.05):
+        """Identifies relative energy cutoff limits enclosing specific targeted electron populations quantities."""
+        e_min_calc, e_max_calc = self.energy_range
+        pad = 5 * sigma if method != "tetrahedron" else 1.0
+        e_min_calc -= pad
+        e_max_calc += pad
         
-        if sigma is None:
-            
-            default_sigma = {
-                "gaussian": 0.1,
-                "methfessel-paxton": 0.18,
-                "fermi-dirac": 300,
-                "tetrahedron": 0.04,
-                }
-            
-            sigma = default_sigma[formal_method]
-            
-        if method == "fermi-dirac":
-            sigma = 8.617333262e-5 * sigma
+        egrid, density = self.get_density_of_states(
+            spin_channel=-1, 
+            energy_range=(e_min_calc, e_max_calc), 
+            num_points=num_points, 
+            method=method, 
+            sigma=sigma, 
+            use_occupancies=not assume_full_occupancy
+        )
         
-        return formal_method, sigma
-
-    def _get_smear_matrix(self, x, method, sigma):
-        """Helper matrix generator parsing customized analytical broadening distributions."""
-        if method.lower() == "gaussian":
-            return np.exp(-0.5 * x**2) / (sigma * np.sqrt(2 * np.pi))
-        elif method.lower() in ["methfessel-paxton", "mp"]:
-            term_0 = np.exp(-x**2) / np.sqrt(np.pi)
-            return ((1.5 - x**2) * term_0) / sigma
-        elif method.lower() in ["fermi-dirac", "fd"]:
-            exp_term = np.exp(np.clip(x, -50, 50))
-            return (exp_term / (exp_term + 1.0)**2) / sigma
-        else:
-            raise ValueError(f"Unknown smearing method: '{method}'")
+        if assume_full_occupancy:
+            density = density * np.max(self.occupancies)
+            
+        if e_min == -np.inf: e_min = egrid[0]
+        mask = egrid >= e_min
+        sub_g, sub_d = egrid[mask], density[mask]
+        
+        cum_charge = np.zeros(len(sub_g))
+        cum_charge[1:] = cumulative_trapezoid(sub_d, sub_g)
+        
+        if target_electrons > cum_charge[-1]: 
+            raise ValueError("Target electron allocation total exceeds evaluated capacity parameters grid envelope limits.")
+        return np.interp(target_electrons, cum_charge, sub_g)
 
     def _setup_tetrahedra(self):
         """
@@ -806,56 +923,150 @@ class PostWFC:
     
         return smear_matrix_3d.reshape(num_points, -1)
     
-    def get_electrons_in_energy_range(self, e_min, e_max, num_points=2000, method="gaussian", sigma=0.05):
-        """Integrates occupied DOS profiles across designated energy limits windows relative to the Fermi Level."""
-        bands = self.energies - self.efermi
-        
-        # Handle asymptotic bounds limitations by padding extreme values past band margins safely
-        if e_min == -np.inf: e_min = np.min(bands) - (5 * sigma if method.lower() != "tetrahedron" else 1.0)
-        if e_max == np.inf: e_max = np.max(bands) + (5 * sigma if method.lower() != "tetrahedron" else 1.0)
-        
-        # Leverages our updated unified DOS generator with occupancies turned on
-        egrid, dens = self.get_density_of_states(
-            spin_channel=-1, 
-            energy_range=(e_min, e_max), 
-            num_points=num_points, 
-            method=method, 
-            sigma=sigma, 
-            use_occupancies=True
-        )
-        
-        # Evaluate total accumulated valence electrons within target bounds using numerical integration
-        return trapezoid(dens, egrid)
-    
-    def find_energy_for_electron_count(self, target_electrons, e_min=-np.inf, assume_full_occupancy=False, num_points=5000, method="gaussian", sigma=0.05):
-        """Identifies relative energy cutoff limits enclosing specific targeted electron populations quantities."""
-        e_min_calc, e_max_calc = self.energy_range
-        pad = 5 * sigma if method.lower() != "tetrahedron" else 1.0
-        e_min_calc -= pad
-        e_max_calc += pad
-        
-        egrid, density = self.get_density_of_states(
-            spin_channel=-1, 
-            energy_range=(e_min_calc, e_max_calc), 
-            num_points=num_points, 
-            method=method, 
-            sigma=sigma, 
-            use_occupancies=not assume_full_occupancy
-        )
-        
-        if assume_full_occupancy:
-            density = density * np.max(self.occupancies)
+    def _get_default_sigma(self, method, sigma):
+        # Gracefully capture literal Python None types
+        if method is None:
+            method = "none"
             
-        if e_min == -np.inf: e_min = egrid[0]
-        mask = egrid >= e_min
-        sub_g, sub_d = egrid[mask], density[mask]
+        shorthands = {
+            "none": "none",
+            "gaussian": "gaussian",
+            "methfessel-paxton": "methfessel-paxton",
+            "mp": "methfessel-paxton",
+            "fermi-dirac": "fermi-dirac",
+            "fm": "fermi-dirac",
+            "tetrahedron": "tetrahedron",
+            "tet": "tetrahedron",
+            }
         
-        cum_charge = np.zeros(len(sub_g))
-        cum_charge[1:] = cumulative_trapezoid(sub_d, sub_g)
+        formal_method = shorthands.get(method if isinstance(method, str) else method, None)
+        if formal_method is None:
+            raise ValueError(f"Unknown smearing method: '{method}'")
         
-        if target_electrons > cum_charge[-1]: 
-            raise ValueError("Target electron allocation total exceeds evaluated capacity parameters grid envelope limits.")
-        return np.interp(target_electrons, cum_charge, sub_g)
+        if sigma is None:
+            default_sigma = {
+                "none": 0.0,
+                "gaussian": 0.1,
+                "methfessel-paxton": 0.18,
+                "fermi-dirac": 300,
+                "tetrahedron": 0.04,
+                }
+            sigma = default_sigma[formal_method]
+            
+        if formal_method == "fermi-dirac":
+            sigma = 8.617333262e-5 * sigma
+        
+        return formal_method, sigma
+    
+    def _get_smear_matrix(self, x, method, sigma):
+        """Helper matrix generator parsing customized analytical broadening distributions."""
+        if method == "none":
+            raise ValueError("Smearing matrix for 'none' method must be constructed via discrete grid-binning, not continuous coordinate division.")
+        elif method == "gaussian":
+            return np.exp(-0.5 * x**2) / (sigma * np.sqrt(2 * np.pi))
+        elif method in ["methfessel-paxton", "mp"]:
+            term_0 = np.exp(-x**2) / np.sqrt(np.pi)
+            return ((1.5 - x**2) * term_0) / sigma
+        elif method in ["fermi-dirac", "fd"]:
+            exp_term = np.exp(np.clip(x, -50, 50))
+            return (exp_term / (exp_term + 1.0)**2) / sigma
+        else:
+            raise ValueError(f"Unknown smearing method: '{method}'")
+    
+    def _execute_spectral_engine(
+            self,
+            num_metrics,
+            spin_channel,
+            energy_range,
+            num_points,
+            method,
+            sigma,
+            eval_callback
+            ):
+        """
+        Unified high-performance orchestration engine for plane-wave spectral decompositions.
+        Manages loops, weights, indexing, and the energy smearing/convolution backend.
+        """
+        method, sigma = self._get_default_sigma(method, sigma)
+        kpoint_weights = self.kpoint_weights
+        
+        spin_indices = [i for i in range(self.nspin)] if spin_channel == -1 else [spin_channel]
+        grid_shape = self._minimum_fft_size * 2
+        nx, ny, nz = grid_shape
+        norm_factor = 1.0 / np.sqrt(self.structure.volume)
+        
+        # Track metrics dynamically across an arbitrary number of collection vectors
+        raw_data = np.zeros((num_metrics, self.nspin, self.nkpoints, self.nbands), dtype=float)
+        
+        # Execute loops over the Irreducible Brillouin Zone
+        for ispin in spin_indices:
+            for ikpt in range(self.nkpoints):
+                active_bands = list(range(self.nbands))
+                rspin = 2.0 if self.nspin == 1 else 1.0
+                weight = rspin * kpoint_weights[ikpt] if method != "tetrahedron" else rspin
+                
+                coeffs_list = self._parser.read_coefficients_batch(ispin, ikpt, active_bands)
+                gvectors, _ = self.get_plane_waves_basis_idx(ikpt, grid_shape, expected_npw=coeffs_list.shape[1])
+                
+                kx_idx = gvectors[:, 0] % nx
+                ky_idx = gvectors[:, 1] % ny
+                kz_idx = gvectors[:, 2] % nz
+                
+                # Defer custom numerical contractions to the provided function handle
+                metrics_block = eval_callback(
+                    ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, 
+                    weight, grid_shape, norm_factor
+                )
+                
+                for imetric, metric_bands in enumerate(metrics_block):
+                    if metric_bands is not None:
+                        raw_data[imetric, ispin, ikpt, :] = metric_bands
+                        
+        # Generate the energy spectrum mapping coordinate grid
+        e_min, e_max = energy_range if energy_range is not None else self.energy_range
+        energy_grid = np.linspace(e_min, e_max, num_points)
+        delta_e = energy_grid[1] - energy_grid[0]
+        
+        if method == "tetrahedron":
+            smear_matrix = self._get_tetrahedron_weights(energy_grid, spin_indices)
+        elif method == "none":
+            bands = (self.energies - self.efermi)[spin_indices].ravel()
+            
+            # Fast vectorized nearest-neighbor discrete binning
+            closest_idx = np.round((bands - e_min) / delta_e).astype(int)
+            valid_mask = (closest_idx >= 0) & (closest_idx < num_points)
+            
+            smear_matrix = np.zeros((num_points, len(bands)))
+            if len(bands) > 0:
+                # 1.0 / delta_e weight preserves exact density integrations under post-smearing
+                smear_matrix[closest_idx[valid_mask], np.where(valid_mask)[0]] = 1.0 / delta_e
+        else:
+            bands = (self.energies - self.efermi)[spin_indices].ravel()
+            delta_E = energy_grid[:, None] - bands[None, :]
+            smear_matrix = self._get_smear_matrix(delta_E / sigma, method, sigma)
+        
+        # Build Gaussian post-processing convolution windows if necessary
+        use_convolution = (method == "tetrahedron" and sigma > 0.0)
+        if use_convolution:
+            delta_e_kernel = energy_grid[1] - energy_grid[0]
+            n_kernel = int(np.ceil(4.0 * sigma / delta_e_kernel))
+            if n_kernel > 0:
+                x_kernel = np.arange(-n_kernel, n_kernel + 1) * delta_e_kernel
+                kernel = np.exp(-0.5 * (x_kernel / sigma)**2)
+                kernel /= np.sum(kernel)
+            else:
+                use_convolution = False
+                
+        # Matrix multiply to apply spectral smearing over all channels simultaneously
+        smeared_results = []
+        for imetric in range(num_metrics):
+            vals = raw_data[imetric, spin_indices].ravel()
+            smeared = np.dot(smear_matrix, vals)
+            if use_convolution:
+                smeared = np.convolve(smeared, kernel, mode='same')
+            smeared_results.append(smeared)
+            
+        return energy_grid, smeared_results
     
     def _symmetrize_3d_grid(self, field):
         """Averages real-space property grid profiles over space-group operations to enforce symmetry invariants."""
@@ -882,7 +1093,15 @@ class PostWFC:
         return sym_field / len(symmetry.rotations)
     
     @classmethod
-    def from_directory(cls, directory: Path | str = Path("."), fmt: str = "vasp", scipy_workers: int = -1, **kwargs):
+    def from_directory(
+            cls, 
+            directory: Path | str = Path("."), 
+            fmt: str = "vasp", 
+            scipy_workers: int = -1, 
+            valence_counts: dict = None,
+            pseudopotential_filename: Path | None | list | str | bool = None,
+            **kwargs,
+            ):
         """Dynamic parser factory routing file stream construction to selected code formats templates handles."""
         
         # select proper parser
@@ -893,5 +1112,8 @@ class PostWFC:
         else: 
             raise ValueError(f"Unknown format profile template string keyword: {fmt}")
             
+        if valence_counts is None:
+            valence_counts = load_pseudo(pseudopotential_filename)
+            
         # create instance
-        return cls(Parser(directory=Path(directory), **kwargs), scipy_workers=scipy_workers)
+        return cls(Parser(directory=Path(directory), **kwargs), scipy_workers=scipy_workers, valence_counts=valence_counts, **kwargs)
