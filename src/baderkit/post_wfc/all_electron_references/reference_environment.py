@@ -4,7 +4,6 @@
 import json
 from pathlib import Path
 import numpy as np
-from scipy.special import factorial2
 
 class AtomicReferenceEnvironment:
     """

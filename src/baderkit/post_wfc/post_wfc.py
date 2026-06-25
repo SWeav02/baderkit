@@ -8,11 +8,9 @@ from scipy.integrate import trapezoid, cumulative_trapezoid
 from baderkit.post_wfc.wf_parsers.base import HSQDTM
 from baderkit.post_wfc.all_electron_references.reference_environment import AtomicReferenceEnvironment
 from baderkit.global_numba.file_parsers import load_pseudo
-
+from .wfc_numba import _integrate_tetrahedra_spectral_density_numba
 # TODO:
-# Create method for plotting how much a state contributes or detracts from
-# the localization at a point
-# Further break that down into contributions from charge density vs. kinetic energy density
+# adjust energies by efermi once at the start
 
 class PostWFC:
     """
@@ -34,12 +32,14 @@ class PostWFC:
         self._reciprocal_lattice = np.linalg.inv(self._lattice).T   # Transpose of inverse cell matrix (B_mat without 2pi)
         self.scipy_workers = scipy_workers
         
+        # Shift all eigenvalues relative to the Fermi Level at the start.
+        # This forces the Fermi level to 0.0 eV for all downstream operations.
+        self._meta.energies = self._meta.energies - self._meta.efermi
+        self._meta.efermi = 0.0
+        
         # valence counts
         if valence_counts is False:
             valence_counts = {}
-            # The user requests a full electron calculation
-            for site in self.structure:
-                valence_counts[site.specie.symbol] = getattr(site.specie, "number", 0)
         self._valence_counts = valence_counts
         
         # Determine minimum grid dims to enclose the full plane-wave cutoff sphere without aliasing errors.
@@ -56,6 +56,7 @@ class PostWFC:
         self._kpoint_weights = None
         self._grid_cache = {}  # Internal cache to avoid rebuilding meshgrids across calculation calls
         self._reference_environment = None # The equivalent non-bonding system
+        self._tetrahedra_indices = None
         
     @property
     def valence_counts(self) -> dict | None:
@@ -228,6 +229,12 @@ class PostWFC:
     def kpoints_cart_full(self):
         """Converts unfolded fractional sampling coordinates into Cartesian inverse Angstrom vectors."""
         return np.dot(self.kpoints_full, 2 * np.pi * self.reciprocal_lattice)
+    
+    @property
+    def tetrahedra_indices(self):
+        if self._tetrahedra_indices is None:
+            self._tetrahedra_indices = self._get_tetrahedra()
+        return self._tetrahedra_indices
 
     @property
     def full_to_irr_map(self):
@@ -240,7 +247,7 @@ class PostWFC:
     def energy_range(self):
         """Returns relative boundary offsets scaled directly against the Fermi level (E - E_f)."""
         if self._energy_range is None:
-            self._energy_range = np.min(self.energies) - self.efermi, np.max(self.energies) - self.efermi
+            self._energy_range = np.min(self.energies), np.max(self.energies)
         return self._energy_range
         
     @property
@@ -368,7 +375,7 @@ class PostWFC:
                 weights = []
                 # Filter bands matching user-specified energy window constraints
                 for iband in range(self.nbands):
-                    rel_energy = self.energies[ispin, ikpt, iband] - self.efermi
+                    rel_energy = self.energies[ispin, ikpt, iband]
                     if not (energy_range[0] <= rel_energy <= energy_range[1]): 
                         continue
                         
@@ -420,7 +427,7 @@ class PostWFC:
                 active_bands = []
                 weights = []
                 for iband in range(self.nbands):
-                    rel_energy = self.energies[ispin, ikpt, iband] - self.efermi
+                    rel_energy = self.energies[ispin, ikpt, iband]
                     if not (energy_range[0] <= rel_energy <= energy_range[1]): 
                         continue
                     rspin = 2.0 if self.nspin == 1 else 1.0
@@ -543,50 +550,48 @@ class PostWFC:
                 num_points=2000, 
                 method = "gaussian", 
                 sigma=None,
+                grid_shape=None,
                 ):
-        
-        grid_shape = self._minimum_fft_size * 2
+        """
+        Calculates the exact state-resolved kinetic and charge density metrics at a 
+        single point in space. Bypasses 3D FFT grids entirely using analytical plane-wave 
+        matrix-vector contractions for optimal performance.
+        """
+        grid_shape = grid_shape if grid_shape is not None else  self._minimum_fft_size * 2
         nx, ny, nz = grid_shape
         
-        # Target voxel mapping
+        # Target voxel mappings
         ix = int(np.round(frac_coord[0] * nx)) % nx
         iy = int(np.round(frac_coord[1] * ny)) % ny
         iz = int(np.round(frac_coord[2] * nz)) % nz
     
         def point_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
-            c_grid = np.zeros((self.nbands, nx, ny, nz), dtype=complex)
-            for iband in range(self.nbands):
-                c_grid[iband, kx_idx, ky_idx, kz_idx] = coeffs_list[iband, :]
+            # 1. Compute the exact analytical phase factors for active plane-wave indices at this point
+            phases = np.exp(2j * np.pi * (kx_idx * ix / nx + ky_idx * iy / ny + kz_idx * iz / nz))
             
-            psi_r_all = np.fft.ifftn(c_grid, axes=(1, 2, 3)) * (nx * ny * nz) * norm_factor
-            phi_at_point = psi_r_all[:, ix, iy, iz]
-            
+            # 2. Extract Cartesian plane wave basis vectors and k-point displacements
             rgvec = self.get_plane_waves_basis_cart_from_idx(gvectors, gshape)
             k = self.kpoints_cart[ikpt]             
             K_cart = rgvec + k[np.newaxis, :]             
             gk2 = np.sum(K_cart**2, axis=1)             
             
-            c_grid_lap = np.zeros((self.nbands, nx, ny, nz), dtype=complex)
-            for iband in range(self.nbands):
-                c_grid_lap[iband, kx_idx, ky_idx, kz_idx] = -gk2 * coeffs_list[iband, :]
+            # 3. Direct BLAS matrix-vector contractions for wavefunctions and Laplacians
+            # Shifts operators onto the 1D phase vector to save large 2D matrix copies
+            phi_at_point = np.dot(coeffs_list, phases) * norm_factor
+            lap_phi_at_point = np.dot(coeffs_list, -gk2 * phases) * norm_factor
             
-            lap_psi_r_all = np.fft.ifftn(c_grid_lap, axes=(1, 2, 3)) * (nx * ny * nz) * norm_factor
-            lap_phi_at_point = lap_psi_r_all[:, ix, iy, iz]
-            
+            # 4. Resolve baseline metrics
             rho_bands = (phi_at_point.conj() * phi_at_point).real * weight
             tau_bands = (-phi_at_point * lap_phi_at_point.conj()).real * weight
             
-            # Pack metrics dynamically to keep indexes clean
             metrics = [rho_bands, tau_bands]
             
+            # 5. Resolve gradients if tracking higher-order features
             if return_grad_rho_sq or return_lap_rho:
                 grad_phi_at_point = np.zeros((self.nbands, 3), dtype=complex)
                 for idim in range(3):
-                    c_grid_grad = np.zeros((self.nbands, nx, ny, nz), dtype=complex)
-                    for iband in range(self.nbands):
-                        c_grid_grad[iband, kx_idx, ky_idx, kz_idx] = 1j * K_cart[:, idim] * coeffs_list[iband, :]
-                    grad_psi_r_all = np.fft.ifftn(c_grid_grad, axes=(1, 2, 3)) * (nx * ny * nz) * norm_factor
-                    grad_phi_at_point[:, idim] = grad_psi_r_all[:, ix, iy, iz]
+                    # Analytical gradient component expansion
+                    grad_phi_at_point[:, idim] = np.dot(coeffs_list, 1j * K_cart[:, idim] * phases) * norm_factor
                 
                 if return_grad_rho_sq:
                     grad_rho_vec = 2.0 * (phi_at_point[:, np.newaxis].conj() * grad_phi_at_point).real
@@ -624,7 +629,8 @@ class PostWFC:
                 energy_range=None, 
                 num_points=2000, 
                 method="gaussian", 
-                sigma=None
+                sigma=None,
+                grid_shape=None,
                 ):
         """
         Calculates the step-by-step delta deformation density spectrum matching the exact
@@ -633,6 +639,7 @@ class PostWFC:
         Automatically masks out high-energy steps that exceed the physical capacity 
         of the reference atomic basis pool and emits a tracking warning.
         """
+        grid_shape = grid_shape if grid_shape is not None else  self._minimum_fft_size * 2
         reference_env = self.reference_environment
 
         # 1. Resolve formal smearing parameters using your native routing tool
@@ -662,7 +669,8 @@ class PostWFC:
             energy_range=(e_min, e_max), 
             num_points=num_points, 
             method=method,
-            sigma=sigma
+            sigma=sigma,
+            grid_shape=grid_shape,
         )
         
         # 4. Convert the continuous spectral DOS into exact cell charge boundaries
@@ -710,74 +718,87 @@ class PostWFC:
                 sigma=None, 
                 use_occupancies=False,
                 ):
-            """
-            Constructs energy coordinate profiles outlining the Electronic Density of States (DOS).
-            Supports 'gaussian', 'methfessel-paxton', 'fermi-dirac', 'tetrahedron', and 'none' methods.
-            For 'tetrahedron', an optional Gaussian post-smoothing can be applied via the 'sigma' parameter.
-            """
-            method, sigma = self._get_default_sigma(method, sigma)
-            
-            kpt_weights = self.kpoint_weights
-            bands = self.energies - self.efermi
-            e_min, e_max = energy_range if energy_range is not None else self.energy_range
-            energy_grid = np.linspace(e_min, e_max, num_points)
-            
-            if spin_channel == 1 and self.nspin == 1:
-                spin_channel = 0
+        """
+        Constructs energy coordinate profiles outlining the Electronic Density of States (DOS).
+        Uses JIT-compiled Numba integration for the tetrahedron method to bypass Python 
+        bottlenecks in piecewise linear interpolation.
+        """
+        method, sigma = self._get_default_sigma(method, sigma)
+        
+        bands = self.energies
+        e_min, e_max = energy_range if energy_range is not None else self.energy_range
+        energy_grid = np.linspace(e_min, e_max, num_points)
+        
+        if spin_channel == 1 and self.nspin == 1:
+            spin_channel = 0
     
-            spin_all = spin_channel if spin_channel != -1 else list(range(self.nspin))
+        spin_all = [spin_channel] if spin_channel != -1 else list(range(self.nspin))
+        factor = 2 if (spin_channel == -1 and self.nspin == 1) else 1
             
-            if spin_channel == -1 and self.nspin == 1:
-                factor = 2
-            else:
-                factor = 1
-                
-            if method == "tetrahedron":
-                smear_matrix = self._get_tetrahedron_weights(energy_grid, spin_all)
-                if use_occupancies:
-                    w_t = self.occupancies[spin_all].ravel() * factor
-                else:
-                    w_t = np.ones(len(spin_all) * self.nkpoints * self.nbands) * factor
-            else:
-                # Flatten bands and build weights identically across all continuum & delta methods
-                bands_flat = bands[spin_all].ravel()
-                if use_occupancies:
-                    w_t = (self.occupancies[spin_all] * kpt_weights[None, :, None]).ravel() * factor
-                else:
-                    w_t = (np.ones_like(bands[spin_all]) * kpt_weights[None, :, None]).ravel() * factor
-                
-                # INTERCEPT HERE: Handle sharp delta-binning cleanly
-                if method == "none":
-                    delta_e = energy_grid[1] - energy_grid[0]
-                    
-                    # Fast vectorized nearest-neighbor grid index projection
-                    closest_idx = np.round((bands_flat - e_min) / delta_e).astype(int)
-                    valid_mask = (closest_idx >= 0) & (closest_idx < num_points)
-                    
-                    smear_matrix = np.zeros((num_points, len(bands_flat)))
-                    if len(bands_flat) > 0:
-                        # 1.0 / delta_e scale enforces perfect preservation of integrated total state counts
-                        smear_matrix[closest_idx[valid_mask], np.where(valid_mask)[0]] = 1.0 / delta_e
-                else:
-                    # Continuous analytical broadening tracks
-                    smear_matrix = self._get_smear_matrix((energy_grid[:, None] - bands_flat[None, :]) / sigma, method, sigma)
+        if method == "tetrahedron":
+            # 1. Prepare data for Numba
+            full_map = self.full_to_irr_map
             
+            # Expand irreducible quantities onto the full BZ mesh so that
+            # tetrahedra_indices (which are full-BZ indices) remain valid.
+            eigenvalues = bands[spin_all][:, full_map, :]  # (N_spin, N_full_kpts, N_bands)
+            
+            tetra_indices = self.tetrahedra_indices
+            tetra_weight = 1.0 / len(tetra_indices)
+            
+            if use_occupancies:
+                w_t = (
+                    self.occupancies[spin_all][:, full_map, :] * factor
+                )[..., np.newaxis]
+            else:
+                w_t = np.ones_like(eigenvalues)[..., np.newaxis] * factor
+            
+            # 2. Invoke the JIT-compiled engine
+            dos = _integrate_tetrahedra_spectral_density_numba(
+                energy_grid,
+                tetra_indices,
+                eigenvalues,
+                w_t,
+                tetra_weight,
+            )[0].sum(axis=0)
+            
+        else:
+            kpt_weights = self.kpoint_weights
+            bands_flat = bands[spin_all].ravel()
+            
+            if use_occupancies:
+                w_t = (self.occupancies[spin_all] * kpt_weights[None, :, None]).ravel() * factor
+            else:
+                w_t = (np.ones_like(bands[spin_all]) * kpt_weights[None, :, None]).ravel() * factor
+                
+            if method == "none":
+                delta_e = energy_grid[1] - energy_grid[0]
+                closest_idx = np.round((bands_flat - e_min) / delta_e).astype(int)
+                valid_mask = (closest_idx >= 0) & (closest_idx < num_points)
+                
+                smear_matrix = np.zeros((num_points, len(bands_flat)))
+                if len(bands_flat) > 0:
+                    smear_matrix[closest_idx[valid_mask], np.where(valid_mask)[0]] = 1.0 / delta_e
+            else:
+                smear_matrix = self._get_smear_matrix((energy_grid[:, None] - bands_flat[None, :]) / sigma, method, sigma)
+                
             dos = np.dot(smear_matrix, w_t)
             
-            if method == "tetrahedron" and sigma > 0.0:
-                delta_e = energy_grid[1] - energy_grid[0]
-                n_kernel = int(np.ceil(4.0 * sigma / delta_e))
-                if n_kernel > 0:
-                    x_kernel = np.arange(-n_kernel, n_kernel + 1) * delta_e
-                    kernel = np.exp(-0.5 * (x_kernel / sigma)**2)
-                    kernel /= np.sum(kernel)
-                    dos = np.convolve(dos, kernel, mode='same')
+        # Post-process tetrahedron results or continuous broadening
+        if method == "tetrahedron" and sigma > 0.0:
+            delta_e = energy_grid[1] - energy_grid[0]
+            n_kernel = int(np.ceil(4.0 * sigma / delta_e))
+            if n_kernel > 0:
+                x_kernel = np.arange(-n_kernel, n_kernel + 1) * delta_e
+                kernel = np.exp(-0.5 * (x_kernel / sigma)**2)
+                kernel /= np.sum(kernel)
+                dos = np.convolve(dos, kernel, mode='same')
                     
-            return energy_grid, dos
+        return energy_grid, dos
     
     def get_electrons_in_energy_range(self, e_min, e_max, num_points=2000, method="gaussian", sigma=None):
             """Integrates occupied DOS profiles across designated energy limits windows relative to the Fermi Level."""
-            bands = self.energies - self.efermi
+            bands = self.energies
             
             # Resolve the formal method identifier and default sigma values
             method, sigma = self._get_default_sigma(method, sigma)
@@ -834,13 +855,11 @@ class PostWFC:
             raise ValueError("Target electron allocation total exceeds evaluated capacity parameters grid envelope limits.")
         return np.interp(target_electrons, cum_charge, sub_g)
 
-    def _setup_tetrahedra(self):
+    def _get_tetrahedra(self):
         """
         Identifies the uniform k-point grid dimensions and splits each 
         micro-cell into 6 tetrahedra without any explicit loops or advanced indexing bugs.
         """
-        if hasattr(self, '_tetrahedra'):
-            return self._tetrahedra, self._ntetra
             
         _ = self.kpoints_full
         kpts = np.mod(np.round(self.kpoints_full, 6), 1.0)
@@ -880,48 +899,12 @@ class PostWFC:
         t5 = np.concatenate([c000, c010, c011, c111], axis=-1).reshape(-1, 4)
         t6 = np.concatenate([c000, c001, c011, c111], axis=-1).reshape(-1, 4)
         
-        self._tetrahedra = np.vstack([t1, t2, t3, t4, t5, t6])
-        self._ntetra = len(self._tetrahedra)
-        return self._tetrahedra, self._ntetra
-    
-    def _get_tetrahedron_weights(self, energy_grid, spin_all):
-        """Calculates the tetrahedron smearing matrix using streamlined vector arrays."""
-        tetrahedra, ntetra = self._setup_tetrahedra()
-        num_points = len(energy_grid)
-        smear_matrix_3d = np.zeros((num_points, len(spin_all), self.nkpoints, self.nbands))
-        bands = self.energies - self.efermi
-    
-        for ispin, s in enumerate(spin_all):
-            # Sort corner energies directly: shape (ntetra, 4, nbands)
-            e = np.sort(bands[s][self.full_to_irr_map][tetrahedra], axis=1)
-            e1, e2, e3, e4 = e[:, 0, :], e[:, 1, :], e[:, 2, :], e[:, 3, :]
-            
-            # Precompute differences safely
-            e21, e31, e41, e32, e42, e43 = e2-e1, e3-e1, e4-e1, e3-e2, e4-e2, e4-e3
-            
-            c21 = np.where(e21 > 1e-12, 1.0 / np.maximum(e21 * e31 * e41, 1e-12), 0.0)
-            c32_4 = np.where(e32 > 1e-12, -(e31 + e42) / np.maximum(e31 * e41 * e32 * e42, 1e-12), 0.0)
-            c32_3 = np.where(e32 > 1e-12, 3.0 / np.maximum(e31 * e41, 1e-12), 0.0)
-            c43 = np.where(e43 > 1e-12, -1.0 / np.maximum(e43 * e42 * e41, 1e-12), 0.0)
-            
-            band_indices = np.arange(self.nbands)[None, :] 
-            
-            # Energy grid evaluations
-            for ie, E in enumerate(energy_grid):
-                v_e1, v_e2, v_e3, v_e4 = E - e1, E - e2, E - e3, E - e4
-                G = np.zeros_like(e1)
-                
-                # Case 1, 2, and 3 steps condensed cleanly
-                G = np.where((v_e1 > 0) & (v_e2 <= 0), 3.0 * c21 * v_e1**2, G)
-                G = np.where((v_e2 > 0) & (v_e3 <= 0), (c32_3 * e21) + v_e2 * (2.0 * c32_3 + 3.0 * v_e2 * c32_4), G)
-                G = np.where((v_e3 > 0) & (v_e4 <= 0), -3.0 * c43 * v_e4**2, G)
-                
-                # Accumulate corner contributions natively 
-                for c in range(4):
-                    row_indices = self.full_to_irr_map[tetrahedra[:, c]][:, None]
-                    np.add.at(smear_matrix_3d[ie, ispin], (row_indices, band_indices), G / (4.0 * ntetra))
-    
-        return smear_matrix_3d.reshape(num_points, -1)
+        tetra_full = np.vstack([t1, t2, t3, t4, t5, t6])
+        
+        # Convert full-BZ vertex indices back to irreducible-kpoint indices
+        tetrahedra = tetra_full
+        
+        return tetrahedra
     
     def _get_default_sigma(self, method, sigma):
         # Gracefully capture literal Python None types
@@ -1003,6 +986,7 @@ class PostWFC:
             for ikpt in range(self.nkpoints):
                 active_bands = list(range(self.nbands))
                 rspin = 2.0 if self.nspin == 1 else 1.0
+                # Linear tetrahedron method handles k-point volume weighting inside its geometric integration
                 weight = rspin * kpoint_weights[ikpt] if method != "tetrahedron" else rspin
                 
                 coeffs_list = self._parser.read_coefficients_batch(ispin, ikpt, active_bands)
@@ -1027,43 +1011,70 @@ class PostWFC:
         energy_grid = np.linspace(e_min, e_max, num_points)
         delta_e = energy_grid[1] - energy_grid[0]
         
+        # Build Gaussian post-processing convolution windows if necessary
+        use_convolution = (method == "tetrahedron" and sigma > 0.0)
+        if use_convolution:
+            n_kernel = int(np.ceil(4.0 * sigma / delta_e))
+            if n_kernel > 0:
+                x_kernel = np.arange(-n_kernel, n_kernel + 1) * delta_e
+                kernel = np.exp(-0.5 * (x_kernel / sigma)**2)
+                kernel /= np.sum(kernel)
+            else:
+                use_convolution = False
+
+        # ROUTING BRANCH 1: Fast Parallelized JIT Linear Tetrahedron Integration
         if method == "tetrahedron":
-            smear_matrix = self._get_tetrahedron_weights(energy_grid, spin_indices)
-        elif method == "none":
-            bands = (self.energies - self.efermi)[spin_indices].ravel()
+            full_map = self.full_to_irr_map
+        
+            cached_metrics = np.ascontiguousarray(
+                np.transpose(raw_data, (1, 2, 3, 0))
+            )
+        
+            eigenvalues = self.energies
+        
+            # Expand irreducible data onto the full BZ mesh
+            eigenvalues = eigenvalues[:, full_map, :]
+            cached_metrics = cached_metrics[:, full_map, :, :]
+        
+            tetra_indices = self.tetrahedra_indices
+            tetra_weight = 1.0 / len(tetra_indices)
+        
+            smeared_output = _integrate_tetrahedra_spectral_density_numba(
+                energy_grid,
+                tetra_indices,
+                eigenvalues[spin_indices],
+                cached_metrics[spin_indices],
+                tetra_weight,
+            )
+        
+            smeared_results = []
+            for imetric in range(num_metrics):
+                # FIX: Sum across active spin channels (axis 0) to combine collinear channels
+                smeared = np.sum(smeared_output[imetric], axis=0)
+                if use_convolution:
+                    smeared = np.convolve(smeared, kernel, mode="same")
+                smeared_results.append(smeared)
+        
+            return energy_grid, smeared_results
             
-            # Fast vectorized nearest-neighbor discrete binning
+        # ROUTING BRANCH 2: Vectorized Continuous/Discrete Analytical Smearing Backends
+        if method == "none":
+            bands = (self.energies)[spin_indices].ravel()
             closest_idx = np.round((bands - e_min) / delta_e).astype(int)
             valid_mask = (closest_idx >= 0) & (closest_idx < num_points)
             
             smear_matrix = np.zeros((num_points, len(bands)))
             if len(bands) > 0:
-                # 1.0 / delta_e weight preserves exact density integrations under post-smearing
                 smear_matrix[closest_idx[valid_mask], np.where(valid_mask)[0]] = 1.0 / delta_e
         else:
-            bands = (self.energies - self.efermi)[spin_indices].ravel()
+            bands = (self.energies)[spin_indices].ravel()
             delta_E = energy_grid[:, None] - bands[None, :]
             smear_matrix = self._get_smear_matrix(delta_E / sigma, method, sigma)
-        
-        # Build Gaussian post-processing convolution windows if necessary
-        use_convolution = (method == "tetrahedron" and sigma > 0.0)
-        if use_convolution:
-            delta_e_kernel = energy_grid[1] - energy_grid[0]
-            n_kernel = int(np.ceil(4.0 * sigma / delta_e_kernel))
-            if n_kernel > 0:
-                x_kernel = np.arange(-n_kernel, n_kernel + 1) * delta_e_kernel
-                kernel = np.exp(-0.5 * (x_kernel / sigma)**2)
-                kernel /= np.sum(kernel)
-            else:
-                use_convolution = False
-                
-        # Matrix multiply to apply spectral smearing over all channels simultaneously
+            
         smeared_results = []
         for imetric in range(num_metrics):
             vals = raw_data[imetric, spin_indices].ravel()
             smeared = np.dot(smear_matrix, vals)
-            if use_convolution:
-                smeared = np.convolve(smeared, kernel, mode='same')
             smeared_results.append(smeared)
             
         return energy_grid, smeared_results
