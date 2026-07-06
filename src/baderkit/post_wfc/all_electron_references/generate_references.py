@@ -8,7 +8,7 @@ from pyscf import lib, gto
 
 OUTPUT_PATH = Path.home() / Path("github/baderkit/src/baderkit/post_wfc/all_electron_references")
 
-def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.r2scan"):
+def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.pbe"):
     """
     Loops over folders using pathlib, extracts spin-polarized orbital coefficients, 
     enforces spherical symmetry by averaging degenerate shell occupations, filters out
@@ -139,7 +139,9 @@ def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.r2scan
             energies = np.zeros(num_states, dtype=np.float64)
             occupancies = np.zeros(num_states, dtype=np.float64)
             spin_channels = np.zeros(num_states, dtype=np.int8)
-            packed_d_matrices = np.zeros((num_states, flat_d_size), dtype=np.float32)
+            
+            # CRITICAL FIX 1: Upgrade density matrix array to 64-bit double precision float to limit truncation roundoff
+            packed_d_matrices = np.zeros((num_states, flat_d_size), dtype=np.float64)
 
             # 5. Extract and Pack Reduced Radial Density Matrices Analytical Upper Triangles
             for istate, state in enumerate(smeared_states):
@@ -156,6 +158,12 @@ def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.r2scan
                     
                     for i_ao, j_ao, p_i, p_j in same_lm_pairs[l]:
                         D_l[p_i, p_j] += coeff[i_ao] * coeff[j_ao]
+                    
+                    # CRITICAL FIX 2: Enforce strict positive semi-definiteness via spectral clipping
+                    if mat_dim > 0:
+                        vals, vecs = np.linalg.eigh(D_l)
+                        vals = np.maximum(vals, 0.0)  # Eliminate micro-negative numerical eigenvalues
+                        D_l = vecs @ np.diag(vals) @ vecs.T
                     
                     iu = np.triu_indices(mat_dim)
                     state_vector.extend(D_l[iu].tolist())
@@ -187,7 +195,7 @@ def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.r2scan
             metadata = {
                 "file_format": "SphericalRadialWavefunction_DMatrix_NPZ",
                 "element": element,
-                "functional": "r2scan",
+                "functional": "pbe",
                 "matrix_layout_dimensions": {str(l): n for l, n in l_counts.items()},
                 "basis_primitives": basis_primitives
             }

@@ -2,7 +2,7 @@
 
 import numpy as np
 from baderkit.toolkit import Structure
-from .base import BaseWfcParser, WfcMetadata
+from .base import BaseWfcReader, WfcMetadata
 
 def get_reciprocal_index(
         ispin,
@@ -25,9 +25,9 @@ def get_reciprocal_index(
         iband
     return rec
 
-class VaspParser(BaseWfcParser):
+class VaspReader(BaseWfcReader):
     """
-    Parser implementation to harvest planewave states directly from VASP direct-access binary WAVECAR files.
+    Reader implementation to harvest planewave states directly from VASP direct-access binary WAVECAR files.
     """
     def __init__(
         self,

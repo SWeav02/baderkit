@@ -1,14 +1,22 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import json
 from pathlib import Path
+from functools import cached_property
 import numpy as np
+from numpy.typing import NDArray
+from .reference_dataset import AESpecies
+from .reference_numba import (
+    find_active_periodic_atoms,
+    find_all_voxels_parallel,
+    broadcast_atoms_to_grid,
+)
+
 
 class AtomicReferenceEnvironment:
     """
     Manages the non-bonding atomic reference states by parsing compressed analytical 
-    basis binaries with pre-applied primitive normalization constants.
+    basis binaries with pre-applied primitive normalization constants. Organized 
+    strictly around a valence-only pseudopotential architecture.
     """
     # Standard CODATA conversion factor used by major DFT codes (VASP/QE)
     BOHR_TO_ANGSTROM = 0.5291772109
@@ -16,7 +24,9 @@ class AtomicReferenceEnvironment:
     def __init__(
             self, 
             structure, 
-            valence_counts_map, 
+            valence_counts, 
+            pdos_data,
+            cutoff_radius=8.0,
             basis_dir=None,
             ):
         """
@@ -24,294 +34,364 @@ class AtomicReferenceEnvironment:
         -----------
         structure : pymatgen.core.Structure
             Crystallographic structure defining cell dimensions and positions.
-        valence_counts_map : dict
+        valence_counts : dict
             The neutral valence electron count (Z_val) for each element's pseudopotential.
+        pdos_data : dict
+            Dictionary containing "energy_grid" and "projections" for individual atoms.
+        cutoff_radius : float
+            The interaction radius boundary in Angstroms. Default: 8.0
         basis_dir : str or Path, optional
             Directory containing the generated {Element}.npz basis files.
         """
         self.structure = structure
-        self.z_val_map = valence_counts_map
+        self.valence_counts = valence_counts
+        self.cutoff_radius = cutoff_radius
         self.basis_dir = Path(basis_dir) if basis_dir is not None else Path(__file__).parent
         
-        self.missing_map = self.z_val_map
         self.lattice_matrix = self.structure.lattice.matrix
-        self.total_neutral_charge = sum(self.z_val_map[site.specie.symbol] for site in self.structure)
-        self.total_cell_missing_weight = sum(self.missing_map[site.specie.symbol] for site in self.structure)
+        self.total_charge = sum(self.valence_counts[site.specie.symbol] for site in self.structure)
         
         self.atomic_basis_headers = {}
         self.valence_pools = {}
         self.unrestricted_flags = {}
+        self.subshell_labels = {}
+        
+        # Dictionary-based multidimensional caching framework
+        self._cache_voxel_footprints = {}
         
         self._load_and_initialize_basis_pool()
+        
+        # Precompute the normalized charge allocation profiles from the PDOS input
+        self.norm_total_integral, self.atom_integrals = self._process_pdos(pdos_data)
+
+    ###########################################################################
+    # INITIALIZATION MODULES
+    ###########################################################################
 
     def _load_and_initialize_basis_pool(self):
-        """Parses NPZ binaries for unique elements and isolates the valence pools."""
+        """
+        Parses NPZ binaries, determines absolute spectroscopic labels from the full 
+        untruncated basis, and drops core states to maintain a pure pseudopotential pool.
+        """
         unique_elements = set(site.specie.symbol for site in self.structure)
+        atom_bases = {}
         
         for element in unique_elements:
             file_path = self.basis_dir / f"{element}.npz"
             if not file_path.exists():
                 raise FileNotFoundError(f"Missing analytical basis binary for element: {file_path}")
+            basis = AESpecies.from_file(file_path)
+            basis = basis.get_valence_dataset(self.valence_counts[element])
+            atom_bases[element] = basis
+        self.atom_bases = atom_bases
+
+    @cached_property
+    def semi_periodic_atoms(self):
+        """Identifies and caches every Cartesian image position inside the cutoff."""
+        if not hasattr(self, '_cache_semi_periodic_atoms'):
+            unique_elements = list(self.structure.symbol_set)
+            element_to_idx = {elem: i for i, elem in enumerate(unique_elements)}
+            
+            num_atoms = len(self.structure)
+            base_frac_coords = np.zeros((num_atoms, 3), dtype=np.float64)
+            atom_types = np.zeros(num_atoms, dtype=np.int32)
+            
+            for i, site in enumerate(self.structure):
+                base_frac_coords[i] = site.frac_coords
+                atom_types[i] = element_to_idx[site.specie.symbol]
                 
-            data = np.load(file_path)
-            metadata = json.loads(str(data["metadata"]))
+            cart_coords, element_indices, base_indices = find_active_periodic_atoms(
+                self.lattice_matrix, base_frac_coords, atom_types, self.cutoff_radius
+            )
             
-            energies = data["energies"]
-            occupancies = data["occupancies"]
-            spin_channels = data["spin_channels"]
-            packed_d = data["packed_d_matrices"]
-            
-            is_unrestricted = int(np.max(spin_channels)) > 0
-            self.unrestricted_flags[element] = is_unrestricted
-            self.atomic_basis_headers[element] = self._flatten_basis_primitives(metadata["basis_primitives"])
-            
-            Z_val = self.z_val_map[element]
-            occupied_idx = np.where(occupancies > 1e-4)[0]
-            occupied_idx = occupied_idx[np.argsort(energies[occupied_idx])[::-1]]
-            
-            valence_indices = []
-            accumulated_charge = 0.0
-            for idx in occupied_idx:
-                valence_indices.append(idx)
-                accumulated_charge += occupancies[idx]
-                if accumulated_charge >= Z_val - 1e-4:
-                    break
-                    
-            virtual_indices = np.where(occupancies <= 1e-4)[0]
-            full_pool_indices = list(valence_indices) + list(virtual_indices)
-            full_pool_indices = sorted(full_pool_indices, key=lambda idx: energies[idx])
-            
-            pool_states = []
-            matrix_dims = metadata["matrix_layout_dimensions"]
-            
-            for idx in full_pool_indices:
-                pool_states.append({
-                    "energy": energies[idx],
-                    "spin": spin_channels[idx],
-                    "d_blocks": self._unpack_triu_matrices(packed_d[idx], matrix_dims)
-                })
-                
-            self.valence_pools[element] = pool_states
+            self._cache_semi_periodic_atoms = {
+                "cart_coords": cart_coords,
+                "element_indices": element_indices,
+                "base_indices": base_indices,
+                "element_mapping": unique_elements
+            }
+        return self._cache_semi_periodic_atoms
 
-    def _unpack_triu_matrices(self, packed_vector, matrix_dims):
-        """Reconstructs full symmetric density matrices from packed upper-triangles."""
-        d_blocks = {}
-        current_idx = 0
-        for l_str in sorted(matrix_dims.keys(), key=int):
-            l = int(l_str)
-            dim = matrix_dims[l_str]
-            size = (dim * (dim + 1)) // 2
-            vec = packed_vector[current_idx:current_idx + size]
-            current_idx += size
-            
-            mat = np.zeros((dim, dim))
-            iu = np.triu_indices(dim)
-            mat[iu] = vec
-            mat = mat + mat.T - np.diag(np.diag(mat))
-            d_blocks[l] = mat
-        return d_blocks
-
-    def _flatten_basis_primitives(self, basis_primitives):
-        """Flattens nested primitive structures into quick-eval array tuples grouped by l."""
-        contractions_by_l = {}
-        for l_str, bas_list in basis_primitives.items():
-            l = int(l_str)
-            contractions_by_l[l] = []
-            for bas_data in bas_list:
-                exps = np.array(bas_data["exponents"])
-                coeffs_mat = np.array(bas_data["coefficients"])
-                nctr = coeffs_mat.shape[1]
-                for c in range(nctr):
-                    contractions_by_l[l].append((exps, coeffs_mat[:, c]))
-        return contractions_by_l
-
-    def _fill_valence_shell_smeared(self, element, target_charge):
-        """Fills orbitals up to target_charge with 0-smearing, maintaining degeneracy symmetry."""
-        pool = self.valence_pools[element]
-        is_unrestricted = self.unrestricted_flags[element]
-        max_capacity_per_orbital = 1.0 if is_unrestricted else 2.0
+    def get_voxel_footprints(self, grid_dims):
+        """
+        Calculates and caches the voxel indices and scalar distances for all 
+        periodic atoms based on the requested grid dimension layout.
+        """
+        grid_key = tuple(grid_dims)
         
-        unique_energies = []
-        energy_groups = []
-        for idx, state in enumerate(pool):
-            E = state["energy"]
-            found = False
-            for u_idx, u_E in enumerate(unique_energies):
-                if abs(u_E - E) < 1e-4:
-                    energy_groups[u_idx].append(idx)
-                    found = True
-                    break
-            if not found:
-                unique_energies.append(E)
-                energy_groups.append([idx])
-                
-        remaining_charge = target_charge
-        assigned_occupancies = np.zeros(len(pool))
-        
-        for group in energy_groups:
-            num_orbitals = len(group)
-            group_max_capacity = num_orbitals * max_capacity_per_orbital
+        if grid_key not in self._cache_voxel_footprints:
+            spa = self.semi_periodic_atoms
+            atom_carts = spa["cart_coords"]
+            g_dims = np.array(grid_dims, dtype=np.int64)
             
-            fill_amount = min(remaining_charge, group_max_capacity)
-            fill_per_orbital = fill_amount / num_orbitals
+            all_indices, all_distances = find_all_voxels_parallel(
+                atom_carts, self.lattice_matrix, g_dims, self.cutoff_radius
+            )
+            self._cache_voxel_footprints[grid_key] = (all_indices, all_distances)
             
-            for idx in group:
-                assigned_occupancies[idx] = fill_per_orbital
-                
-            remaining_charge -= fill_amount
-            if remaining_charge <= 0:
-                break
-                
-        return assigned_occupancies
+        return self._cache_voxel_footprints[grid_key]
 
-    def _evaluate_radial_density(self, element, occupancies, r):
-        """Evaluates the analytical spherical electron density at distance r (input in Angstroms)."""
-        if r < 1e-8:
-            r = 1e-8
-            
-        r_bohr = r / self.BOHR_TO_ANGSTROM
-        contractions = self.atomic_basis_headers[element]
-        pool = self.valence_pools[element]
+    def _process_pdos(self, pdos_data: dict):
+        """
+        Normalizes individual atom PDOS arrays so the occupied states integrate exactly
+        to each atom's valence count, then computes the cumulative total cell charge profile.
+        """
+        energies = pdos_data["energy_grid"]
         
-        # 1. Evaluate radial profiles (coefficients are already pre-normalized)
-        R_vals = {}
-        for l, basis_list in contractions.items():
-            R_l = np.zeros(len(basis_list))
-            for p, (exps, coeffs) in enumerate(basis_list):
-                R_l[p] = (r_bohr**l) * np.sum(coeffs * np.exp(-exps * (r_bohr**2)))
-            R_vals[l] = R_l
-            
-        # 2. Contract density blocks
-        total_rho_atomic_units = 0.0
-        for idx, state in enumerate(pool):
-            occ = occupancies[idx]
-            if np.abs(occ) <= 1e-5:
+        dx = np.diff(energies)
+        
+        def cumulative_integrate(y):
+            avg_y = 0.5 * (y[:-1] + y[1:])
+            integral = np.zeros_like(y)
+            integral[1:] = np.cumsum(avg_y * dx)
+            return integral
+
+        # Compute unnormalized total cell DOS
+        raw_total_dos = np.zeros_like(energies)
+        for key, p_sub in pdos_data.items():
+            try:
+                int(key)
+            except:
                 continue
-                
-            for l, D_l in state["d_blocks"].items():
-                R_l = R_vals[l]
-                state_rho_l = np.dot(R_l, np.dot(D_l, R_l))
-                total_rho_atomic_units += occ * state_rho_l
-                
-        # CRITICAL FIX: Divide by 4 * pi to convert solid-angle integrated density to point density
-        return total_rho_atomic_units / (4 * np.pi * (self.BOHR_TO_ANGSTROM ** 3))
+            raw_total_dos += p_sub
+            
+        # Locate the neutral Fermi level
+        raw_total_integral = cumulative_integrate(raw_total_dos)
+        E_F = np.interp(self.total_charge, raw_total_integral, energies)
+        
+        atom_integrals = {}
+        norm_total_dos = np.zeros_like(energies)
+        
+        # Normalize each atom's trajectory individually
+        for i_atom, p_sub in pdos_data.items():
+            try:
+                int(i_atom)
+            except:
+                continue
+            symbol = self.structure[i_atom].specie.symbol
+            z_val = self.valence_counts[symbol]
+            
+            raw_atom_integral = cumulative_integrate(p_sub)
+            raw_occ = np.interp(E_F, energies, raw_atom_integral)
+            
+            norm_factor = z_val / raw_occ if raw_occ > 1e-12 else 1.0
+            p_norm = p_sub * norm_factor
+            
+            norm_total_dos += p_norm
+            atom_integrals[i_atom] = cumulative_integrate(p_norm)
+            
+        norm_total_integral = cumulative_integrate(norm_total_dos)
+        return norm_total_integral, atom_integrals
     
-    def get_maximum_cell_charge_capacity(self):
-        """Calculates the absolute maximum cell valence charge limit before orbital saturation."""
-        max_cell_charges = []
-        unique_elements = set(site.specie.symbol for site in self.structure)
+    def get_partial_radial_charge_densities(
+            self, 
+            min_charge: float, 
+            max_charge: float,
+            grid_spacing: float = 0.05,
+            ) -> dict[int, NDArray]:
+        """
+        Computes the total radial charge density profiles across the PDOS-resolved local 
+        electron ranges mapped to a specific global cell charge range.
+        """
+        min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
         
-        for element in unique_elements:
-            pool = self.valence_pools[element]
-            is_unrestricted = self.unrestricted_flags[element]
-            max_capacity_per_orbital = 1.0 if is_unrestricted else 2.0
+        partial_densities = {}
+        for i_atom, alloc_integral in self.atom_integrals.items():
+            atom_qs = np.interp([min_charge, max_charge], self.norm_total_integral, alloc_integral)
+            symbol = self.structure[i_atom].specie.symbol
+            basis = self.atom_bases[symbol]
             
-            total_element_capacity = len(pool) * max_capacity_per_orbital
-            weight_ratio = self.missing_map[element] / self.total_cell_missing_weight
-            
-            if weight_ratio > 1e-10:
-                max_delta_q_cell = (total_element_capacity - self.z_val_map[element]) / weight_ratio
-                max_cell_charges.append(self.total_neutral_charge + max_delta_q_cell)
-                
-        return min(max_cell_charges) if max_cell_charges else np.inf
-
-    def calculate_non_bonding_density(self, frac_coord, total_valence_charge, r_cut=8.0):
-        """Calculates reference non-bonding spatial density at a given fractional coordinate."""
-        delta_q_cell = total_valence_charge - self.total_neutral_charge
-        
-        element_occupancy_profiles = {}
-        unique_elements = set(site.specie.symbol for site in self.structure)
-        
-        for element in unique_elements:
-            allocated_atom_charge = self.z_val_map[element] + delta_q_cell * (self.missing_map[element] / self.total_cell_missing_weight)
-            element_occupancy_profiles[element] = self._fill_valence_shell_smeared(element, allocated_atom_charge)
-
-        total_density = 0.0
-        target_cart = np.dot(frac_coord, self.lattice_matrix)
-        
-        box_limit = int(np.ceil(r_cut / np.min(np.linalg.norm(self.lattice_matrix, axis=1))))
-        search_range = range(-box_limit, box_limit + 1)
-        
-        for site in self.structure:
-            element = site.specie.symbol
-            occs = element_occupancy_profiles[element]
-            atom_base_frac = site.frac_coords
-            
-            for dx in search_range:
-                for dy in search_range:
-                    for dz in search_range:
-                        image_shift = np.array([dx, dy, dz])
-                        image_frac = atom_base_frac + image_shift
-                        
-                        dr_cart = np.dot(image_frac, self.lattice_matrix) - target_cart
-                        r = np.linalg.norm(dr_cart)
-                        
-                        if r < r_cut:
-                            total_density += self._evaluate_radial_density(element, occs, r)
-                            
-        return total_density
+            partial_densities[i_atom] = basis.get_radial_charge_density(
+                min_electrons=atom_qs[0], 
+                max_electrons=atom_qs[1], 
+            )
+        return partial_densities
     
-    def calculate_sequential_reference_deltas(self, frac_coord, q_bounds, r_cut=8.0):
-        """Calculates step-by-step non-bonding reference density changes tracking q_bounds."""
-        num_steps = len(q_bounds) - 1
-        delta_q_intervals = q_bounds - self.total_neutral_charge
+    def get_partial_radial_kinetic_energy_densities(
+            self, 
+            min_charge: float, 
+            max_charge: float,
+            ) -> dict[int, NDArray]:
+        """
+        Computes the positive-definite radial kinetic energy density profiles 
+        across the PDOS-resolved local electron ranges.
+        """
+        min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
         
-        unique_elements = set(site.specie.symbol for site in self.structure)
-        
-        element_delta_occs = {}
-        for element in unique_elements:
-            pool_size = len(self.valence_pools[element])
-            occs_matrix = np.zeros((num_steps + 1, pool_size))
-            weight_ratio = self.missing_map[element] / self.total_cell_missing_weight
+        partial_keds = {}
+        for i_atom, alloc_integral in self.atom_integrals.items():
+            atom_qs = np.interp([min_charge, max_charge], self.norm_total_integral, alloc_integral)
+            symbol = self.structure[i_atom].specie.symbol
+            basis = self.atom_bases[symbol]
             
-            for i in range(num_steps + 1):
-                alloc_q = self.z_val_map[element] + delta_q_intervals[i] * weight_ratio
-                occs_matrix[i, :] = self._fill_valence_shell_smeared(element, alloc_q)
-                
-            element_delta_occs[element] = occs_matrix[1:, :] - occs_matrix[:-1, :]
+            partial_keds[i_atom] = basis.get_radial_kinetic_energy_density(
+                min_electrons=atom_qs[0], 
+                max_electrons=atom_qs[1], 
+            )
+        return partial_keds
             
-        total_delta_rhos_atomic_units = np.zeros(num_steps)
-        target_cart = np.dot(frac_coord, self.lattice_matrix)
+    ###########################################################################
+    # CORE TRACKING & COORDINATE PASSES
+    ###########################################################################
+
+    def calculate_non_bonding_density_at_point(
+            self, 
+            frac_coord, 
+            min_charge=None, 
+            max_charge=None,
+            ):
+        """
+        Calculates non-bonding reference valence density at a specific coordinate location
+        using atom-resolved PDOS charge mapping tracking rules.
+        """
+        min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
         
-        box_limit = int(np.ceil(r_cut / np.min(np.linalg.norm(self.lattice_matrix, axis=1))))
-        search_range = range(-box_limit, box_limit + 1)
+        spa = self.semi_periodic_atoms
+        atom_carts = spa["cart_coords"]
+        atom_bases_indices = spa["base_indices"]
         
-        for site in self.structure:
-            element = site.specie.symbol
-            delta_occs = element_delta_occs[element]
-            atom_base_frac = site.frac_coords
-            contractions = self.atomic_basis_headers[element]
-            pool = self.valence_pools[element]
+        target_cart = np.array(frac_coord, dtype=np.float64) @ self.lattice_matrix
+        
+        delta_vectors = atom_carts - target_cart
+        distances = np.sqrt(np.sum(delta_vectors**2, axis=1))
+        
+        mask = distances < self.cutoff_radius
+        filtered_distances = distances[mask]
+        filtered_base_indices = atom_bases_indices[mask]
+        
+        partial_charges = self.get_partial_radial_charge_densities(min_charge, max_charge)
+
+        any_atom = list(partial_charges.keys())[0]
+        n_configurations = partial_charges[any_atom].shape[0]
+        total = np.zeros(n_configurations, dtype=np.float64)
+        
+        for dist, i_atom in zip(filtered_distances, filtered_base_indices):
+            symbol = self.structure[i_atom].specie.symbol
+            r_grid = self.atom_bases[symbol].radial_grid
+            rho_matrix = partial_charges[i_atom]  # shape: (n_configurations, n_grid)
             
-            for dx in search_range:
-                for dy in search_range:
-                    for dz in search_range:
-                        image_shift = np.array([dx, dy, dz])
-                        image_frac = atom_base_frac + image_shift
-                        
-                        dr_cart = np.dot(image_frac, self.lattice_matrix) - target_cart
-                        r = np.linalg.norm(dr_cart)
-                        
-                        if r < r_cut:
-                            r_eval = max(r, 1e-8)
-                            r_bohr = r_eval / self.BOHR_TO_ANGSTROM
-                            
-                            R_vals = {}
-                            for l, basis_list in contractions.items():
-                                R_l = np.zeros(len(basis_list))
-                                for p, (exps, coeffs) in enumerate(basis_list):
-                                    R_l[p] = (r_bohr**l) * np.sum(coeffs * np.exp(-exps * (r_bohr**2)))
-                                R_vals[l] = R_l
-                                
-                            orbital_profiles = np.zeros(len(pool))
-                            for idx, state in enumerate(pool):
-                                state_rho = 0.0
-                                for l, D_l in state["d_blocks"].items():
-                                    R_l = R_vals[l]
-                                    state_rho += np.dot(R_l, np.dot(D_l, R_l))
-                                orbital_profiles[idx] = state_rho
-                                
-                            total_delta_rhos_atomic_units += np.dot(delta_occs, orbital_profiles)
-                            
-        # CRITICAL FIX: Divide by 4 * pi to convert solid-angle integrated density to point density
-        return total_delta_rhos_atomic_units / (4 * np.pi * (self.BOHR_TO_ANGSTROM ** 3))
+            for c in range(n_configurations):
+                total[c] += np.interp(dist, r_grid, rho_matrix[c, :])
+        
+        return total
+    
+    def calculate_density_at_point_vs_charge(
+        self, 
+        frac_coord: NDArray, 
+        min_charge: float, 
+        max_charge: float, 
+        num_points: int = 2000,
+    ) -> NDArray:
+        """Calculates the charge density at a point for a range of total cell charges."""
+        min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
+        target_charges = np.linspace(min_charge, max_charge, num_points)
+        
+        density_values = self.calculate_non_bonding_density_at_point(
+            frac_coord, 
+            min_charge=min_charge, 
+            max_charge=max_charge
+        )
+        
+        if len(density_values) != num_points:
+            original_charges = np.linspace(min_charge, max_charge, len(density_values))
+            density_values = np.interp(target_charges, original_charges, density_values)
+            
+        return np.column_stack((target_charges, density_values))
+    
+    def calculate_density_at_point_vs_energy(
+        self, 
+        frac_coord: NDArray, 
+        energy_charge_array: NDArray, 
+        num_interp_points: int = 2000,
+    ) -> NDArray:
+        """Maps input cell energies to their corresponding non-bonding charge densities."""
+        energies = energy_charge_array[:, 0]
+        charges = energy_charge_array[:, 1]
+        
+        min_charge = np.min(charges)
+        max_charge = np.max(charges)
+        
+        if np.abs(max_charge - min_charge) < 1e-6:
+            density_vs_charge = self.calculate_density_at_point_vs_charge(
+                frac_coord, min_charge=min_charge, max_charge=max_charge, num_points=1
+            )
+            constant_density = density_vs_charge[0, 1]
+            densities = np.full(len(energies), constant_density, dtype=np.float64)
+        else:
+            density_vs_charge = self.calculate_density_at_point_vs_charge(
+                frac_coord, 
+                min_charge=min_charge, 
+                max_charge=max_charge, 
+                num_points=num_interp_points
+            )
+            densities = np.interp(charges, density_vs_charge[:, 0], density_vs_charge[:, 1])
+            
+        return np.column_stack((energies, densities))
+
+    def generate_charge_density_grid(
+                self, 
+                grid_dims, 
+                min_charge=None, 
+                max_charge=None,
+                energy_cutoff=None,
+                ):
+        """Generates the total non-bonding reference charge density grid using custom PDOS weights."""
+        min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
+
+        spa = self.semi_periodic_atoms
+        # Redirect Numba unique identity maps from global elements to distinct structural atom indexes
+        atom_types = spa["base_indices"]
+        
+        all_indices, all_distances = self.get_voxel_footprints(grid_dims)
+        partial_charges = self.get_partial_radial_charge_densities(min_charge, max_charge)
+
+        rho_matrices_list = []
+        r_grids_list = []               
+        
+        # Build 1D lists matching the exact length of the structural atoms count
+        for i_atom in range(len(self.structure)):
+            symbol = self.structure[i_atom].specie.symbol
+            r_grids_list.append(self.atom_bases[symbol].radial_grid)
+            rho_matrices_list.append(partial_charges[i_atom])
+        
+        g_dims = np.array(grid_dims, dtype=np.int64)
+        
+        rho_3d = broadcast_atoms_to_grid(
+            g_dims,
+            atom_types,
+            all_indices,
+            all_distances,
+            rho_matrices_list,
+            r_grids_list
+        )
+        
+        if energy_cutoff is not None:
+            ngx, ngy, ngz = grid_dims
+            rho_G = np.fft.fftn(rho_3d)
+            recip_lattice = self.structure.lattice.reciprocal_lattice.matrix
+            
+            h = np.fft.fftfreq(ngx) * ngx
+            k = np.fft.fftfreq(ngy) * ngy
+            l = np.fft.fftfreq(ngz) * ngz
+            H, K, L = np.meshgrid(h, k, l, indexing='ij')
+            
+            G_vectors = np.stack([H, K, L], axis=-1) @ recip_lattice
+            G_magnitudes = np.linalg.norm(G_vectors, axis=-1)
+            
+            BOHR_TO_ANGSTROM = 0.529177210903
+            g_cutoff = np.sqrt(2.0 * energy_cutoff / (27.211386 * BOHR_TO_ANGSTROM**2))
+
+            rho_G[G_magnitudes > g_cutoff] = 0.0
+            rho_3d = np.fft.ifftn(rho_G).real
+            
+        return rho_3d
+    
+    def _clean_ranges(self, min_charge, max_charge):
+        if min_charge is None or min_charge == -np.inf:
+            min_charge = 0.0
+        if max_charge is None or max_charge == np.inf:
+            max_charge = self.total_charge
+            
+        min_charge = max(min_charge, 0)
+        max_charge = min(max_charge, self.total_charge)
+        return min_charge, max_charge

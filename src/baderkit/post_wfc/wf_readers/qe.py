@@ -5,11 +5,11 @@ from pathlib import Path
 import numpy as np
 
 from baderkit.toolkit import Structure
-from .base import BaseWfcParser, WfcMetadata, BOHR_TO_ANG, HARTREE_TO_EV
+from .base import BaseWfcReader, WfcMetadata, BOHR_TO_ANG, HARTREE_TO_EV
 
-class QeParser(BaseWfcParser):
+class QeReader(BaseWfcReader):
     """
-    Parser implementation to harvest planewave states out of 
+    Reader implementation to harvest planewave states out of 
     Quantum ESPRESSO's data-file-schema.xml and unformatted binary records.
     """
     def __init__(self, **kwargs):

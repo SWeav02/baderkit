@@ -34,16 +34,16 @@ class WfcMetadata:
     nbands: int                # Total number of calculated bands/orbitals
     cplx_dtype: complex        # Precision requirement datatype (complex64 or complex128)
 
-class BaseWfcParser(ABC):
+class BaseWfcReader(ABC):
     """
     Abstract Base Class outlining the mandatory interface contract required
-    for implementing code-specific periodic electronic structure parsers.
+    for implementing code-specific periodic electronic structure Readers.
     """
     def __init__(
         self,
         directory: Path | str = Path("."),
         ):
-        """Initializes the parser base class and prepares the internal g-vector lookups."""
+        """Initializes the Reader base class and prepares the internal g-vector lookups."""
         self.directory = Path(directory)
         self._gvec_cache = {}  # Internal lifecycle cache to prevent re-building plane-wave spheres
         self.read_metadata()
@@ -71,7 +71,7 @@ class BaseWfcParser(ABC):
         during a single file handle session to eliminate disk I/O thrashing.
         """
         pass
-
+    
     @abstractmethod
     def read_gvectors(self, ikpt: int) -> np.ndarray:
         """

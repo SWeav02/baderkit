@@ -5,12 +5,14 @@ import numpy as np
 from scipy.fft import fftn, ifftn, set_workers
 from scipy.integrate import trapezoid, cumulative_trapezoid
 
-from baderkit.post_wfc.wf_parsers.base import HSQDTM
-from baderkit.post_wfc.all_electron_references.reference_environment import AtomicReferenceEnvironment
-from baderkit.global_numba.file_parsers import load_pseudo
+from baderkit.post_wfc.wf_readers.base import HSQDTM
+from .all_electron_references.reference_environment import AtomicReferenceEnvironment
+from baderkit.post_wfc.pseudopotentials.augmentation_numba import (
+    compute_reciprocal_projectors,
+    enforce_matrix_symmetrization
+    )
 from .wfc_numba import _integrate_tetrahedra_spectral_density_numba
-# TODO:
-# adjust energies by efermi once at the start
+
 
 class PostWFC:
     """
@@ -19,14 +21,17 @@ class PostWFC:
     """
     def __init__(
         self, 
-        parser, 
+        wf_reader, 
+        aug_environment,
         valence_counts,
         scipy_workers: int = -1,
         **kwargs
         ):
         """Initializes properties and calculates necessary minimum FFT grid boundaries."""
-        self._parser = parser
-        self._meta = parser.meta
+        self._wf_reader = wf_reader
+        self._meta = wf_reader.meta
+        self._aug_environment = aug_environment
+        
         self._structure = self._meta.structure
         self._lattice = self._structure.lattice.matrix               # Lattice row vectors in Angstroms
         self._reciprocal_lattice = np.linalg.inv(self._lattice).T   # Transpose of inverse cell matrix (B_mat without 2pi)
@@ -43,39 +48,56 @@ class PostWFC:
         self._valence_counts = valence_counts
         
         # Determine minimum grid dims to enclose the full plane-wave cutoff sphere without aliasing errors.
-        # Max integer Miller component index along direction i requires: |n_i| <= R * ||a_i||
-        # Using scipy/numpy norm calls for clean vectorization
         lattice_norm = np.linalg.norm(self._lattice, axis=1)
         CUTOFF = np.ceil(np.sqrt(self._meta.energy_cutoff / HSQDTM) / (2 * np.pi / lattice_norm))
         self._minimum_fft_size = np.array(2 * CUTOFF + 1, dtype=int)
         
+        # High-performance analytical projector caching variables
+        self._projector_cache = {}
+        self._channel_slices = {}
+        
+        total_ch = 0
+        for i_atom in range(len(self._structure)):
+            elem = self._structure[i_atom].species_string
+            dataset = self._aug_environment.paw_datasets[elem]
+            num_ch = len(dataset.angular_momenta)
+            self._channel_slices[i_atom] = slice(total_ch, total_ch + num_ch)
+            total_ch += num_ch
+        self._total_projector_channels = total_ch
+
         # Internal placeholders for properties lazily calculated on demand
-        self._energy_range = None
-        self._total_electrons = None
+        self._total_charge = None
         self._kpoint_multiplicities = None
         self._kpoint_weights = None
         self._grid_cache = {}  # Internal cache to avoid rebuilding meshgrids across calculation calls
-        self._reference_environment = None # The equivalent non-bonding system
         self._tetrahedra_indices = None
         
     @property
+    def reference_environment(self):
+        if getattr(self, "_reference_environment", None) is None:
+            pdos = self.get_atom_projected_density_of_states()
+            self._reference_environment = AtomicReferenceEnvironment(
+                structure=self._structure,
+                valence_counts=self._aug_environment.valence_counts,
+                pdos_data=pdos
+                )
+        return self._reference_environment
+        
+    def clear_projector_cache(self):
+        """Flushes memory tied to static reciprocal projector matrices."""
+        self._projector_cache.clear()
+
+    @property
     def valence_counts(self) -> dict | None:
         """
-
         Returns
         -------
         dict | None
             A dictionary where each key is an atomic species in the system and each
             value is the number of valence electrons used in the pseudo potential.
-            This is used for methods that calculate oxidation states.
-
         """
-        return self._valence_counts
+        return self._aug_environment.valence_counts
 
-    @valence_counts.setter
-    def valence_counts(self, value: dict):
-        self._valence_counts = value
-        
     @property
     def nspin(self):
         """Returns total active spin allocation dimension count (1 for restricted, 2 for collinear/LSDA)."""
@@ -135,7 +157,7 @@ class PostWFC:
     def kpoints_cart(self):
         """Converts fractional sampling coordinates into Cartesian inverse Angstrom vectors (K = k * 2pi * B)."""
         return np.dot(self.kpoints, 2 * np.pi * self.reciprocal_lattice)
-    
+        
     @property
     def kpoint_multiplicities(self):
         """Maps star orbits across reciprocal point symmetries and time-reversal folding to find full-zone counts."""
@@ -143,25 +165,21 @@ class PostWFC:
             recp_symm_ops = self.structure.lattice.get_recp_symmetry_operation()
             recip_rotations = []
             
-            # 1. Use the operations directly since they are already in the reciprocal basis
             for op in recp_symm_ops:
                 R_recip = np.round(op.rotation_matrix).astype(int)
                 if not any(np.array_equal(R_recip, R) for R in recip_rotations):
                     recip_rotations.append(R_recip)
                     
-            # Fold in time-reversal inversion symmetry (-R operations)
             for R in [-R for R in recip_rotations]:
                 if not any(np.array_equal(R, ex_R) for ex_R in recip_rotations):
                     recip_rotations.append(R)
                     
-            # 2. Trace equivalent points using the minimum image convention
             multiplicities = []
             for k in self.kpoints:
                 star_kpts = []
                 for R in recip_rotations:
                     k_wrapped = np.mod(R @ k, 1.0)
                     
-                    # Robust distance checker handling 0.0 vs 1.0 boundary wrapping noise safely
                     is_duplicate = False
                     for eq in star_kpts:
                         diff = np.mod(k_wrapped - eq, 1.0)
@@ -211,13 +229,14 @@ class PostWFC:
                     
         self._kpoints_full = np.array(kpts_full)
         self._full_to_irr_map = np.array(full_to_irr, dtype=int)
+
     @property
     def kpoint_weights(self):
         """Returns full Brillouin zone weights normalized to sum to 1.0."""
         if self._kpoint_weights is None:
             self._kpoint_weights = self.kpoint_multiplicities / np.sum(self.kpoint_multiplicities)
         return self._kpoint_weights
-    
+        
     @property
     def kpoints_full(self):
         """Returns fractional coordinates for the completely unfolded full Brillouin zone k-mesh."""
@@ -229,7 +248,7 @@ class PostWFC:
     def kpoints_cart_full(self):
         """Converts unfolded fractional sampling coordinates into Cartesian inverse Angstrom vectors."""
         return np.dot(self.kpoints_full, 2 * np.pi * self.reciprocal_lattice)
-    
+        
     @property
     def tetrahedra_indices(self):
         if self._tetrahedra_indices is None:
@@ -242,29 +261,40 @@ class PostWFC:
         if getattr(self, "_full_to_irr_map", None) is None:
             self._unfold_brillouin_zone()
         return self._full_to_irr_map
+
+    def get_energy_range(self, method=None, sigma=None):
+        """
+        Returns relative boundary offsets scaled directly against the Fermi level (E - E_f).
+        If a smearing method is provided, the range is padded to capture the continuous 
+        tails of the smeared distribution.
+        """
+        e_min = np.min(self.energies)
+        e_max = np.max(self.energies)
         
-    @property
-    def energy_range(self):
-        """Returns relative boundary offsets scaled directly against the Fermi level (E - E_f)."""
-        if self._energy_range is None:
-            self._energy_range = np.min(self.energies), np.max(self.energies)
-        return self._energy_range
+        if method is None:
+            return e_min, e_max
+            
+        formal_method, formal_sigma = self._get_default_sigma(method, sigma)
         
-    @property
-    def total_electrons(self):
-        """Evaluates total integrated system valence electron content by summing occupied DOS profiles."""
-        if self._total_electrons is None:
-            self._total_electrons = self.get_electrons_in_energy_range(-np.inf, np.inf)
-        return self._total_electrons
+        if formal_method == "none":
+            pad = 0.0
+        elif formal_method == "tetrahedron":
+            pad = 4.0 * formal_sigma if formal_sigma > 0.0 else 0.0
+        else:
+            pad = 5.0 * formal_sigma
+            
+        return e_min - pad, e_max + pad
     
+    def shift_energies(self, shift: float):
+        """Shifts the eigenvalue energies and fermi energy by a constant value"""
+        self._meta.energies += shift
+        
     @property
-    def reference_environment(self):
-        if self._reference_environment is None:
-            self._reference_environment = AtomicReferenceEnvironment(
-                self.structure, 
-                self.valence_counts,
-                )
-        return self._reference_environment
+    def total_charge(self):
+        """Evaluates total integrated system valence electron content by summing occupied DOS profiles."""
+        if self._total_charge is None:
+            self._total_charge = self.get_electrons_in_energy_range(-np.inf, np.inf)
+        return self._total_charge
         
     def get_plane_waves_frac(self, grid_shape=None):
         """Generates fractional coordinate arrays for plane waves in standard FFT wrapped frequency order."""
@@ -275,12 +305,10 @@ class PostWFC:
             return self._grid_cache[grid_shape]
             
         Nx, Ny, Nz = grid_shape
-        # Wrap frequency array mapping indices matching standard 3D FFT layouts: [0, 1, 2, ..., -3, -2, -1]
         fx = [ii if ii < Nx // 2 + 1 else ii - Nx for ii in range(Nx)]
         fy = [jj if jj < Ny // 2 + 1 else jj - Ny for jj in range(Ny)]
         fz = [kk if kk < Nz // 2 + 1 else kk - Nz for kk in range(Nz)]
         
-        # indexing='ij' ensures output configurations match dimensions shape (Nx, Ny, Nz) directly
         gx, gy, gz = np.meshgrid(fx, fy, fz, indexing='ij')
         self._grid_cache[grid_shape] = (gx, gy, gz)
         return gx, gy, gz
@@ -288,55 +316,37 @@ class PostWFC:
     def plane_waves_cart(self, grid_shape=None):
         """Transforms integer fractional meshgrid coordinate axes into explicit Cartesian grid coordinates (in A^-1)."""
         gx, gy, gz = self.get_plane_waves_frac(grid_shape)
-        
-        # Aligns reciprocal vectors (b1, b2, b3) row indices to match fractional grid components (x, y, z)
         cx, cy, cz = np.tensordot(
             self.reciprocal_lattice * np.pi * 2, [gx, gy, gz], axes=(0, 0))
-
         return cx, cy, cz
         
     def get_plane_waves_basis_idx(self, ikpt, grid_shape=None, expected_npw=None):
-        """Gathers explicit active g-vectors and pre-wrapped grid coordinates from the current parser."""
+        """Gathers explicit active g-vectors and pre-wrapped grid coordinates from the current wf_reader."""
         if grid_shape is None: 
             grid_shape = self._minimum_fft_size * 2
-        gvectors = self._parser.read_gvectors(ikpt)
-        # Wrap fractional components into modular array spaces matching the discrete FFT size index layout
+        gvectors = self._wf_reader.read_gvectors(ikpt)
         return gvectors, (gvectors % np.asarray(grid_shape)[np.newaxis, :]).astype(int)
 
-    def get_plane_waves_basis_cart_from_idx(self, gvectors, grid_shape=None):
+    def get_plane_waves_basis_cart_from_idx(self, ikpt, grid_shape=None, expected_npw=None):
         """Projects integer Miller vector blocks straight into Cartesian inverse Angstrom coordinates."""
+        gvectors, _ = self.get_plane_waves_basis_idx(ikpt, grid_shape, expected_npw)
         return gvectors @ (2 * np.pi * self.reciprocal_lattice)
         
     def get_plane_wave_coefficients(self, ispin, ikpt, iband):
-        """Single-band coefficient query acting as a backward-compatible parser bridge layer."""
-        return self._parser.read_coefficients(ispin, ikpt, iband)
+        """Single-band coefficient query acting as a backward-compatible wf_reader bridge layer."""
+        return self._wf_reader.read_coefficients(ispin, ikpt, iband)
+    
+    def get_plane_wave_coefficients_batch(self, ispin, ikpt, bands):
+        """Single-band coefficient query acting as a backward-compatible wf_reader bridge layer."""
+        return self._wf_reader.read_coefficients_batch(ispin, ikpt, bands)
         
     def get_pseudo_wavefunction(self, ispin=0, ikpt=0, iband=0, grid_shape=None, kr_phase=False, coeffs=None):
-        r'''
-        Obtain the pseudo-wavefunction of the specified KS states in real space
-        by performing FT transform on the reciprocal space planewave
-        coefficients.  The 3D FT grid size is determined by grid_shape, which
-        defaults to self._minimum_fft_size*2 if not given.  Gvectors of the KS states is used
-        to put 1D planewave coefficients back to 3D grid.
-
-        Inputs:
-            ispin : spin index of the desired KS states, starting from 1
-            ikpt  : k-point index of the desired KS states, starting from 1
-            iband : band index of the desired KS states, starting from 1
-
-        The return wavefunctions are normalized in a way that
-
-                        \sum_{ijk} | \phi_{ijk} | ^ 2 = 1
-        '''
+        """Obtain the pseudo-wavefunction of the specified KS states in real space."""
         if grid_shape is None: 
             grid_shape = self._minimum_fft_size * 2
         grid_shape = tuple(grid_shape)
         Nx, Ny, Nz = grid_shape
         
-        # By default, the WAVECAR only stores the periodic part of the Bloch
-        # wavefunction. In order to get the full Bloch wavefunction, one need to
-        # multiply the periodic part with the phase: exp(i k (r + r0). Below, the
-        # k-point vector and the real-space grid are both in the direct coordinates.
         if kr_phase:
             phase = np.exp(1j * np.pi * 2 * np.sum(self.kpoints[ikpt] * (np.mgrid[0:Nx, 0:Ny, 0:Nz].reshape((3, Nx*Ny*Nz)).T / np.array(grid_shape, dtype=float)), axis=1)).reshape(grid_shape)
         else:
@@ -347,40 +357,127 @@ class PostWFC:
         if coeffs is None: 
             coeffs = self.get_plane_wave_coefficients(ispin, ikpt, iband)
             
-        # Reconstruct the 3D reciprocal space matrix by placing flat coefficients back onto wrapped grids
         phi_k[gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = coeffs
         
-        # Execute inverse FFT to map state profile directly into real coordinate space representation
         with set_workers(self.scipy_workers):
             pseudo_wfs = ifftn(phi_k * np.sqrt(Nx * Ny * Nz)) * phase
         return pseudo_wfs
+    
+    def calculate_onsite_occupancy(
+        self, 
+        energy_range=(-np.inf, np.inf), 
+        spin_channel=-1, 
+        use_partial_occ=True
+    ) -> list[np.ndarray]:
+        """
+        Calculates the integrated onsite occupancy/density matrix for each atomic site 
+        as a drop-in replacement for calculate_onsite_occupancy, keeping the core 
+        symmetrization logic intact.
+        """
+        energies = self.energies
+        occupancies = self.occupancies
+        kweights = self.kpoint_weights
+        num_atoms = len(self.structure)
         
-    def calculate_charge_density(self, grid_shape=None, spin_channel=-1, energy_range=(-np.inf, np.inf), use_partial_occ=True):
-        """Constructs full real-space electronic charge density grid profiles (rho)."""
+        energy_min, energy_max = energy_range
+        spin_indices = [i for i in range(self.nspin)] if spin_channel == -1 else [spin_channel]
+        spin_degeneracy = 2.0 if self.nspin == 1 else 1.0
+
+        # Pre-allocate density matrices and gather static atom-specific dataset attributes
+        density_matrices = []
+        
+        for i_atom in range(num_atoms):
+            elem = self.structure[i_atom].species_string
+            dataset = self._aug_environment.paw_datasets[elem]
+            num_projectors = len(dataset.angular_momenta)
+            density_matrices.append(np.zeros((num_projectors, num_projectors), dtype=np.complex128))
+
+        for ispin in spin_indices:
+            for ikpt in range(self.nkpoints):
+                w_k = kweights[ikpt]
+                k_energies = energies[ispin, ikpt, :]
+                
+                # Screen active bands falling inside the target window early
+                mask = (k_energies >= energy_min) & (k_energies <= energy_max)
+                if use_partial_occ:
+                    mask &= (occupancies[ispin, ikpt, :] > 0.0)
+                    
+                active_bands = np.where(mask)[0]
+                if active_bands.size == 0:
+                    continue
+                    
+                k_cart = self.kpoints_cart[ikpt]
+                G_basis_cart = self.get_plane_waves_basis_cart_from_idx(ikpt)
+                
+                for i_atom in range(num_atoms):
+                    elem = self.structure[i_atom].species_string
+                    dataset = self._aug_environment.paw_datasets[elem]
+                    h = dataset.q_linear_grid[-1]
+                    num_projectors = len(dataset.angular_momenta)
+                    
+                    # Compute position-dependent structural projector matrix per site
+                    P_G_matrix = compute_reciprocal_projectors(
+                        k_cart, 
+                        G_basis_cart, 
+                        self.structure[i_atom].coords, 
+                        h,
+                        len(dataset.q_linear_grid), 
+                        self.structure.volume, 
+                        dataset.reciprocal_projectors, 
+                        dataset.angular_momenta, 
+                        dataset.magnetic_nums
+                    )
+                    
+                    for band in active_bands:
+                        f_nk = occupancies[ispin, ikpt, band] if use_partial_occ else 1.0
+                        weight = spin_degeneracy * w_k * f_nk
+                        if weight == 0.0:
+                            continue
+                            
+                        C_G = self.get_plane_wave_coefficients(ispin, ikpt, band)
+                        c = np.dot(P_G_matrix, C_G)
+                        
+                        contr = weight * np.outer(c, np.conj(c))
+                        density_matrices[i_atom] += contr
+        
+        for i_atom in range(num_atoms):
+            elem = self.structure[i_atom].species_string
+            dataset = self._aug_environment.paw_datasets[elem]
+            
+            density_matrix = density_matrices[i_atom]
+            final_density_matrix = enforce_matrix_symmetrization(density_matrix, dataset.angular_momenta, dataset.magnetic_nums)
+            density_matrices[i_atom] = final_density_matrix.real        
+             
+        return density_matrices
+        
+    def calculate_charge_density(
+        self, 
+        grid_shape=None, 
+        spin_channel=-1, 
+        include_aug=False,
+        energy_range=(-np.inf, np.inf), 
+        use_partial_occ=True,
+        return_density_matrices=False,
+    ):
+        """Constructs full real-space electronic charge density grid profiles (rho) with PAW augmentation."""
         if grid_shape is None: 
             grid_shape = self._minimum_fft_size * 2
         Nx, Ny, Nz = grid_shape
         
-        # Normalization adjustments ensuring that: \sum_{ijk} | \phi_{ijk} | ^ 2 * cell_volume / N_grid_points = 1
         normFac = np.sqrt((Nx * Ny * Nz) / self.structure.volume)
         kpoint_weights = self.kpoint_weights
         rho = np.zeros(grid_shape, dtype=float)
         spin_indices = [i for i in range(self.nspin)] if spin_channel == -1 else [spin_channel]
     
-        # Loop over active spin allocations channels
         for ispin in spin_indices:
-            # Loop over sampling irreducible k-points blocks
             for ikpt in range(self.nkpoints):
                 active_bands = []
                 weights = []
-                # Filter bands matching user-specified energy window constraints
                 for iband in range(self.nbands):
                     rel_energy = self.energies[ispin, ikpt, iband]
                     if not (energy_range[0] <= rel_energy <= energy_range[1]): 
                         continue
                         
-                    # Scale weights based on calculation spin polarization channel limits
-                    # Double occupancy factor (rspin=2) must be explicitly enforced if nspin == 1
                     rspin = 2.0 if self.nspin == 1 else 1.0
                     weight = rspin * kpoint_weights[ikpt] * (self.occupancies[ispin, ikpt, iband] if use_partial_occ else 1.0)
                     if weight > 0:
@@ -389,28 +486,85 @@ class PostWFC:
                 if not active_bands: 
                     continue
                 
-                # High-performance batch read eliminates discrete single-band disk head seeking loops
-                coeffs_list = self._parser.read_coefficients_batch(ispin, ikpt, active_bands)
+                coeffs_list = self._wf_reader.read_coefficients_batch(ispin, ikpt, active_bands)
                 gvectors, gvec_wrapped = self.get_plane_waves_basis_idx(ikpt, grid_shape, expected_npw=coeffs_list.shape[1])
                 
-                # Multi-dimensional vectorized band allocation layout mapping
                 phi_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
                 phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = coeffs_list
                 
-                # Transform entire active energy band manifold collectively using a batched multi-dimensional parallel FFT
                 with set_workers(self.scipy_workers):
                     phi_r = ifftn(phi_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
                     
-                # Accumulate real-space densities scaled by corresponding state weights: rho = sum( |psi|^2 * w )
                 rho += np.sum((phi_r.conj() * phi_r).real * np.array(weights)[:, np.newaxis, np.newaxis, np.newaxis], axis=0)
                 
+        if include_aug:
+            density_matrices = self.calculate_onsite_occupancy(
+                energy_range=energy_range, 
+                spin_channel=spin_channel, 
+                use_partial_occ=use_partial_occ
+            )
+            
+            aug_rho, corr_rho = self._aug_environment.calculate_onsite_densities(
+                grid_dims=grid_shape, 
+                density_matrices=density_matrices,
+                energy_range=energy_range
+            )
+            
+            rho += aug_rho - corr_rho
+        
+        if return_density_matrices:
+            return self._symmetrize_3d_grid(rho), density_matrices
+        
         return self._symmetrize_3d_grid(rho)
     
-    def calculate_kinetic_energy_density(self, grid_shape=None, spin_channel=-1, energy_range=(-np.inf, np.inf), use_partial_occ=True, return_charge_density=False):
-        """Computes full real-space non-negative electronic kinetic energy density profiles (tau)."""
-        # TODO: Add tag to determine if using canonical or shrodinger (-lap(rho)/2) form
-        # Change LOL/ELF calls to assume canonical rather than shrodinger
-        
+    def calculate_nonbonding_charge_density(
+        self, 
+        grid_dims, 
+        energy_range=None, 
+        num_points=2000, 
+        method="gaussian", 
+        sigma=None,
+    ) -> np.ndarray:
+        """Converts electronic bounds into non-bonding environment metrics."""
+        if energy_range is None:
+            min_charge = 0.0
+            max_charge = self.total_charge
+        else:
+            e_min, e_max = energy_range
+            
+            min_charge = self.get_electrons_in_energy_range(
+                e_min=None, 
+                e_max=e_min, 
+                num_points=num_points, 
+                method=method, 
+                sigma=sigma
+            )
+            
+            max_charge = self.get_electrons_in_energy_range(
+                e_min=None, 
+                e_max=e_max, 
+                num_points=num_points, 
+                method=method, 
+                sigma=sigma
+            )
+            
+        return self.reference_environment.generate_charge_density_grid(
+            grid_dims=grid_dims,
+            min_charge=min_charge,
+            max_charge=max_charge,
+        )
+    
+    def calculate_kinetic_energy_density(
+            self, 
+            grid_shape=None, 
+            spin_channel=-1, 
+            energy_range=(-np.inf, np.inf), 
+            use_partial_occ=True, 
+            include_aug=False,
+            return_charge_density=False,
+            return_density_matrices=False,
+            ):
+        """Computes full real-space non-negative electronic kinetic energy density profiles (tau) with PAW augmentation."""
         if grid_shape is None: 
             grid_shape = self._minimum_fft_size * 2
         grid_shape_tuple = tuple(grid_shape)
@@ -438,45 +592,222 @@ class PostWFC:
                 if not active_bands: 
                     continue
                 
-                # Optimized batch reading extracts all active bands in a single file open transaction
-                coeffs_list = self._parser.read_coefficients_batch(ispin, ikpt, active_bands)
+                coeffs_list = self._wf_reader.read_coefficients_batch(ispin, ikpt, active_bands)
                 gvectors, gvec_wrapped = self.get_plane_waves_basis_idx(ikpt, grid_shape_tuple, expected_npw=coeffs_list.shape[1])
-                rgvec = self.get_plane_waves_basis_cart_from_idx(gvectors, grid_shape_tuple)
+                rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
                 
-                # Construct absolute momentum vector components coordinates: K = G + k
                 k = self.kpoints_cart[ikpt]             
                 gk2 = np.sum((rgvec + k[np.newaxis, :])**2, axis=1)             
                 
-                # Integration by Parts identity transforms kinetic matrix elements into a Laplacian representation:
-                # tau(r) = sum( |Grad(psi)|^2 ) -> Re-mapped onto grid space fields via: -psi * Del^2(psi)*
                 lap_coeffs = -gk2[np.newaxis, :] * coeffs_list
                 
-                # Map raw state coefficients arrays collectives onto dense 3D frequency grid structures
                 phi_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
                 phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = coeffs_list
                 with set_workers(self.scipy_workers):
                     phi_r = ifftn(phi_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
                 
-                # Map corresponding orbital Laplacian coefficients onto matching wrapped grid matrix structures
                 lap_phi_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
                 lap_phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = lap_coeffs
                 with set_workers(self.scipy_workers):
                     lap_phi_r = ifftn(lap_phi_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
                     
                 w_arr = np.array(weights)[:, np.newaxis, np.newaxis, np.newaxis]
-                # Accumulate kinetic density mapping terms (tau) in real space coordinates
                 tau += np.sum((-phi_r * lap_phi_r.conj()).real * w_arr, axis=0)
                 if return_charge_density:
                     rho += np.sum((phi_r.conj() * phi_r).real * w_arr, axis=0)
 
+        if include_aug:
+            density_matrices = self.calculate_onsite_occupancy(
+                energy_range=energy_range, 
+                spin_channel=spin_channel, 
+                use_partial_occ=use_partial_occ
+            )
+            aug_tau, corr_tau = self._aug_environment.calculate_ke_on_grid(
+                grid_dims=grid_shape_tuple, 
+                density_matrices=density_matrices,
+                energy_range=energy_range
+            )
+            tau += aug_tau - corr_tau
         tau = self._symmetrize_3d_grid(tau)
+        
+        results = [tau]
         if return_charge_density: 
-            return tau, self._symmetrize_3d_grid(rho)
-        return tau
+            aug_rho, corr_rho = self._aug_environment.calculate_on_grid(
+                grid_dims=grid_shape_tuple, 
+                density_matrices=density_matrices,
+                energy_range=energy_range
+            )
+            rho += aug_rho - corr_rho
+            results.append(self._symmetrize_3d_grid(rho))
+            
+        if return_density_matrices:
+            results.append(density_matrices)
+            
+        return tuple(results) if len(results) > 1 else results[0]
+
+    def get_rho_tau_vs_energy(
+        self, 
+        frac_coord, 
+        return_grad_rho_sq = False,
+        return_lap_rho = False,
+        spin_channel = -1, 
+        energy_range=None, 
+        num_points=2000, 
+        method = "gaussian", 
+        sigma=None,
+        grid_shape=None,
+        include_aug=False,
+    ):
+        """Calculates exact state-resolved kinetic and charge density metrics at a single point with PAW updates."""
+        grid_shape = grid_shape if grid_shape is not None else  self._minimum_fft_size * 2
+        nx, ny, nz = grid_shape
+        
+        ix = int(np.round(frac_coord[0] * nx)) % nx
+        iy = int(np.round(frac_coord[1] * ny)) % ny
+        iz = int(np.round(frac_coord[2] * nz)) % nz
+    
+        def point_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
+            phases = np.exp(2j * np.pi * (kx_idx * ix / nx + ky_idx * iy / ny + kz_idx * iz / nz))
+            
+            rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
+            k = self.kpoints_cart[ikpt]             
+            K_cart = rgvec + k[np.newaxis, :]             
+            gk2 = np.sum(K_cart**2, axis=1)             
+            
+            phi_at_point = np.dot(coeffs_list, phases) * norm_factor
+            lap_phi_at_point = np.dot(coeffs_list, -gk2 * phases) * norm_factor
+            
+            rho_bands = (phi_at_point.conj() * phi_at_point).real * weight
+            tau_bands = (-phi_at_point * lap_phi_at_point.conj()).real * weight
+            
+            active_bands = []
+            for iband in range(self.nbands):
+                rel_energy = self.energies[ispin, ikpt, iband]
+                if energy_range is not None:
+                    if not (energy_range[0] <= rel_energy <= energy_range[1]):
+                        continue
+                active_bands.append(iband)
+            
+            if len(active_bands) == len(coeffs_list):
+                point_cart = frac_coord @ self._aug_environment.lattice_matrix
+                num_atoms = len(self.structure)
+                
+                projections_all_atoms = []
+                for i_atom in range(num_atoms):
+                    elem = self.structure[i_atom].species_string
+                    dataset = self._aug_environment.paw_datasets[elem]
+                    h = dataset.q_linear_grid[-1]
+                    
+                    P_G_matrix = compute_reciprocal_projectors(
+                        k, 
+                        rgvec, 
+                        self.structure[i_atom].coords, 
+                        h,
+                        len(dataset.q_linear_grid), 
+                        self.structure.volume, 
+                        dataset.reciprocal_projectors, 
+                        dataset.angular_momenta, 
+                        dataset.magnetic_nums
+                    )
+                    proj_atom = np.dot(P_G_matrix, coeffs_list.T)
+                    projections_all_atoms.append(proj_atom)
+                
+                if include_aug:
+                    aug_bands = np.zeros(len(active_bands), dtype=np.float64)
+                    aug_ke_bands = np.zeros(len(active_bands), dtype=np.float64)
+                    
+                    for n_idx in range(len(active_bands)):
+                        band_density_matrices = []
+                        for i_atom in range(num_atoms):
+                            proj = projections_all_atoms[i_atom][:, n_idx]
+                            dm = np.outer(proj, proj.conj()).real
+                            band_density_matrices.append(dm)
+                            
+                        ae_rho, ps_rho = self._aug_environment.calculate_onsite_densities_at_point(
+                            point_cart=point_cart,
+                            density_matrices=band_density_matrices
+                        )
+                        aug_bands[n_idx] = ae_rho - ps_rho
+                        
+                        ae_tau, ps_tau = self._aug_environment.calculate_onsite_ke_densities_at_point(
+                            point_cart=point_cart,
+                            density_matrices=band_density_matrices
+                        )
+                        aug_ke_bands[n_idx] = ae_tau - ps_tau
+                    
+                    rho_bands += aug_bands * weight
+                    tau_bands += aug_ke_bands * weight
+            
+            metrics = [rho_bands, tau_bands]
+            
+            if return_grad_rho_sq or return_lap_rho:
+                grad_phi_at_point = np.zeros((len(coeffs_list), 3), dtype=complex)
+                for idim in range(3):
+                    grad_phi_at_point[:, idim] = np.dot(coeffs_list, 1j * K_cart[:, idim] * phases) * norm_factor
+                
+                if return_grad_rho_sq:
+                    grad_rho_vec = 2.0 * (phi_at_point[:, np.newaxis].conj() * grad_phi_at_point).real
+                    grad_rho_sq_bands = np.sum(grad_rho_vec**2, axis=1) * weight
+                    metrics.append(grad_rho_sq_bands)
+                else:
+                    metrics.append(None)
+                    
+                if return_lap_rho:
+                    grad_psi_sq = np.sum(np.abs(grad_phi_at_point)**2, axis=1)
+                    lap_rho_bands = 2.0 * (grad_psi_sq + (phi_at_point.conj() * lap_phi_at_point.conj()).real) * weight
+                    metrics.append(lap_rho_bands)
+                else:
+                    metrics.append(None)
+                    
+            return metrics
+    
+        num_metrics = 4 if (return_grad_rho_sq or return_lap_rho) else 2
+
+        energy_grid, smeared = self._execute_spectral_engine(
+            num_metrics=num_metrics, spin_channel=spin_channel, energy_range=energy_range, 
+            num_points=num_points, method=method, sigma=sigma, eval_callback=point_callback
+        )
+        
+        results = [energy_grid, smeared[0], smeared[1]]
+        if return_grad_rho_sq: results.append(smeared[2])
+        if return_lap_rho: results.append(smeared[3])
+        return tuple(results)
+    
+    def get_integrated_rho_tau_vs_energy(self, frac_coord, **kwargs) -> np.ndarray:
+        """Calculates total cumulatively integrated metrics at a fraction coordinate point."""
+        kwargs["return_grad_rho_sq"] = False
+        kwargs["return_lap_rho"] = False
+        
+        contributions = self.get_rho_tau_vs_energy(frac_coord, **kwargs)
+        energy_grid = contributions[0]
+        smeared_rho = contributions[1]
+        smeared_tau = contributions[2]
+        
+        cum_charge = np.zeros(len(energy_grid), dtype=np.float64)
+        cum_tau = np.zeros(len(energy_grid), dtype=np.float64)
+        if len(energy_grid) > 1:
+            cum_charge[1:] = cumulative_trapezoid(smeared_rho, energy_grid)
+            cum_tau[1:] = cumulative_trapezoid(smeared_tau, energy_grid)
+            
+        return energy_grid, cum_charge, cum_tau
+    
+    def calculate_nonbonding_rho_vs_energy(self, frac_coord, **kwargs) -> np.ndarray:
+        """Computes both bonding system and non-bonding mapping comparisons."""
+        energy_grid, rho, tau = self.get_integrated_rho_tau_vs_energy(frac_coord, **kwargs)
+        
+        num_interp_points = kwargs.get("num_points", 2000)
+        reference_data = self.reference_environment.calculate_density_at_point_vs_energy(
+            frac_coord=frac_coord,
+            energy_charge_array=rho,
+            num_interp_points=num_interp_points
+        )
+        
+        return energy_grid, reference_data
     
     def calculate_localization_function(
             self, 
             grid_shape=None, 
+            include_aug=False,
             energy_range=(-np.inf, np.inf), 
             spin_channel=-1, 
             localization_function="elf", 
@@ -487,13 +818,18 @@ class PostWFC:
         if grid_shape is None: 
             grid_shape = self._minimum_fft_size * 2
             
-        # Collect baseline real space fields required for evaluating topological descriptions
-        tau, rho = self.calculate_kinetic_energy_density(grid_shape=grid_shape, energy_range=energy_range, spin_channel=spin_channel, use_partial_occ=use_partial_occ, return_charge_density=True)
+        tau, rho = self.calculate_kinetic_energy_density(
+            grid_shape=grid_shape, 
+            include_aug=include_aug,
+            energy_range=energy_range, 
+            spin_channel=spin_channel, 
+            use_partial_occ=use_partial_occ, 
+            return_charge_density=True
+            )
         if localization_function == "lol":
             from baderkit.post_wfc.localization_functions import lol
             return lol(rho, tau, savin_correction, spin_channel != -1)
             
-        # Both ELF and ELI-D evaluations require explicit field Laplacians and gradient norms
         with set_workers(self.scipy_workers): 
             rho_q = fftn(rho, norm='ortho')
         lap_rho = self.calculate_laplacian(rho_q, is_reciprocal=True)
@@ -510,7 +846,7 @@ class PostWFC:
     def calculate_laplacian(self, data, is_reciprocal=False):
         """Evaluates second-derivative field Laplacian grid profiles via algebraic Fourier space multiplication."""
         Gx, Gy, Gz = self.plane_waves_cart()
-        G2 = Gx**2 + Gy**2 + Gz**2  # Compute squared norms magnitude values: G^2 = Gx^2 + Gy^2 + Gz^2
+        G2 = Gx**2 + Gy**2 + Gz**2  
         
         if not is_reciprocal:
             with set_workers(self.scipy_workers): 
@@ -518,7 +854,6 @@ class PostWFC:
         else: 
             recip_data = data
             
-        # Laplacian operator identity mapping in reciprocal space translates cleanly to: Del^2(rho) -> -G^2 * rho(G)
         recip_lap = -G2 * recip_data
         with set_workers(self.scipy_workers): 
             real_lap = ifftn(recip_lap, norm='ortho')
@@ -533,182 +868,12 @@ class PostWFC:
             recip_data = data
             
         Gx, Gy, Gz = self.plane_waves_cart()
-        # Gradient operator identity mapping in reciprocal space translates cleanly to: Grad(rho) -> i * G * rho(G)
         with set_workers(self.scipy_workers):
             grad_x = ifftn(1j * Gx * recip_data, norm='ortho')
             grad_y = ifftn(1j * Gy * recip_data, norm='ortho')
             grad_z = ifftn(1j * Gz * recip_data, norm='ortho')
         return grad_x.real, grad_y.real, grad_z.real
         
-    def calculate_state_rho_tau_contributions(
-                self, 
-                frac_coord, 
-                return_grad_rho_sq = True,
-                return_lap_rho = True,
-                spin_channel = -1, 
-                energy_range=None, 
-                num_points=2000, 
-                method = "gaussian", 
-                sigma=None,
-                grid_shape=None,
-                ):
-        """
-        Calculates the exact state-resolved kinetic and charge density metrics at a 
-        single point in space. Bypasses 3D FFT grids entirely using analytical plane-wave 
-        matrix-vector contractions for optimal performance.
-        """
-        grid_shape = grid_shape if grid_shape is not None else  self._minimum_fft_size * 2
-        nx, ny, nz = grid_shape
-        
-        # Target voxel mappings
-        ix = int(np.round(frac_coord[0] * nx)) % nx
-        iy = int(np.round(frac_coord[1] * ny)) % ny
-        iz = int(np.round(frac_coord[2] * nz)) % nz
-    
-        def point_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
-            # 1. Compute the exact analytical phase factors for active plane-wave indices at this point
-            phases = np.exp(2j * np.pi * (kx_idx * ix / nx + ky_idx * iy / ny + kz_idx * iz / nz))
-            
-            # 2. Extract Cartesian plane wave basis vectors and k-point displacements
-            rgvec = self.get_plane_waves_basis_cart_from_idx(gvectors, gshape)
-            k = self.kpoints_cart[ikpt]             
-            K_cart = rgvec + k[np.newaxis, :]             
-            gk2 = np.sum(K_cart**2, axis=1)             
-            
-            # 3. Direct BLAS matrix-vector contractions for wavefunctions and Laplacians
-            # Shifts operators onto the 1D phase vector to save large 2D matrix copies
-            phi_at_point = np.dot(coeffs_list, phases) * norm_factor
-            lap_phi_at_point = np.dot(coeffs_list, -gk2 * phases) * norm_factor
-            
-            # 4. Resolve baseline metrics
-            rho_bands = (phi_at_point.conj() * phi_at_point).real * weight
-            tau_bands = (-phi_at_point * lap_phi_at_point.conj()).real * weight
-            
-            metrics = [rho_bands, tau_bands]
-            
-            # 5. Resolve gradients if tracking higher-order features
-            if return_grad_rho_sq or return_lap_rho:
-                grad_phi_at_point = np.zeros((self.nbands, 3), dtype=complex)
-                for idim in range(3):
-                    # Analytical gradient component expansion
-                    grad_phi_at_point[:, idim] = np.dot(coeffs_list, 1j * K_cart[:, idim] * phases) * norm_factor
-                
-                if return_grad_rho_sq:
-                    grad_rho_vec = 2.0 * (phi_at_point[:, np.newaxis].conj() * grad_phi_at_point).real
-                    grad_rho_sq_bands = np.sum(grad_rho_vec**2, axis=1) * weight
-                    metrics.append(grad_rho_sq_bands)
-                else:
-                    metrics.append(None)
-                    
-                if return_lap_rho:
-                    grad_psi_sq = np.sum(np.abs(grad_phi_at_point)**2, axis=1)
-                    lap_rho_bands = 2.0 * (grad_psi_sq + (phi_at_point.conj() * lap_phi_at_point).real) * weight
-                    metrics.append(lap_rho_bands)
-                else:
-                    metrics.append(None)
-                    
-            return metrics
-    
-        # Determine total tracking dimensions dynamically 
-        num_metrics = 4 if (return_grad_rho_sq or return_lap_rho) else 2
-
-        energy_grid, smeared = self._execute_spectral_engine(
-            num_metrics=num_metrics, spin_channel=spin_channel, energy_range=energy_range, 
-            num_points=num_points, method=method, sigma=sigma, eval_callback=point_callback
-        )
-        
-        results = [energy_grid, smeared[0], smeared[1]]
-        if return_grad_rho_sq: results.append(smeared[2])
-        if return_lap_rho: results.append(smeared[3])
-        return tuple(results)
-    
-    def calculate_state_deformation_density(
-                self, 
-                frac_coord, 
-                spin_channel=-1,
-                energy_range=None, 
-                num_points=2000, 
-                method="gaussian", 
-                sigma=None,
-                grid_shape=None,
-                ):
-        """
-        Calculates the step-by-step delta deformation density spectrum matching the exact
-        non-linear charge accumulation tracks of the true crystal states.
-        
-        Automatically masks out high-energy steps that exceed the physical capacity 
-        of the reference atomic basis pool and emits a tracking warning.
-        """
-        grid_shape = grid_shape if grid_shape is not None else  self._minimum_fft_size * 2
-        reference_env = self.reference_environment
-
-        # 1. Resolve formal smearing parameters using your native routing tool
-        formal_method, formal_sigma = self._get_default_sigma(method, sigma)
-        e_min, e_max = energy_range if energy_range is not None else self.energy_range
-        
-        # 2. Automatically calculate background charge accumulated up to e_min
-        start_charge = self.get_electrons_in_energy_range(
-            -np.inf, e_min, num_points=num_points, method=method, sigma=sigma
-        )
-        
-        # 3. Compute natively smeared crystal profiles simultaneously
-        egrid, dos = self.get_density_of_states(
-            spin_channel=spin_channel, 
-            energy_range=(e_min, e_max), 
-            num_points=num_points, 
-            method=method, 
-            sigma=sigma,
-            use_occupancies=False
-        )
-        
-        _, rho_crys, _ = self.calculate_state_rho_tau_contributions(
-            frac_coord=frac_coord, 
-            return_grad_rho_sq=False, 
-            return_lap_rho=False,
-            spin_channel=spin_channel, 
-            energy_range=(e_min, e_max), 
-            num_points=num_points, 
-            method=method,
-            sigma=sigma,
-            grid_shape=grid_shape,
-        )
-        
-        # 4. Convert the continuous spectral DOS into exact cell charge boundaries
-        delta_e = egrid[1] - egrid[0]
-        q_bounds = np.zeros(len(dos) + 1)
-        q_bounds[0] = start_charge
-        q_bounds[1:] = start_charge + np.cumsum(dos) * delta_e
-        
-        # 5. Extract the matching sequential reference steps from the environment
-        delta_rho_ref_steps = reference_env.calculate_sequential_reference_deltas(
-            frac_coord=frac_coord, q_bounds=q_bounds
-        )
-        
-        # 6. Direct Point-by-Point Spectral Subtraction
-        deformation_profile = rho_crys - (delta_rho_ref_steps / delta_e)
-        
-        # 7. Dynamic Capacity Checking & Saturation Masking
-        max_capacity_charge = reference_env.get_maximum_cell_charge_capacity()
-        
-        # Check against the upper charge bound of each discrete energy interval
-        invalid_mask = q_bounds[1:] > max_capacity_charge
-        
-        if np.any(invalid_mask):
-            first_invalid_idx = np.where(invalid_mask)[0][0]
-            meaningless_energy_threshold = egrid[first_invalid_idx]
-            
-            print(f"========================================================================\n"
-                  f"WARNING: Reference atomic basis set capacity exceeded!\n"
-                  f"Orbital saturation occurs at total cell charge: {max_capacity_charge:.4f} e-\n"
-                  f"Energy values above {meaningless_energy_threshold:.4f} eV are unphysical.\n"
-                  f"Masking subsequent deformation steps to 0.0.\n"
-                  f"========================================================================")
-            
-            # Force the net delta to zero for all saturated intervals
-            deformation_profile[invalid_mask] = 0.0
-            
-        return egrid, deformation_profile
-    
     def get_density_of_states(
                 self, 
                 spin_channel = -1, 
@@ -718,16 +883,20 @@ class PostWFC:
                 sigma=None, 
                 use_occupancies=False,
                 ):
-        """
-        Constructs energy coordinate profiles outlining the Electronic Density of States (DOS).
-        Uses JIT-compiled Numba integration for the tetrahedron method to bypass Python 
-        bottlenecks in piecewise linear interpolation.
-        """
+        """Constructs energy coordinate profiles outlining the Electronic Density of States (DOS)."""
         method, sigma = self._get_default_sigma(method, sigma)
-        
         bands = self.energies
-        e_min, e_max = energy_range if energy_range is not None else self.energy_range
+        
+        if energy_range is None:
+            e_min, e_max = self.get_energy_range(method, sigma)
+        else:
+            e_min, e_max = energy_range
+            full_e_min, full_e_max = self.get_energy_range(method, sigma)
+            if e_min is None or e_min == -np.inf: e_min = full_e_min
+            if e_max is None or e_max == np.inf: e_max = full_e_max
+                
         energy_grid = np.linspace(e_min, e_max, num_points)
+        delta_e = energy_grid[1] - energy_grid[0] if num_points > 1 else 0.0
         
         if spin_channel == 1 and self.nspin == 1:
             spin_channel = 0
@@ -735,32 +904,35 @@ class PostWFC:
         spin_all = [spin_channel] if spin_channel != -1 else list(range(self.nspin))
         factor = 2 if (spin_channel == -1 and self.nspin == 1) else 1
             
+        if method == "none":
+            pad = 0.5 * delta_e if num_points > 1 else 0.0
+        elif method == "tetrahedron":
+            pad = 4.0 * sigma if sigma > 0.0 else 0.0
+        else:
+            pad = 5.0 * sigma
+
         if method == "tetrahedron":
-            # 1. Prepare data for Numba
             full_map = self.full_to_irr_map
-            
-            # Expand irreducible quantities onto the full BZ mesh so that
-            # tetrahedra_indices (which are full-BZ indices) remain valid.
-            eigenvalues = bands[spin_all][:, full_map, :]  # (N_spin, N_full_kpts, N_bands)
+            eigenvalues = bands[spin_all][:, full_map, :]  
             
             tetra_indices = self.tetrahedra_indices
             tetra_weight = 1.0 / len(tetra_indices)
             
             if use_occupancies:
-                w_t = (
-                    self.occupancies[spin_all][:, full_map, :] * factor
-                )[..., np.newaxis]
+                w_t = (self.occupancies[spin_all][:, full_map, :] * factor)[..., np.newaxis]
             else:
                 w_t = np.ones_like(eigenvalues)[..., np.newaxis] * factor
+                
+            band_mask = np.any((eigenvalues >= e_min - pad) & (eigenvalues <= e_max + pad), axis=(0, 1))
             
-            # 2. Invoke the JIT-compiled engine
-            dos = _integrate_tetrahedra_spectral_density_numba(
-                energy_grid,
-                tetra_indices,
-                eigenvalues,
-                w_t,
-                tetra_weight,
-            )[0].sum(axis=0)
+            if not np.any(band_mask):
+                dos = np.zeros(num_points)
+            else:
+                eigenvalues_filtered = eigenvalues[:, :, band_mask]
+                w_t_filtered = w_t[:, :, band_mask]
+                dos = _integrate_tetrahedra_spectral_density_numba(
+                    energy_grid, tetra_indices, eigenvalues_filtered, w_t_filtered, tetra_weight,
+                )[0].sum(axis=0)
             
         else:
             kpt_weights = self.kpoint_weights
@@ -771,23 +943,25 @@ class PostWFC:
             else:
                 w_t = (np.ones_like(bands[spin_all]) * kpt_weights[None, :, None]).ravel() * factor
                 
+            mask = (bands_flat >= e_min - pad) & (bands_flat <= e_max + pad)
+            bands_filtered = bands_flat[mask]
+            w_t_filtered = w_t[mask]
+            
             if method == "none":
-                delta_e = energy_grid[1] - energy_grid[0]
-                closest_idx = np.round((bands_flat - e_min) / delta_e).astype(int)
-                valid_mask = (closest_idx >= 0) & (closest_idx < num_points)
-                
-                smear_matrix = np.zeros((num_points, len(bands_flat)))
-                if len(bands_flat) > 0:
+                smear_matrix = np.zeros((num_points, len(bands_filtered)))
+                if len(bands_filtered) > 0:
+                    closest_idx = np.round((bands_filtered - e_min) / delta_e).astype(int)
+                    valid_mask = (closest_idx >= 0) & (closest_idx < num_points)
                     smear_matrix[closest_idx[valid_mask], np.where(valid_mask)[0]] = 1.0 / delta_e
             else:
-                smear_matrix = self._get_smear_matrix((energy_grid[:, None] - bands_flat[None, :]) / sigma, method, sigma)
+                delta_E = energy_grid[:, None] - bands_filtered[None, :]
+                smear_matrix = self._get_smear_matrix(delta_E / sigma, method, sigma)
                 
-            dos = np.dot(smear_matrix, w_t)
+            dos = np.dot(smear_matrix, w_t_filtered)
             
-        # Post-process tetrahedron results or continuous broadening
         if method == "tetrahedron" and sigma > 0.0:
-            delta_e = energy_grid[1] - energy_grid[0]
             n_kernel = int(np.ceil(4.0 * sigma / delta_e))
+
             if n_kernel > 0:
                 x_kernel = np.arange(-n_kernel, n_kernel + 1) * delta_e
                 kernel = np.exp(-0.5 * (x_kernel / sigma)**2)
@@ -796,77 +970,271 @@ class PostWFC:
                     
         return energy_grid, dos
     
-    def get_electrons_in_energy_range(self, e_min, e_max, num_points=2000, method="gaussian", sigma=None):
-            """Integrates occupied DOS profiles across designated energy limits windows relative to the Fermi Level."""
-            bands = self.energies
+    def get_projected_density_of_states(
+        self, 
+        spin_channel=-1, 
+        energy_range=None, 
+        num_points=2000, 
+        method="gaussian", 
+        sigma=None, 
+        orbital_types=None,
+    ):
+        """
+        Constructs the total electronic DOS along with individual projections 
+        smeared across s, p, d, and f orbital character manifolds without external batching.
+        """
+        if orbital_types is None:
+            orbital_types = ["s", "p", "d", "f"]
             
-            # Resolve the formal method identifier and default sigma values
-            method, sigma = self._get_default_sigma(method, sigma)
+        orbital_map = {"s": 0, "p": 1, "d": 2, "f": 3}
+        target_ls = [orbital_map[orb] for orb in orbital_types if orb in orbital_map]
+        num_atoms = len(self.structure)
+
+        def pdos_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
+            num_bands = coeffs_list.shape[0]
+            # Use safe explicit array allocations tracked along the current active bands count
+            metrics = [np.full(num_bands, weight)]  # First tracking index is the total baseline DOS
             
-            # Handle asymptotic bounds limitations by padding extreme values past band margins safely
-            if e_min == -np.inf: 
-                pad = 0.1 if method == "none" else (1.0 if method == "tetrahedron" else 5 * sigma)
-                e_min = np.min(bands) - pad
+            # Map out local band-resolved collectors for each requested l channel
+            orbital_accumulators = {l: np.zeros(num_bands) for l in target_ls}
+            
+            # Precompute reciprocal lattice vectors and k-point mapping for this block
+            rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
+            k = self.kpoints_cart[ikpt]
+            
+            for i_atom in range(num_atoms):
+                elem = self.structure[i_atom].species_string
+                dataset = self._aug_environment.paw_datasets[elem]
+                h = dataset.q_linear_grid[-1]
                 
-            if e_max == np.inf: 
-                pad = 0.1 if method == "none" else (1.0 if method == "tetrahedron" else 5 * sigma)
-                e_max = np.max(bands) + pad
+                # Compute reciprocal projection matrix for the current site
+                P_G_matrix = compute_reciprocal_projectors(
+                    k, 
+                    rgvec, 
+                    self.structure[i_atom].coords, 
+                    h,
+                    len(dataset.q_linear_grid), 
+                    self.structure.volume, 
+                    dataset.reciprocal_projectors, 
+                    dataset.angular_momenta, 
+                    dataset.magnetic_nums
+                )
+                
+                # Vectorized contraction: (num_projectors, npw) x (npw, len(active_bands))
+                proj_atom = np.dot(P_G_matrix, coeffs_list.T)
+                proj_sq = np.abs(proj_atom)**2
+                
+                # Accumulate the projections into their respective angular momentum manifolds
+                for p_idx, l in enumerate(dataset.angular_momenta):
+                    if l in orbital_accumulators:
+                        orbital_accumulators[l] += proj_sq[p_idx, :]
             
-            # Leverages our updated unified DOS generator with occupancies turned on
-            egrid, dens = self.get_density_of_states(
-                spin_channel=-1, 
-                energy_range=(e_min, e_max), 
-                num_points=num_points, 
-                method=method, 
-                sigma=sigma, 
-                use_occupancies=True
-            )
-            
-            # Evaluate total accumulated valence electrons within target bounds using numerical integration
-            return trapezoid(dens, egrid)
-    
-    def find_energy_for_electron_count(self, target_electrons, e_min=-np.inf, assume_full_occupancy=False, num_points=5000, method="gaussian", sigma=0.05):
-        """Identifies relative energy cutoff limits enclosing specific targeted electron populations quantities."""
-        e_min_calc, e_max_calc = self.energy_range
-        pad = 5 * sigma if method != "tetrahedron" else 1.0
-        e_min_calc -= pad
-        e_max_calc += pad
-        
-        egrid, density = self.get_density_of_states(
-            spin_channel=-1, 
-            energy_range=(e_min_calc, e_max_calc), 
+            # Multiply projectivities by state weights and queue for spectral engine processing
+            for l in target_ls:
+                metrics.append(orbital_accumulators[l] * weight)
+                
+            return metrics
+
+        # Total number of metrics is 1 (Total DOS) + number of valid orbital tracking keys
+        num_metrics = 1 + len(target_ls)
+
+        energy_grid, smeared = self._execute_spectral_engine(
+            num_metrics=num_metrics, 
+            spin_channel=spin_channel, 
+            energy_range=energy_range, 
             num_points=num_points, 
             method=method, 
             sigma=sigma, 
-            use_occupancies=not assume_full_occupancy
+            eval_callback=pdos_callback
+        )
+        
+        total_dos = smeared[0]
+        projections_dict = {}
+        for idx, orb in enumerate(orbital_types):
+            projections_dict[orb] = smeared[1 + idx]
+        projections_dict["energy_grid"] = energy_grid
+        projections_dict["total_dos"] = total_dos
+        
+        return projections_dict
+    
+    def get_atom_projected_density_of_states(
+        self, 
+        atom_indices=None,
+        spin_channel=-1, 
+        energy_range=None, 
+        num_points=2000, 
+        method="gaussian", 
+        sigma=None, 
+    ):
+        """
+        Constructs the total electronic DOS along with individual projections 
+        onto specified individual atoms without external batching.
+        """
+        if atom_indices is None:
+            # Default to all atoms in the structure if no specific list is provided
+            atom_indices = list(range(len(self.structure)))
+            
+        def atom_dos_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
+            num_bands = coeffs_list.shape[0]
+            # Use safe explicit array allocations tracked along the current active bands count
+            metrics = [np.full(num_bands, weight)]  # First tracking index is the total baseline DOS
+            
+            # Map out local band-resolved collectors for each target atom
+            atom_accumulators = {i_atom: np.zeros(num_bands) for i_atom in atom_indices}
+            
+            # Precompute reciprocal lattice vectors and k-point mapping for this block
+            rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
+            k = self.kpoints_cart[ikpt]
+            
+            for i_atom in atom_indices:
+                elem = self.structure[i_atom].species_string
+                dataset = self._aug_environment.paw_datasets[elem]
+                h = dataset.q_linear_grid[-1]
+                
+                # Compute reciprocal projection matrix for the current site
+                P_G_matrix = compute_reciprocal_projectors(
+                    k, 
+                    rgvec, 
+                    self.structure[i_atom].coords, 
+                    h,
+                    len(dataset.q_linear_grid), 
+                    self.structure.volume, 
+                    dataset.reciprocal_projectors, 
+                    dataset.angular_momenta, 
+                    dataset.magnetic_nums
+                )
+                
+                # Vectorized contraction: (num_projectors, npw) x (npw, len(active_bands))
+                proj_atom = np.dot(P_G_matrix, coeffs_list.T)
+                proj_sq = np.abs(proj_atom)**2
+                
+                # Collapse the projector axis (axis=0) to get total atom character per band
+                atom_accumulators[i_atom] = np.sum(proj_sq, axis=0)
+            
+            # Multiply projectivities by state weights and queue for spectral engine processing
+            for i_atom in atom_indices:
+                metrics.append(atom_accumulators[i_atom] * weight)
+                
+            return metrics
+    
+        # Total number of metrics is 1 (Total DOS) + number of tracked atoms
+        num_metrics = 1 + len(atom_indices)
+    
+        energy_grid, smeared = self._execute_spectral_engine(
+            num_metrics=num_metrics, 
+            spin_channel=spin_channel, 
+            energy_range=energy_range, 
+            num_points=num_points, 
+            method=method, 
+            sigma=sigma, 
+            eval_callback=atom_dos_callback
+        )
+        
+        total_dos = smeared[0]
+        projections_dict = {}
+        for idx, i_atom in enumerate(atom_indices):
+            projections_dict[i_atom] = smeared[1 + idx]
+            
+        projections_dict["energy_grid"] = energy_grid
+        projections_dict["total_dos"] = total_dos
+        
+        return projections_dict
+    
+    def calculate_density_at_point_vs_charge(
+        self, 
+        frac_coord, 
+        min_charge=None, 
+        max_charge=None, 
+        num_points=2000,
+        spin_channel=-1
+    ) -> np.ndarray:
+        """Calculates electronic charge density at a specific coordinate using Aufbau fillings."""
+        if min_charge is None:
+            min_charge = 0.0
+        if max_charge is None:
+            max_charge = self.total_charge
+            
+        min_charge = max(min_charge, 0.0)
+        max_charge = min(max_charge, self.total_charge)
+        
+        if spin_channel == 1 and self.nspin == 1:
+            spin_channel = 0
+            
+        spin_all = [spin_channel] if spin_channel != -1 else list(range(self.nspin))
+        factor = 2 if (spin_channel == -1 and self.nspin == 1) else 1
+        
+        bands_flat = self.energies[spin_all].ravel()
+        kpt_weights = self.kpoint_weights
+        state_weights = (np.ones_like(self.energies[spin_all]) * kpt_weights[None, :, None]).ravel() * factor
+        
+        sort_indices = np.argsort(bands_flat)
+        sorted_weights = state_weights[sort_indices]
+        cum_capacities = np.cumsum(sorted_weights)
+        
+        state_densities = self.calculate_state_densities_at_point(frac_coord, spin_channel=spin_channel)
+        sorted_state_densities = state_densities.ravel()[sort_indices]
+        
+        target_charges = np.linspace(min_charge, max_charge, num_points)
+        density_values = np.zeros(num_points, dtype=np.float64)
+        
+        for i, q in enumerate(target_charges):
+            state_allocations = np.minimum(
+                sorted_weights, 
+                np.maximum(0.0, q - cum_capacities + sorted_weights)
+            )
+            
+            occupancy_fractions = np.where(sorted_weights > 0.0, state_allocations / sorted_weights, 0.0)
+            density_values[i] = np.sum(occupancy_fractions * sorted_state_densities)
+            
+        return np.column_stack((target_charges, density_values))
+        
+    def get_electrons_in_energy_range(self, e_min=None, e_max=None, num_points=5000, method="gaussian", sigma=None):
+        """Integrates occupied DOS profiles across designated energy limits."""
+        method, sigma = self._get_default_sigma(method, sigma)
+        full_e_min, full_e_max = self.get_energy_range(method, sigma)
+        
+        if e_min is None or e_min == -np.inf: e_min = full_e_min
+        if e_max is None or e_max == np.inf: e_max = full_e_max
+        if e_min == e_max:
+            return 0.0
+        egrid, dens = self.get_density_of_states(
+            spin_channel=-1, energy_range=(e_min, e_max), num_points=num_points, 
+            method=method, sigma=sigma, use_occupancies=True
+        )
+        return trapezoid(dens, egrid)
+        
+    def find_energy_for_electron_count(self, target_electrons, e_min=None, assume_full_occupancy=False, num_points=5000, method="gaussian", sigma=None):
+        """Identifies relative energy cutoff limits enclosing specific targeted electron populations."""
+        method, sigma = self._get_default_sigma(method, sigma)
+        full_e_min, full_e_max = self.get_energy_range(method, sigma)
+        
+        if e_min is None or e_min == -np.inf:
+            e_start = full_e_min
+        else:
+            e_start = e_min
+            
+        egrid, density = self.get_density_of_states(
+            spin_channel=-1, energy_range=(e_start, full_e_max), num_points=num_points, 
+            method=method, sigma=sigma, use_occupancies=not assume_full_occupancy
         )
         
         if assume_full_occupancy:
             density = density * np.max(self.occupancies)
             
-        if e_min == -np.inf: e_min = egrid[0]
-        mask = egrid >= e_min
-        sub_g, sub_d = egrid[mask], density[mask]
-        
-        cum_charge = np.zeros(len(sub_g))
-        cum_charge[1:] = cumulative_trapezoid(sub_d, sub_g)
+        cum_charge = np.zeros(len(egrid))
+        cum_charge[1:] = cumulative_trapezoid(density, egrid)
         
         if target_electrons > cum_charge[-1]: 
             raise ValueError("Target electron allocation total exceeds evaluated capacity parameters grid envelope limits.")
-        return np.interp(target_electrons, cum_charge, sub_g)
+            
+        return np.interp(target_electrons, cum_charge, egrid)
 
     def _get_tetrahedra(self):
-        """
-        Identifies the uniform k-point grid dimensions and splits each 
-        micro-cell into 6 tetrahedra without any explicit loops or advanced indexing bugs.
-        """
-            
-        _ = self.kpoints_full
+        """Identifies uniform k-point grid dimensions and splits each micro-cell into 6 tetrahedra."""
         kpts = np.mod(np.round(self.kpoints_full, 6), 1.0)
         u1, u2, u3 = np.unique(kpts[:, 0]), np.unique(kpts[:, 1]), np.unique(kpts[:, 2])
         nk1, nk2, nk3 = len(u1), len(u2), len(u3)
         
-        # Vectorized grid coordinate mapping
         i = np.argmin(np.abs(kpts[:, 0, None] - u1[None, :]), axis=1)
         j = np.argmin(np.abs(kpts[:, 1, None] - u2[None, :]), axis=1)
         k = np.argmin(np.abs(kpts[:, 2, None] - u3[None, :]), axis=1)
@@ -874,14 +1242,11 @@ class PostWFC:
         grid_indices = np.zeros((nk1, nk2, nk3), dtype=int)
         grid_indices[i, j, k] = np.arange(len(kpts))
             
-        # FIX: Use np.ogrid to create broadcastable 3D index vectors.
-        # This prevents NumPy from collapsing dimensions during advanced indexing.
         I, J, K = np.ogrid[:nk1, :nk2, :nk3]
         Ip = (I + 1) % nk1
         Jp = (J + 1) % nk2
         Kp = (K + 1) % nk3
         
-        # Grid slicing to construct the 8 corners of all micro-cubes simultaneously
         c000 = grid_indices[I,  J,  K ][:, :, :, None]
         c100 = grid_indices[Ip, J,  K ][:, :, :, None]
         c010 = grid_indices[I,  Jp, K ][:, :, :, None]
@@ -891,7 +1256,6 @@ class PostWFC:
         c011 = grid_indices[I,  Jp, Kp][:, :, :, None]
         c111 = grid_indices[Ip, Jp, Kp][:, :, :, None]
         
-        # Define the 6 space-filling tetrahedra templates
         t1 = np.concatenate([c000, c100, c110, c111], axis=-1).reshape(-1, 4)
         t2 = np.concatenate([c000, c100, c101, c111], axis=-1).reshape(-1, 4)
         t3 = np.concatenate([c000, c001, c101, c111], axis=-1).reshape(-1, 4)
@@ -899,27 +1263,15 @@ class PostWFC:
         t5 = np.concatenate([c000, c010, c011, c111], axis=-1).reshape(-1, 4)
         t6 = np.concatenate([c000, c001, c011, c111], axis=-1).reshape(-1, 4)
         
-        tetra_full = np.vstack([t1, t2, t3, t4, t5, t6])
+        return np.vstack([t1, t2, t3, t4, t5, t6])
         
-        # Convert full-BZ vertex indices back to irreducible-kpoint indices
-        tetrahedra = tetra_full
-        
-        return tetrahedra
-    
     def _get_default_sigma(self, method, sigma):
-        # Gracefully capture literal Python None types
-        if method is None:
-            method = "none"
+        if method is None: method = "none"
             
         shorthands = {
-            "none": "none",
-            "gaussian": "gaussian",
-            "methfessel-paxton": "methfessel-paxton",
-            "mp": "methfessel-paxton",
-            "fermi-dirac": "fermi-dirac",
-            "fm": "fermi-dirac",
-            "tetrahedron": "tetrahedron",
-            "tet": "tetrahedron",
+            "none": "none", "gaussian": "gaussian", "methfessel-paxton": "methfessel-paxton",
+            "mp": "methfessel-paxton", "fermi-dirac": "fermi-dirac", "fm": "fermi-dirac",
+            "tetrahedron": "tetrahedron", "tet": "tetrahedron",
             }
         
         formal_method = shorthands.get(method if isinstance(method, str) else method, None)
@@ -928,11 +1280,8 @@ class PostWFC:
         
         if sigma is None:
             default_sigma = {
-                "none": 0.0,
-                "gaussian": 0.1,
-                "methfessel-paxton": 0.18,
-                "fermi-dirac": 300,
-                "tetrahedron": 0.04,
+                "none": 0.0, "gaussian": 0.1, "methfessel-paxton": 0.18,
+                "fermi-dirac": 300, "tetrahedron": 0.04,
                 }
             sigma = default_sigma[formal_method]
             
@@ -940,11 +1289,11 @@ class PostWFC:
             sigma = 8.617333262e-5 * sigma
         
         return formal_method, sigma
-    
+        
     def _get_smear_matrix(self, x, method, sigma):
         """Helper matrix generator parsing customized analytical broadening distributions."""
         if method == "none":
-            raise ValueError("Smearing matrix for 'none' method must be constructed via discrete grid-binning, not continuous coordinate division.")
+            raise ValueError("Smearing matrix for 'none' method must be constructed via discrete grid-binning.")
         elif method == "gaussian":
             return np.exp(-0.5 * x**2) / (sigma * np.sqrt(2 * np.pi))
         elif method in ["methfessel-paxton", "mp"]:
@@ -955,7 +1304,7 @@ class PostWFC:
             return (exp_term / (exp_term + 1.0)**2) / sigma
         else:
             raise ValueError(f"Unknown smearing method: '{method}'")
-    
+        
     def _execute_spectral_engine(
             self,
             num_metrics,
@@ -966,10 +1315,7 @@ class PostWFC:
             sigma,
             eval_callback
             ):
-        """
-        Unified high-performance orchestration engine for plane-wave spectral decompositions.
-        Manages loops, weights, indexing, and the energy smearing/convolution backend.
-        """
+        """Unified high-performance orchestration engine for plane-wave spectral decompositions."""
         method, sigma = self._get_default_sigma(method, sigma)
         kpoint_weights = self.kpoint_weights
         
@@ -978,25 +1324,45 @@ class PostWFC:
         nx, ny, nz = grid_shape
         norm_factor = 1.0 / np.sqrt(self.structure.volume)
         
-        # Track metrics dynamically across an arbitrary number of collection vectors
         raw_data = np.zeros((num_metrics, self.nspin, self.nkpoints, self.nbands), dtype=float)
         
-        # Execute loops over the Irreducible Brillouin Zone
+        if energy_range is None:
+            e_min, e_max = self.get_energy_range(method, sigma)
+        else:
+            e_min, e_max = energy_range
+            full_e_min, full_e_max = self.get_energy_range(method, sigma)
+            if e_min is None or e_min == -np.inf: e_min = full_e_min
+            if e_max is None or e_max == np.inf: e_max = full_e_max
+            
+        energy_grid = np.linspace(e_min, e_max, num_points)
+        delta_e = energy_grid[1] - energy_grid[0] if num_points > 1 else 0.0
+
+        if method == "none":
+            pad = 0.5 * delta_e if num_points > 1 else 0.0
+        elif method == "tetrahedron":
+            pad = 4.0 * sigma if sigma > 0.0 else 0.0
+        else:
+            pad = 5.0 * sigma
+
         for ispin in spin_indices:
             for ikpt in range(self.nkpoints):
-                active_bands = list(range(self.nbands))
+                energies_ik = self.energies[ispin, ikpt]
+                active_bands = [iband for iband in range(self.nbands) 
+                                if energies_ik[iband] >= e_min - pad and energies_ik[iband] <= e_max + pad]
+                
+                if not active_bands:
+                    continue
+                
                 rspin = 2.0 if self.nspin == 1 else 1.0
-                # Linear tetrahedron method handles k-point volume weighting inside its geometric integration
                 weight = rspin * kpoint_weights[ikpt] if method != "tetrahedron" else rspin
                 
-                coeffs_list = self._parser.read_coefficients_batch(ispin, ikpt, active_bands)
+                coeffs_list = self._wf_reader.read_coefficients_batch(ispin, ikpt, active_bands)
                 gvectors, _ = self.get_plane_waves_basis_idx(ikpt, grid_shape, expected_npw=coeffs_list.shape[1])
                 
                 kx_idx = gvectors[:, 0] % nx
                 ky_idx = gvectors[:, 1] % ny
                 kz_idx = gvectors[:, 2] % nz
                 
-                # Defer custom numerical contractions to the provided function handle
                 metrics_block = eval_callback(
                     ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, 
                     weight, grid_shape, norm_factor
@@ -1004,14 +1370,8 @@ class PostWFC:
                 
                 for imetric, metric_bands in enumerate(metrics_block):
                     if metric_bands is not None:
-                        raw_data[imetric, ispin, ikpt, :] = metric_bands
+                        raw_data[imetric, ispin, ikpt, active_bands] = metric_bands
                         
-        # Generate the energy spectrum mapping coordinate grid
-        e_min, e_max = energy_range if energy_range is not None else self.energy_range
-        energy_grid = np.linspace(e_min, e_max, num_points)
-        delta_e = energy_grid[1] - energy_grid[0]
-        
-        # Build Gaussian post-processing convolution windows if necessary
         use_convolution = (method == "tetrahedron" and sigma > 0.0)
         if use_convolution:
             n_kernel = int(np.ceil(4.0 * sigma / delta_e))
@@ -1022,65 +1382,66 @@ class PostWFC:
             else:
                 use_convolution = False
 
-        # ROUTING BRANCH 1: Fast Parallelized JIT Linear Tetrahedron Integration
         if method == "tetrahedron":
             full_map = self.full_to_irr_map
-        
-            cached_metrics = np.ascontiguousarray(
-                np.transpose(raw_data, (1, 2, 3, 0))
-            )
-        
-            eigenvalues = self.energies
-        
-            # Expand irreducible data onto the full BZ mesh
-            eigenvalues = eigenvalues[:, full_map, :]
+            cached_metrics = np.ascontiguousarray(np.transpose(raw_data, (1, 2, 3, 0)))
+            eigenvalues = self.energies[:, full_map, :]
             cached_metrics = cached_metrics[:, full_map, :, :]
+            
+            eigenvalues_spin = eigenvalues[spin_indices]
+            cached_metrics_spin = cached_metrics[spin_indices]
+            
+            band_mask = np.any((eigenvalues_spin >= e_min - pad) & (eigenvalues_spin <= e_max + pad), axis=(0, 1))
+            
+            if not np.any(band_mask):
+                return energy_grid, [np.zeros(num_points) for _ in range(num_metrics)]
+                
+            eigenvalues_filtered = eigenvalues_spin[:, :, band_mask]
+            cached_metrics_filtered = cached_metrics_spin[:, :, band_mask, :]
         
             tetra_indices = self.tetrahedra_indices
             tetra_weight = 1.0 / len(tetra_indices)
         
             smeared_output = _integrate_tetrahedra_spectral_density_numba(
-                energy_grid,
-                tetra_indices,
-                eigenvalues[spin_indices],
-                cached_metrics[spin_indices],
-                tetra_weight,
+                energy_grid, tetra_indices, eigenvalues_filtered,
+                cached_metrics_filtered, tetra_weight,
             )
         
             smeared_results = []
             for imetric in range(num_metrics):
-                # FIX: Sum across active spin channels (axis 0) to combine collinear channels
                 smeared = np.sum(smeared_output[imetric], axis=0)
                 if use_convolution:
-                    smeared = np.convolve(smeared, kernel, mode="same")
+                    smeared = np.convolve(smeared, kernel, mode='same')
                 smeared_results.append(smeared)
-        
             return energy_grid, smeared_results
             
-        # ROUTING BRANCH 2: Vectorized Continuous/Discrete Analytical Smearing Backends
+        bands_all = self.energies[spin_indices]
+        bands_flat = bands_all.ravel()
+        
+        mask = (bands_flat >= e_min - pad) & (bands_flat <= e_max + pad)
+        bands_filtered = bands_flat[mask]
+        
         if method == "none":
-            bands = (self.energies)[spin_indices].ravel()
-            closest_idx = np.round((bands - e_min) / delta_e).astype(int)
-            valid_mask = (closest_idx >= 0) & (closest_idx < num_points)
-            
-            smear_matrix = np.zeros((num_points, len(bands)))
-            if len(bands) > 0:
+            smear_matrix = np.zeros((num_points, len(bands_filtered)))
+            if len(bands_filtered) > 0:
+                closest_idx = np.round((bands_filtered - e_min) / delta_e).astype(int)
+                valid_mask = (closest_idx >= 0) & (closest_idx < num_points)
                 smear_matrix[closest_idx[valid_mask], np.where(valid_mask)[0]] = 1.0 / delta_e
         else:
-            bands = (self.energies)[spin_indices].ravel()
-            delta_E = energy_grid[:, None] - bands[None, :]
+            delta_E = energy_grid[:, None] - bands_filtered[None, :]
             smear_matrix = self._get_smear_matrix(delta_E / sigma, method, sigma)
             
         smeared_results = []
         for imetric in range(num_metrics):
-            vals = raw_data[imetric, spin_indices].ravel()
-            smeared = np.dot(smear_matrix, vals)
+            vals_all = raw_data[imetric, spin_indices].ravel()
+            vals_filtered = vals_all[mask]
+            smeared = np.dot(smear_matrix, vals_filtered)
             smeared_results.append(smeared)
             
         return energy_grid, smeared_results
     
     def _symmetrize_3d_grid(self, field):
-        """Averages real-space property grid profiles over space-group operations to enforce symmetry invariants."""
+        """Averages real-space property grid profiles over space-group operations."""
         symmetry = self.structure.symmetry_data
         Nx, Ny, Nz = field.shape
         sym_field = np.zeros_like(field)
@@ -1088,13 +1449,10 @@ class PostWFC:
         mx, my, mz = np.meshgrid(np.arange(Nx), np.arange(Ny), np.arange(Nz), indexing='ij')
         coords = np.stack([mx.ravel() / Nx, my.ravel() / Ny, mz.ravel() / Nz], axis=0)
         
-        # Walk systematically through available crystal rotation and translation operations
         for R, t in zip(symmetry.rotations, symmetry.translations):
             R_inv = np.round(np.linalg.inv(R)).astype(int)
-            # Map forward real space grid components onto inverted cell symmetry frames
             tc = ((R_inv @ coords - (R_inv @ t)[:, np.newaxis]) % 1.0)
             
-            # Re-index coordinate components back onto periodic cell boundary limits using integer rounding masks
             sym_field += field[
                 np.round(tc[0] * Nx).astype(int) % Nx, 
                 np.round(tc[1] * Ny).astype(int) % Ny, 
@@ -1102,29 +1460,32 @@ class PostWFC:
             ].reshape(Nx, Ny, Nz)
             
         return sym_field / len(symmetry.rotations)
-    
+        
     @classmethod
     def from_directory(
             cls, 
             directory: Path | str = Path("."), 
             fmt: str = "vasp", 
             scipy_workers: int = -1, 
-            valence_counts: dict = None,
-            pseudopotential_filename: Path | None | list | str | bool = None,
             **kwargs,
             ):
-        """Dynamic parser factory routing file stream construction to selected code formats templates handles."""
-        
-        # select proper parser
+        """Dynamic wf_reader factory routing file stream construction to selected code formats."""
         if fmt == "vasp": 
-            from baderkit.post_wfc.wf_parsers import VaspParser as Parser
+            from baderkit.post_wfc.wf_readers import VaspReader as wf_reader
         elif fmt == "qe": 
-            from baderkit.post_wfc.wf_parsers import QeParser as Parser
+            from baderkit.post_wfc.wf_readers import QeReader as wf_reader
         else: 
             raise ValueError(f"Unknown format profile template string keyword: {fmt}")
             
-        if valence_counts is None:
-            valence_counts = load_pseudo(pseudopotential_filename)
-            
-        # create instance
-        return cls(Parser(directory=Path(directory), **kwargs), scipy_workers=scipy_workers, valence_counts=valence_counts, **kwargs)
+        from baderkit.post_wfc.pseudopotentials.augmentation_environment import PAWAugmentationEnvironment
+        aug_env = PAWAugmentationEnvironment.from_directory(
+            directory=directory,
+            fmt=fmt,
+            )
+        
+        return cls(
+            wf_reader(directory=Path(directory), **kwargs), 
+            aug_environment=aug_env,
+            valence_counts=kwargs.get("valence_counts", None),
+            scipy_workers=scipy_workers, 
+            **kwargs)
