@@ -32,6 +32,7 @@ class GridPlotter(StructurePlotter):
         surface_opacity=0.8,
         cap_opacity=0.8,
         colormap="viridis",
+        log_scale=False,
         use_solid_surface_color=False,
         use_solid_cap_color=False,
         surface_color="#BA8E23",
@@ -45,6 +46,7 @@ class GridPlotter(StructurePlotter):
         self._surface_opacity = surface_opacity
         self._cap_opacity = cap_opacity
         self._colormap = colormap
+        self._log_scale = log_scale
         self._use_solid_surface_color = use_solid_surface_color
         self._use_solid_cap_color = use_solid_cap_color
         self._surface_color = pv.Color(surface_color)
@@ -167,6 +169,27 @@ class GridPlotter(StructurePlotter):
 
         # update settings
         self._colormap = colormap
+        self._update_clims_cmaps()
+        
+    @property
+    def log_scale(self) -> str:
+        """
+
+        Returns
+        -------
+        str
+            Whether or not to use a logarithmic scale for colormaps.
+
+        """
+        return self._log_scale
+
+    @log_scale.setter
+    def log_scale(self, log_scale: str):
+        if log_scale == self.log_scale:
+            return
+
+        # update settings
+        self._log_scale = log_scale
         self._update_clims_cmaps()
 
     @property
@@ -400,6 +423,7 @@ class GridPlotter(StructurePlotter):
             if actor is not None:
                 actor.mapper.scalar_range = (self.min_val, self.max_val)
                 actor.mapper.lookup_table.cmap = self.colormap
+                actor.mapper.lookup_table.log_scale = self.log_scale
 
     def _make_structured_grid(self) -> pv.StructuredGrid:
         """
@@ -487,6 +511,7 @@ class GridPlotter(StructurePlotter):
             clim=(self.min_val, self.max_val),
             show_scalar_bar=False,
             name=name,
+            log_scale=self.log_scale,
         )
 
     def remove_slice(self, key):
@@ -548,6 +573,7 @@ class GridPlotter(StructurePlotter):
             cmap=self.colormap,
             clim=(self.min_val, self.max_val),
             show_scalar_bar=False,
+            log_scale=self.log_scale,
         )
 
         origin, normal = self._slice_planes[name]
