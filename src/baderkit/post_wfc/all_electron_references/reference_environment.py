@@ -24,8 +24,8 @@ class AtomicReferenceEnvironment:
     def __init__(
             self, 
             structure, 
-            valence_counts, 
             pdos_data,
+            aug_environment,
             cutoff_radius=8.0,
             basis_dir=None,
             ):
@@ -44,7 +44,8 @@ class AtomicReferenceEnvironment:
             Directory containing the generated {Element}.npz basis files.
         """
         self.structure = structure
-        self.valence_counts = valence_counts
+        self.aug_environment = aug_environment
+        self.valence_counts = self.aug_environment.valence_counts
         self.cutoff_radius = cutoff_radius
         self.basis_dir = Path(basis_dir) if basis_dir is not None else Path(__file__).parent
         
@@ -80,8 +81,7 @@ class AtomicReferenceEnvironment:
             file_path = self.basis_dir / f"{element}.npz"
             if not file_path.exists():
                 raise FileNotFoundError(f"Missing analytical basis binary for element: {file_path}")
-            basis = AESpecies.from_file(file_path)
-            basis = basis.get_valence_dataset(self.valence_counts[element])
+            basis = AESpecies.from_file(file_path, paw_species=self.aug_environment.paw_datasets[element])
             atom_bases[element] = basis
         self.atom_bases = atom_bases
 
@@ -135,6 +135,7 @@ class AtomicReferenceEnvironment:
         """
         Normalizes individual atom PDOS arrays so the occupied states integrate exactly
         to each atom's valence count, then computes the cumulative total cell charge profile.
+        This is used to properly fill atomic states based on an energy range.
         """
         energies = pdos_data["energy_grid"]
         
@@ -187,7 +188,6 @@ class AtomicReferenceEnvironment:
             self, 
             min_charge: float, 
             max_charge: float,
-            grid_spacing: float = 0.05,
             ) -> dict[int, NDArray]:
         """
         Computes the total radial charge density profiles across the PDOS-resolved local 
@@ -261,17 +261,12 @@ class AtomicReferenceEnvironment:
         
         partial_charges = self.get_partial_radial_charge_densities(min_charge, max_charge)
 
-        any_atom = list(partial_charges.keys())[0]
-        n_configurations = partial_charges[any_atom].shape[0]
-        total = np.zeros(n_configurations, dtype=np.float64)
-        
+        total = 0
         for dist, i_atom in zip(filtered_distances, filtered_base_indices):
             symbol = self.structure[i_atom].specie.symbol
             r_grid = self.atom_bases[symbol].radial_grid
             rho_matrix = partial_charges[i_atom]  # shape: (n_configurations, n_grid)
-            
-            for c in range(n_configurations):
-                total[c] += np.interp(dist, r_grid, rho_matrix[c, :])
+            total += np.interp(dist, r_grid, rho_matrix)
         
         return total
     
@@ -282,21 +277,27 @@ class AtomicReferenceEnvironment:
         max_charge: float, 
         num_points: int = 2000,
     ) -> NDArray:
-        """Calculates the charge density at a point for a range of total cell charges."""
+        """Calculates the differential charge density (d_rho / d_Q) at a given point using a stable cumulative approach."""
         min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
         target_charges = np.linspace(min_charge, max_charge, num_points)
         
-        density_values = self.calculate_non_bonding_density_at_point(
-            frac_coord, 
-            min_charge=min_charge, 
-            max_charge=max_charge
-        )
+        cumulative_density = np.empty(len(target_charges), dtype=np.float64)
         
-        if len(density_values) != num_points:
-            original_charges = np.linspace(min_charge, max_charge, len(density_values))
-            density_values = np.interp(target_charges, original_charges, density_values)
+        # 1. Compute cumulative density using robust macroscopic windows starting from baseline
+        for idx, charge in enumerate(target_charges):
+            cumulative_density[idx] = self.calculate_non_bonding_density_at_point(
+                frac_coord, 
+                min_charge=min_charge, 
+                max_charge=charge
+            )
             
-        return np.column_stack((target_charges, density_values))
+        # 2. Extract the stable numerical derivative (d_rho / d_Q) via central differences
+        if num_points > 1:
+            drho_dQ = np.gradient(cumulative_density, target_charges)
+        else:
+            drho_dQ = np.zeros(len(target_charges), dtype=np.float64)
+            
+        return np.column_stack((target_charges, drho_dQ))
     
     def calculate_density_at_point_vs_energy(
         self, 
@@ -304,36 +305,48 @@ class AtomicReferenceEnvironment:
         energy_charge_array: NDArray, 
         num_interp_points: int = 2000,
     ) -> NDArray:
-        """Maps input cell energies to their corresponding non-bonding charge densities."""
-        energies = energy_charge_array[:, 0]
-        charges = energy_charge_array[:, 1]
+        """Maps input cell energies to their corresponding differential charge densities (d_rho / d_E)."""
+        # 1. Sort internally by energy to guarantee a valid numerical gradient
+        sorted_indices = np.argsort(energy_charge_array[:, 0])
+        energies = energy_charge_array[sorted_indices, 0]
+        charges = energy_charge_array[sorted_indices, 1]
         
         min_charge = np.min(charges)
         max_charge = np.max(charges)
         
+        # Handle edge case where charge doesn't change
         if np.abs(max_charge - min_charge) < 1e-6:
-            density_vs_charge = self.calculate_density_at_point_vs_charge(
-                frac_coord, min_charge=min_charge, max_charge=max_charge, num_points=1
-            )
-            constant_density = density_vs_charge[0, 1]
-            densities = np.full(len(energies), constant_density, dtype=np.float64)
+            # If charge is constant, d_Q/d_E is 0, so d_rho/d_E is also 0
+            drho_dE_sorted = np.zeros(len(energies), dtype=np.float64)
         else:
+            # 2. Get the differential density with respect to charge: d_rho / d_Q
             density_vs_charge = self.calculate_density_at_point_vs_charge(
                 frac_coord, 
                 min_charge=min_charge, 
                 max_charge=max_charge, 
                 num_points=num_interp_points
             )
-            densities = np.interp(charges, density_vs_charge[:, 0], density_vs_charge[:, 1])
+            # Interpolate d_rho/d_Q values at our specific point charges
+            drho_dQ_sorted = np.interp(charges, density_vs_charge[:, 0], density_vs_charge[:, 1])
             
-        return np.column_stack((energies, densities))
+            # 3. Compute the derivative of charge with respect to energy: d_Q / d_E
+            # np.gradient handles non-uniform energy spacing automatically
+            dQ_dE_sorted = np.gradient(charges, energies)
+            
+            # 4. Apply the chain rule: d_rho / d_E = (d_rho / d_Q) * (d_Q / d_E)
+            drho_dE_sorted = drho_dQ_sorted * dQ_dE_sorted
+            
+        # 5. Restore original array ordering to prevent downstream bugs
+        original_order = np.argsort(sorted_indices)
+        drho_dE_original = drho_dE_sorted[original_order]
+        
+        return np.column_stack((energy_charge_array[:, 0], drho_dE_original))
 
     def generate_charge_density_grid(
                 self, 
                 grid_dims, 
                 min_charge=None, 
                 max_charge=None,
-                energy_cutoff=None,
                 ):
         """Generates the total non-bonding reference charge density grid using custom PDOS weights."""
         min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
@@ -353,6 +366,9 @@ class AtomicReferenceEnvironment:
             symbol = self.structure[i_atom].specie.symbol
             r_grids_list.append(self.atom_bases[symbol].radial_grid)
             rho_matrices_list.append(partial_charges[i_atom])
+            
+            # get radial grid
+            paw_r1=self.aug_environment.paw_datasets[symbol].radial_grid[0]
         
         g_dims = np.array(grid_dims, dtype=np.int64)
         
@@ -362,27 +378,28 @@ class AtomicReferenceEnvironment:
             all_indices,
             all_distances,
             rho_matrices_list,
-            r_grids_list
+            r_grids_list,
+            paw_r1,
         )
         
-        if energy_cutoff is not None:
-            ngx, ngy, ngz = grid_dims
-            rho_G = np.fft.fftn(rho_3d)
-            recip_lattice = self.structure.lattice.reciprocal_lattice.matrix
+        # if energy_cutoff is not None:
+        #     ngx, ngy, ngz = grid_dims
+        #     rho_G = np.fft.fftn(rho_3d)
+        #     recip_lattice = self.structure.lattice.reciprocal_lattice.matrix
             
-            h = np.fft.fftfreq(ngx) * ngx
-            k = np.fft.fftfreq(ngy) * ngy
-            l = np.fft.fftfreq(ngz) * ngz
-            H, K, L = np.meshgrid(h, k, l, indexing='ij')
+        #     h = np.fft.fftfreq(ngx) * ngx
+        #     k = np.fft.fftfreq(ngy) * ngy
+        #     l = np.fft.fftfreq(ngz) * ngz
+        #     H, K, L = np.meshgrid(h, k, l, indexing='ij')
             
-            G_vectors = np.stack([H, K, L], axis=-1) @ recip_lattice
-            G_magnitudes = np.linalg.norm(G_vectors, axis=-1)
+        #     G_vectors = np.stack([H, K, L], axis=-1) @ recip_lattice
+        #     G_magnitudes = np.linalg.norm(G_vectors, axis=-1)
             
-            BOHR_TO_ANGSTROM = 0.529177210903
-            g_cutoff = np.sqrt(2.0 * energy_cutoff / (27.211386 * BOHR_TO_ANGSTROM**2))
+        #     BOHR_TO_ANGSTROM = 0.529177210903
+        #     g_cutoff = np.sqrt(2.0 * energy_cutoff / (27.211386 * BOHR_TO_ANGSTROM**2))
 
-            rho_G[G_magnitudes > g_cutoff] = 0.0
-            rho_3d = np.fft.ifftn(rho_G).real
+        #     rho_G[G_magnitudes > g_cutoff] = 0.0
+        #     rho_3d = np.fft.ifftn(rho_G).real
             
         return rho_3d
     

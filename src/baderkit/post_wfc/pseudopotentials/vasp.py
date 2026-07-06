@@ -133,7 +133,6 @@ def parse_vasp_potcar(potcar_path: Path | str) -> dict:
 
         # --- 2. Pass B: Targeted Numerical Array Collection ---
         radial_grid = None
-        radial_weights = None
         raw_projectors = []
         pseudo_partial_waves = []
         all_electron_partial_waves = []
@@ -183,7 +182,6 @@ def parse_vasp_potcar(potcar_path: Path | str) -> dict:
                     dr[0] = radial_grid[1] - radial_grid[0]
                     dr[1:-1] = 0.5 * (radial_grid[2:] - radial_grid[:-2])
                     dr[-1] = radial_grid[-1] - radial_grid[-2]
-                    radial_weights = (radial_grid ** 2) * dr
                 line_idx += 1
                 continue
                 
@@ -352,7 +350,6 @@ def parse_vasp_potcar(potcar_path: Path | str) -> dict:
             element=element,
             Z=z_val,
             radial_grid=radial_grid if radial_grid is not None else np.empty(0),
-            radial_weights=radial_weights if radial_weights is not None else np.empty(0),
             angular_momenta=np.array(expanded_ang_moms, dtype=int),
             magnetic_nums=np.array(expanded_ms, dtype=int),
             all_electron_partial_waves=np.array(expanded_ae_partial_waves),

@@ -26,9 +26,6 @@ class PAWSpecies:
     radial_grid: NDArray
     """1D array containing the radial coordinate mesh grid points, r."""
     
-    radial_weights: NDArray
-    """1D array containing the integration grid quadrature weights (Jacobian: r^2 * dr)."""
-    
     # --- Fields WITH default values second ---
     source: str | None = None
     """The DFT code this PAW was used for"""
@@ -43,7 +40,7 @@ class PAWSpecies:
     """1D array of orbital angular momentum quantum numbers, l, for each active channel."""
     
     magnetic_nums: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int_))
-    """1D array of orbital angular momentum quantum numbers, m, for each active channel."""
+    """1D array of orbital magnetic momentum quantum numbers, m, for each active channel."""
     
     all_electron_partial_waves: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
     """2D array of shape (num_channels, num_pts) containing core-orthogonalized atomic partial waves, phi(r)."""

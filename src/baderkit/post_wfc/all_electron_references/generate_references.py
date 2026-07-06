@@ -191,13 +191,13 @@ def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.pbe"):
                     "exponents": exps.tolist(),
                     "coefficients": normalized_coeffs_mat.tolist()
                 })
-
             metadata = {
                 "file_format": "SphericalRadialWavefunction_DMatrix_NPZ",
                 "element": element,
                 "functional": "pbe",
                 "matrix_layout_dimensions": {str(l): n for l, n in l_counts.items()},
-                "basis_primitives": basis_primitives
+                "basis_primitives": basis_primitives,
+                "basis": mol.basis,
             }
 
             output_path = OUTPUT_PATH / f"{element}.npz"

@@ -227,7 +227,7 @@ def reconstruct_onsite_densities_at_point(
         dz = lattice_matrix[2,0]*df_x + lattice_matrix[2,1]*df_y + lattice_matrix[2,2]*df_z
         
         r = np.sqrt(dx*dx + dy*dy + dz*dz)
-        if r >= cutoff:  # REMOVED: or r == 0.0
+        if r >= cutoff:
             continue
             
         # FIX: Handle exact nuclear coordinate grid alignment gracefully

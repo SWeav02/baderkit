@@ -78,8 +78,8 @@ class PostWFC:
             pdos = self.get_atom_projected_density_of_states()
             self._reference_environment = AtomicReferenceEnvironment(
                 structure=self._structure,
-                valence_counts=self._aug_environment.valence_counts,
-                pdos_data=pdos
+                pdos_data=pdos,
+                aug_environment=self._aug_environment,
                 )
         return self._reference_environment
         
@@ -454,7 +454,7 @@ class PostWFC:
         self, 
         grid_shape=None, 
         spin_channel=-1, 
-        include_aug=False,
+        include_aug=True,
         energy_range=(-np.inf, np.inf), 
         use_partial_occ=True,
         return_density_matrices=False,
@@ -560,7 +560,7 @@ class PostWFC:
             spin_channel=-1, 
             energy_range=(-np.inf, np.inf), 
             use_partial_occ=True, 
-            include_aug=False,
+            include_aug=True,
             return_charge_density=False,
             return_density_matrices=False,
             ):
@@ -645,6 +645,75 @@ class PostWFC:
             
         return tuple(results) if len(results) > 1 else results[0]
 
+    @staticmethod
+    def _generate_property_plot(energy_grid, plot_curves, x_label, energy_range=None):
+        """
+        Shared visualization module that converts point-resolved physical metrics 
+        vs energy levels into a clean, publication-ready Matplotlib figure object.
+        """
+        import matplotlib.pyplot as plt
+        
+        # Initialize figure frame with a high-resolution canvas size
+        fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
+        
+        max_val = 1e-6
+        # Loop over every property dataset passed in the plot tracking dictionary
+        for label, data in plot_curves.items():
+            if data is not None:
+                # Plot properties on the X-axis and energies on the Y-axis (swapped layout axis)
+                ax.plot(data, energy_grid, label=label, linewidth=2.5)
+                
+                # Dynamically determine visible viewport boundaries to prevent over-scaling the X-axis limit
+                ymin, ymax = energy_grid[0], energy_grid[-1]
+                if energy_range is not None:
+                    if energy_range[0] is not None and energy_range[0] != -np.inf: 
+                        ymin = energy_range[0]
+                    if energy_range[1] is not None and energy_range[1] != np.inf: 
+                        ymax = energy_range[1]
+                
+                # Isolate values falling purely within the visible window bounding mask
+                mask = (energy_grid >= ymin) & (energy_grid <= ymax)
+                if np.any(mask):
+                    max_val = max(max_val, float(np.max(data[mask])))
+            
+        # Enforce explicit axis viewport boundaries matching the calculation limits
+        ymin, ymax = energy_grid[0], energy_grid[-1]
+        if energy_range is not None:
+            if energy_range[0] is not None and energy_range[0] != -np.inf: 
+                ymin = energy_range[0]
+            if energy_range[1] is not None and energy_range[1] != np.inf: 
+                ymax = energy_range[1]
+                
+        # Apply a clean 5% padding on the right edge so line paths do not clip the border
+        ax.set_xlim(0.0, 1.05 * max_val)
+        ax.set_ylim(ymin, ymax)
+        
+        # Apply minimalist styling parameters reflecting the 'plotly_white' template canvas
+        ax.set_facecolor("white")
+        ax.grid(True, which="both", color="black", alpha=0.05, linestyle="-")
+        
+        # Hide top and right outer borders for a modern look
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+            
+        # Draw a clear dashed indicator tracking the system Fermi level (Energy = 0.0 eV)
+        ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
+        
+        # Position the EF label tracking data space on Y, but viewport space (1% from left border) on X
+        ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
+                color="gray", va="bottom", ha="left", fontsize=12)
+        
+        # Solid vertical baseline tracking the zero-density origin boundary
+        ax.axvline(0.0, color="black", linewidth=1)
+        
+        # Apply customized typography elements across axes frames
+        ax.set_xlabel(x_label, fontsize=14, family="sans-serif")
+        ax.set_ylabel("Energy - $E_F$ (eV)", fontsize=14, family="sans-serif")
+        ax.legend(fontsize=12, loc="upper right", frameon=True)
+        
+        plt.tight_layout()
+        return fig
+
     def get_rho_tau_vs_energy(
         self, 
         frac_coord, 
@@ -656,30 +725,38 @@ class PostWFC:
         method = "gaussian", 
         sigma=None,
         grid_shape=None,
-        include_aug=False,
+        include_aug=True,
+        return_plot=False,
     ):
         """Calculates exact state-resolved kinetic and charge density metrics at a single point with PAW updates."""
-        grid_shape = grid_shape if grid_shape is not None else  self._minimum_fft_size * 2
+        # Fallback to standard double unaliased grid dimensions if custom dimensions are omitted[cite: 2]
+        grid_shape = grid_shape if grid_shape is not None else self._minimum_fft_size * 2
         nx, ny, nz = grid_shape
         
+        # Map real continuous fractional coordinates into discrete periodic meshgrid indices
         ix = int(np.round(frac_coord[0] * nx)) % nx
         iy = int(np.round(frac_coord[1] * ny)) % ny
         iz = int(np.round(frac_coord[2] * nz)) % nz
     
         def point_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
+            # Calculate structural coordinate phase shifting factors for the explicit point
             phases = np.exp(2j * np.pi * (kx_idx * ix / nx + ky_idx * iy / ny + kz_idx * iz / nz))
             
+            # Construct Cartesian reciprocal momentum space vectors for the active block[cite: 2]
             rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
             k = self.kpoints_cart[ikpt]             
             K_cart = rgvec + k[np.newaxis, :]             
             gk2 = np.sum(K_cart**2, axis=1)             
             
+            # Evaluate baseline pseudo-wavefunction and kinetic Laplacian contributions at the target coordinate
             phi_at_point = np.dot(coeffs_list, phases) * norm_factor
             lap_phi_at_point = np.dot(coeffs_list, -gk2 * phases) * norm_factor
             
+            # Extract standard plane-wave tracking fields scaled by state k-weights and degeneracies
             rho_bands = (phi_at_point.conj() * phi_at_point).real * weight
             tau_bands = (-phi_at_point * lap_phi_at_point.conj()).real * weight
             
+            # Isolate the index configurations of states matching the requested energy boundaries[cite: 2]
             active_bands = []
             for iband in range(self.nbands):
                 rel_energy = self.energies[ispin, ikpt, iband]
@@ -688,10 +765,12 @@ class PostWFC:
                         continue
                 active_bands.append(iband)
             
+            # Execute localized PAW sphere reconstructions if the matrix row dimensions line up correctly[cite: 2]
             if len(active_bands) == len(coeffs_list):
                 point_cart = frac_coord @ self._aug_environment.lattice_matrix
                 num_atoms = len(self.structure)
                 
+                # Gather raw projectivity overlaps for all structural sites[cite: 2]
                 projections_all_atoms = []
                 for i_atom in range(num_atoms):
                     elem = self.structure[i_atom].species_string
@@ -699,23 +778,19 @@ class PostWFC:
                     h = dataset.q_linear_grid[-1]
                     
                     P_G_matrix = compute_reciprocal_projectors(
-                        k, 
-                        rgvec, 
-                        self.structure[i_atom].coords, 
-                        h,
-                        len(dataset.q_linear_grid), 
-                        self.structure.volume, 
-                        dataset.reciprocal_projectors, 
-                        dataset.angular_momenta, 
-                        dataset.magnetic_nums
+                        k, rgvec, self.structure[i_atom].coords, h,
+                        len(dataset.q_linear_grid), self.structure.volume, 
+                        dataset.reciprocal_projectors, dataset.angular_momenta, dataset.magnetic_nums
                     )
                     proj_atom = np.dot(P_G_matrix, coeffs_list.T)
                     projections_all_atoms.append(proj_atom)
                 
+                # Inject all-electron minus pseudo localized corrections inside the spheres[cite: 2]
                 if include_aug:
                     aug_bands = np.zeros(len(active_bands), dtype=np.float64)
                     aug_ke_bands = np.zeros(len(active_bands), dtype=np.float64)
                     
+                    # Compute individual 1D state corrections by establishing local density matrices
                     for n_idx in range(len(active_bands)):
                         band_density_matrices = []
                         for i_atom in range(num_atoms):
@@ -723,23 +798,25 @@ class PostWFC:
                             dm = np.outer(proj, proj.conj()).real
                             band_density_matrices.append(dm)
                             
+                        # Evaluate localized all-electron vs pseudo onsite charge adjustments (AE - PS)[cite: 2]
                         ae_rho, ps_rho = self._aug_environment.calculate_onsite_densities_at_point(
-                            point_cart=point_cart,
-                            density_matrices=band_density_matrices
+                            point_cart=point_cart, density_matrices=band_density_matrices
                         )
                         aug_bands[n_idx] = ae_rho - ps_rho
                         
+                        # Evaluate localized all-electron vs pseudo onsite kinetic adjustments (AE - PS)[cite: 2]
                         ae_tau, ps_tau = self._aug_environment.calculate_onsite_ke_densities_at_point(
-                            point_cart=point_cart,
-                            density_matrices=band_density_matrices
+                            point_cart=point_cart, density_matrices=band_density_matrices
                         )
                         aug_ke_bands[n_idx] = ae_tau - ps_tau
                     
+                    # Accumulate localized PAW terms onto the continuous background channels
                     rho_bands += aug_bands * weight
                     tau_bands += aug_ke_bands * weight
             
             metrics = [rho_bands, tau_bands]
             
+            # Resolve complex spatial derivatives if gradient or laplacian flags are specified[cite: 2]
             if return_grad_rho_sq or return_lap_rho:
                 grad_phi_at_point = np.zeros((len(coeffs_list), 3), dtype=complex)
                 for idim in range(3):
@@ -761,6 +838,7 @@ class PostWFC:
                     
             return metrics
     
+        # Allocate required collector arrays inside the spectral decomposition framework[cite: 2]
         num_metrics = 4 if (return_grad_rho_sq or return_lap_rho) else 2
 
         energy_grid, smeared = self._execute_spectral_engine(
@@ -768,46 +846,146 @@ class PostWFC:
             num_points=num_points, method=method, sigma=sigma, eval_callback=point_callback
         )
         
+        # Route directly to the graphing handler if return_plot flag is active
+        if return_plot:
+            plot_curves = {
+                r"Charge Density $\rho$": smeared[0],
+                r"Kinetic Density $\tau$": smeared[1]
+            }
+            if return_grad_rho_sq and smeared[2] is not None:
+                plot_curves[r"Gradient $|\nabla\rho|^2$"] = smeared[2]
+            if return_lap_rho and smeared[3] is not None:
+                plot_curves[r"Laplacian $\nabla^2\rho$"] = smeared[3]
+                
+            return self._generate_property_plot(
+                energy_grid=energy_grid,
+                plot_curves=plot_curves,
+                x_label="Differential Density Magnitude (per eV)",
+                energy_range=energy_range
+            )
+            
         results = [energy_grid, smeared[0], smeared[1]]
         if return_grad_rho_sq: results.append(smeared[2])
         if return_lap_rho: results.append(smeared[3])
         return tuple(results)
     
-    def get_integrated_rho_tau_vs_energy(self, frac_coord, **kwargs) -> np.ndarray:
+    def get_integrated_rho_tau_vs_energy(self, frac_coord, return_plot=False, **kwargs) -> np.ndarray:
         """Calculates total cumulatively integrated metrics at a fraction coordinate point."""
+        # Explicitly turn off derivative components to eliminate unnecessary matrix overhead calculations[cite: 2]
         kwargs["return_grad_rho_sq"] = False
         kwargs["return_lap_rho"] = False
         
-        contributions = self.get_rho_tau_vs_energy(frac_coord, **kwargs)
+        # Force return_plot=False internally to extract raw mathematical array trajectories[cite: 2]
+        contributions = self.get_rho_tau_vs_energy(frac_coord, return_plot=False, **kwargs)
         energy_grid = contributions[0]
         smeared_rho = contributions[1]
         smeared_tau = contributions[2]
         
+        # Pre-allocate integration accumulators matching the energy grid dimensions
         cum_charge = np.zeros(len(energy_grid), dtype=np.float64)
         cum_tau = np.zeros(len(energy_grid), dtype=np.float64)
+        
+        # Execute cumulative trapezoidal numerical integrations across the energy steps[cite: 2]
         if len(energy_grid) > 1:
             cum_charge[1:] = cumulative_trapezoid(smeared_rho, energy_grid)
             cum_tau[1:] = cumulative_trapezoid(smeared_tau, energy_grid)
             
+        # If visual chart is requested, pass the integrated fields to the shared static engine
+        if return_plot:
+            plot_curves = {
+                "Integrated Charge Density": cum_charge,
+                "Integrated Kinetic Density": cum_tau
+            }
+            return self._generate_property_plot(
+                energy_grid=energy_grid,
+                plot_curves=plot_curves,
+                x_label="Accumulated Integrated Value",
+                energy_range=kwargs.get("energy_range", None)
+            )
+            
         return energy_grid, cum_charge, cum_tau
     
-    def calculate_nonbonding_rho_vs_energy(self, frac_coord, **kwargs) -> np.ndarray:
-        """Computes both bonding system and non-bonding mapping comparisons."""
-        energy_grid, rho, tau = self.get_integrated_rho_tau_vs_energy(frac_coord, **kwargs)
-        
-        num_interp_points = kwargs.get("num_points", 2000)
-        reference_data = self.reference_environment.calculate_density_at_point_vs_energy(
-            frac_coord=frac_coord,
-            energy_charge_array=rho,
-            num_interp_points=num_interp_points
+    def get_total_charge_vs_energy(
+        self,
+        spin_channel: int = -1,
+        energy_range: list = None,
+        num_points: int = 2000,
+        method: str = "gaussian",
+        sigma: float = None,
+        **kwargs,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Computes the total cell charge integrated as a function of energy 
+        by evaluating the total cell Density of States (DOS).
+        """
+        # A callback that simply returns the state weights to compute total DOS
+        def total_dos_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
+            n_bands = coeffs_list.shape[0]
+            return [np.full(n_bands, weight)]
+
+        # Execute the engine to get the smeared total DOS
+        energy_grid, smeared = self._execute_spectral_engine(
+            num_metrics=1,
+            spin_channel=spin_channel,
+            energy_range=energy_range,
+            num_points=num_points,
+            method=method,
+            sigma=sigma,
+            eval_callback=total_dos_callback
         )
         
-        return energy_grid, reference_data
+        total_dos = smeared[0]
+        
+        # Numerically integrate the total DOS to get cumulative cell charge Q(E)
+        dx = np.diff(energy_grid)
+        avg_dos = 0.5 * (total_dos[:-1] + total_dos[1:])
+        total_charge = np.zeros_like(energy_grid)
+        total_charge[1:] = np.cumsum(avg_dos * dx)
+        
+        return energy_grid, total_charge
+    
+    def get_nonbonding_rho_vs_energy(
+        self, 
+        frac_coord, 
+        num_points = 2000,
+        return_plot=False, 
+        **kwargs,
+    ) -> np.ndarray:
+        """Computes the differential non-bonding reference charge density vs energy curve."""
+        # 1. Retrieve the true global continuous charging profile of the cell
+        energy_grid, total_charge = self.get_total_charge_vs_energy(
+            num_points=num_points,
+            **kwargs
+        )
+        
+        # 2. Construct the array mapping column 0 to energies and column 1 to total cell charge Q(E)
+        energy_charge_grid = np.column_stack((energy_grid, total_charge))
+        
+        # 3. Forward the mapped array into the target PDOS-driven reference environment
+        reference_data = self.reference_environment.calculate_density_at_point_vs_energy(
+            frac_coord=frac_coord,
+            energy_charge_array=energy_charge_grid,
+            num_interp_points=num_points
+        )
+        
+        # Dispatch to plotting subsystem if the return_plot flag is active
+        if return_plot:
+            plot_curves = {
+                "Non-Bonding Reference Density": reference_data[:, 1]
+            }
+            return self._generate_property_plot(
+                energy_grid=energy_grid,
+                plot_curves=plot_curves,
+                x_label="Differential Density Magnitude (per eV)",
+                energy_range=kwargs.get("energy_range", None)
+            )
+            
+        return reference_data
     
     def calculate_localization_function(
             self, 
             grid_shape=None, 
-            include_aug=False,
+            include_aug=True,
             energy_range=(-np.inf, np.inf), 
             spin_channel=-1, 
             localization_function="elf", 
@@ -875,14 +1053,15 @@ class PostWFC:
         return grad_x.real, grad_y.real, grad_z.real
         
     def get_density_of_states(
-                self, 
-                spin_channel = -1, 
-                energy_range=None, 
-                num_points=2000, 
-                method="gaussian", 
-                sigma=None, 
-                use_occupancies=False,
-                ):
+        self, 
+        spin_channel=-1, 
+        energy_range=None, 
+        num_points=2000, 
+        method="gaussian", 
+        sigma=None, 
+        use_occupancies=False,
+        return_plot=False,
+    ):
         """Constructs energy coordinate profiles outlining the Electronic Density of States (DOS)."""
         method, sigma = self._get_default_sigma(method, sigma)
         bands = self.energies
@@ -968,8 +1147,67 @@ class PostWFC:
                 kernel /= np.sum(kernel)
                 dos = np.convolve(dos, kernel, mode='same')
                     
+        if return_plot:
+            return self._generate_dos_plot(
+                energy_grid=energy_grid,
+                total_dos=dos,
+                plot_curves={},
+                energy_range=energy_range
+            )
+
         return energy_grid, dos
     
+    @staticmethod
+    def _generate_dos_plot(energy_grid, total_dos, plot_curves, energy_range=None):
+        """
+        Shared high-performance plotting module that converts raw spectral data matrices 
+        into a polished, publication-ready Matplotlib figure object.
+        """
+        import matplotlib.pyplot as plt
+        
+        fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
+        
+        # Plot baseline Total DOS
+        ax.plot(total_dos, energy_grid, label="total", color="black", linewidth=2.5)
+        
+        # Plot individual contributing channels
+        for label, data in plot_curves.items():
+            ax.plot(data, energy_grid, label=label, linewidth=2.5)
+            
+        # Compute exact bounded viewport ranges 
+        ymin, ymax = energy_grid[0], energy_grid[-1]
+        if energy_range is not None:
+            if energy_range[0] is not None and energy_range[0] != -np.inf: 
+                ymin = energy_range[0]
+            if energy_range[1] is not None and energy_range[1] != np.inf: 
+                ymax = energy_range[1]
+                
+        mask = (energy_grid >= ymin) & (energy_grid <= ymax)
+        dos_max = float(np.max(total_dos[mask])) if np.any(mask) else 1.0
+        
+        ax.set_xlim(0.0, 1.05 * dos_max)
+        ax.set_ylim(ymin, ymax)
+        
+        # Styling parameters mirroring the clean plotly_white layout
+        ax.set_facecolor("white")
+        ax.grid(True, which="both", color="black", alpha=0.05, linestyle="-")
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+            
+        # Structural reference lines and indicators
+        ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
+        ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
+                color="gray", va="bottom", ha="left", fontsize=12)
+        ax.axvline(0.0, color="black", linewidth=1)
+        
+        # Frame text elements
+        ax.set_xlabel("DOS (states/eV)", fontsize=14, family="sans-serif")
+        ax.set_ylabel("Energy - $E_F$ (eV)", fontsize=14, family="sans-serif")
+        ax.legend(fontsize=12, loc="upper right", frameon=True)
+        
+        plt.tight_layout()
+        return fig
+
     def get_projected_density_of_states(
         self, 
         spin_channel=-1, 
@@ -978,6 +1216,7 @@ class PostWFC:
         method="gaussian", 
         sigma=None, 
         orbital_types=None,
+        return_plot=False,
     ):
         """
         Constructs the total electronic DOS along with individual projections 
@@ -992,13 +1231,11 @@ class PostWFC:
 
         def pdos_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
             num_bands = coeffs_list.shape[0]
-            # Use safe explicit array allocations tracked along the current active bands count
-            metrics = [np.full(num_bands, weight)]  # First tracking index is the total baseline DOS
+            metrics = [np.full(num_bands, weight)]
             
-            # Map out local band-resolved collectors for each requested l channel
             orbital_accumulators = {l: np.zeros(num_bands) for l in target_ls}
+            total_projection_per_band = np.zeros(num_bands)
             
-            # Precompute reciprocal lattice vectors and k-point mapping for this block
             rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
             k = self.kpoints_cart[ikpt]
             
@@ -1007,56 +1244,50 @@ class PostWFC:
                 dataset = self._aug_environment.paw_datasets[elem]
                 h = dataset.q_linear_grid[-1]
                 
-                # Compute reciprocal projection matrix for the current site
                 P_G_matrix = compute_reciprocal_projectors(
-                    k, 
-                    rgvec, 
-                    self.structure[i_atom].coords, 
-                    h,
-                    len(dataset.q_linear_grid), 
-                    self.structure.volume, 
-                    dataset.reciprocal_projectors, 
-                    dataset.angular_momenta, 
-                    dataset.magnetic_nums
+                    k, rgvec, self.structure[i_atom].coords, h,
+                    len(dataset.q_linear_grid), self.structure.volume, 
+                    dataset.reciprocal_projectors, dataset.angular_momenta, dataset.magnetic_nums
                 )
                 
-                # Vectorized contraction: (num_projectors, npw) x (npw, len(active_bands))
                 proj_atom = np.dot(P_G_matrix, coeffs_list.T)
                 proj_sq = np.abs(proj_atom)**2
+                total_projection_per_band += np.sum(proj_sq, axis=0)
                 
-                # Accumulate the projections into their respective angular momentum manifolds
                 for p_idx, l in enumerate(dataset.angular_momenta):
                     if l in orbital_accumulators:
                         orbital_accumulators[l] += proj_sq[p_idx, :]
             
-            # Multiply projectivities by state weights and queue for spectral engine processing
+            zero_mask = total_projection_per_band < 1e-12
+            safe_denominator = np.where(zero_mask, 1.0, total_projection_per_band)
+            
             for l in target_ls:
-                metrics.append(orbital_accumulators[l] * weight)
+                normalized_character = np.where(zero_mask, 1.0 / 4.0, orbital_accumulators[l] / safe_denominator)
+                metrics.append(normalized_character * weight)
                 
             return metrics
 
-        # Total number of metrics is 1 (Total DOS) + number of valid orbital tracking keys
         num_metrics = 1 + len(target_ls)
-
         energy_grid, smeared = self._execute_spectral_engine(
-            num_metrics=num_metrics, 
-            spin_channel=spin_channel, 
-            energy_range=energy_range, 
-            num_points=num_points, 
-            method=method, 
-            sigma=sigma, 
-            eval_callback=pdos_callback
+            num_metrics=num_metrics, spin_channel=spin_channel, energy_range=energy_range, 
+            num_points=num_points, method=method, sigma=sigma, eval_callback=pdos_callback
         )
         
         total_dos = smeared[0]
-        projections_dict = {}
-        for idx, orb in enumerate(orbital_types):
-            projections_dict[orb] = smeared[1 + idx]
+        projections_dict = {orb: smeared[1 + idx] for idx, orb in enumerate(orbital_types)}
+            
+        if return_plot:
+            return self._generate_dos_plot(
+                energy_grid=energy_grid, 
+                total_dos=total_dos, 
+                plot_curves=projections_dict, 
+                energy_range=energy_range
+            )
+            
         projections_dict["energy_grid"] = energy_grid
         projections_dict["total_dos"] = total_dos
-        
         return projections_dict
-    
+
     def get_atom_projected_density_of_states(
         self, 
         atom_indices=None,
@@ -1065,128 +1296,78 @@ class PostWFC:
         num_points=2000, 
         method="gaussian", 
         sigma=None, 
+        return_plot=False,
     ):
         """
         Constructs the total electronic DOS along with individual projections 
         onto specified individual atoms without external batching.
         """
         if atom_indices is None:
-            # Default to all atoms in the structure if no specific list is provided
             atom_indices = list(range(len(self.structure)))
             
         def atom_dos_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
             num_bands = coeffs_list.shape[0]
-            # Use safe explicit array allocations tracked along the current active bands count
-            metrics = [np.full(num_bands, weight)]  # First tracking index is the total baseline DOS
+            metrics = [np.full(num_bands, weight)]
             
-            # Map out local band-resolved collectors for each target atom
             atom_accumulators = {i_atom: np.zeros(num_bands) for i_atom in atom_indices}
+            total_projection_per_band = np.zeros(num_bands)
             
-            # Precompute reciprocal lattice vectors and k-point mapping for this block
             rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
             k = self.kpoints_cart[ikpt]
             
-            for i_atom in atom_indices:
-                elem = self.structure[i_atom].species_string
+            for i_all_atom in range(len(self.structure)):
+                elem = self.structure[i_all_atom].species_string
                 dataset = self._aug_environment.paw_datasets[elem]
                 h = dataset.q_linear_grid[-1]
                 
-                # Compute reciprocal projection matrix for the current site
                 P_G_matrix = compute_reciprocal_projectors(
-                    k, 
-                    rgvec, 
-                    self.structure[i_atom].coords, 
-                    h,
-                    len(dataset.q_linear_grid), 
-                    self.structure.volume, 
-                    dataset.reciprocal_projectors, 
-                    dataset.angular_momenta, 
-                    dataset.magnetic_nums
+                    k, rgvec, self.structure[i_all_atom].coords, h,
+                    len(dataset.q_linear_grid), self.structure.volume, 
+                    dataset.reciprocal_projectors, dataset.angular_momenta, dataset.magnetic_nums
                 )
                 
-                # Vectorized contraction: (num_projectors, npw) x (npw, len(active_bands))
                 proj_atom = np.dot(P_G_matrix, coeffs_list.T)
                 proj_sq = np.abs(proj_atom)**2
+                atom_sum = np.sum(proj_sq, axis=0)
+                total_projection_per_band += atom_sum
                 
-                # Collapse the projector axis (axis=0) to get total atom character per band
-                atom_accumulators[i_atom] = np.sum(proj_sq, axis=0)
+                if i_all_atom in atom_accumulators:
+                    atom_accumulators[i_all_atom] = atom_sum
             
-            # Multiply projectivities by state weights and queue for spectral engine processing
+            zero_mask = total_projection_per_band < 1e-12
+            safe_denominator = np.where(zero_mask, 1.0, total_projection_per_band)
+            
             for i_atom in atom_indices:
-                metrics.append(atom_accumulators[i_atom] * weight)
+                normalized_character = np.where(zero_mask, 1.0 / len(self.structure), atom_accumulators[i_atom] / safe_denominator)
+                metrics.append(normalized_character * weight)
                 
             return metrics
-    
-        # Total number of metrics is 1 (Total DOS) + number of tracked atoms
+
         num_metrics = 1 + len(atom_indices)
-    
         energy_grid, smeared = self._execute_spectral_engine(
-            num_metrics=num_metrics, 
-            spin_channel=spin_channel, 
-            energy_range=energy_range, 
-            num_points=num_points, 
-            method=method, 
-            sigma=sigma, 
-            eval_callback=atom_dos_callback
+            num_metrics=num_metrics, spin_channel=spin_channel, energy_range=energy_range, 
+            num_points=num_points, method=method, sigma=sigma, eval_callback=atom_dos_callback
         )
         
         total_dos = smeared[0]
-        projections_dict = {}
-        for idx, i_atom in enumerate(atom_indices):
-            projections_dict[i_atom] = smeared[1 + idx]
+        projections_dict = {i_atom: smeared[1 + idx] for idx, i_atom in enumerate(atom_indices)}
+            
+        if return_plot:
+            # Map structural data directly into readable label string annotations for the plot legend
+            plot_curves = {
+                f"Atom {i} ({self.structure[i].species_string})": projections_dict[i] 
+                for i in atom_indices
+            }
+            return self._generate_dos_plot(
+                energy_grid=energy_grid, 
+                total_dos=total_dos, 
+                plot_curves=plot_curves, 
+                energy_range=energy_range
+            )
             
         projections_dict["energy_grid"] = energy_grid
         projections_dict["total_dos"] = total_dos
-        
         return projections_dict
-    
-    def calculate_density_at_point_vs_charge(
-        self, 
-        frac_coord, 
-        min_charge=None, 
-        max_charge=None, 
-        num_points=2000,
-        spin_channel=-1
-    ) -> np.ndarray:
-        """Calculates electronic charge density at a specific coordinate using Aufbau fillings."""
-        if min_charge is None:
-            min_charge = 0.0
-        if max_charge is None:
-            max_charge = self.total_charge
-            
-        min_charge = max(min_charge, 0.0)
-        max_charge = min(max_charge, self.total_charge)
-        
-        if spin_channel == 1 and self.nspin == 1:
-            spin_channel = 0
-            
-        spin_all = [spin_channel] if spin_channel != -1 else list(range(self.nspin))
-        factor = 2 if (spin_channel == -1 and self.nspin == 1) else 1
-        
-        bands_flat = self.energies[spin_all].ravel()
-        kpt_weights = self.kpoint_weights
-        state_weights = (np.ones_like(self.energies[spin_all]) * kpt_weights[None, :, None]).ravel() * factor
-        
-        sort_indices = np.argsort(bands_flat)
-        sorted_weights = state_weights[sort_indices]
-        cum_capacities = np.cumsum(sorted_weights)
-        
-        state_densities = self.calculate_state_densities_at_point(frac_coord, spin_channel=spin_channel)
-        sorted_state_densities = state_densities.ravel()[sort_indices]
-        
-        target_charges = np.linspace(min_charge, max_charge, num_points)
-        density_values = np.zeros(num_points, dtype=np.float64)
-        
-        for i, q in enumerate(target_charges):
-            state_allocations = np.minimum(
-                sorted_weights, 
-                np.maximum(0.0, q - cum_capacities + sorted_weights)
-            )
-            
-            occupancy_fractions = np.where(sorted_weights > 0.0, state_allocations / sorted_weights, 0.0)
-            density_values[i] = np.sum(occupancy_fractions * sorted_state_densities)
-            
-        return np.column_stack((target_charges, density_values))
         
     def get_electrons_in_energy_range(self, e_min=None, e_max=None, num_points=5000, method="gaussian", sigma=None):
         """Integrates occupied DOS profiles across designated energy limits."""

@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 
+from baderkit.post_wfc.pseudopotentials.paw_dataset import PAWSpecies
+
 
 @dataclass
 class AESpecies:
@@ -41,6 +43,10 @@ class AESpecies:
     radial_grid: NDArray
     """1D array containing the radial coordinate mesh grid points, r."""
     
+    # --- Fields WITH default values second ---
+    paw_species: PAWSpecies | None = None
+    """The pseudopotential this species maps onto"""
+    
     angular_momenta: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int_))
     """1D array of orbital angular momentum quantum numbers, l, for each merged active channel."""
     
@@ -63,32 +69,245 @@ class AESpecies:
     def __post_init__(self):
         """
         Generates the radial rho and kinetic energy density matrices on initialization.
+        If a PAWSpecies dataset is provided, triggers an isolated optimization helper 
+        method to calibrate the analytical primitive exponents first.
+        """
+        # Execute exponent refinement if a PAW validation baseline is present
+        if self.paw_species is not None:
+            self._optimize_exponents()
+            
+        # Final evaluation pass mapping fields onto the active grid space
+        self.radial_rho, self.radial_tau = self._compute_radial_densities(alpha=1.0)
+
+    def _optimize_exponents(self):
+        """
+        Executes a regularized linear algebraic projection of the uncontracted primitive 
+        basis functions onto a hybrid target state space. Normalizes primitives to protect 
+        the nuclear core cusp and filters out extreme high-energy virtual continuum states.
+        Bakes primitive normalization directly into stored coefficients to prevent grid warping.
+        """
+        r = self.radial_grid
+        num_grid = len(r)
+        BOHR_TO_ANGSTROM = 0.529177210903
+        r_bohr = r / BOHR_TO_ANGSTROM
+        
+        # Interpolate raw PAW wavefunctions onto master radial grid to align coordinates
+        r_paw = self.paw_species.radial_grid
+        num_paw_channels = self.paw_species.all_electron_partial_waves.shape[0]
+        
+        paw_u_interp = np.zeros((num_paw_channels, len(r)), dtype=np.float64)
+        for i in range(num_paw_channels):
+            paw_u_interp[i, :] = np.interp(r, r_paw, self.paw_species.all_electron_partial_waves[i])
+            
+        unique_l = np.unique(self.angular_momenta)
+        all_new_states = []
+        new_primitives = {}
+        
+        print("\n" + "="*80)
+        print("     STARTING HYBRID REGULARIZED CHANGE-OF-BASIS DEBUGS")
+        print("="*80)
+        
+        for l in unique_l:
+            if l not in self.primitives:
+                continue
+                
+            unique_exps = np.unique(self.primitives[l]["exps"])
+            num_prims = len(unique_exps)
+            
+            # Evaluate and explicitly NORMALIZE primitive basis functions chi_k(r)
+            r_pow_l = r_bohr ** l
+            chi = np.zeros((num_prims, len(r)), dtype=np.float64)
+            prim_norms = np.zeros(num_prims, dtype=np.float64)  # <-- Track norms here
+            for k in range(num_prims):
+                raw_chi = r_pow_l * np.exp(-unique_exps[k] * (r_bohr ** 2))
+                norm_integrand = 4.0 * np.pi * (r ** 2) * (raw_chi ** 2)
+                prim_norm = np.sqrt(np.trapezoid(norm_integrand, r))
+                prim_norms[k] = prim_norm if prim_norm > 1e-12 else 1.0
+                chi[k, :] = raw_chi / prim_norms[k]
+                
+            # Compute Primitive-Primitive Overlap Matrix S 
+            S = np.zeros((num_prims, num_prims), dtype=np.float64)
+            for k1 in range(num_prims):
+                for k2 in range(num_prims):
+                    integrand = 4.0 * np.pi * (r ** 2) * chi[k1, :] * chi[k2, :]
+                    S[k1, k2] = np.trapezoid(integrand, r)
+                    
+            S_reg = S + 1e-10 * np.eye(num_prims)
+            
+            shell_name = {0: 's', 1: 'p', 2: 'd', 3: 'f'}.get(l, '?')
+            print(f"\n[Shell l={l} ({shell_name}-orbitals)]")
+            print(f"  -> Number of primitive exponents available: {num_prims}")
+            
+            # 1. Isolate occupied PAW states
+            paw_indices = np.where((self.paw_species.angular_momenta == l) & (self.paw_species.reference_occupations > 1e-4))[0]
+            paw_indices = paw_indices[np.argsort(self.paw_species.eigenvalues[paw_indices])]
+            
+            # 2. Isolate unoccupied virtual states 
+            ae_indices = np.where(self.angular_momenta == l)[0]
+            ae_unoccupied = ae_indices[(self.reference_occupations[ae_indices] <= 1e-4) & (self.eigenvalues[ae_indices] < 100.0)]
+            ae_unoccupied = ae_unoccupied[np.argsort(self.eigenvalues[ae_unoccupied])]
+            
+            # Project occupied PAW states
+            print(f"  --> Projecting {len(paw_indices)} Occupied PAW Potential channels...")
+            for paw_idx in paw_indices:
+                u_target = paw_u_interp[paw_idx]
+                B = np.zeros(num_prims, dtype=np.float64)
+                for k in range(num_prims):
+                    integrand = 4.0 * np.pi * r * chi[k, :] * u_target
+                    B[k] = np.trapezoid(integrand, r)
+                    
+                C_state = np.linalg.solve(S_reg, B)
+                all_new_states.append({
+                    'l': l,
+                    'energy': self.paw_species.eigenvalues[paw_idx],
+                    'occupation': self.paw_species.reference_occupations[paw_idx],
+                    'C_state': C_state
+                })
+                
+                u_fit = r * np.dot(C_state, chi)
+                max_coeff = np.max(np.abs(C_state))
+                max_err = np.max(np.abs(u_target - u_fit))
+                
+                print(f"    * PAW Channel {paw_idx} | Energy: {self.paw_species.eigenvalues[paw_idx]:.4f} eV | Occ: {self.paw_species.reference_occupations[paw_idx]:.2f}")
+                print(f"        Max Coeff: {max_coeff:.2f} | Max Abs Profile Error: {max_err:.4e}")
+                
+            # Project original unoccupied AE states
+            print(f"  --> Projecting {len(ae_unoccupied)} Physical Unoccupied AE Reference states...")
+            for ae_idx in ae_unoccupied:
+                c_data = self.primitives[l]
+                exps = c_data["exps"]
+                coeffs = c_data["coeffs"]
+                offsets = c_data["offsets"]
+                D_l = self.density_matrices[ae_idx][l]
+                
+                dim = D_l.shape[0]
+                if dim > 0:
+                    vals, vecs = np.linalg.eigh(D_l)
+                    state_coeffs = vecs[:, np.argmax(vals)]
+                    
+                    phi_contracted = np.zeros((dim, len(r)), dtype=np.float64)
+                    for p in range(dim):
+                        start = offsets[p]
+                        end = offsets[p+1]
+                        sum_0 = np.zeros(len(r), dtype=np.float64)
+                        for k in range(start, end):
+                            sum_0 += coeffs[k] * np.exp(-exps[k] * (r_bohr ** 2))
+                        phi_contracted[p, :] = (r_bohr ** l) * sum_0
+                        
+                    psi_r = state_coeffs @ phi_contracted
+                    u_target = r * psi_r
+                    
+                    norm_factor = np.trapezoid(4.0 * np.pi * (u_target ** 2), r)
+                    if norm_factor > 1e-6:
+                        u_target /= np.sqrt(norm_factor)
+                        
+                    B = np.zeros(num_prims, dtype=np.float64)
+                    for k in range(num_prims):
+                        integrand = 4.0 * np.pi * r * chi[k, :] * u_target
+                        B[k] = np.trapezoid(integrand, r)
+                        
+                    C_state = np.linalg.solve(S_reg, B)
+                    all_new_states.append({
+                        'l': l,
+                        'energy': self.eigenvalues[ae_idx],
+                        'occupation': 0.0,
+                        'C_state': C_state
+                    })
+                    
+        # Sort all combined states globally by energy to preserve canonical structure
+        all_new_states.sort(key=lambda x: x['energy'])
+        
+        # Rebuild instance properties
+        self.angular_momenta = np.array([s['l'] for s in all_new_states], dtype=np.int_)
+        self.eigenvalues = np.array([s['energy'] for s in all_new_states], dtype=np.float64)
+        self.reference_occupations = np.array([s['occupation'] for s in all_new_states], dtype=np.float64)
+        
+        # Rebuild primitives dictionary with uncontracted state mappings
+        for l in unique_l:
+            if l not in self.primitives:
+                continue
+            unique_exps = np.unique(self.primitives[l]["exps"])
+            num_prims = len(unique_exps)
+            
+            l_states = [s for s in all_new_states if s['l'] == l]
+            
+            new_exps_list = []
+            new_coeffs_list = []
+            new_offsets = [0]
+            
+            # Recompute normalization array specifically for this shell's unique primitives
+            r_pow_l = r_bohr ** l
+            shell_norms = np.zeros(num_prims, dtype=np.float64)
+            for k in range(num_prims):
+                raw_chi = r_pow_l * np.exp(-unique_exps[k] * (r_bohr ** 2))
+                norm_integrand = 4.0 * np.pi * (r ** 2) * (raw_chi ** 2)
+                prim_norm = np.sqrt(np.trapezoid(norm_integrand, r))
+                shell_norms[k] = prim_norm if prim_norm > 1e-12 else 1.0
+
+            for s in l_states:
+                new_exps_list.extend(unique_exps)
+                # CRITICAL FIX: Divide C_state by shell_norms so the standard evaluation
+                # loop naturally reconstructs the correct wavefunction amplitudes!
+                new_coeffs_list.extend(s['C_state'] / shell_norms)
+                new_offsets.append(new_offsets[-1] + num_prims)
+                
+            new_primitives[l] = {
+                "exps": np.array(new_exps_list, dtype=np.float64),
+                "coeffs": np.array(new_coeffs_list, dtype=np.float64),
+                "offsets": np.array(new_offsets, dtype=np.int32)
+            }
+        self.primitives = new_primitives
+        
+        # Rebuild symmetric density matrices
+        new_density_matrices = []
+        for idx, s in enumerate(all_new_states):
+            d_blocks = {}
+            for active_l in unique_l:
+                if active_l not in self.primitives:
+                    continue
+                l_states_indices = [i for i, x in enumerate(all_new_states) if x['l'] == active_l]
+                dim = len(l_states_indices)
+                mat = np.zeros((dim, dim), dtype=np.float64)
+                
+                if active_l == s['l']:
+                    rel_pos = l_states_indices.index(idx)
+                    mat[rel_pos, rel_pos] = 1.0
+                    
+                d_blocks[active_l] = mat
+            new_density_matrices.append(d_blocks)
+        self.density_matrices = new_density_matrices
+        
+        print("\n" + "="*80)
+        print("     DIAGNOSTICS COMPLETE - DATASETS LOADED AND STABILIZED")
+        print("="*80 + "\n")
+        
+    def _compute_radial_densities(self, alpha: float) -> tuple[NDArray, NDArray]:
+        """
+        Evaluates the radial charge density (rho) and kinetic energy density (tau) 
+        profiles for a given primitive exponent scaling multiplier (alpha).
         """
         BOHR_TO_ANGSTROM = 0.529177210903
         r_bohr = self.radial_grid / BOHR_TO_ANGSTROM
         
         num_states = len(self.eigenvalues)
         num_grid = len(self.radial_grid)
-        self.radial_rho = np.zeros((num_states, num_grid), dtype=np.float64)
-        self.radial_tau = np.zeros((num_states, num_grid), dtype=np.float64)
+        radial_rho = np.zeros((num_states, num_grid), dtype=np.float64)
+        radial_tau = np.zeros((num_states, num_grid), dtype=np.float64)
         
         for idx, d_blocks in enumerate(self.density_matrices):
             l = self.angular_momenta[idx]
             if l in self.primitives:
                 c_data = self.primitives[l]
-                exps = c_data["exps"]
+                exps = alpha * c_data["exps"] # Apply trial scaling factor
                 coeffs = c_data["coeffs"]
                 offsets = c_data["offsets"]
                 D_l = d_blocks[l]
                 
-                # --- RUNTIME PATCH: Enforce strict Positive Semi-Definiteness ---
-                # This neutralizes any single-precision truncation roundoffs or micro-negative 
-                # eigenvalues before they can get amplified by high-exponent primitives near r->0.
+                # Clip non-physical negative eigenvalues to exactly zero
                 if D_l.shape[0] > 0:
                     vals, vecs = np.linalg.eigh(D_l)
-                    vals = np.maximum(vals, 0.0)  # Clip non-physical negative eigenvalues to exactly zero
+                    vals = np.maximum(vals, 0.0) 
                     D_l = vecs @ np.diag(vals) @ vecs.T
-                # -----------------------------------------------------------------
                 
                 dim = D_l.shape[0]
                 phi = np.zeros((dim, num_grid), dtype=np.float64)
@@ -122,7 +341,7 @@ class AESpecies:
                 raw_rho = np.einsum('pq,pi,qi->i', D_l, phi, phi)
                 rho_final = raw_rho / (4.0 * np.pi * (BOHR_TO_ANGSTROM ** 3))
                 
-                # Compute radial kinetic energy density: tau = 0.5 * sum Dpq * [phip' * phiq' + l(l+1)/r^2 * phip * phiq]
+                # Compute radial kinetic energy density
                 angular_term = np.zeros(num_grid, dtype=np.float64)
                 if l > 0:
                     angular_term = (l * (l + 1) / (r_bohr ** 2))
@@ -132,18 +351,19 @@ class AESpecies:
                 raw_tau = 0.5 * (term1 + term2)
                 tau_final = raw_tau / (4.0 * np.pi * (BOHR_TO_ANGSTROM ** 5))
                 
-                # Integrate the raw radial charge density over the spherical grid (4 * pi * r^2 * rho)
-                # self.radial_grid is in Angstroms, matching the spatial coordinate space
+                # Integrate the raw radial charge density over the spherical grid
                 integrated_charge = np.trapezoid(4.0 * np.pi * (self.radial_grid ** 2) * rho_final, self.radial_grid)
                 
-                # Normalize both arrays to a single electron representation if the state is occupied
+                # Normalize both arrays to a single electron representation
                 if integrated_charge > 1e-6:
                     rho_final /= integrated_charge
                     tau_final /= integrated_charge
                 
-                self.radial_rho[idx, :] = rho_final
-                self.radial_tau[idx, :] = tau_final
-
+                radial_rho[idx, :] = rho_final
+                radial_tau[idx, :] = tau_final
+                
+        return radial_rho, radial_tau
+            
     @property
     def max_occupations(self) -> NDArray:
         """
@@ -155,7 +375,7 @@ class AESpecies:
             return 2 * self.angular_momenta + 1.0
         return 4 * self.angular_momenta + 2.0
 
-    def get_valence_dataset(self, Z: float) -> "AESpecies":
+    def get_valence_dataset(self, paw_species: PAWSpecies) -> "AESpecies":
         """
         Extracts a subset of the dataset containing only valence and virtual states, 
         dropping any underlying core states. 
@@ -163,6 +383,7 @@ class AESpecies:
         Accumulation starts from the highest energy occupied states downwards until 
         the requested valence charge value `Z` is reached. All virtual states are preserved.
         """
+        Z = paw_species.Z
         # 1. Isolate occupied states
         occupied_indices = np.where(self.reference_occupations > 1e-4)[0]
         
@@ -196,6 +417,7 @@ class AESpecies:
             unrestricted=self.unrestricted,
             primitives=self.primitives,
             radial_grid=self.radial_grid,
+            paw_species=paw_species,
             angular_momenta=self.angular_momenta[keep_indices],
             eigenvalues=self.eigenvalues[keep_indices],
             reference_occupations=self.reference_occupations[keep_indices],
@@ -235,10 +457,9 @@ class AESpecies:
             A 2D numpy array of shape (n_configurations, n_grid) where each row represents 
             the total radial charge density profile for that electron count step.
         """
-        # 1. Map out the electron configurations across the range
+        # Get electron occupancies of each state
         occupancies = self.get_occupancies(min_electrons, max_electrons)
-        
-        # 2. sum based on occupancies
+        # Get weighted sum
         total_rho = np.sum(occupancies * self.radial_rho.T, axis=1)
         
         return total_rho
@@ -252,10 +473,10 @@ class AESpecies:
             A 2D numpy array of shape (n_configurations, n_grid) where each row represents 
             the total radial KED profile for that electron count step.
         """
-        # 1. Map out the electron configurations across the range
+        # Get electron occupancies of each state
         occupancies = self.get_occupancies(min_electrons, max_electrons)
         
-        # 2. sum based on occupancies
+        # Get weighted sum
         total_tau = np.sum(occupancies * self.radial_tau, axis=0)
         
         return total_tau
@@ -264,6 +485,7 @@ class AESpecies:
     def from_file(
             cls,
             filename: str | Path,
+            paw_species: PAWSpecies = None,
             cutoff_radius: float = 10.0,
             grid_points: int = 2000):
         """
@@ -350,9 +572,39 @@ class AESpecies:
             })
             
         merged_states.sort(key=lambda x: x['energy'])
-        radial_grid = np.geomspace(1e-10, cutoff_radius, grid_points)
         
-        return cls(
+        # --- Dynamic Grid Reconstruction Layout ---
+        if paw_species is not None:
+            paw_grid = paw_species.radial_grid
+            if cutoff_radius <= paw_grid[-1]:
+                radial_grid = paw_grid.copy()
+            else:
+                # Track the local grid spacing trends at the outer tail
+                diff1 = paw_grid[-1] - paw_grid[-2]
+                diff2 = paw_grid[-2] - paw_grid[-3]
+                ratio1 = paw_grid[-1] / paw_grid[-2] if paw_grid[-2] != 0.0 else 1.0
+                ratio2 = paw_grid[-2] / paw_grid[-3] if paw_grid[-3] != 0.0 else 1.0
+                
+                extended_points = list(paw_grid)
+                current_r = paw_grid[-1]
+                
+                # Check variance of difference vs ratio to detect exponential/geometric vs linear mesh
+                if abs(ratio1 - ratio2) / ratio1 < abs(diff1 - diff2) / diff1:
+                    # Logarithmic/Geometric expansion matching VASP POTCAR conventions
+                    while current_r < cutoff_radius:
+                        current_r *= ratio1
+                        extended_points.append(current_r)
+                else:
+                    # Linear extension layout
+                    while current_r < cutoff_radius:
+                        current_r += diff1
+                        extended_points.append(current_r)
+                        
+                radial_grid = np.array(extended_points, dtype=np.float64)
+        else:
+            radial_grid = np.geomspace(1e-10, cutoff_radius, grid_points)
+        
+        result = cls(
             name=f"{element}_{functional}",
             element=element,
             Z=Z,
@@ -361,11 +613,15 @@ class AESpecies:
             unrestricted=unrestricted,
             primitives=primitives,
             radial_grid=radial_grid,
+            paw_species=None,
             angular_momenta=np.array([m['l'] for m in merged_states], dtype=np.int_),
             eigenvalues=np.array([m['energy'] for m in merged_states], dtype=np.float64),
             reference_occupations=np.array([m['occupancy'] for m in merged_states], dtype=np.float64),
             density_matrices=[m['d_blocks'] for m in merged_states]
         )
+        if paw_species is not None:
+            return result.get_valence_dataset(paw_species)
+        return result
 
     @staticmethod
     def _unpack_triu_matrices(packed_vector, matrix_dims):
