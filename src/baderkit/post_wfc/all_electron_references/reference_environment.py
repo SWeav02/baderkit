@@ -65,6 +65,19 @@ class AtomicReferenceEnvironment:
         # Precompute the normalized charge allocation profiles from the PDOS input
         self.norm_total_integral, self.atom_integrals = self._process_pdos(pdos_data)
 
+    @property
+    def maximum_charge(self) -> float:
+        """
+        Calculates the total charge capacity of the system if all available electronic 
+        states across all atomic basis channels were fully occupied.
+        """
+        total = 0.0
+        for site in self.structure:
+            basis = self.atom_bases[site.specie.symbol]
+            max_per_state = 1.0 if getattr(basis, "unrestricted", False) else 2.0
+            total += max_per_state * len(basis.angular_momenta)
+        return total
+
     ###########################################################################
     # INITIALIZATION MODULES
     ###########################################################################
@@ -359,7 +372,7 @@ class AtomicReferenceEnvironment:
         partial_charges = self.get_partial_radial_charge_densities(min_charge, max_charge)
 
         rho_matrices_list = []
-        r_grids_list = []               
+        r_grids_list = []                
         
         # Build 1D lists matching the exact length of the structural atoms count
         for i_atom in range(len(self.structure)):
@@ -381,25 +394,6 @@ class AtomicReferenceEnvironment:
             r_grids_list,
             paw_r1,
         )
-        
-        # if energy_cutoff is not None:
-        #     ngx, ngy, ngz = grid_dims
-        #     rho_G = np.fft.fftn(rho_3d)
-        #     recip_lattice = self.structure.lattice.reciprocal_lattice.matrix
-            
-        #     h = np.fft.fftfreq(ngx) * ngx
-        #     k = np.fft.fftfreq(ngy) * ngy
-        #     l = np.fft.fftfreq(ngz) * ngz
-        #     H, K, L = np.meshgrid(h, k, l, indexing='ij')
-            
-        #     G_vectors = np.stack([H, K, L], axis=-1) @ recip_lattice
-        #     G_magnitudes = np.linalg.norm(G_vectors, axis=-1)
-            
-        #     BOHR_TO_ANGSTROM = 0.529177210903
-        #     g_cutoff = np.sqrt(2.0 * energy_cutoff / (27.211386 * BOHR_TO_ANGSTROM**2))
-
-        #     rho_G[G_magnitudes > g_cutoff] = 0.0
-        #     rho_3d = np.fft.ifftn(rho_G).real
             
         return rho_3d
     
@@ -407,8 +401,8 @@ class AtomicReferenceEnvironment:
         if min_charge is None or min_charge == -np.inf:
             min_charge = 0.0
         if max_charge is None or max_charge == np.inf:
-            max_charge = self.total_charge
+            max_charge = self.maximum_charge
             
         min_charge = max(min_charge, 0)
-        max_charge = min(max_charge, self.total_charge)
+        max_charge = min(max_charge, self.maximum_charge)
         return min_charge, max_charge

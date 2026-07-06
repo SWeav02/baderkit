@@ -73,21 +73,20 @@ class AESpecies:
         method to calibrate the analytical primitive exponents first.
         """
         # Execute exponent refinement if a PAW validation baseline is present
-        if self.paw_species is not None:
-            self._optimize_exponents()
+        # if self.paw_species is not None:
+        #     self._optimize_exponents()
             
         # Final evaluation pass mapping fields onto the active grid space
         self.radial_rho, self.radial_tau = self._compute_radial_densities(alpha=1.0)
 
     def _optimize_exponents(self):
         """
-        Executes a regularized linear algebraic projection of the uncontracted primitive 
-        basis functions onto a hybrid target state space. Normalizes primitives to protect 
-        the nuclear core cusp and filters out extreme high-energy virtual continuum states.
-        Bakes primitive normalization directly into stored coefficients to prevent grid warping.
+        Executes a regularized linear algebraic projection of the PAW core partial waves 
+        directly onto the original contracted basis functions of the AE reference.
+        Preserves the original canonical state definitions and energy levels intact, 
+        ensuring missing valence states (like 4s) or virtual manifolds are retained.
         """
         r = self.radial_grid
-        num_grid = len(r)
         BOHR_TO_ANGSTROM = 0.529177210903
         r_bohr = r / BOHR_TO_ANGSTROM
         
@@ -100,185 +99,99 @@ class AESpecies:
             paw_u_interp[i, :] = np.interp(r, r_paw, self.paw_species.all_electron_partial_waves[i])
             
         unique_l = np.unique(self.angular_momenta)
-        all_new_states = []
-        new_primitives = {}
+        
+        # Coordinate weighting function to favor the core and accept valence variance
+        W = np.exp(-2.0 * r) / (r + 1e-6)
         
         print("\n" + "="*80)
-        print("     STARTING HYBRID REGULARIZED CHANGE-OF-BASIS DEBUGS")
+        print("     STARTING AE-RETAINED INVERTED CHANGE-OF-BASIS PROJECTION")
         print("="*80)
         
         for l in unique_l:
             if l not in self.primitives:
                 continue
                 
-            unique_exps = np.unique(self.primitives[l]["exps"])
-            num_prims = len(unique_exps)
+            # Extract pristine contracted basis descriptors from the loaded AE reference
+            c_data = self.primitives[l]
+            exps = c_data["exps"]
+            coeffs = c_data["coeffs"]
+            offsets = c_data["offsets"]
+            dim = len(offsets) - 1
             
-            # Evaluate and explicitly NORMALIZE primitive basis functions chi_k(r)
+            # Evaluate the original contracted basis functions Phi_p(r) on the active mesh
+            phi_contracted = np.zeros((dim, len(r)), dtype=np.float64)
             r_pow_l = r_bohr ** l
-            chi = np.zeros((num_prims, len(r)), dtype=np.float64)
-            prim_norms = np.zeros(num_prims, dtype=np.float64)  # <-- Track norms here
-            for k in range(num_prims):
-                raw_chi = r_pow_l * np.exp(-unique_exps[k] * (r_bohr ** 2))
-                norm_integrand = 4.0 * np.pi * (r ** 2) * (raw_chi ** 2)
-                prim_norm = np.sqrt(np.trapezoid(norm_integrand, r))
-                prim_norms[k] = prim_norm if prim_norm > 1e-12 else 1.0
-                chi[k, :] = raw_chi / prim_norms[k]
+            for p in range(dim):
+                start = offsets[p]
+                end = offsets[p+1]
+                sum_0 = np.zeros(len(r), dtype=np.float64)
+                for k in range(start, end):
+                    sum_0 += coeffs[k] * np.exp(-exps[k] * (r_bohr ** 2))
+                phi_contracted[p, :] = r_pow_l * sum_0
                 
-            # Compute Primitive-Primitive Overlap Matrix S 
-            S = np.zeros((num_prims, num_prims), dtype=np.float64)
-            for k1 in range(num_prims):
-                for k2 in range(num_prims):
-                    integrand = 4.0 * np.pi * (r ** 2) * chi[k1, :] * chi[k2, :]
-                    S[k1, k2] = np.trapezoid(integrand, r)
+            # Compute Contracted-Contracted Overlap Matrix S 
+            S = np.zeros((dim, dim), dtype=np.float64)
+            for p1 in range(dim):
+                for p2 in range(dim):
+                    S[p1, p2] = np.trapezoid(W * phi_contracted[p1, :] * phi_contracted[p2, :], r)
                     
-            S_reg = S + 1e-10 * np.eye(num_prims)
+            S_reg = S + 1e-9 * np.eye(dim)
             
-            shell_name = {0: 's', 1: 'p', 2: 'd', 3: 'f'}.get(l, '?')
-            print(f"\n[Shell l={l} ({shell_name}-orbitals)]")
-            print(f"  -> Number of primitive exponents available: {num_prims}")
-            
-            # 1. Isolate occupied PAW states
+            # Isolate occupied core channels inside the PAW potential
             paw_indices = np.where((self.paw_species.angular_momenta == l) & (self.paw_species.reference_occupations > 1e-4))[0]
             paw_indices = paw_indices[np.argsort(self.paw_species.eigenvalues[paw_indices])]
             
-            # 2. Isolate unoccupied virtual states 
+            # Map them directly onto the lowest matching core states of the AE reference
             ae_indices = np.where(self.angular_momenta == l)[0]
-            ae_unoccupied = ae_indices[(self.reference_occupations[ae_indices] <= 1e-4) & (self.eigenvalues[ae_indices] < 100.0)]
-            ae_unoccupied = ae_unoccupied[np.argsort(self.eigenvalues[ae_unoccupied])]
+            ae_sorted = ae_indices[np.argsort(self.eigenvalues[ae_indices])]
             
-            # Project occupied PAW states
-            print(f"  --> Projecting {len(paw_indices)} Occupied PAW Potential channels...")
-            for paw_idx in paw_indices:
+            shell_name = {0: 's', 1: 'p', 2: 'd', 3: 'f'}.get(l, '?')
+            print(f"\n[Shell l={l} ({shell_name}-orbitals)]")
+            print(f"  -> Total AE reference states defined: {len(ae_sorted)}")
+            print(f"  -> Active PAW core channels mapped:    {len(paw_indices)}")
+            
+            # Run state-by-state projection for overlapping core domains
+            for pair_idx, paw_idx in enumerate(paw_indices):
+                if pair_idx >= len(ae_sorted):
+                    print(f"    [!] WARNING: Extra PAW channel {paw_idx} exceeds AE state capacities. Skipping.")
+                    break
+                    
+                ae_state_idx = ae_sorted[pair_idx]
                 u_target = paw_u_interp[paw_idx]
-                B = np.zeros(num_prims, dtype=np.float64)
-                for k in range(num_prims):
-                    integrand = 4.0 * np.pi * r * chi[k, :] * u_target
-                    B[k] = np.trapezoid(integrand, r)
+                
+                # Transform target wavefunction back to amplitude: phi = u / r
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    phi_target = np.where(r > 1e-12, u_target / r, 0.0)
+                if r[0] < 1e-10:
+                    phi_target[0] = phi_target[1]
+                    
+                # Compute Cross-Overlap vector against original contracted functions
+                B = np.zeros(dim, dtype=np.float64)
+                for p in range(dim):
+                    B[p] = np.trapezoid(W * phi_contracted[p, :] * phi_target, r)
                     
                 C_state = np.linalg.solve(S_reg, B)
-                all_new_states.append({
-                    'l': l,
-                    'energy': self.paw_species.eigenvalues[paw_idx],
-                    'occupation': self.paw_species.reference_occupations[paw_idx],
-                    'C_state': C_state
-                })
                 
-                u_fit = r * np.dot(C_state, chi)
-                max_coeff = np.max(np.abs(C_state))
+                # Update density matrix blocks for this state to align with PAW configurations
+                for active_l in unique_l:
+                    self.density_matrices[ae_state_idx][active_l] = np.zeros_like(self.density_matrices[ae_state_idx].get(active_l, np.zeros((1,1))))
+                
+                self.density_matrices[ae_state_idx][l] = np.outer(C_state, C_state)
+                
+                # Evaluation sanity diagnostics
+                u_fit = r * np.dot(C_state, phi_contracted)
                 max_err = np.max(np.abs(u_target - u_fit))
+                print(f"    * Core Pair {pair_idx} -> Realigned AE State Index {ae_state_idx} using PAW Channel {paw_idx}")
+                print(f"        Energy: {self.eigenvalues[ae_state_idx]:.4f} eV | Core Fit Max Abs Error: {max_err:.4e}")
                 
-                print(f"    * PAW Channel {paw_idx} | Energy: {self.paw_species.eigenvalues[paw_idx]:.4f} eV | Occ: {self.paw_species.reference_occupations[paw_idx]:.2f}")
-                print(f"        Max Coeff: {max_coeff:.2f} | Max Abs Profile Error: {max_err:.4e}")
-                
-            # Project original unoccupied AE states
-            print(f"  --> Projecting {len(ae_unoccupied)} Physical Unoccupied AE Reference states...")
-            for ae_idx in ae_unoccupied:
-                c_data = self.primitives[l]
-                exps = c_data["exps"]
-                coeffs = c_data["coeffs"]
-                offsets = c_data["offsets"]
-                D_l = self.density_matrices[ae_idx][l]
-                
-                dim = D_l.shape[0]
-                if dim > 0:
-                    vals, vecs = np.linalg.eigh(D_l)
-                    state_coeffs = vecs[:, np.argmax(vals)]
+            # Print status of protected unmapped states (like the 4s valence shell)
+            if len(ae_sorted) > len(paw_indices):
+                print(f"  --> Preserving {len(ae_sorted) - len(paw_indices)} unmapped valence/virtual states in their original form:")
+                for unmapped_idx in ae_sorted[len(paw_indices):]:
+                    print(f"        * Retained AE State Index {unmapped_idx} | Energy: {self.eigenvalues[unmapped_idx]:.4f} eV | Occ Baseline: {self.reference_occupations[unmapped_idx]:.2f}")
                     
-                    phi_contracted = np.zeros((dim, len(r)), dtype=np.float64)
-                    for p in range(dim):
-                        start = offsets[p]
-                        end = offsets[p+1]
-                        sum_0 = np.zeros(len(r), dtype=np.float64)
-                        for k in range(start, end):
-                            sum_0 += coeffs[k] * np.exp(-exps[k] * (r_bohr ** 2))
-                        phi_contracted[p, :] = (r_bohr ** l) * sum_0
-                        
-                    psi_r = state_coeffs @ phi_contracted
-                    u_target = r * psi_r
-                    
-                    norm_factor = np.trapezoid(4.0 * np.pi * (u_target ** 2), r)
-                    if norm_factor > 1e-6:
-                        u_target /= np.sqrt(norm_factor)
-                        
-                    B = np.zeros(num_prims, dtype=np.float64)
-                    for k in range(num_prims):
-                        integrand = 4.0 * np.pi * r * chi[k, :] * u_target
-                        B[k] = np.trapezoid(integrand, r)
-                        
-                    C_state = np.linalg.solve(S_reg, B)
-                    all_new_states.append({
-                        'l': l,
-                        'energy': self.eigenvalues[ae_idx],
-                        'occupation': 0.0,
-                        'C_state': C_state
-                    })
-                    
-        # Sort all combined states globally by energy to preserve canonical structure
-        all_new_states.sort(key=lambda x: x['energy'])
-        
-        # Rebuild instance properties
-        self.angular_momenta = np.array([s['l'] for s in all_new_states], dtype=np.int_)
-        self.eigenvalues = np.array([s['energy'] for s in all_new_states], dtype=np.float64)
-        self.reference_occupations = np.array([s['occupation'] for s in all_new_states], dtype=np.float64)
-        
-        # Rebuild primitives dictionary with uncontracted state mappings
-        for l in unique_l:
-            if l not in self.primitives:
-                continue
-            unique_exps = np.unique(self.primitives[l]["exps"])
-            num_prims = len(unique_exps)
-            
-            l_states = [s for s in all_new_states if s['l'] == l]
-            
-            new_exps_list = []
-            new_coeffs_list = []
-            new_offsets = [0]
-            
-            # Recompute normalization array specifically for this shell's unique primitives
-            r_pow_l = r_bohr ** l
-            shell_norms = np.zeros(num_prims, dtype=np.float64)
-            for k in range(num_prims):
-                raw_chi = r_pow_l * np.exp(-unique_exps[k] * (r_bohr ** 2))
-                norm_integrand = 4.0 * np.pi * (r ** 2) * (raw_chi ** 2)
-                prim_norm = np.sqrt(np.trapezoid(norm_integrand, r))
-                shell_norms[k] = prim_norm if prim_norm > 1e-12 else 1.0
-
-            for s in l_states:
-                new_exps_list.extend(unique_exps)
-                # CRITICAL FIX: Divide C_state by shell_norms so the standard evaluation
-                # loop naturally reconstructs the correct wavefunction amplitudes!
-                new_coeffs_list.extend(s['C_state'] / shell_norms)
-                new_offsets.append(new_offsets[-1] + num_prims)
-                
-            new_primitives[l] = {
-                "exps": np.array(new_exps_list, dtype=np.float64),
-                "coeffs": np.array(new_coeffs_list, dtype=np.float64),
-                "offsets": np.array(new_offsets, dtype=np.int32)
-            }
-        self.primitives = new_primitives
-        
-        # Rebuild symmetric density matrices
-        new_density_matrices = []
-        for idx, s in enumerate(all_new_states):
-            d_blocks = {}
-            for active_l in unique_l:
-                if active_l not in self.primitives:
-                    continue
-                l_states_indices = [i for i, x in enumerate(all_new_states) if x['l'] == active_l]
-                dim = len(l_states_indices)
-                mat = np.zeros((dim, dim), dtype=np.float64)
-                
-                if active_l == s['l']:
-                    rel_pos = l_states_indices.index(idx)
-                    mat[rel_pos, rel_pos] = 1.0
-                    
-                d_blocks[active_l] = mat
-            new_density_matrices.append(d_blocks)
-        self.density_matrices = new_density_matrices
-        
         print("\n" + "="*80)
-        print("     DIAGNOSTICS COMPLETE - DATASETS LOADED AND STABILIZED")
+        print("     DIAGNOSTICS COMPLETE - SYSTEM GEOMETRY LOCKED TO AE LAYOUT")
         print("="*80 + "\n")
         
     def _compute_radial_densities(self, alpha: float) -> tuple[NDArray, NDArray]:
@@ -477,7 +390,7 @@ class AESpecies:
         occupancies = self.get_occupancies(min_electrons, max_electrons)
         
         # Get weighted sum
-        total_tau = np.sum(occupancies * self.radial_tau, axis=0)
+        total_tau = np.sum(occupancies * self.radial_tau.T, axis=1)
         
         return total_tau
 

@@ -942,6 +942,11 @@ class PostWFC:
         total_charge = np.zeros_like(energy_grid)
         total_charge[1:] = np.cumsum(avg_dos * dx)
         
+        # Add charge from below this energy
+        if energy_range is not None:
+            initial_charge = self.get_electrons_in_energy_range(e_min=-np.inf,e_max=energy_range[0])
+            total_charge += initial_charge
+        
         return energy_grid, total_charge
     
     def get_nonbonding_rho_vs_energy(
