@@ -117,7 +117,9 @@ class PAWAugmentationEnvironment:
         )
 
     def calculate_onsite_densities(
-        self, grid_dims: list | tuple | np.ndarray, density_matrices: list, **kwargs
+        self, 
+        grid_dims: list | tuple | np.ndarray, 
+        density_matrices: list, 
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Broadcasts localized core-sphere all-electron and pseudo onsite grid fields 
@@ -128,7 +130,7 @@ class PAWAugmentationEnvironment:
         """
         ae_p, ps_p, ae_d, ps_d, r, l, m, occ = self._prepare_numba_containers(
             density_matrices, 
-            use_kinetic=kwargs.get('use_kinetic', False)
+            use_kinetic=False
         )
 
         return reconstruct_onsite_densities(
@@ -166,7 +168,9 @@ class PAWAugmentationEnvironment:
         )
 
     def calculate_onsite_ke_densities(
-        self, grid_dims: list | tuple | np.ndarray, density_matrices: list
+        self, 
+        grid_dims: list | tuple | np.ndarray, 
+        density_matrices: list
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Broadcasts localized core-sphere all-electron and pseudo onsite kinetic energy 
