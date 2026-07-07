@@ -122,6 +122,8 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         energy_range=(-np.inf, np.inf), 
         use_partial_occ=True, 
         return_density_matrices=False,
+        use_shrod_tau=False,
+        **kwargs
     ):
         """Computes localized LCAO real-space rho and tau densities using the base engine."""
         if grid_shape is None: 
@@ -145,7 +147,8 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             spin_channel=spin_channel,
             energy_range=energy_range,
             use_partial_occ=use_partial_occ,
-            weight_callback=callback
+            weight_callback=callback,
+            use_shrod_tau=use_shrod_tau,
         )
             
         results = [rho, tau]

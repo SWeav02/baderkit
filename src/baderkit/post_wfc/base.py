@@ -10,6 +10,7 @@ from scipy.fft import fftn, ifftn, set_workers
 from baderkit.post_wfc.wf_readers.base import HSQDTM
 
 from .wfc_numba import _integrate_tetrahedra_spectral_density_numba
+from .pseudopotentials.augmentation_numba import compute_reciprocal_projectors
 
 class BaseWavefunctionEnvironment(ABC):
     """
@@ -331,27 +332,21 @@ class BaseWavefunctionEnvironment(ABC):
         energy_range: tuple = (-np.inf, np.inf),
         use_partial_occ: bool = True,
         include_aug: bool = True,
+        use_shrod_tau=False,
     ) -> tuple:
         """
-        Calculates the interacting electronic charge density (rho) and positive-definite kinetic 
+        Calculates the interacting electronic charge density (rho) and Schrödinger kinetic 
         energy density (tau) at one or multiple continuous fractional coordinate locations.
-        Optimized via vectorized plane-wave phase evaluations across all target coordinates.
-
-        Parameters:
-        -----------
-        frac_coord : array-like
-            Fractional coordinates matching shape (3,) for a single point, 
-            or shape (N, 3) for multiple target points.
         """
         frac_coord_arr = np.asarray(frac_coord, dtype=np.float64)
         is_single_point = frac_coord_arr.ndim == 1
-        target_frac = np.atleast_2d(frac_coord_arr)  # shape: (N, 3)
+        target_frac = np.atleast_2d(frac_coord_arr)
         num_targets = target_frac.shape[0]
         
-        # Pre-allocate accumulators for the point batch
-        rho_total = np.zeros(num_targets, dtype=np.float64)
-        tau_total = np.zeros(num_targets, dtype=np.float64)
-        grad_rho_sq_total = np.zeros(num_targets, dtype=np.float64) if return_grad_rho_sq else None
+        # create tracker for rho/tau
+        rho_total = np.zeros(num_targets, dtype=np.complex128)
+        tau_total = np.zeros(num_targets, dtype=np.complex128)
+        grad_rho_sq_total = np.zeros(num_targets, dtype=np.float64) if return_grad_rho_sq or not use_shrod_tau else None
         lap_rho_total = np.zeros(num_targets, dtype=np.float64) if return_lap_rho else None
         
         norm_factor = 1.0 / np.sqrt(self.structure.volume)
@@ -374,72 +369,95 @@ class BaseWavefunctionEnvironment(ABC):
                 if not active_bands:
                     continue
                 
-                # Dynamic subclass coefficient resolution: shape (len(active_bands), num_pw)
+                # Calculate rho/tau for smooth pseudo charge density
                 coeffs_gspace = self._construct_coefficients(ispin, ikpt, active_bands)
+                num_active_bands = coeffs_gspace.shape[0]
                 
-                # Fetch reciprocal integer tracking configurations
                 gvectors, _ = self.get_plane_waves_basis_idx(
                     ikpt, grid_shape=self._minimum_fft_size * 2, expected_npw=coeffs_gspace.shape[1]
                 )
                 
-                # Vectorized evaluation of plane-wave phases across ALL coordinates simultaneously
                 phases = np.exp(2j * np.pi * np.dot(gvectors, target_frac.T))
                 
-                # Construct Cartesian reciprocal momentum space vectors
                 rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
                 k_cart = self.kpoints_cart[ikpt]
                 K_cart = rgvec + k_cart[np.newaxis, :]
+                gk2 = np.linalg.norm(K_cart, axis=1)**2
                 
-                # Coherently reconstruct background wavefunctions across the point array
                 phi_at_points = np.dot(coeffs_gspace, phases) * norm_factor
-                
-                # Unconditionally evaluate the 3 Cartesian spatial gradient channels analytically
-                tau_bands = np.zeros((len(active_bands), num_targets), dtype=np.float64)
-                grad_phi_at_points = np.zeros((len(active_bands), num_targets, 3), dtype=complex)
-                for idim in range(3):
-                    grad_phi_dim = np.dot(coeffs_gspace, 1j * K_cart[:, idim, np.newaxis] * phases) * norm_factor
-                    grad_phi_at_points[:, :, idim] = grad_phi_dim
-                    tau_bands += (grad_phi_dim.conj() * grad_phi_dim).real
+                lap_phi_at_points = np.dot(coeffs_gspace, -gk2[:, np.newaxis] * phases) * norm_factor
                 
                 active_weights = np.array(weights)
-                w_arr = active_weights[:, np.newaxis]  # shape: (len(active_bands), 1)
+                w_arr = active_weights[:, np.newaxis]
                 
-                # Apply scaling factor down to state k-weights and degeneracies
-                tau_bands_weighted = tau_bands * w_arr
-                rho_total += np.sum((phi_at_points.conj() * phi_at_points).real * w_arr, axis=0)
-                tau_total += np.sum(tau_bands_weighted, axis=0)
+                rho_total += np.sum(phi_at_points.conj() * phi_at_points * w_arr, axis=0)
+                tau_total += np.sum(-phi_at_points * lap_phi_at_points.conj() * w_arr, axis=0)
                 
-                # Apply localized PAW corrections if overridden by child lifecycle hook
-                if include_aug and hasattr(self, "_apply_onsite_augmentation_at_point"):
-                    for n_idx, frac in enumerate(target_frac):
-                        r_b = (phi_at_points[:, n_idx].conj() * phi_at_points[:, n_idx]).real * active_weights
-                        t_b = tau_bands_weighted[:, n_idx]
+                # Apply augmentation corrections
+                if include_aug:
+                    num_atoms = len(self.structure)
+                    projections_all_atoms = []
+                    for i_atom in range(num_atoms):
+                        elem = self.structure[i_atom].species_string
+                        dataset = self._aug_environment.paw_datasets[elem]
+                        h = dataset.q_linear_grid[-1]
                         
-                        # Pass the active weights array so child corrections scale dynamically per state
-                        r_b_aug, t_b_aug = self._apply_onsite_augmentation_at_point(
-                            ispin=ispin, ikpt=ikpt, active_bands=active_bands, coeffs_list=coeffs_gspace,
-                            rgvec=rgvec, weight=active_weights, frac_coord=frac,
-                            rho_bands=r_b, tau_bands=t_b, include_aug=True
+                        P_G_matrix = compute_reciprocal_projectors(
+                            k_cart, rgvec, self.structure[i_atom].coords, h,
+                            len(dataset.q_linear_grid), self.structure.volume,
+                            dataset.reciprocal_projectors, dataset.angular_momenta, dataset.magnetic_nums
                         )
-                        rho_total[n_idx] += np.sum(r_b_aug - r_b)
-                        tau_total[n_idx] += np.sum(t_b_aug - t_b)
+                        proj_atom = np.dot(P_G_matrix, coeffs_gspace.T)
+                        projections_all_atoms.append(proj_atom)
                         
-                # Resolve complex spatial derivatives if tracking flags are activated
+                    for n_idx, frac in enumerate(target_frac):
+                        point_cart = frac @ self._aug_environment.lattice_matrix
+                        
+                        aug_bands = np.zeros(num_active_bands, dtype=np.float64)
+                        aug_ke_bands = np.zeros(num_active_bands, dtype=np.float64)
+                        
+                        for b_idx in range(num_active_bands):
+                            band_density_matrices = []
+                            for i_atom in range(num_atoms):
+                                proj = projections_all_atoms[i_atom][:, b_idx]
+                                dm = np.outer(proj, proj.conj()).real
+                                band_density_matrices.append(dm)
+                                
+                            ae_rho, ps_rho = self._aug_environment.calculate_onsite_densities_at_point(
+                                point_cart=point_cart, density_matrices=band_density_matrices
+                            )
+                            aug_bands[b_idx] = ae_rho - ps_rho
+                            
+                            ae_tau, ps_tau = self._aug_environment.calculate_onsite_ke_densities_at_point(
+                                point_cart=point_cart, density_matrices=band_density_matrices
+                            )
+                            aug_ke_bands[b_idx] = ae_tau - ps_tau
+                            
+                        rho_total[n_idx] += np.sum(aug_bands * active_weights)
+                        tau_total[n_idx] += np.sum(aug_ke_bands * active_weights)
+                        
                 if return_grad_rho_sq or return_lap_rho:
-                    if return_grad_rho_sq:
-                        grad_rho_tensor = 2.0 * (phi_at_points[:, :, np.newaxis].conj() * grad_phi_at_points).real
-                        grad_rho_sq_bands = np.sum(grad_rho_tensor**2, axis=2)  
-                        grad_rho_sq_total += np.sum(grad_rho_sq_bands * w_arr, axis=0)
+                    grad_phi_at_points = np.zeros((num_active_bands, num_targets, 3), dtype=complex)
+                    for idim in range(3):
+                        grad_phi_at_points[:, :, idim] = np.dot(coeffs_gspace, 1j * K_cart[:, idim, np.newaxis] * phases) * norm_factor
                         
+                if return_grad_rho_sq:
+                    grad_rho_tensor = 2.0 * (phi_at_points[:, :, np.newaxis].conj() * grad_phi_at_points).real
+                    grad_rho_sq_bands = np.sum(grad_rho_tensor**2, axis=2)  
+                    grad_rho_sq_total += np.sum(grad_rho_sq_bands * w_arr, axis=0)
+                    
+                if return_lap_rho or not use_shrod_tau:
+                    grad_psi_sq = np.sum(np.abs(grad_phi_at_points)**2, axis=2)  
+                    lap_rho_bands = 2.0 * (grad_psi_sq + (phi_at_points.conj() * lap_phi_at_points).real)
+                    if not use_shrod_tau:
+                        tau_total += lap_rho_bands / 2
                     if return_lap_rho:
-                        # Laplacian only gets populated if explicitly activated
-                        gk2 = np.sum(K_cart**2, axis=1)
-                        lap_phi_at_points = np.dot(coeffs_gspace, -gk2[:, np.newaxis] * phases) * norm_factor
-                        grad_psi_sq = np.sum(np.abs(grad_phi_at_points)**2, axis=2)  
-                        lap_rho_bands = 2.0 * (grad_psi_sq + (phi_at_points.conj() * lap_phi_at_points).real)
                         lap_rho_total += np.sum(lap_rho_bands * w_arr, axis=0)
 
-        # Unpack results array back to pristine floats if a single point coordinate was handed in
+        # convert to real space
+        rho_total = rho_total.real
+        tau_total = tau_total.real
+
         if is_single_point:
             results = [rho_total[0], tau_total[0]]
             if return_grad_rho_sq: results.append(grad_rho_sq_total[0])
@@ -461,105 +479,152 @@ class BaseWavefunctionEnvironment(ABC):
         num_points=2000, 
         method = "gaussian", 
         sigma=None,
-        grid_shape=None,
         include_aug=True,
         cumulative=False,
         return_plot=False,
+        use_partial_occ=False,
+        use_shrod_tau=False,
     ):
         """
         Calculates exact state-resolved kinetic and charge density metrics at a single point coordinate,
         supporting both differential spectral slices and full cumulative accumulation options.
         """
-        from scipy.integrate import cumulative_trapezoid
 
-        # Fallback to standard double unaliased grid dimensions if custom dimensions are omitted
-        grid_shape = grid_shape if grid_shape is not None else self._minimum_fft_size * 2
-        nx, ny, nz = grid_shape
-        
-        # Map real continuous fractional coordinates into discrete periodic meshgrid indices
-        ix = int(np.round(frac_coord[0] * nx)) % nx
-        iy = int(np.round(frac_coord[1] * ny)) % ny
-        iz = int(np.round(frac_coord[2] * nz)) % nz
+        # Resolve the exact window dimensions and padding used by the underlying spectral engine
+        formal_method, formal_sigma = self._get_default_sigma(method, sigma)
+        if energy_range is None:
+            e_min, e_max = self.get_energy_range(formal_method, formal_sigma)
+        else:
+            e_min, e_max = energy_range
+            full_e_min, full_e_max = self.get_energy_range(formal_method, formal_sigma)
+            if e_min is None or e_min == -np.inf: e_min = full_e_min
+            if e_max is None or e_max == np.inf: e_max = full_e_max
+            
+        energy_grid = np.linspace(e_min, e_max, num_points)
+        delta_e = energy_grid[1] - energy_grid[0] if num_points > 1 else 0.0
+
+        if formal_method == "none":
+            pad = 0.5 * delta_e if num_points > 1 else 0.0
+        elif formal_method == "tetrahedron":
+            pad = 4.0 * formal_sigma if formal_sigma > 0.0 else 0.0
+        else:
+            pad = 5.0 * formal_sigma
     
         def point_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
-            # Calculate structural coordinate phase shifting factors for the explicit point
-            phases = np.exp(2j * np.pi * (kx_idx * ix / nx + ky_idx * iy / ny + kz_idx * iz / nz))
+            # FIX 1: Exact continuous phase factor evaluation (eliminates voxel snapping/discretization errors)
+            phases = np.exp(2j * np.pi * np.dot(gvectors, frac_coord))
             
-            # Construct Cartesian reciprocal momentum space vectors for the active block
             rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
             k = self.kpoints_cart[ikpt]             
             K_cart = rgvec + k[np.newaxis, :]             
+            gk2 = np.sum(K_cart**2, axis=1)             
             
-            # Evaluate baseline pseudo-wavefunction value at the target coordinate
             phi_at_point = np.dot(coeffs_list, phases) * norm_factor
+            lap_phi_at_point = np.dot(coeffs_list, -gk2 * phases) * norm_factor
             
-            # Unconditionally evaluate the 3 Cartesian spatial gradient channels analytically
-            grad_phi_at_point = np.zeros((len(coeffs_list), 3), dtype=complex)
-            for idim in range(3):
-                grad_phi_at_point[:, idim] = np.dot(coeffs_list, 1j * K_cart[:, idim] * phases) * norm_factor
+            # FIX 2: Reconstruct active band indexes to apply occupancy weights
+            energies_ik = self.energies[ispin, ikpt]
+            engine_active_bands = [iband for iband in range(self.nbands) 
+                                   if energies_ik[iband] >= e_min - pad and energies_ik[iband] <= e_max + pad]
             
-            # Extract fields scaled by state k-weights and degeneracies
-            rho_bands = (phi_at_point.conj() * phi_at_point).real * weight
+            if use_partial_occ:
+                occ_weights = np.array([self.occupancies[ispin, ikpt, iband] for iband in engine_active_bands])
+            else:
+                occ_weights = np.ones(len(engine_active_bands))
             
-            # Positive-Definite Kinetic Energy formulation: sum(|grad_alpha|^2)
-            tau_bands = np.sum(np.abs(grad_phi_at_point)**2, axis=1) * weight
+            # Factor band occupancies into the real-space metric profiles
+            rho_bands = phi_at_point.conj() * phi_at_point * weight * occ_weights
+            tau_bands = -phi_at_point * lap_phi_at_point.conj() * weight * occ_weights
             
-            # Isolate the index configurations of states matching the requested energy boundaries
-            active_bands = []
-            for iband in range(self.nbands):
-                rel_energy = self.energies[ispin, ikpt, iband]
-                if energy_range is not None:
-                    if not (energy_range[0] <= rel_energy <= energy_range[1]):
-                        continue
-                active_bands.append(iband)
+            num_bands_coeffs = coeffs_list.shape[0]
             
-            # Delegate to child class lifecycle hook to apply representation-specific terms
-            rho_bands, tau_bands = self._apply_onsite_augmentation_at_point(
-                ispin=ispin, ikpt=ikpt, active_bands=active_bands, coeffs_list=coeffs_list,
-                rgvec=rgvec, weight=weight, frac_coord=frac_coord, 
-                rho_bands=rho_bands, tau_bands=tau_bands, include_aug=include_aug
-            )
+            # calculate augmentation contributions
+            if include_aug:
+                point_cart = frac_coord @ self._aug_environment.lattice_matrix
+                num_atoms = len(self.structure)
+                
+                projections_all_atoms = []
+                for i_atom in range(num_atoms):
+                    elem = self.structure[i_atom].species_string
+                    dataset = self._aug_environment.paw_datasets[elem]
+                    h = dataset.q_linear_grid[-1]
+                    
+                    P_G_matrix = compute_reciprocal_projectors(
+                        k, rgvec, self.structure[i_atom].coords, h,
+                        len(dataset.q_linear_grid), self.structure.volume, 
+                        dataset.reciprocal_projectors, dataset.angular_momenta, dataset.magnetic_nums
+                    )
+                    proj_atom = np.dot(P_G_matrix, coeffs_list.T)
+                    projections_all_atoms.append(proj_atom)
+                
+                aug_bands = np.zeros(num_bands_coeffs, dtype=np.float64)
+                aug_ke_bands = np.zeros(num_bands_coeffs, dtype=np.float64)
+                
+                for n_idx in range(num_bands_coeffs):
+                    band_density_matrices = []
+                    for i_atom in range(num_atoms):
+                        proj = projections_all_atoms[i_atom][:, n_idx]
+                        dm = np.outer(proj, proj.conj()).real
+                        band_density_matrices.append(dm)
+                        
+                    ae_rho, ps_rho = self._aug_environment.calculate_onsite_densities_at_point(
+                        point_cart=point_cart, density_matrices=band_density_matrices
+                    )
+                    aug_bands[n_idx] = ae_rho - ps_rho
+                    
+                    ae_tau, ps_tau = self._aug_environment.calculate_onsite_ke_densities_at_point(
+                        point_cart=point_cart, density_matrices=band_density_matrices
+                    )
+                    aug_ke_bands[n_idx] = ae_tau - ps_tau
+                
+                rho_bands += aug_bands * weight * occ_weights
+                tau_bands += aug_ke_bands * weight * occ_weights
             
-            metrics = [rho_bands, tau_bands]
+            metrics = [rho_bands.real, tau_bands.real]
             
-            # Resolve complex spatial derivatives if gradient or laplacian flags are specified
-            if return_grad_rho_sq or return_lap_rho:
+            if return_grad_rho_sq or return_lap_rho or not use_shrod_tau:
+                grad_phi_at_point = np.zeros((num_bands_coeffs, 3), dtype=complex)
+                for idim in range(3):
+                    grad_phi_at_point[:, idim] = np.dot(coeffs_list, 1j * K_cart[:, idim] * phases) * norm_factor
+                
                 if return_grad_rho_sq:
                     grad_rho_vec = 2.0 * (phi_at_point[:, np.newaxis].conj() * grad_phi_at_point).real
-                    grad_rho_sq_bands = np.sum(grad_rho_vec**2, axis=1) * weight
+                    grad_rho_sq_bands = np.sum(grad_rho_vec**2, axis=1) * weight * occ_weights
                     metrics.append(grad_rho_sq_bands)
                 else:
                     metrics.append(None)
                     
-                if return_lap_rho:
-                    gk2 = np.sum(K_cart**2, axis=1)             
-                    lap_phi_at_point = np.dot(coeffs_list, -gk2 * phases) * norm_factor
+                if return_lap_rho or not use_shrod_tau:
                     grad_psi_sq = np.sum(np.abs(grad_phi_at_point)**2, axis=1)
-                    lap_rho_bands = 2.0 * (grad_psi_sq + (phi_at_point.conj() * lap_phi_at_point.conj()).real) * weight
-                    metrics.append(lap_rho_bands)
-                else:
-                    metrics.append(None)
+                    # FIX 3: Corrected complex conjugate product evaluation for Re(ψ* ∇²ψ)
+                    lap_rho_bands = 2.0 * (grad_psi_sq + (phi_at_point.conj() * lap_phi_at_point).real) * weight * occ_weights
+                    # adjust tau to true positive definite
+                    if not use_shrod_tau:
+                        metrics[1] += lap_rho_bands / 2
+                    
+                    if return_lap_rho:
+                        metrics.append(lap_rho_bands)
+                    
+                    else:
+                        metrics.append(None)
                     
             return metrics
     
-        # Allocate required collector arrays inside the spectral decomposition framework
         num_metrics = 4 if (return_grad_rho_sq or return_lap_rho) else 2
 
         energy_grid, smeared = self._execute_spectral_engine(
             num_metrics=num_metrics, spin_channel=spin_channel, energy_range=energy_range, 
             num_points=num_points, method=method, sigma=sigma, eval_callback=point_callback
         )
+        smeared = [i for i in smeared if i is not None]
         
-        # --- Handle Cumulative Trapezoidal Integrations ---
         if cumulative:
             for idx in range(len(smeared)):
-                if smeared[idx] is not None:
-                    cum_array = np.zeros(len(energy_grid), dtype=np.float64)
-                    if len(energy_grid) > 1:
-                        cum_array[1:] = cumulative_trapezoid(smeared[idx], energy_grid)
-                    smeared[idx] = cum_array
+                cum_array = np.zeros(len(energy_grid), dtype=np.float64)
+                if len(energy_grid) > 1:
+                    cum_array[1:] = cumulative_trapezoid(smeared[idx], energy_grid)
+                smeared[idx] = cum_array
 
-        # Route directly to the graphing handler if return_plot flag is active
         if return_plot:
             prefix = "Integrated " if cumulative else ""
             x_label = "Accumulated Integrated Value" if cumulative else "Differential Density Magnitude (per eV)"
@@ -568,9 +633,9 @@ class BaseWavefunctionEnvironment(ABC):
                 f"{prefix}Charge Density $\\rho$": smeared[0],
                 f"{prefix}Kinetic Density $\\tau$": smeared[1]
             }
-            if return_grad_rho_sq and smeared[2] is not None:
+            if return_grad_rho_sq:
                 plot_curves[f"{prefix}Gradient $|\\nabla\\rho|^2$"] = smeared[2]
-            if return_lap_rho and smeared[3] is not None:
+            if return_lap_rho:
                 plot_curves[f"{prefix}Laplacian $\\nabla^2\\rho$"] = smeared[3]
                 
             return self._generate_property_plot(
@@ -580,9 +645,8 @@ class BaseWavefunctionEnvironment(ABC):
                 energy_range=energy_range
             )
             
-        results = [energy_grid, smeared[0], smeared[1]]
-        if return_grad_rho_sq: results.append(smeared[2])
-        if return_lap_rho: results.append(smeared[3])
+        results = [energy_grid]
+        results.extend(smeared)
         return tuple(results)
 
     def get_localization_function(
@@ -605,6 +669,7 @@ class BaseWavefunctionEnvironment(ABC):
             energy_range=energy_range, 
             spin_channel=spin_channel, 
             use_partial_occ=use_partial_occ, 
+            use_shrod_tau=False,
             )
         if localization_function == "lol":
             from baderkit.post_wfc.localization_functions import lol
@@ -612,16 +677,15 @@ class BaseWavefunctionEnvironment(ABC):
             
         with set_workers(self.scipy_workers): 
             rho_q = fftn(rho, norm='ortho')
-        lap_rho = self.calculate_laplacian(rho_q, is_reciprocal=True)
         gx, gy, gz = self.calculate_gradient(rho_q, is_reciprocal=True)
         grad_sq = gx**2 + gy**2 + gz**2
         
         if localization_function == "elid":
             from baderkit.post_wfc.localization_functions import elid
-            return elid(rho, tau, lap_rho, grad_sq)
+            return elid(rho, tau, grad_sq)
         elif localization_function == "elf":
             from baderkit.post_wfc.localization_functions import elf
-            return elf(rho, tau, lap_rho, grad_sq, savin_correction, spin_channel != -1)
+            return elf(rho, tau, grad_sq, savin_correction, spin_channel != -1)
         
     def get_localization_function_vs_energy(
         self, 
@@ -631,12 +695,12 @@ class BaseWavefunctionEnvironment(ABC):
         num_points=2000, 
         method="gaussian", 
         sigma=None,
-        grid_shape=None,
         include_aug=True,
         localization_function="elf", 
         savin_correction=True,
         cumulative=False,
         return_plot=False,
+        use_partial_occ=False,
     ) -> tuple:
         """
         Calculates topological electron localization indicators (ELF, LOL, or ELI-D)
@@ -662,23 +726,23 @@ class BaseWavefunctionEnvironment(ABC):
         contributions = self.get_rho_tau_vs_energy(
             frac_coord=frac_coord,
             return_grad_rho_sq=need_derivatives,
-            return_lap_rho=need_derivatives,
+            return_lap_rho=False,
             spin_channel=spin_channel,
             energy_range=energy_range,
             num_points=num_points,
             method=method,
             sigma=sigma,
-            grid_shape=grid_shape,
             include_aug=include_aug,
             cumulative=cumulative,
-            return_plot=False
+            return_plot=False,
+            use_shrod_tau=False,
+            use_partial_occ=use_partial_occ,
         )
         
         energy_grid = contributions[0]
         rho = contributions[1]
         tau = contributions[2]
         grad_sq = contributions[3] if need_derivatives else None
-        lap_rho = contributions[4] if need_derivatives else None
 
         is_spin = spin_channel != -1
 
@@ -688,10 +752,10 @@ class BaseWavefunctionEnvironment(ABC):
             loc_data = lol(rho, tau, savin_correction, is_spin)
         elif loc_fn_lower == "elid":
             from baderkit.post_wfc.localization_functions import elid
-            loc_data = elid(rho, tau, lap_rho, grad_sq)
+            loc_data = elid(rho, tau, grad_sq)
         elif loc_fn_lower == "elf":
             from baderkit.post_wfc.localization_functions import elf
-            loc_data = elf(rho, tau, lap_rho, grad_sq, savin_correction, is_spin)
+            loc_data = elf(rho, tau, grad_sq, savin_correction, is_spin)
 
         if return_plot:
             mode_prefix = "Integrated" if cumulative else "Differential"
@@ -729,17 +793,17 @@ class BaseWavefunctionEnvironment(ABC):
         contributions = self.get_rho_tau_at_point(
             frac_coord=frac_coord,
             return_grad_rho_sq=need_derivatives,
-            return_lap_rho=need_derivatives,
+            return_lap_rho=False,
             spin_channel=spin_channel,
             energy_range=energy_range,
             use_partial_occ=use_partial_occ,
-            include_aug=include_aug
+            include_aug=include_aug,
+            use_shrod_tau=False,
         )
         
         rho = contributions[0]
         tau = contributions[1]
         grad_sq = contributions[2] if need_derivatives else None
-        lap_rho = contributions[3] if need_derivatives else None
         
         is_spin = spin_channel != -1
 
@@ -749,10 +813,10 @@ class BaseWavefunctionEnvironment(ABC):
             return lol(rho, tau, savin_correction, is_spin)
         elif loc_fn_lower == "elid":
             from baderkit.post_wfc.localization_functions import elid
-            return elid(rho, tau, lap_rho, grad_sq)
+            return elid(rho, tau, grad_sq)
         elif loc_fn_lower == "elf":
             from baderkit.post_wfc.localization_functions import elf
-            return elf(rho, tau, lap_rho, grad_sq, savin_correction, is_spin)
+            return elf(rho, tau, grad_sq, savin_correction, is_spin)
         
     def get_density_of_states(
         self, 
@@ -954,20 +1018,20 @@ class BaseWavefunctionEnvironment(ABC):
         spin_channel: int = -1,
         energy_range: tuple = (-np.inf, np.inf),
         use_partial_occ: bool = True,
-        weight_callback=None
+        weight_callback=None,
+        use_shrod_tau=False,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Centralized state-space transformation driver. Iterates through system eigenstates,
-        applies positive-definite gradient operators, and executes dense 3D IFFT conversions 
-        to real-space grids.
+        applies Schrödinger kinetic operators, and executes dense 3D IFFT conversions to real-space grids.
         """
-        from scipy.fft import ifftn, set_workers
         
         Nx, Ny, Nz = grid_shape
-        normFac = np.sqrt((Nx * Ny * Nz) / self.structure.volume)
+        # Adjust norm factor to purely scale real-space units based on crystal volume
+        normFac = 1.0 / np.sqrt(self.structure.volume)
         
-        rho = np.zeros(grid_shape, dtype=np.float64)
-        tau = np.zeros(grid_shape, dtype=np.float64)
+        rho = np.zeros(grid_shape, dtype=np.complex128)
+        tau = np.zeros(grid_shape, dtype=np.complex128)
         spin_indices = [i for i in range(self.nspin)] if spin_channel == -1 else [spin_channel]
         
         for ispin in spin_indices:
@@ -987,50 +1051,41 @@ class BaseWavefunctionEnvironment(ABC):
                 if not active_bands: 
                     continue
                 
-                # Trigger callback hook for class-specific sub-matrix operations (e.g., LCAO density matrices)
                 if weight_callback is not None:
                     weight_callback(ispin, ikpt, active_bands, weights)
                 
-                # Execute subclass-specific coefficient resolution
                 coeffs_gspace = self._construct_coefficients(ispin, ikpt, active_bands)
                 
-                # --- Resolve Wavefunction Cartesian Gradients in Fourier Space ---
                 gvectors, gvec_wrapped = self.get_plane_waves_basis_idx(
                     ikpt, grid_shape, expected_npw=coeffs_gspace.shape[1]
                 )
                 rgvec = gvectors @ (2 * np.pi * self.reciprocal_lattice)
                 k_cart = self.kpoints_cart[ikpt]
-                K_cart = rgvec + k_cart[np.newaxis, :]
+                gk2 = np.sum((rgvec + k_cart[np.newaxis, :])**2, axis=1)
                 
-                # Box frequency distributions into 3D grid layout configurations
                 phi_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
-                grad_x_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
-                grad_y_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
-                grad_z_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
+                lap_phi_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
                 
-                # Assign baseline wavefunctions and analytic partial derivatives (i * K_cart)
                 phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = coeffs_gspace
-                grad_x_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = 1j * K_cart[:, 0] * coeffs_gspace
-                grad_y_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = 1j * K_cart[:, 1] * coeffs_gspace
-                grad_z_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = 1j * K_cart[:, 2] * coeffs_gspace
+                lap_phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = -gk2[np.newaxis, :] * coeffs_gspace
                 
-                # Execute high-throughput parallel multidimensional inverse Fourier mappings
+                # FIX: norm='forward' removes artificial bumps by handling the grid scaling natively
                 with set_workers(self.scipy_workers):
-                    phi_r = ifftn(phi_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
-                    grad_x_r = ifftn(grad_x_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
-                    grad_y_r = ifftn(grad_y_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
-                    grad_z_r = ifftn(grad_z_k * np.sqrt(Nx * Ny * Nz), axes=(1, 2, 3)) * normFac
+                    phi_r = ifftn(phi_k, axes=(1, 2, 3), norm='forward') * normFac
+                    lap_phi_r = ifftn(lap_phi_k, axes=(1, 2, 3), norm='forward') * normFac
                     
                 w_arr = np.array(weights)[:, np.newaxis, np.newaxis, np.newaxis]
-                rho += np.sum((phi_r.conj() * phi_r).real * w_arr, axis=0)
+                rho += np.sum(phi_r.conj() * phi_r * w_arr, axis=0)
+                tau += np.sum(-phi_r * lap_phi_r.conj() * w_arr, axis=0)
+        
+        rho = self._symmetrize_3d_grid(rho.real)
+        tau =  self._symmetrize_3d_grid(tau.real)
+        
+        if not use_shrod_tau:
+            laplacian = self.calculate_laplacian(rho)
+            tau += laplacian/2
                 
-                # Accumulate the positive-definite kinetic metric: sum(|grad_alpha|^2)
-                tau_state_sq = (grad_x_r.conj() * grad_x_r + 
-                                grad_y_r.conj() * grad_y_r + 
-                                grad_z_r.conj() * grad_z_r).real
-                tau += np.sum(tau_state_sq * w_arr, axis=0)
-                
-        return self._symmetrize_3d_grid(rho), self._symmetrize_3d_grid(tau)
+        return rho, tau
     
     def _apply_onsite_augmentation_at_point(
         self, ispin, ikpt, active_bands, coeffs_list, rgvec, weight, frac_coord, rho_bands, tau_bands, include_aug

@@ -202,6 +202,7 @@ class PostWFC(BaseWavefunctionEnvironment):
         use_partial_occ=True, 
         include_aug=True,
         return_density_matrices=False,
+        use_shrod_tau=False,
     ):
         """Computes plane-wave real-space rho and tau densities using the base engine."""
         if grid_shape is None: 
@@ -213,7 +214,8 @@ class PostWFC(BaseWavefunctionEnvironment):
             grid_shape=grid_shape_tuple,
             spin_channel=spin_channel,
             energy_range=energy_range,
-            use_partial_occ=use_partial_occ
+            use_partial_occ=use_partial_occ,
+            use_shrod_tau=use_shrod_tau,
         )
         
         if include_aug:
