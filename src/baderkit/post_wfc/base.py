@@ -698,7 +698,7 @@ class BaseWavefunctionEnvironment(ABC):
         include_aug=True,
         localization_function="elf", 
         savin_correction=True,
-        cumulative=False,
+        cumulative=True,
         return_plot=False,
         use_partial_occ=False,
     ) -> tuple:
@@ -733,7 +733,7 @@ class BaseWavefunctionEnvironment(ABC):
             method=method,
             sigma=sigma,
             include_aug=include_aug,
-            cumulative=cumulative,
+            cumulative=True,
             return_plot=False,
             use_shrod_tau=False,
             use_partial_occ=use_partial_occ,
@@ -756,6 +756,10 @@ class BaseWavefunctionEnvironment(ABC):
         elif loc_fn_lower == "elf":
             from baderkit.post_wfc.localization_functions import elf
             loc_data = elf(rho, tau, grad_sq, savin_correction, is_spin)
+            
+        # if not cumulative, we get the derivative
+        if not cumulative:
+            loc_data = np.gradient(loc_data, energy_grid)
 
         if return_plot:
             mode_prefix = "Integrated" if cumulative else "Differential"
