@@ -6,6 +6,7 @@ from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, T
 from functools import cached_property
 import numpy as np
 from numpy.typing import NDArray
+from scipy.integrate import trapezoid, cumulative_trapezoid
 
 from baderkit.post_wfc.pseudopotentials.augmentation_numba import compute_reciprocal_projectors
 from .all_electron_dataset import AESpecies
@@ -18,6 +19,9 @@ from .projection_numba import (
 from baderkit.post_wfc.wfc_numba import _integrate_tetrahedra_spectral_density_numba
 from baderkit.post_wfc.base import BaseWavefunctionEnvironment
 
+# TODO:
+    # Determine why promolecular rho shows charge at the p-state at 0,0,0 when there should be 0
+    # 
 
 class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     """
@@ -155,6 +159,17 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         if return_density_matrices:
             results.append(global_density_matrix)
         return tuple(results)
+    
+    def get_rho_tau_vs_energy(
+        self, 
+        include_aug=False,
+        **kwargs,
+    ):
+        # Force method to not use augmentations
+        return super().get_rho_tau_vs_energy(
+            include_aug=False,
+            **kwargs,
+            )
     
     
     
@@ -405,10 +420,61 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     ###########################################################################
     # Promolecular Reconstruction
     ###########################################################################
+    def _get_total_charge_vs_energy(self, spin_channel: int = -1, use_partial_occ: bool = False) -> np.ndarray:
+        """
+        Dynamically computes the total cell charge integrated as a function of energy.
+        Acts as the primary state calibration curve matching energy coordinates (E) 
+        to cumulative electron allocations Q(E).
+
+        Parameters:
+        -----------
+        spin_channel : int, default=-1
+            Target spin polarization state index (-1 for total, 0 for up, 1 for down).
+        use_partial_occ : bool, default=True
+            If True, scales density states using continuous band occupancy eigenvalues.
+
+        Returns:
+        --------
+        np.ndarray
+            A 2D array of shape (num_points, 2), where column 0 is the energy grid (eV)
+            and column 1 is the cumulative integrated cell charge population Q(E).
+        """
+        # Obtain the total Electronic Density of States (DOS) for the specified configuration
+        dos_res = self.get_density_of_states(
+            spin_channel=spin_channel,
+            energy_range=None,
+            num_points=2000,
+            method="tetrahedron",
+            sigma=None,
+            use_occupancies=use_partial_occ,
+            return_plot=False
+        )
+        energy_grid = dos_res["energy_grid"]
+        total_dos = dos_res["total_dos"]
+        
+        # Perform numerical integration across the energy grid axis via the trapezoidal rule
+        dx = np.diff(energy_grid)
+        avg_dos = 0.5 * (total_dos[:-1] + total_dos[1:])
+        total_charge = np.zeros_like(energy_grid)
+        # Progressively accumulate integrated slices to define the exact Q(E) trajectory
+        total_charge[1:] = np.cumsum(avg_dos * dx)
+        
+        return np.column_stack((energy_grid, total_charge))
+
     @cached_property
     def semi_periodic_atoms(self):
-        """Identifies and caches every Cartesian image position inside the cutoff."""
+        """
+        Identifies, transforms, and caches all atomic Cartesian coordinate image positions
+        lying within the designated cutoff interaction radius boundary across periodic boundary limits.
+        
+        Returns:
+        --------
+        dict
+            A metadata storage dictionary mapping real-space Cartesian coordinates, site types, 
+            original asymmetric cell indexes, and unique element symbols.
+        """
         if not hasattr(self, '_cache_semi_periodic_atoms'):
+            # Group atoms into unique chemical element buckets to track distinct basis sets
             unique_elements = list(self.structure.symbol_set)
             element_to_idx = {elem: i for i, elem in enumerate(unique_elements)}
             
@@ -416,10 +482,12 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             base_frac_coords = np.zeros((num_atoms, 3), dtype=np.float64)
             atom_types = np.zeros(num_atoms, dtype=np.int32)
             
+            # Map native crystal fractional structures into clean matrix arrays
             for i, site in enumerate(self.structure):
                 base_frac_coords[i] = site.frac_coords
                 atom_types[i] = element_to_idx[site.specie.symbol]
                 
+            # Invoke low-level compiled parallel wrapper to wrap and capture crystal boundary shells
             cart_coords, element_indices, base_indices = find_active_periodic_atoms(
                 self.lattice_matrix, base_frac_coords, atom_types, self.cutoff_radius
             )
@@ -432,18 +500,24 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             }
         return self._cache_semi_periodic_atoms
 
-    def _get_voxel_footprints(self, grid_dims):
+    def _get_voxel_footprints(self, grid_shape):
         """
-        Calculates and caches the voxel indices and scalar distances for all 
-        periodic atoms based on the requested grid dimension layout.
+        Calculates and caches the voxel coordinate index mappings and scalar radial distances 
+        for all translationally extended periodic atoms relative to a specified discrete 3D grid layout.
+
+        Parameters:
+        -----------
+        grid_shape : tuple or list
+            Discrete 3D grid shape array layout: (Nx, Ny, Nz).
         """
-        grid_key = tuple(grid_dims)
+        grid_key = tuple(grid_shape)
         
         if grid_key not in self._cache_voxel_footprints:
             spa = self.semi_periodic_atoms
             atom_carts = spa["cart_coords"]
-            g_dims = np.array(grid_dims, dtype=np.int64)
+            g_dims = np.array(grid_shape, dtype=np.int64)
             
+            # Execute vectorized ray-marching/distance filters to build sparse localized grid masks
             all_indices, all_distances = find_all_voxels_parallel(
                 atom_carts, self.lattice_matrix, g_dims, self.cutoff_radius
             )
@@ -454,22 +528,32 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     def get_atom_radial_rho_tau(
         self, 
         min_charge: float, 
-        max_charge: float
+        max_charge: float,
+        spin_channel: int,
+        use_partial_occ: bool,
     ) -> tuple[dict[int, NDArray], dict[int, NDArray]]:
         """
-        Unifies charge and kinetic energy radial profile evaluation across the 
-        PDOS-resolved local electronic shells mapped to a specific global cell charge window.
+        Evaluates the non-interacting atomic radial charge and kinetic energy density profiles 
+        by mapping the global cell charge window onto local atomic shells using PDOS allocation rules.
+
+        Parameters:
+        -----------
+        min_charge, max_charge : float
+            Lower and upper global cell integration boundaries (electron counts).
         """
-        min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
+        min_charge, max_charge = self._clean_charge_ranges(min_charge, max_charge)
         
         partial_rhos = {}
         partial_taus = {}
         
+        # Loop through every atom in the primary unit cell matrix
         for i_atom, alloc_integral in self.atom_integrals.items():
+            # Project global cell charge limits to local atomic populations via state-resolved integrals
             atom_qs = np.interp([min_charge, max_charge], self.norm_total_integral, alloc_integral)
             symbol = self.structure[i_atom].specie.symbol
             basis = self.atom_bases[symbol]
             
+            # Interpolate isolated radial grid densities matching the current atomic shell configuration
             partial_rhos[i_atom] = basis.get_radial_charge_density(
                 min_electrons=atom_qs[0], 
                 max_electrons=atom_qs[1], 
@@ -484,61 +568,71 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     def get_promolecular_rho_tau_at_points(
         self, 
         frac_coords, 
-        min_charge=None, 
-        max_charge=None
+        spin_channel: int = -1,
+        energy_range=(-np.inf, np.inf),
+        method="gaussian",
+        sigma=None,
+        use_partial_occ: bool = True,
     ) -> tuple[float | NDArray, float | NDArray]:
         """
-        Calculates the non-bonding reference valence charge and kinetic energy density
-        at one or multiple continuous fractional coordinate locations using atom-resolved 
-        PDOS tracking rules.
+        Calculates the non-bonding promolecular reference valence charge and positive-definite
+        kinetic energy density at one or multiple arbitrary continuous fractional coordinate points.
 
         Parameters:
         -----------
         frac_coords : array-like
-            Fractional coordinates matching shape (3,) for a single point, 
-            or shape (N, 3) for multiple target points.
+            Fractional coordinate matrix array matching shape (3,) or (N, 3).
         """
-        min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
+        # Resolve the specific spin-polarized or unpolarized cumulative reference curve mapping
+        energy_charge_array = self._get_total_charge_vs_energy(spin_channel=spin_channel, use_partial_occ=use_partial_occ)
+        
+        e_min, e_max = self._clean_energy_ranges(energy_range, method, sigma)
+                
+        # Map the energy boundaries directly to their corresponding global electron quantities
+        energies = np.linspace(e_min, e_max, 2000)
+        charges = np.interp(energies, energy_charge_array[:,0], energy_charge_array[:,1])
+
+        min_charge = np.min(charges)
+        max_charge = np.max(charges)
         
         spa = self.semi_periodic_atoms
-        atom_carts = spa["cart_coords"]          # shape: (M, 3)
-        atom_bases_indices = spa["base_indices"]  # shape: (M,)
+        atom_carts = spa["cart_coords"]          
+        atom_bases_indices = spa["base_indices"]  
         
-        # Standardize coordinate dimensions into a 2D matrix layout
+        # Standardize inputs into a strict 2D coordinate matrix layout
         frac_coords_arr = np.asarray(frac_coords, dtype=np.float64)
         is_single_point = frac_coords_arr.ndim == 1
-        target_cart = np.atleast_2d(frac_coords_arr) @ self.lattice_matrix  # shape: (N, 3)
+        target_cart = np.atleast_2d(frac_coords_arr) @ self.lattice_matrix  
         num_targets = target_cart.shape[0]
         
-        # Pre-allocate zero-filled accumulators for all target positions
         rho_total = np.zeros(num_targets, dtype=np.float64)
         tau_total = np.zeros(num_targets, dtype=np.float64)
         
-        # Fetch individual element species radial templates
-        partial_rhos, partial_taus = self.get_atom_radial_rho_tau(min_charge, max_charge)
+        # Pre-fetch radial density distribution grids for every atom type in the system
+        partial_rhos, partial_taus = self.get_atom_radial_rho_tau(
+            min_charge, max_charge, spin_channel=spin_channel, use_partial_occ=use_partial_occ
+        )
 
-        # Vectorize calculations column-by-column across the periodic atom images
+        # Vectorize calculations across all active real-space periodic images
         for j, i_atom in enumerate(atom_bases_indices):
             atom_pos = atom_carts[j]
             
-            # Distance from this specific periodic image to ALL target coordinates
-            dists_j = np.sqrt(
-                (target_cart[:, 0] - atom_pos[0]) ** 2 +
-                (target_cart[:, 1] - atom_pos[1]) ** 2 +
-                (target_cart[:, 2] - atom_pos[2]) ** 2
-            )
+            # Evaluate exact Euclidean distance vectors from this atom image to ALL target coordinates
+            dist_sq = (target_cart[:, 0] - atom_pos[0]) ** 2 + \
+                      (target_cart[:, 1] - atom_pos[1]) ** 2 + \
+                      (target_cart[:, 2] - atom_pos[2]) ** 2
+            dists_j = np.sqrt(dist_sq)
             
-            # Isolate target coordinates lying within this atom's interaction boundary
+            # Mask out targets that fall outside the interaction envelope to bypass redundant calculations
             mask_j = dists_j < self.cutoff_radius
             if np.any(mask_j):
                 symbol = self.structure[i_atom].specie.symbol
                 r_grid = self.atom_bases[symbol].radial_grid
                 
-                # Highly optimized C-level interpolation executed across the target space array
+                # Perform continuous linear interpolation to accumulate density values onto the active points
                 rho_total += np.interp(dists_j, r_grid, partial_rhos[i_atom]) * mask_j
                 tau_total += np.interp(dists_j, r_grid, partial_taus[i_atom]) * mask_j
         
-        # Unpack array metrics to pristine native floats if input was a single point coordinate
         if is_single_point:
             return rho_total[0], tau_total[0]
             
@@ -549,24 +643,43 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         frac_coord: NDArray, 
         min_charge: float, 
         max_charge: float, 
+        spin_channel: int = -1,
         num_points: int = 2000,
+        method="gaussian",
+        sigma=None,
+        use_partial_occ: bool = False,
     ) -> tuple[NDArray, NDArray, NDArray]:
-        """Calculates the differential profiles (d_rho/dQ and d_tau/dQ) at a coordinate via a stable cumulative matrix approach."""
-        min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
+        """
+        Calculates the differential promolecular density charge derivatives (d_rho/dQ and d_tau/dQ) 
+        at a specific point coordinate via a central-difference cumulative gradient matrix approach.
+        """
+        min_charge, max_charge = self._clean_charge_ranges(min_charge, max_charge)
         target_charges = np.linspace(min_charge, max_charge, num_points)
         
         cumulative_rho = np.empty(len(target_charges), dtype=np.float64)
         cumulative_tau = np.empty(len(target_charges), dtype=np.float64)
         
+        # Load the configuration-specific calibration data block
+        energy_charge_array = self._get_total_charge_vs_energy(spin_channel=spin_channel, use_partial_occ=use_partial_occ)
+        
+        charges = np.linspace(min_charge, max_charge, num_points)
+        energies = np.interp(charges, energy_charge_array[:,1], energy_charge_array[:,0])
+        energy_range = (energies.min(), energies.max())
+        
+        # Compute real-space fields incrementally up to each charge step
         for idx, charge in enumerate(target_charges):
             r_val, t_val = self.get_promolecular_rho_tau_at_points(
                 frac_coord, 
-                min_charge=min_charge, 
-                max_charge=charge
+                spin_channel=spin_channel,
+                energy_range=energy_range,
+                method=method,
+                sigma=sigma,
+                use_partial_occ=use_partial_occ,
             )
             cumulative_rho[idx] = r_val
             cumulative_tau[idx] = t_val
             
+        # Differentiate the accumulated curves to generate smooth differential outputs
         if num_points > 1:
             drho_dQ = np.gradient(cumulative_rho, target_charges)
             dtau_dQ = np.gradient(cumulative_tau, target_charges)
@@ -579,59 +692,101 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     def get_promolecular_rho_tau_vs_energy(
         self, 
         frac_coord: NDArray, 
-        energy_charge_array: NDArray = None, 
-        num_interp_points: int = 2000,
+        spin_channel: int = -1,
+        energy_range=(-np.inf, np.inf),
+        method="gaussian",
+        sigma=None,
+        num_points: int = 2000,
+        use_partial_occ: bool = False,
     ) -> tuple[NDArray, NDArray, NDArray]:
-        """Maps input cell energies to their corresponding non-bonding differential densities (d_rho / d_E and d_tau / d_E)."""
-        if energy_charge_array is None:
-            energy_charge_array = self.total_charge_vs_energy
-
-        sorted_indices = np.argsort(energy_charge_array[:, 0])
-        energies = energy_charge_array[sorted_indices, 0]
-        charges = energy_charge_array[sorted_indices, 1]
+        """
+        Maps input cell energies directly to their corresponding non-bonding differential 
+        energy densities (d_rho / d_E and d_tau / d_E). This implementation bypasses the 
+        charge-space transformation step, resolving derivatives using the chain rule.
+        """
+        e_min, e_max = self._clean_energy_ranges(energy_range, method, sigma)
+        energies = np.linspace(e_min, e_max, num_points)
         
-        min_charge = np.min(charges)
-        max_charge = np.max(charges)
+        drho_dE = np.zeros(num_points, dtype=np.float64)
+        dtau_dE = np.zeros(num_points, dtype=np.float64)
         
-        if np.abs(max_charge - min_charge) < 1e-6:
-            drho_dE_sorted = np.zeros(len(energies), dtype=np.float64)
-            dtau_dE_sorted = np.zeros(len(energies), dtype=np.float64)
-        else:
-            target_charges, drho_dQ, dtau_dQ = self.get_promolecular_rho_tau_vs_charge(
-                frac_coord, 
-                min_charge=min_charge, 
-                max_charge=max_charge, 
-                num_points=num_interp_points
+        spa = self.semi_periodic_atoms
+        atom_carts = spa["cart_coords"]
+        atom_bases_indices = spa["base_indices"]
+        target_cart = np.atleast_2d(frac_coord) @ self.lattice_matrix
+        
+        # Evaluate configuration-specific charge trajectories
+        energy_charge_array = self._get_total_charge_vs_energy(spin_channel=spin_channel, use_partial_occ=use_partial_occ)
+        charges = np.interp(energies, energy_charge_array[:,0], energy_charge_array[:,1])
+        
+        # Use an infinitesimal charge interval step (dQ) to extract clean differential shell slices
+        delta_q = 1e-4
+        for idx, energy in enumerate(energies):
+            current_charge = charges[idx]
+            
+            # Fetch local atomic density shells corresponding exactly to the current energy state
+            partial_rhos, partial_taus = self.get_atom_radial_rho_tau(
+                min_charge=current_charge - delta_q, 
+                max_charge=current_charge + delta_q,
+                spin_channel=spin_channel,
+                use_partial_occ=use_partial_occ,
             )
-            drho_dQ_sorted = np.interp(charges, target_charges, drho_dQ)
-            dtau_dQ_sorted = np.interp(charges, target_charges, dtau_dQ)
             
-            dQ_dE_sorted = np.gradient(charges, energies)
-            drho_dE_sorted = drho_dQ_sorted * dQ_dE_sorted
-            dtau_dE_sorted = dtau_dQ_sorted * dQ_dE_sorted
+            rho_at_E = 0.0
+            tau_at_E = 0.0
             
-        original_order = np.argsort(sorted_indices)
+            # Sum contributions from nearby atomic centers
+            for j, i_atom in enumerate(atom_bases_indices):
+                dist = np.linalg.norm(target_cart[0] - atom_carts[j])
+                if dist < self.cutoff_radius:
+                    symbol = self.structure[i_atom].specie.symbol
+                    r_grid = self.atom_bases[symbol].radial_grid
+                    
+                    # Convert the integrated shell difference back into a differential derivative value (1 / 2*dQ)
+                    rho_at_E += np.interp(dist, r_grid, partial_rhos[i_atom]) / (2 * delta_q)
+                    tau_at_E += np.interp(dist, r_grid, partial_taus[i_atom]) / (2 * delta_q)
+            
+            drho_dE[idx] = rho_at_E
+            dtau_dE[idx] = tau_at_E
+
+        # Map the derivatives using the system's Density of States mapping layer: dX/dE = dX/dQ * dQ/dE
+        dQ_dE = np.gradient(charges, energies)
+        drho_dE = drho_dE * dQ_dE
+        dtau_dE = dtau_dE * dQ_dE
         
-        return (
-            energy_charge_array[:, 0], 
-            drho_dE_sorted[original_order], 
-            dtau_dE_sorted[original_order]
-        )
+        return energies, drho_dE, dtau_dE
 
     def get_promolecular_rho_tau(
         self, 
-        grid_dims, 
-        min_charge=None, 
-        max_charge=None,
+        grid_shape, 
+        spin_channel: int = -1,
+        energy_range=(-np.inf, np.inf),
+        method="gaussian",
+        sigma=None,
+        use_partial_occ: bool = True,
     ) -> tuple[NDArray, NDArray]:
-        """Generates both non-bonding reference charge and kinetic energy density 3D grids using custom PDOS weights."""
-        min_charge, max_charge = self._clean_ranges(min_charge, max_charge)
+        """
+        Generates continuous 3D promolecular charge and kinetic energy density reference grids
+        across the unit cell, evaluated using the requested energy range bounds.
+        """
+        energy_charge_array = self._get_total_charge_vs_energy(spin_channel=spin_channel, use_partial_occ=use_partial_occ)
+        
+        e_min, e_max = self._clean_energy_ranges(energy_range, method, sigma)
+                
+        energies = np.linspace(e_min, e_max, 2000)
+        charges = np.interp(energies, energy_charge_array[:,0], energy_charge_array[:,1])
 
+        min_charge = np.min(charges)
+        max_charge = np.max(charges)
+        
         spa = self.semi_periodic_atoms
         atom_types = spa["base_indices"]
         
-        all_indices, all_distances = self._get_voxel_footprints(grid_dims)
-        partial_rhos, partial_taus = self.get_atom_radial_rho_tau(min_charge, max_charge)
+        # Load the sparse real-space voxel masking arrays matching the active dimensions
+        all_indices, all_distances = self._get_voxel_footprints(grid_shape)
+        partial_rhos, partial_taus = self.get_atom_radial_rho_tau(
+            min_charge, max_charge, spin_channel=spin_channel, use_partial_occ=use_partial_occ
+        )
 
         rho_matrices_list = []
         tau_matrices_list = []
@@ -640,6 +795,7 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         num_atoms_cell = len(self.structure)
         paw_r1_list = np.zeros(num_atoms_cell, dtype=np.float64)
         
+        # Reconstruct standard structured array pointers to interface directly with compiled Numba loops
         for i_atom in range(num_atoms_cell):
             symbol = self.structure[i_atom].specie.symbol
             r_grids_list.append(self.atom_bases[symbol].radial_grid)
@@ -647,9 +803,9 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             tau_matrices_list.append(partial_taus[i_atom])
             paw_r1_list[i_atom] = self._aug_environment.paw_datasets[symbol].radial_grid[0]
         
-        g_dims = np.array(grid_dims, dtype=np.int64)
+        g_dims = np.array(grid_shape, dtype=np.int64)
         
-        # Sequentially broadcast profiles across the structural voxel maps
+        # Broadcast the 1D atomic curves across the 3D grid layout using the cached footprints
         rho_3d = broadcast_atoms_to_grid(
             g_dims, atom_types, all_indices, all_distances, rho_matrices_list, r_grids_list, paw_r1_list,
         )
@@ -666,39 +822,34 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     def get_deformation_rho_tau(
         self, 
         grid_shape=None, 
-        spin_channel=-1, 
-        energy_range=(-np.inf, np.inf), 
-        use_partial_occ=True,
-        energy_charge_array=None
+        spin_channel: int = -1, 
+        energy_range=(-np.inf, np.inf),
+        method="gaussian",
+        sigma=None,
+        use_partial_occ: bool = True,
     ) -> tuple[NDArray, NDArray]:
         """
-        Calculates the real-space 3D deformation charge and kinetic energy density grids
-        (Interacting - Promolecular) inside the unit cell.
+        Calculates the real-space 3D deformation grids inside the unit cell.
+        Defined as: Deformation Field = Interacting Density - Promolecular Reference.
         """
-        if energy_charge_array is None:
-            energy_charge_array = self.total_charge_vs_energy
-
-        # 1. Compute fully interacting densities on the real-space grid
-        rho_int, tau_int = self.calculate_rho_tau(
+        # 1. Evaluate the fully interacting crystalline state density arrays
+        rho_int, tau_int = self.get_rho_tau(
             grid_shape=grid_shape,
             spin_channel=spin_channel,
             energy_range=energy_range,
             use_partial_occ=use_partial_occ,
-            return_density_matrices=False
+            method=method,
+            sigma=sigma,
         )
         
-        # 2. Map target energy boundaries to cell charge ranges if mapping array is supplied
-        min_charge, max_charge = None, None
-        if energy_charge_array is not None:
-            sorted_arr = energy_charge_array[np.argsort(energy_charge_array[:, 0])]
-            min_charge = float(np.interp(energy_range[0], sorted_arr[:, 0], sorted_arr[:, 1]))
-            max_charge = float(np.interp(energy_range[1], sorted_arr[:, 0], sorted_arr[:, 1]))
-            
-        # 3. Generate matching non-bonding promolecular reference grids
+        # 2. Generate matching non-bonding overlapping atomic reference grids
         rho_pro, tau_pro = self.get_promolecular_rho_tau(
-            grid_dims=rho_int.shape,
-            min_charge=min_charge,
-            max_charge=max_charge
+            grid_shape=rho_int.shape,
+            spin_channel=spin_channel,
+            energy_range=energy_range,
+            method=method,
+            sigma=sigma,
+            use_partial_occ=use_partial_occ,
         )
         
         return rho_int - rho_pro, tau_int - tau_pro
@@ -706,39 +857,34 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     def get_deformation_rho_tau_at_points(
         self,
         frac_coords,
-        spin_channel=-1,
+        spin_channel: int = -1,
         energy_range=(-np.inf, np.inf),
-        use_partial_occ=True,
-        energy_charge_array=None
+        method="gaussian",
+        sigma=None,
+        use_partial_occ: bool = False,
     ) -> tuple[float | NDArray, float | NDArray]:
         """
-        Calculates the exact deformation charge and kinetic energy density profiles
-        (Interacting - Promolecular) at one or multiple discrete fractional coordinates.
+        Calculates the exact deformation charge and positive-definite kinetic energy profiles
+        at one or multiple discrete fractional coordinates.
         """
-        if energy_charge_array is None:
-            energy_charge_array = self.total_charge_vs_energy
-
-        # 1. Evaluate exact point wavefunctions from the continuous representation backend
-        rho_int, tau_int = self.get_rho_tau_at_point(
+        # Extract points from the fully interacting continuous wavefunction representation backend
+        rho_int, tau_int = self.get_rho_tau_at_points(
             frac_coord=frac_coords,
             spin_channel=spin_channel,
             energy_range=energy_range,
             use_partial_occ=use_partial_occ,
-            include_aug=False
+            method=method,
+            sigma=sigma,
         )
-        
-        # 2. Map target energy boundaries to cell charge ranges if mapping array is supplied
-        min_charge, max_charge = None, None
-        if energy_charge_array is not None:
-            sorted_arr = energy_charge_array[np.argsort(energy_charge_array[:, 0])]
-            min_charge = float(np.interp(energy_range[0], sorted_arr[:, 0], sorted_arr[:, 1]))
-            max_charge = float(np.interp(energy_range[1], sorted_arr[:, 0], sorted_arr[:, 1]))
-            
-        # 3. Compute the vectorized promolecular reference values at the same positions
+
+        # Extract matching reference profiles at the exact same coordinate points
         rho_pro, tau_pro = self.get_promolecular_rho_tau_at_points(
             frac_coords=frac_coords,
-            min_charge=min_charge,
-            max_charge=max_charge
+            spin_channel=spin_channel,
+            energy_range=energy_range,
+            method=method,
+            sigma=sigma,
+            use_partial_occ=use_partial_occ,
         )
         
         return rho_int - rho_pro, tau_int - tau_pro
@@ -746,68 +892,63 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     def get_deformation_rho_tau_vs_energy(
         self,
         frac_coord: NDArray,
-        energy_charge_array: NDArray = None,
         spin_channel: int = -1,
-        num_interp_points: int = 2000,
+        energy_range=(-np.inf, np.inf),
+        method="gaussian",
+        sigma=None,
+        num_points: int = 2000,
         cumulative: bool = False,
         return_plot: bool = False,
+        use_partial_occ: bool = False,
     ) -> tuple:
         """
-        Calculates the energy-resolved deformation density spectral curves (Interacting - Promolecular)
-        at a specific fractional coordinate. Supporting both differential and cumulative integrated modes.
+        Calculates the energy-resolved deformation density spectral curves at a given coordinate.
+        Supports both narrow differential energy slices and full cumulative accumulation modes.
         """
-        from scipy.integrate import cumulative_trapezoid
-
-        if energy_charge_array is None:
-            energy_charge_array = self.total_charge_vs_energy
-
-        energies = energy_charge_array[:, 0]
-        energy_range = (float(np.min(energies)), float(np.max(energies)))
-        
         # 1. Fetch interacting densities across the energy grid continuum
         int_res = self.get_rho_tau_vs_energy(
             frac_coord=frac_coord,
             spin_channel=spin_channel,
             energy_range=energy_range,
-            num_points=num_interp_points,
-            include_aug=False,
-            cumulative=cumulative,
-            return_plot=False
+            num_points=num_points,
+            cumulative=False,
+            return_plot=False,
+            use_partial_occ=use_partial_occ,
+            method=method,
+            sigma=sigma,
         )
         int_energy, int_rho, int_tau = int_res[0], int_res[1], int_res[2]
         
-        # 2. Fetch differential non-bonding promolecular reference densities
-        pro_energy, pro_rho, pro_tau = self.get_promolecular_rho_tau_vs_energy(
+        # 2. Fetch the corresponding non-bonding promolecular reference densities
+        energies, pro_rho, pro_tau = self.get_promolecular_rho_tau_vs_energy(
             frac_coord=frac_coord,
-            energy_charge_array=energy_charge_array,
-            num_interp_points=num_interp_points
+            spin_channel=spin_channel,
+            energy_range=energy_range,
+            method=method,
+            sigma=sigma,
+            num_points=num_points,
+            use_partial_occ=use_partial_occ,
         )
         
-        # 3. Handle cumulative numerical integration tracking for the promolecular arrays
+        # 3. Integrate the promolecular vectors if cumulative tracking is enabled
         if cumulative:
-            sort_idx = np.argsort(pro_energy)
-            pro_energy_s = pro_energy[sort_idx]
-            pro_rho_s = pro_rho[sort_idx]
-            pro_tau_s = pro_tau[sort_idx]
-            
-            cum_pro_rho = np.zeros_like(pro_energy_s)
-            cum_pro_tau = np.zeros_like(pro_energy_s)
-            if len(pro_energy_s) > 1:
-                cum_pro_rho[1:] = cumulative_trapezoid(pro_rho_s, pro_energy_s)
-                cum_pro_tau[1:] = cumulative_trapezoid(pro_tau_s, pro_energy_s)
+            cum_pro_rho = np.zeros_like(energies)
+            cum_pro_tau = np.zeros_like(energies)
+            if len(energies) > 1:
+                cum_pro_rho[1:] = cumulative_trapezoid(pro_rho, energies)
+                cum_pro_tau[1:] = cumulative_trapezoid(pro_tau, energies)
                 
-            orig_idx = np.argsort(sort_idx)
-            pro_rho_eval = cum_pro_rho[orig_idx]
-            pro_tau_eval = cum_pro_tau[orig_idx]
+            pro_rho_eval = cum_pro_rho
+            pro_tau_eval = cum_pro_tau
         else:
             pro_rho_eval = pro_rho
             pro_tau_eval = pro_tau
             
-        # 4. Interpolate interacting properties onto the exact user-supplied energy levels
+        # 4. Interpolate interacting values to align perfectly with the target energy levels
         rho_int_interp = np.interp(energies, int_energy, int_rho)
         tau_int_interp = np.interp(energies, int_energy, int_tau)
         
-        # 5. Extract the net deformation delta curves
+        # 5. Extract the net deformation difference curves
         def_rho = rho_int_interp - pro_rho_eval
         def_tau = tau_int_interp - pro_tau_eval
         
@@ -881,16 +1022,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         norm_total_integral = cumulative_integrate(norm_total_dos)
         self._norm_total_integral = norm_total_integral
         self._atom_integrals = atom_integrals
-    
-    def _clean_ranges(self, min_charge, max_charge):
-        if min_charge is None or min_charge == -np.inf:
-            min_charge = 0.0
-        if max_charge is None or max_charge == np.inf:
-            max_charge = self.maximum_charge
-            
-        min_charge = max(min_charge, 0)
-        max_charge = min(max_charge, self.maximum_charge)
-        return min_charge, max_charge
     
     def _load_bases(self):
         """Parses NPZ binaries and filters out target elements matching cell contents."""

@@ -277,44 +277,44 @@ class BaseWavefunctionEnvironment(ABC):
             self._tetrahedra_indices = self._get_tetrahedra()
         return self._tetrahedra_indices
     
-    @cached_property
-    def total_charge_vs_energy(self) -> np.ndarray:
-        """
-        Computes and caches the total cell charge integrated as a function of energy 
-        across the entire unaliased system valence spectrum. 
+    # @cached_property
+    # def total_charge_vs_energy(self) -> np.ndarray:
+    #     """
+    #     Computes and caches the total cell charge integrated as a function of energy 
+    #     across the entire unaliased system valence spectrum. 
 
-        Returns:
-        --------
-        np.ndarray
-            A 2D array of shape (num_points, 2), where column 0 represents the 
-            energy grid (eV) and column 1 is the cumulative integrated charge Q(E).
-        """
-        # A callback that simply returns the state weights to compute total DOS
-        def total_dos_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
-            n_bands = coeffs_list.shape[0]
-            return [np.full(n_bands, weight)]
+    #     Returns:
+    #     --------
+    #     np.ndarray
+    #         A 2D array of shape (num_points, 2), where column 0 represents the 
+    #         energy grid (eV) and column 1 is the cumulative integrated charge Q(E).
+    #     """
+    #     # A callback that simply returns the state weights to compute total DOS
+    #     def total_dos_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor):
+    #         n_bands = coeffs_list.shape[0]
+    #         return [np.full(n_bands, weight)]
 
-        # Execute the engine across the full un-windowed range using default settings
-        energy_grid, smeared = self._execute_spectral_engine(
-            num_metrics=1,
-            spin_channel=-1,
-            energy_range=None,
-            num_points=2000,
-            method="tetrahedron",
-            sigma=None,
-            eval_callback=total_dos_callback
-        )
+    #     # Execute the engine across the full un-windowed range using default settings
+    #     energy_grid, smeared = self._execute_spectral_engine(
+    #         num_metrics=1,
+    #         spin_channel=-1,
+    #         energy_range=None,
+    #         num_points=2000,
+    #         method="tetrahedron",
+    #         sigma=None,
+    #         eval_callback=total_dos_callback
+    #     )
         
-        total_dos = smeared[0]
+    #     total_dos = smeared[0]
         
-        # Numerically integrate the total DOS to get cumulative cell charge Q(E)
-        dx = np.diff(energy_grid)
-        avg_dos = 0.5 * (total_dos[:-1] + total_dos[1:])
-        total_charge = np.zeros_like(energy_grid)
-        total_charge[1:] = np.cumsum(avg_dos * dx)
+    #     # Numerically integrate the total DOS to get cumulative cell charge Q(E)
+    #     dx = np.diff(energy_grid)
+    #     avg_dos = 0.5 * (total_dos[:-1] + total_dos[1:])
+    #     total_charge = np.zeros_like(energy_grid)
+    #     total_charge[1:] = np.cumsum(avg_dos * dx)
         
-        # Column-stacking returns the exact (N, 2) shape expected by the deformation functions
-        return np.column_stack((energy_grid, total_charge))
+    #     # Column-stacking returns the exact (N, 2) shape expected by the deformation functions
+    #     return np.column_stack((energy_grid, total_charge))
     
     ###########################################################################
     # Property Calculations
@@ -934,7 +934,8 @@ class BaseWavefunctionEnvironment(ABC):
     ###########################################################################
     def calculate_laplacian(self, data, is_reciprocal=False):
         """Evaluates second-derivative field Laplacian grid profiles via algebraic Fourier space multiplication."""
-        Gx, Gy, Gz = self.plane_waves_cart()
+        # FIX: Dynamically resolve the Cartesian G-space grids using the incoming data shape
+        Gx, Gy, Gz = self.plane_waves_cart(grid_shape=data.shape)
         G2 = Gx**2 + Gy**2 + Gz**2  
         
         if not is_reciprocal:
@@ -956,7 +957,8 @@ class BaseWavefunctionEnvironment(ABC):
         else: 
             recip_data = data
             
-        Gx, Gy, Gz = self.plane_waves_cart()
+        # FIX: Dynamically resolve the Cartesian G-space grids using the incoming data shape
+        Gx, Gy, Gz = self.plane_waves_cart(grid_shape=data.shape)
         with set_workers(self.scipy_workers):
             grad_x = ifftn(1j * Gx * recip_data, norm='ortho')
             grad_y = ifftn(1j * Gy * recip_data, norm='ortho')
@@ -1328,6 +1330,26 @@ class BaseWavefunctionEnvironment(ABC):
             ].reshape(Nx, Ny, Nz)
             
         return sym_field / len(symmetry.rotations)
+    
+    def _clean_charge_ranges(self, min_charge, max_charge):
+        if min_charge is None or min_charge == -np.inf:
+            min_charge = 0.0
+        if max_charge is None or max_charge == np.inf:
+            max_charge = self.maximum_charge
+            
+        min_charge = max(min_charge, 0)
+        max_charge = min(max_charge, self.maximum_charge)
+        return min_charge, max_charge
+    
+    def _clean_energy_ranges(self, energy_range, method, sigma):
+        if energy_range is None:
+            e_min, e_max = self.get_energy_range(method, sigma)
+        else:
+            e_min, e_max = energy_range
+            full_e_min, full_e_max = self.get_energy_range(method, sigma)
+            if e_min is None or e_min == -np.inf: e_min = full_e_min
+            if e_max is None or e_max == np.inf: e_max = full_e_max
+        return e_min, e_max
 
     ###########################################################################
     # Plotting Helpers

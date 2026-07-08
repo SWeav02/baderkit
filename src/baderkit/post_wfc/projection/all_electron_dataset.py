@@ -152,17 +152,6 @@ class AESpecies:
                 radial_tau[idx, :] = tau_final
                 
         return radial_rho, radial_tau
-    
-    @property
-    def max_occupations(self) -> NDArray:
-        """
-        1D array containing the maximum allowed electron occupation for each channel.
-        Since channels track explicit m projections, an individual state holds 1.0 electron 
-        if spin-unrestricted, and 2.0 electrons if spin-restricted.
-        """
-        if self.unrestricted:
-            return np.ones_like(self.angular_momenta, dtype=np.float64)
-        return 2.0 * np.ones_like(self.angular_momenta, dtype=np.float64)
 
     def get_valence_dataset(self, paw_species: PAWSpecies) -> "AESpecies":
         """
@@ -214,12 +203,15 @@ class AESpecies:
             raise ValueError("min_electrons cannot be greater than max_electrons.")
         
         n_channels = len(self.eigenvalues)
-        max_occ = self.max_occupations
         occs = np.zeros(n_channels, dtype=np.float64)
+        
+        # A single spatial orbital channel holds 1 electron if spin-polarized, 2 if restricted
+        max_per_state = 1.0 if self.unrestricted else 2.0
         
         prev_count = 0.0
         for idx in range(n_channels):
-            current_count = prev_count + max_occ[idx]
+            # Increment current_count by the state's capacity to advance the Aufbau threshold
+            current_count = prev_count + max_per_state
             overlap = max(0.0, min(current_count, max_electrons) - max(prev_count, min_electrons))
             occs[idx] = overlap
             prev_count = current_count
@@ -338,7 +330,7 @@ class AESpecies:
             angular_momenta=data["angular_momenta"],
             magnetic_quantum_numbers=data["magnetic_quantum_numbers"],
             eigenvalues=data["energies"],
-            reference_occupations=data["occupancies"],
+            reference_occupations=np.where(data["occupancies"]>1e-16, data["occupancies"], 0.0),
             spin_channels=data["spin_channels"],
             state_vectors=data["packed_state_vectors"],
             l_slices=l_slices
