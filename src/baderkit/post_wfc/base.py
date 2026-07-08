@@ -438,7 +438,7 @@ class BaseWavefunctionEnvironment(ABC):
         # CRITICAL: Clean energy ranges using the ORIGINAL method/sigma parameters 
         # before any internal eV conversion mutations take place inside _get_default_sigma.
         energy_range = self._clean_energy_ranges(energy_range, method, sigma)
-        method, sigma = self._get_default_sigma(method, sigma)
+        # method, sigma = self._get_default_sigma(method, sigma)
         e_min, e_max = energy_range        
         
         num_points = int(round((e_max - e_min) * resolution))

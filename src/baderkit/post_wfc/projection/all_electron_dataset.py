@@ -10,13 +10,13 @@ from numpy.typing import NDArray
 
 from baderkit.post_wfc.pseudopotentials.paw_dataset import PAWSpecies
 
-
 @dataclass
 class AESpecies:
     """
     Standardized, code-agnostic data representation of atomic core reconstruction 
     parameters. Overcomplete basis channels are canonically orthogonalized and sorted 
     by energy on initialization to yield clear, independent radial charge densities.
+    All calculations and quantities are handled natively in Angstrom and eV units.
     """
     # --- Fields WITHOUT default values first ---
     name: str
@@ -41,7 +41,7 @@ class AESpecies:
     """The primitive basis functions grouped by angular momentum"""
     
     radial_grid: NDArray
-    """1D array containing the radial coordinate mesh grid points, r."""
+    """1D array containing the radial coordinate mesh grid points, r (in Angstroms)."""
     
     # --- Fields WITH default values second ---
     paw_species: PAWSpecies | None = None
@@ -54,7 +54,7 @@ class AESpecies:
     """1D array of magnetic quantum numbers, m, for each active channel."""
     
     eigenvalues: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
-    """1D array of atomic reference state energy eigenvalues for each channel."""
+    """1D array of atomic reference state energy eigenvalues for each channel (in eV)."""
     
     reference_occupations: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
     """1D array of reference atomic occupations for each channel."""
@@ -70,10 +70,10 @@ class AESpecies:
 
     # --- Fields initialized during post_init ---
     radial_rho: NDArray = field(init=False)
-    """2D array of shape (channels, grid) containing radial charge density."""
+    """2D array of shape (channels, grid) containing radial charge density (in Angstrom^-3)."""
     
     radial_tau: NDArray = field(init=False)
-    """2D array of shape (channels, grid) containing radial kinetic energy density."""
+    """2D array of shape (channels, grid) containing radial kinetic energy density (in Angstrom^-5)."""
     
     def __post_init__(self):
         """
@@ -85,10 +85,9 @@ class AESpecies:
     def _compute_radial_densities(self, alpha: float) -> tuple[NDArray, NDArray]:
         """
         Evaluates the radial charge density (rho) and kinetic energy density (tau) 
-        profiles for a given primitive exponent scaling multiplier (alpha).
+        profiles natively in Angstrom units for a given primitive exponent scaling multiplier (alpha).
         """
-        BOHR_TO_ANGSTROM = 0.529177210903
-        r_bohr = self.radial_grid / BOHR_TO_ANGSTROM
+        r_ang = self.radial_grid
         
         num_states = len(self.eigenvalues)
         num_grid = len(self.radial_grid)
@@ -109,10 +108,13 @@ class AESpecies:
                 
                 dim = len(c_state)
                 phi = np.zeros((dim, num_grid), dtype=np.float64)
-                phi_prime = np.zeros((dim, num_grid), dtype=np.float64)
                 
-                r_pow_l = r_bohr ** l
-                r_pow_l_plus_1 = r_bohr ** (l + 1)
+                r_pow_l = r_ang ** l
+                r_pow_l_plus_1 = r_ang ** (l + 1)
+                
+                # Analytical accumulation vectors to avoid division-by-zero errors at r=0
+                sum_0_matrix = np.zeros((dim, num_grid), dtype=np.float64)
+                sum_1_matrix = np.zeros((dim, num_grid), dtype=np.float64)
                 
                 for p in range(dim):
                     start = offsets[p]
@@ -121,26 +123,32 @@ class AESpecies:
                     sum_0 = np.zeros(num_grid, dtype=np.float64)
                     sum_1 = np.zeros(num_grid, dtype=np.float64)
                     for k in range(start, end):
-                        exp_factor = np.exp(-exps[k] * (r_bohr ** 2))
+                        exp_factor = np.exp(-exps[k] * (r_ang ** 2))
                         sum_0 += coeffs[k] * exp_factor
                         sum_1 += coeffs[k] * exps[k] * exp_factor
                     
+                    sum_0_matrix[p, :] = sum_0
+                    sum_1_matrix[p, :] = sum_1
                     phi[p, :] = r_pow_l * sum_0
-                    
-                    if l == 0:
-                        phi_prime[p, :] = -2.0 * r_bohr * sum_1
-                    else:
-                        phi_prime[p, :] = (l / r_bohr) * phi[p, :] - 2.0 * r_pow_l_plus_1 * sum_1
                 
                 # Pure state vector transformations (Replaces matrix einsums)
                 phi_state = np.dot(c_state, phi)
-                phi_prime_state = np.dot(c_state, phi_prime)
+                sum_0_state = np.dot(c_state, sum_0_matrix)
+                sum_1_state = np.dot(c_state, sum_1_matrix)
                 
-                rho_final = (phi_state * phi_state) / (4.0 * np.pi * (BOHR_TO_ANGSTROM ** 3))
+                # Evaluate derivatives and kinetic energy components analytically without 1/r terms
+                if l == 0:
+                    phi_prime_state = -2.0 * r_ang * sum_1_state
+                    raw_tau = 0.5 * (phi_prime_state * phi_prime_state)
+                else:
+                    r_pow_l_minus_1 = r_ang ** (l - 1)
+                    phi_prime_state = l * r_pow_l_minus_1 * sum_0_state - 2.0 * r_pow_l_plus_1 * sum_1_state
+                    phi_state_over_r = r_pow_l_minus_1 * sum_0_state
+                    raw_tau = 0.5 * ((phi_prime_state * phi_prime_state) + l * (l + 1) * (phi_state_over_r * phi_state_over_r))
                 
-                angular_term = 0.0 if l == 0 else (l * (l + 1) / (r_bohr ** 2))
-                raw_tau = 0.5 * ((phi_prime_state * phi_prime_state) + (phi_state * phi_state) * angular_term)
-                tau_final = raw_tau / (4.0 * np.pi * (BOHR_TO_ANGSTROM ** 5))
+                # Natively calculated in Angstrom space (No BOHR_TO_ANGSTROM conversions)
+                rho_final = (phi_state * phi_state) / (4.0 * np.pi)
+                tau_final = raw_tau / (4.0 * np.pi)
                 
                 integrated_charge = np.trapezoid(4.0 * np.pi * (self.radial_grid ** 2) * rho_final, self.radial_grid)
                 
@@ -265,10 +273,10 @@ class AESpecies:
             cls,
             filename: str | Path,
             paw_species: PAWSpecies = None,
-            cutoff_radius: float = 10.0,
+            cutoff_radius: float = 6.0,
             grid_points: int = 2000):
         """
-        Parses compressed linear state-vector references generated by compress_checkpoint_to_radial_basis.
+        Parses compressed linear state-vector references natively stored in Angstrom and eV units.
         """
         file_path = Path(filename)
         if not file_path.exists():
@@ -281,7 +289,7 @@ class AESpecies:
         element_py = Element(element)
         matrix_dims = metadata["matrix_layout_dimensions"]
         
-        # Precompute the slicing masks mapping global flat array segments back to specific l-shells
+        # Precompute slicing masks
         l_slices = {}
         curr_offset = 0
         for l_str in sorted(matrix_dims.keys(), key=int):
@@ -289,8 +297,8 @@ class AESpecies:
             dim = matrix_dims[l_str]
             l_slices[l_val] = (curr_offset, curr_offset + dim)
             curr_offset += dim
-
-        # Set up grid geometry context
+    
+        # Set up grid geometry context natively in Angstroms
         if paw_species is not None:
             paw_grid = paw_species.radial_grid
             if cutoff_radius <= paw_grid[-1]:
@@ -314,9 +322,10 @@ class AESpecies:
                         
                 radial_grid = np.array(extended_points, dtype=np.float64)
         else:
+            # Native Angstrom geometry specification
             radial_grid = np.geomspace(1e-10, cutoff_radius, grid_points)
         
-        # Instantiate instance directly from structured rows
+        # Instantiate instance
         result = cls(
             name=f"{element}_{metadata['functional']}",
             element=element,
@@ -325,12 +334,12 @@ class AESpecies:
             functional=metadata["functional"],
             unrestricted=int(np.max(data["spin_channels"])) > 0,
             primitives=cls._flatten_basis_primitives(metadata["basis_primitives"]),
-            radial_grid=radial_grid,
+            radial_grid=radial_grid, 
             paw_species=None,
             angular_momenta=data["angular_momenta"],
             magnetic_quantum_numbers=data["magnetic_quantum_numbers"],
-            eigenvalues=data["energies"],
-            reference_occupations=np.where(data["occupancies"]>1e-16, data["occupancies"], 0.0),
+            eigenvalues=data["energies"], 
+            reference_occupations=np.where(data["occupancies"] > 1e-16, data["occupancies"], 0.0),
             spin_channels=data["spin_channels"],
             state_vectors=data["packed_state_vectors"],
             l_slices=l_slices
