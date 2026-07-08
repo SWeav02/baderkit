@@ -151,9 +151,9 @@ class BaseWavefunctionEnvironment(ABC):
         formal_method, formal_sigma = self._get_default_sigma(method, sigma)
         
         if formal_method == "none":
-            pad = 0.0
+            pad = 0.01
         elif formal_method == "tetrahedron":
-            pad = 4.0 * formal_sigma if formal_sigma > 0.0 else 0.0
+            pad = 5.0 * formal_sigma if formal_sigma > 0.0 else 0.0
         else:
             pad = 5.0 * formal_sigma
             

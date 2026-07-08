@@ -21,7 +21,9 @@ from baderkit.post_wfc.base import BaseWavefunctionEnvironment
 
 # TODO:
     # Determine why promolecular rho shows charge at the p-state at 0,0,0 when there should be 0
-    # 
+    # The issue is with _get_total_charge_vs_energy. Specifically, the tetrahedron method does
+    # not scale properly, either over or underestimating the accumulated charge. Other smearing
+    # methods work, but don't give accurate results.
 
 class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     """
@@ -420,7 +422,12 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     ###########################################################################
     # Promolecular Reconstruction
     ###########################################################################
-    def _get_total_charge_vs_energy(self, spin_channel: int = -1, use_partial_occ: bool = False) -> np.ndarray:
+    def _get_total_charge_vs_energy(
+            self, 
+            spin_channel: int = -1, 
+            use_partial_occ: bool = False,
+            point_density: float = 200,
+            ) -> np.ndarray:
         """
         Dynamically computes the total cell charge integrated as a function of energy.
         Acts as the primary state calibration curve matching energy coordinates (E) 
@@ -439,13 +446,18 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             A 2D array of shape (num_points, 2), where column 0 is the energy grid (eV)
             and column 1 is the cumulative integrated cell charge population Q(E).
         """
+        energy_range = self.get_energy_range()
+        num_points = int(round((energy_range[1]-energy_range[0])*point_density))
+        print(num_points)
         # Obtain the total Electronic Density of States (DOS) for the specified configuration
         dos_res = self.get_density_of_states(
             spin_channel=spin_channel,
             energy_range=None,
-            num_points=2000,
+            num_points=num_points,
             method="tetrahedron",
-            sigma=None,
+            # method=None,
+            # sigma=None,
+            sigma=0.0,
             use_occupancies=use_partial_occ,
             return_plot=False
         )
