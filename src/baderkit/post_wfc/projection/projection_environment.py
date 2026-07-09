@@ -985,8 +985,11 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         Injects explicit assertion floors and numeric sanity bounds across the 
         reciprocal-to-radial matrix map to catch under/over-amplifications.
         """
-        import logging
-        import sys
+        # TODO:
+            # 1. Make sure basis is renormalized in the same manor as in the
+            # construction script.
+            # 2. Check what all must be normalized. Do we need to temporarily
+            # normalize VASP's coefficients?
         
         post_wfc = self.post_wfc
         structure = self.structure
