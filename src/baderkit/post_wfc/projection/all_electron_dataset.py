@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+import logging
 
 from pymatgen.core import Element
 from dataclasses import dataclass, field
@@ -50,6 +51,9 @@ class AESpecies:
     angular_momenta: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int_))
     """1D array of orbital angular momentum quantum numbers, l, for each active channel."""
     
+    principal_quantum_numbers: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int_))
+    """1D array of principle quantum numbers quantum numbers for each active channel."""
+    
     magnetic_quantum_numbers: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int_))
     """1D array of magnetic quantum numbers, m, for each active channel."""
     
@@ -84,8 +88,9 @@ class AESpecies:
         
     def _compute_radial_densities(self, alpha: float) -> tuple[NDArray, NDArray]:
         """
-        Evaluates the radial charge density (rho) and kinetic energy density (tau) 
+        Evaluates the radial charge density (rho) and positive-definite kinetic energy density (tau) 
         profiles natively in Angstrom units for a given primitive exponent scaling multiplier (alpha).
+        Calculations strictly enforce spherical averaging over the full angular harmonic space.
         """
         r_ang = self.radial_grid
         
@@ -131,12 +136,14 @@ class AESpecies:
                     sum_1_matrix[p, :] = sum_1
                     phi[p, :] = r_pow_l * sum_0
                 
-                # Pure state vector transformations (Replaces matrix einsums)
+                # Pure state vector transformations 
                 phi_state = np.dot(c_state, phi)
                 sum_0_state = np.dot(c_state, sum_0_matrix)
                 sum_1_state = np.dot(c_state, sum_1_matrix)
                 
-                # Evaluate derivatives and kinetic energy components analytically without 1/r terms
+                # Evaluate derivatives and kinetic components analytically.
+                # Incorporates the exact shell-averaged angular derivative summation identity:
+                # sum_{m} [|dY/dtheta|^2 + |dY/dphi|^2/sin^2(theta)] = l(l+1)(2l+1)/4pi
                 if l == 0:
                     phi_prime_state = -2.0 * r_ang * sum_1_state
                     raw_tau = 0.5 * (phi_prime_state * phi_prime_state)
@@ -146,7 +153,7 @@ class AESpecies:
                     phi_state_over_r = r_pow_l_minus_1 * sum_0_state
                     raw_tau = 0.5 * ((phi_prime_state * phi_prime_state) + l * (l + 1) * (phi_state_over_r * phi_state_over_r))
                 
-                # Natively calculated in Angstrom space (No BOHR_TO_ANGSTROM conversions)
+                # Scale by 1/(4*pi) to obtain the perfectly isotropic spherical average per electron
                 rho_final = (phi_state * phi_state) / (4.0 * np.pi)
                 tau_final = raw_tau / (4.0 * np.pi)
                 
@@ -174,14 +181,15 @@ class AESpecies:
         accumulated_charge = 0.0
         
         for idx in sorted_occupied:
+            l = self.angular_momenta[idx]
             valence_indices.append(idx)
-            accumulated_charge += self.reference_occupations[idx]
+            # Accounts for the total shell population by scaling with the subshell degeneracy factor
+            accumulated_charge += self.reference_occupations[idx] * (2 * l + 1)
             if accumulated_charge >= Z - 1e-4:
                 break
                 
         virtual_indices = np.where(self.reference_occupations <= 1e-4)[0]
         keep_indices = sorted(list(valence_indices) + list(virtual_indices), key=lambda idx: self.eigenvalues[idx])
-        
         return AESpecies(
             name=f"{self.name}_valence",
             element=self.element,
@@ -193,6 +201,7 @@ class AESpecies:
             radial_grid=self.radial_grid,
             paw_species=paw_species,
             angular_momenta=self.angular_momenta[keep_indices],
+            principal_quantum_numbers=self.principal_quantum_numbers[keep_indices],
             magnetic_quantum_numbers=self.magnetic_quantum_numbers[keep_indices],
             eigenvalues=self.eigenvalues[keep_indices],
             reference_occupations=self.reference_occupations[keep_indices],
@@ -204,7 +213,7 @@ class AESpecies:
     def get_occupancies(self, min_electrons: float, max_electrons: float) -> NDArray:
         """
         Generates a 1D occupancy array of shape (n_channels,) containing the 
-        number of electrons allocated to each channel within the specified 
+        number of electrons allocated to each subshell channel within the specified 
         electron window [min_electrons, max_electrons] using the Aufbau principle.
         """
         if min_electrons > max_electrons:
@@ -213,12 +222,14 @@ class AESpecies:
         n_channels = len(self.eigenvalues)
         occs = np.zeros(n_channels, dtype=np.float64)
         
-        # A single spatial orbital channel holds 1 electron if spin-polarized, 2 if restricted
-        max_per_state = 1.0 if self.unrestricted else 2.0
-        
         prev_count = 0.0
         for idx in range(n_channels):
-            # Increment current_count by the state's capacity to advance the Aufbau threshold
+            l = self.angular_momenta[idx]
+            # Dynamically scale maximum channel capacity using the subshell degeneracy factor
+            deg_factor = 2 * l + 1
+            max_per_state = deg_factor if self.unrestricted else 2.0 * deg_factor
+            
+            # Increment current_count by the subshell's total capacity to advance the Aufbau threshold
             current_count = prev_count + max_per_state
             overlap = max(0.0, min(current_count, max_electrons) - max(prev_count, min_electrons))
             occs[idx] = overlap
@@ -253,7 +264,7 @@ class AESpecies:
 
     def get_radial_charge_density(self, min_electrons: float, max_electrons: float) -> NDArray:
         """
-        Computes the total radial charge density profiles across a range of total electron counts.
+        Computes the total isotropic radial charge density profiles across a range of total electron counts.
         """
         occupancies = self.get_occupancies(min_electrons, max_electrons)
         total_rho = np.sum(occupancies * self.radial_rho.T, axis=1)
@@ -261,7 +272,7 @@ class AESpecies:
 
     def get_radial_kinetic_energy_density(self, min_electrons: float, max_electrons: float) -> NDArray:
         """
-        Computes the total radial positive-definite kinetic energy density (KED) profiles 
+        Computes the total isotropic radial positive-definite kinetic energy density (KED) profiles 
         across a range of total electron counts.
         """
         occupancies = self.get_occupancies(min_electrons, max_electrons)
@@ -322,7 +333,6 @@ class AESpecies:
                         
                 radial_grid = np.array(extended_points, dtype=np.float64)
         else:
-            # Native Angstrom geometry specification
             radial_grid = np.geomspace(1e-10, cutoff_radius, grid_points)
         
         # Instantiate instance
@@ -337,6 +347,7 @@ class AESpecies:
             radial_grid=radial_grid, 
             paw_species=None,
             angular_momenta=data["angular_momenta"],
+            principal_quantum_numbers=data["principal_quantum_numbers"],
             magnetic_quantum_numbers=data["magnetic_quantum_numbers"],
             eigenvalues=data["energies"], 
             reference_occupations=np.where(data["occupancies"] > 1e-16, data["occupancies"], 0.0),

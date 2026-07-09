@@ -7,7 +7,7 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.integrate import cumulative_trapezoid
 from scipy.special import gamma
-from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, MofNCompleteColumn, TimeRemainingColumn
+from rich.progress import track
 
 from .all_electron_dataset import AESpecies
 from .projection_numba import (
@@ -20,9 +20,8 @@ from baderkit.post_wfc.wfc_numba import _integrate_tetrahedra_spectral_density_n
 from baderkit.post_wfc.base import BaseWavefunctionEnvironment
 
 # TODO:
-    # Make sure basis is loaded in metallic units (or just saved this way)
-    # Fix any methods that assum atomic units
-    # Fix projection method
+    # Try to fix cusp difference. Might help to put atomic bases through an FFT filter of some kind. Might also help projection as well
+    # See if we can resove the spillage at higher unoccupied statess. I don't see why these should exist.
 
 class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     """
@@ -976,77 +975,9 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                 q_vecs, q_norms, orb['l'], orb['m'], orb['alphas'], orb['g_coefficients']
             )
             
-        # FIXED: A direct discrete dot product now returns unscaled plane-wave coefficients
-        # that perfectly match the raw VASP normalization convention.
-        return np.dot(coeffs_active, Chi_q)
-    
-    def _analyze_basis_leakage(self, basis_map, lattice_matrix, containment_threshold=0.99):
-        """
-        Dynamically audits basis orbital leakage by comparing the physical charge
-        density enclosed within the cell's inscribed sphere against its total 
-        infinite-space norm.
-        """
-        # Calculate the minimum unit cell face-to-face width
-        norms = np.linalg.norm(lattice_matrix, axis=1)
-        L_min = np.min(norms)
-        R_cell = L_min / 2.0  # Maximum radius of an inscribed sphere in the unit cell
-        
-        classified_basis = []
-        
-        print("\n" + "="*80)
-        print("         DYNAMIC BASIS ETYMOLOGY & INTEGRATED CONTAINMENT ENGINE     ")
-        print("="*80)
-        print(f"Cell Inscribed Sphere Radius (R_cell): {R_cell:.4f} \u00c5")
-        print(f"Target Enclosed Containment Threshold  : {containment_threshold * 100.0:.1f}%")
-        print(f" " + "-"*75)
-        print(f"{'ID':<4} | {'State':<5} | {'Total Norm':<12} | {'Enclosed Norm':<15} | {'Leakage %':<11} | {'Domain Assignment'}")
-        print("-"*80)
-        
-        # Build radial grids: one up to R_cell, one extending to "infinity" (50 \u00c5)
-        r_enclosed = np.linspace(0.0, R_cell, 1000)
-        r_infinite = np.linspace(0.0, 50.0, 5000)
-        
-        for mu, orb in enumerate(basis_map):
-            alphas = orb['alphas']
-            coeffs = orb['coeffs']
-            l = orb['l']
-            
-            # --- 1. Compute Enclosed Norm up to R_cell ---
-            R_enc = np.zeros_like(r_enclosed)
-            for k in range(len(alphas)):
-                R_enc += coeffs[k] * (r_enclosed ** l) * np.exp(-alphas[k] * (r_enclosed**2))
-            prob_enc = (R_enc ** 2) * 4.0 * np.pi * (r_enclosed ** 2)
-            enclosed_norm = np.trapezoid(prob_enc, r_enclosed)
-            
-            # --- 2. Compute Total Analytical Norm (Infinite-Space Approximation) ---
-            R_inf = np.zeros_like(r_infinite)
-            for k in range(len(alphas)):
-                R_inf += coeffs[k] * (r_infinite ** l) * np.exp(-alphas[k] * (r_infinite**2))
-            prob_inf = (R_inf ** 2) * 4.0 * np.pi * (r_infinite ** 2)
-            total_norm = np.trapezoid(prob_inf, r_infinite)
-            
-            # Avoid divide-by-zero on unphysical/empty channels
-            if total_norm > 1e-8:
-                fractional_containment = enclosed_norm / total_norm
-            else:
-                fractional_containment = 1.0
-                
-            leakage_percent = (1.0 - fractional_containment) * 100.0
-            is_diffuse = fractional_containment < containment_threshold
-            
-            assignment = "RECIPROCAL GRID (Diffuse)" if is_diffuse else "ANALYTICAL SPACE (Compact)"
-            state_label = f"{l}s" if l == 0 else f"{l}p"
-            
-            print(f" {mu:2d}  | {state_label:<5} | {total_norm:12.6f} | {enclosed_norm:15.6f} | {leakage_percent:10.2f}% | {assignment}")
-            
-            orb_meta = orb.copy()
-            orb_meta['is_diffuse'] = is_diffuse
-            orb_meta['containment'] = fractional_containment
-            orb_meta['leakage_percent'] = leakage_percent
-            classified_basis.append(orb_meta)
-            
-        print("="*80 + "\n")
-        return classified_basis
+        # FIX: Scaling by 1 / sqrt(Volume) resolves the LCAO-to-Periodic plane wave continuum mapping mismatch
+        volume_norm = 1.0 / np.sqrt(self.post_wfc.structure.volume)
+        return np.dot(coeffs_active, Chi_q) * volume_norm
     
     def _project_system(self):
         """
@@ -1054,17 +985,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         Deconstructed into 4 clean mathematical pillars with exact analytical 
         real-space normalization and gauge alignment.
         """
-        # TODO:
-            # This is very close to working, but the reciprocal space method
-            # results in physically incorrect negative spillage.
-            # On the other hand, the real space variant is exceptionally slow,
-            # at least the most recent version.
-            # A couple of thoughts:
-                # 1. We might be able to increase the FFT grid size to avoid
-                # issues with cusps
-                # 2. We ought to be able to use a logarithmic mapping of the
-                # real space basis sets to ensure they are well resolved.
-
         post_wfc = self.post_wfc
         structure = self.structure
         nspin = post_wfc.nspin
@@ -1072,85 +992,93 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         nbands = post_wfc.nbands
         volume = structure.volume
         num_atoms = len(structure)
-        
-        # Cartesian positions of all cell sites
-        atom_positions = np.array([site.coords for site in structure], dtype=np.float64)
-        
-        tol = 0.0
-        alpha_min = 1e-4
-        state_alpha_min = 0.15
+        l_symbols = {0: 's', 1: 'p', 2: 'd', 3: 'f', 4: 'g'}
         
         print("\n" + "="*80)
-        print("         PROJECTOR AUGMENTED WAVE (PAW) PRODUCTION SYSTEM ENGINE        ")
+        print("          PROJECTOR AUGMENTED WAVE (PAW) PRODUCTION SYSTEM ENGINE        ")
         print("="*80)
         print(f"System Dimensions: Spin={nspin}, k-points={nkpoints}, Bands={nbands}")
         print(f"Unit Cell Volume (Omega): {volume:.6f} Å^3")
         
-        #######################################################################
-        # STEP 1: Basis Pruning & Exact Analytical Renormalization
-        #######################################################################
-        # OBJECTIVE: Select, filter, and normalize localized atomic reference 
-        # wavefunctions from the all-electron database to construct a clean, 
-        # linearly independent orbital space for the crystalline system.
+        # Cartesian positions of all cell sites
+        atom_positions = np.array([site.coords for site in structure], dtype=np.float64)
         
-        # MECHANICS:
-        #   1. Align the database's semi-core states with the crystal's active
-        #      DFT energy scale via a rigid reference energy shift.
-        #   2. Programmatically identify and include all subshells sitting below 
-        #      e_max, plus exactly one additional virtual subshell above it to 
-        #      provide complete variational flexibility for high-lying bands.
-        #   3. Strip away unphysically sharp or diffuse primitive Gaussians while 
-        #      safely protecting physically occupied semi-core and valence states.
-        #   4. Execute an exact analytical real-space integration of the truncated 
-        #      contracted Gaussians to restore a perfect unit norm (1.000000) for 
-        #      every single localized basis function before grid projection.
+        tol = 0.1
+        alpha_min = 1e-4
+        state_alpha_min = 0.15
         
-        logging.info("Executing Step 1: Core reference orbital pruning and analytical renormalization.")
+        # =====================================================================
+        # DIAGNOSTIC: RAW UNPRUNED ATOMIC BASE SPECTRUM
+        # =====================================================================
+        print("\n" + "="*80)
+        print("          RAW UNPRUNED ATOMIC DATABASE SPECTRUM (PRE-PRUNING)          ")
+        print("="*80)
+        unique_elements = set(site.specie.symbol for site in structure)
+        for elem in unique_elements:
+            if elem not in self.atom_bases:
+                print(f"Element {elem} not found in atom_bases library.")
+                continue
+            atom_basis = self.atom_bases[elem]
+            print(f"Element: {elem}")
+            print(f"{'Index':<5} | {'True Shell':<10} | {'Energy (eV)':<12} | {'Occupation':<10} | {'Spin':<5}")
+            print("-"*60)
+            
+            for idx in range(len(atom_basis.eigenvalues)):
+                l = atom_basis.angular_momenta[idx]
+                n = atom_basis.principal_quantum_numbers[idx]
+                energy = atom_basis.eigenvalues[idx]
+                occ = atom_basis.reference_occupations[idx]
+                spin = atom_basis.spin_channels[idx]
+                
+                l_sym = l_symbols.get(l, f"l={l}")
+                shell_label = f"{n}{l_sym}"
+                
+                print(f" {idx:<5} | {shell_label:<10} | {energy:12.4f} | {occ:10.4f} | {spin:<5}")
+        print("="*80 + "\n")
+        
+        #######################################################################
+        # STEP 1: Basis Pruning & Symmetry-Balanced Virtual Recovery
+        #######################################################################
+        logging.info("Step 1: Core reference orbital pruning and symmetry-balanced recovery.")
         
         unique_elements = set(site.specie.symbol for site in structure)
-        species_pruned_bases = {}
         e_min, e_max = self.get_energy_range(method=None)
         
-        # Filtering thresholds to discard numerical noise without sacrificing physical completeness
-        alpha_min = 1e-4          # Lower bound to eliminate unphysically diffuse primitive tails
-        state_alpha_min = 0.01     # Structural ceiling to filter out completely unstable virtual channels
+        element_counts = {}
+        for site in structure:
+            sym = site.specie.symbol
+            element_counts[sym] = element_counts.get(sym, 0) + 1
+            
+        alpha_min = 1e-4          
+        state_alpha_min = 0.01   
+        total_basis_count = 0
         
         for elem in unique_elements:
             atom_basis = self.atom_bases[elem]
+            for l_val in atom_basis.angular_momenta:
+                total_basis_count += (2 * l_val + 1) * element_counts[elem]
+        
+        # --- PASS 1: Raw Parsing and Confinement Filtering ---
+        candidates_all_elements = {}
+        for elem in unique_elements:
+            atom_basis = self.atom_bases[elem]
             
-            # Align the isolated atom energy spectrum with the periodic crystal baseline by matching 
-            # the lowest remaining semi-core state with the lowest bound DFT energy eigenvalue
             atom_energies = atom_basis.eigenvalues.copy()
             atom_energies += e_min - atom_energies[0]
             
-            # Programmatically find the energy boundary that spans all states below e_max plus one full subshell
             unique_energies = np.sort(np.unique(atom_energies))
             states_below_max = unique_energies <= e_max
             n_below = np.sum(states_below_max)
             
-            if n_below < len(unique_energies):
-                # Dynamically capture the next higher unique energy level to encompass the entire next degenerate shell
-                cutoff_energy = unique_energies[n_below]
-                logging.info(f"Element '{elem}': Crystal valence window maximum = {e_max:.4f} eV. "
-                             f"Dynamic cutoff extended to encompass next virtual subshell at {cutoff_energy:.4f} eV.")
-            else:
-                cutoff_energy = unique_energies[-1]
-                logging.info(f"Element '{elem}': Crystal valence window maximum = {e_max:.4f} eV. "
-                             f"All available database subshells sit within active window boundaries.")
+            cutoff_energy = unique_energies[n_below] if n_below < len(unique_energies) else unique_energies[-1]
+            valid_bases = np.where(atom_energies <= (cutoff_energy + (cutoff_energy * tol)))[0]
             
-            # Extract indices for all atomic states satisfying our dynamic energy cutoff constraint
-            valid_bases = np.where(atom_energies <= (cutoff_energy + 1e-4))[0]
-            pruned_orbs_for_elem = []
-            
-            logging.debug(f"Element '{elem}': Checking {len(valid_bases)} active database channels against structural tail filters.")
-            
+            element_candidates = []
             for i in valid_bases:
                 l = atom_basis.angular_momenta[i]
-                m = atom_basis.magnetic_quantum_numbers[i]
                 energy = atom_energies[i]
                 occ = atom_basis.reference_occupations[i]
                 
-                # Fetch primitive basis contraction mappings for the current angular momentum l channel
                 c_data = atom_basis.primitives[l]
                 exps = c_data["exps"]
                 coeffs = c_data["coeffs"]
@@ -1158,7 +1086,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                 offsets = c_data["offsets"]
                 dim = len(offsets) - 1
                 
-                # Isolate the JIT-optimized radial state coefficients from the database layout
                 start_l, end_l = atom_basis.l_slices[l]
                 state_coeffs = atom_basis.state_vectors[i, start_l:end_l]
                 
@@ -1166,7 +1093,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                 orb_coeffs = []
                 orb_g_coeffs = []
                 
-                # Decontract and scale primitives by their state coefficients to parse the active wavefunction profile
                 for p in range(dim):
                     start = offsets[p]
                     end = offsets[p+1]
@@ -1175,26 +1101,86 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                         alpha = exps[prim_idx]
                         if alpha >= alpha_min:
                             orb_alphas.append(alpha)
-                            # CRITICAL: Truncation filtering and real-space integrals must scale using real-space coefficients
                             orb_coeffs.append(coeffs[prim_idx] * c_p)
                             orb_g_coeffs.append(g_coeffs[prim_idx] * c_p)
                 
                 if len(orb_alphas) == 0:
                     continue
                     
-                # Guard rails: Protect physically occupied core/valence states from being accidentally dropped by diffuse tail constraints
-                if occ < 1e-4 and np.max(orb_alphas) < state_alpha_min:
-                    logging.debug(f"  -> State ID {i:2d} (l={l}): Skipped. Unoccupied and too diffuse to sit on active grid safely.")
-                    continue
-                
                 alphas_arr = np.array(orb_alphas, dtype=np.float64)
                 coeffs_arr = np.array(orb_coeffs, dtype=np.float64)
                 g_coeffs_arr = np.array(orb_g_coeffs, dtype=np.float64)
                 
-                # Calculate the exact analytical real-space self-overlap integral over the contracted Gaussians.
-                # Bypasses grid-undersampling artifacts near the nucleus completely using the standard Gamma function identity:
-                # \int_0^\infty r^{2l+2} e^{-(alpha_k + alpha_j)r^2} dr = 0.5 * A^{-(l+1.5)} * \Gamma(l+1.5)
+                max_alpha = np.max(alphas_arr)
+                min_alpha_val = np.min(alphas_arr)
+                is_occupied = occ >= 1e-4
+                is_confined = max_alpha >= state_alpha_min
+                
+                initially_kept = is_occupied or is_confined
+                origin_status = "OCCUPIED" if is_occupied else ("CONFINED" if is_confined else "REJECTED VIRTUAL")
+                
+                element_candidates.append({
+                    'index': i, 'l': l, 'energy': energy, 'occ': occ,
+                    'alphas': alphas_arr, 'coeffs': coeffs_arr, 'g_coefficients': g_coeffs_arr,
+                    'max_alpha': max_alpha, 'min_alpha': min_alpha_val, 'initially_kept': initially_kept,
+                    'origin_status': origin_status
+                })
+                
+            candidates_all_elements[elem] = element_candidates
+
+        # --- PASS 2: Dynamic Symmetry-Balanced Round-Robin Safeguard ---
+        def calc_total_basis(basis_set_dict):
+            total = 0
+            for el, orbs in basis_set_dict.items():
+                for orb in orbs:
+                    total += (2 * orb['l'] + 1) * element_counts[el]
+            return total
+
+        species_pruned_bases = {el: [o for o in orbs if o['initially_kept']] for el, orbs in candidates_all_elements.items()}
+        current_total_basis = calc_total_basis(species_pruned_bases)
+        
+        if current_total_basis < nbands:
+            logging.info(f"Basis size shortfall detected ({current_total_basis} functions < {nbands} bands). Transitioning to round-robin symmetry recovery.")
+            
+            pool_by_symmetry = {}
+            for elem, orbs in candidates_all_elements.items():
+                for orb in orbs:
+                    if not orb['initially_kept']:
+                        l = orb['l']
+                        pool_by_symmetry.setdefault((elem, l), []).append(orb)
+            
+            for key in pool_by_symmetry:
+                pool_by_symmetry[key].sort(key=lambda x: x['max_alpha'], reverse=True)
+            
+            symmetry_keys = sorted(list(pool_by_symmetry.keys()))
+            
+            while current_total_basis < nbands and symmetry_keys:
+                added_in_round = 0
+                for key in list(symmetry_keys):
+                    if pool_by_symmetry[key]:
+                        orb = pool_by_symmetry[key].pop(0)
+                        orb['origin_status'] = f"RECOVERED VIRTUAL ({l_symbols.get(key[1], 'l='+str(key[1]))})"
+                        species_pruned_bases[key[0]].append(orb)
+                        added_in_round += 1
+                        
+                        current_total_basis = calc_total_basis(species_pruned_bases)
+                        if current_total_basis >= nbands:
+                            break
+                    else:
+                        symmetry_keys.remove(key)
+                
+                if added_in_round == 0:
+                    break
+
+        # --- FINAL PASS: Exact Analytical Renormalization of Retained States ---
+        for elem in unique_elements:
+            for orb in species_pruned_bases[elem]:
+                l = orb['l']
+                alphas_arr = orb['alphas']
+                coeffs_arr = orb['coeffs']
+                g_coeffs_arr = orb['g_coefficients']
                 n_prim = len(alphas_arr)
+                
                 trunc_norm = 0.0
                 gamma_factor = gamma(l + 1.5)
                 
@@ -1204,117 +1190,100 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                         analytical_integral = 0.5 * (A ** -(l + 1.5)) * gamma_factor
                         trunc_norm += coeffs_arr[k] * coeffs_arr[j] * analytical_integral
                 
-                # Rescale the linear primitive array weights to force a perfect real-space normalization of 1.0
                 if trunc_norm > 1e-8:
                     coeffs_arr /= np.sqrt(trunc_norm)
                     g_coeffs_arr /= np.sqrt(trunc_norm)
                 
-                # VERIFICATION PASS: Re-integrate post-normalization primitive matrices to confirm 1.000000 convergence
                 post_norm = 0.0
                 for k in range(n_prim):
                     for j in range(n_prim):
                         A = alphas_arr[k] + alphas_arr[j]
                         analytical_integral = 0.5 * (A ** -(l + 1.5)) * gamma_factor
                         post_norm += coeffs_arr[k] * coeffs_arr[j] * analytical_integral
-                
-                logging.debug(f"  -> State ID {i:2d} (l={l}, m={m}): Shifted Energy = {energy:10.4f} eV | "
-                              f"Pre-Norm = {trunc_norm:11.6f} -> Verified Post-Norm = {post_norm:.6f}")
-                
-                pruned_orbs_for_elem.append({
-                    'index': i, 'l': l, 'm': m,
-                    'alphas': alphas_arr, 'coeffs': coeffs_arr, 'g_coefficients': g_coeffs_arr,
-                    'original_trunc_norm': trunc_norm, 'verified_norm': post_norm
-                })
-            
-            species_pruned_bases[elem] = pruned_orbs_for_elem
-            logging.info(f"Element '{elem}': Successfully pruned and verified {len(pruned_orbs_for_elem)} normalized atomic states.")
+                        
+                orb['verified_norm'] = post_norm
 
-        # Flatten structural dictionary maps into a unified system-wide basis index array
         basis_map = []
         for i_atom in range(num_atoms):
             elem = structure[i_atom].species_string
             for orb in species_pruned_bases[elem]:
-                basis_map.append({
-                    'atom_index': i_atom, 'element': elem, 'l': orb['l'], 'm': orb['m'],
-                    'alphas': orb['alphas'], 'coeffs': orb['coeffs'], 'g_coefficients': orb['g_coefficients']
-                })
+                l = orb['l']
+                for m_idx in range(2 * l + 1):
+                    m_physical = m_idx - l  
+                    
+                    basis_map.append({
+                        'atom_index': i_atom, 
+                        'element': elem, 
+                        'l': l, 
+                        'm': m_physical, 
+                        'alphas': orb['alphas'], 
+                        'coeffs': orb['coeffs'], 
+                        'g_coefficients': orb['g_coefficients'],
+                        'energy': orb['energy'], 
+                        'occ': orb['occ'], 
+                        'origin_status': orb['origin_status'],
+                        'min_alpha': orb['min_alpha'], 
+                        'max_alpha': orb['max_alpha']
+                    })
         n_basis = len(basis_map)
-        logging.info(f"Step 1 Complete: Total System Basis Matrix Size successfully mapped (n_basis = {n_basis}).")
+
+        #######################################################################
+        # DIAGNOSTIC: PRUNED BASIS EXPONENT SPECTRUM REPORT
+        #######################################################################
+        print("\n" + "="*80)
+        print("          PRUNED BASIS SET PRIMITIVE EXPONENT SPECTRUM REPORT          ")
+        print("="*80)
+        
+        lbl_id, lbl_state, lbl_eng, lbl_occ = "ID", "State", "Energy (eV)", "Occupancy"
+        lbl_min, lbl_max, lbl_origin = "Min Alpha", "Max Alpha", "Origin Status"
+        
+        print(f"{lbl_id:<4} | {lbl_state:<8} | {lbl_eng:<11} | {lbl_occ:<9} | {lbl_min:<11} | {lbl_max:<11} | {lbl_origin}")
+        print("-"*80)
+        
+        for mu, orb in enumerate(basis_map):
+            l_sym = l_symbols.get(orb['l'], f"l={orb['l']}")
+            state_base = f"{orb['l']}{l_sym}"
+            m_phys = orb['m']  # FIX: Reads true precalculated physical quantum number directly
+            state_label_with_m = f"{state_base}({m_phys:+d})" if orb['l'] > 0 else state_base
+            
+            print(f" {mu:2d}  | {state_label_with_m:<8} | {orb['energy']:11.4f} | {orb['occ']:9.4f} | {orb['min_alpha']:11.4e} | {orb['max_alpha']:11.4e} | {orb['origin_status']}")
+            
+        print("="*80 + "\n")
         
         #######################################################################
         # STEP 2: Reciprocal Grid Integration & Smooth Manifold Mapping
         #######################################################################
-        # OBJECTIVE: Map the analytically normalized LCAO reference orbitals onto 
-        # the discrete periodic plane-wave grid of the unit cell, compute the 
-        # reciprocal-space overlap matrix (S_k), and project the smooth DFT valence 
-        # eigenstates onto the localized basis functions (P_ps).
-        
-        # MECHANICS:
-        #   1. Construct the 3D Cartesian scattering vectors (q = G + k) for each 
-        #      k-point plane-wave grid context.
-        #   2. Evaluate the analytical Fourier transforms of the localized orbitals 
-        #      in G-space, applying the structural phase factors e^{-i G . R}.
-        #   3. Establish a precise, grid-matched normalization conversion scale 
-        #      by mapping the maximum valence diagonal element to unity.
-        #   4. Assert explicit shape and norm compliance on incoming DFT planewave 
-        #      coefficients to catch grid representation mismatches before projection.
         logging.info("Step 2: Projecting localized orbitals onto periodic plane-wave grids.")
         
         S_k = np.zeros((nkpoints, n_basis, n_basis), dtype=np.complex128)
         P_ps = np.zeros((nspin, nkpoints, nbands, n_basis), dtype=np.complex128)
         
-        # Initialize atom-centered PAW projector weight matrices
         C_paw = []
         for i_atom in range(num_atoms):
             elem = structure[i_atom].species_string
             dataset = post_wfc._aug_environment.paw_datasets[elem]
             C_paw.append(np.zeros((nspin, nkpoints, nbands, len(dataset.angular_momenta)), dtype=np.complex128))
 
-        # --- Baseline Grid Normalization Pre-Calculation ---
-        # FIXED: Use the true physical unit cell volume (Omega) as the absolute scale
-        # to ensure plane-wave spaces match the absolute real-space core spheres.
         norm_factor = volume
-        logging.info(f"Absolute unit cell volume scaling factor locked: {norm_factor:.6f}")
-        ikpt_ref = 0
-        gvecs_ref, _ = post_wfc.get_plane_waves_basis_idx(ikpt_ref, grid_shape=post_wfc._minimum_fft_size * 2)
-        rgvec_ref = gvecs_ref @ (2 * np.pi * post_wfc.reciprocal_lattice)
-        q_vecs_ref = rgvec_ref + post_wfc.kpoints_cart[ikpt_ref][np.newaxis, :]
-        q_norms_ref = np.linalg.norm(q_vecs_ref, axis=1)
         
-        chi_matrix_ref = np.zeros((n_basis, len(q_norms_ref)), dtype=np.complex128)
-        for mu, orb in enumerate(basis_map):
-            # Translate 0-indexed database layouts back to physical harmonic conventions [-l, ..., +l]
-            m_physical = orb['m'] - orb['l']
-            chi_g = evaluate_orbital_g_space(q_vecs_ref, q_norms_ref, orb['l'], m_physical, orb['alphas'], orb['g_coefficients'])
-            phase_factor = np.exp(-1j * np.dot(q_vecs_ref, atom_positions[orb['atom_index']]))
-            chi_matrix_ref[mu, :] = chi_g * phase_factor
-
-        # Use the maximum valence self-overlap diagonal as our system-wide integration volume baseline
-        # norm_factor = np.max((chi_matrix_ref.conj() @ chi_matrix_ref.T).real.diagonal())
-        # logging.debug(f"Programmatic G-space grid normalization factor locked: {norm_factor:.6f}")
-
-        # --- Main Reciprocal Space Integration Loop ---
-        for ikpt_idx in range(nkpoints):
-            # Extract active 3D Cartesian scattering vectors (q = G + k) for the current grid context
+        for ikpt_idx in track(range(nkpoints), description="[bold blue]Mapping Reciprocal Projections...[/]"):
             gvecs, _ = post_wfc.get_plane_waves_basis_idx(ikpt_idx, grid_shape=post_wfc._minimum_fft_size * 2)
             rgvec_k = gvecs @ (2 * np.pi * post_wfc.reciprocal_lattice)
             q_vecs_k = rgvec_k + post_wfc.kpoints_cart[ikpt_idx][np.newaxis, :]
             q_norms_k = np.linalg.norm(q_vecs_k, axis=1)
             n_q_k = len(q_norms_k)
             
-            # Map the all-electron basis functions onto the current k-point plane-wave grid
             chi_mat_k = np.zeros((n_basis, n_q_k), dtype=np.complex128)
             for mu, orb in enumerate(basis_map):
-                m_physical = orb['m'] - orb['l']
-                chi_g = evaluate_orbital_g_space(q_vecs_k, q_norms_k, orb['l'], m_physical, orb['alphas'], orb['g_coefficients'])
+                chi_g = evaluate_orbital_g_space(
+                    q_vecs_k, q_norms_k, orb['l'], orb['m'], orb['alphas'], orb['g_coefficients']
+                )
                 phase = np.exp(-1j * np.dot(q_vecs_k, atom_positions[orb['atom_index']]))
                 chi_mat_k[mu, :] = chi_g * phase
             
-            # Compute the localized overlap matrix scaled by our volume normalization baseline
             S_k[ikpt_idx] = (chi_mat_k.conj() @ chi_mat_k.T) / norm_factor
-            
-            # Build Cartesian PAW pseudopotential projector matrices for all cell sites
             G_basis_cart = post_wfc.get_plane_waves_basis_cart_from_idx(ikpt_idx)
+            
             P_G_atoms = []
             for i_atom in range(num_atoms):
                 elem = structure[i_atom].species_string
@@ -1325,40 +1294,17 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                 ))
                 
             for ispin in range(nspin):
-                # Load the raw DFT coefficients from the wavefunction backup
                 wfc_coeffs = post_wfc.get_plane_wave_coefficients_batch(ispin, ikpt_idx, np.arange(nbands))
-                
-                # Hard Validation Guard: Enforce strict row-column plane-wave matching
                 if wfc_coeffs.shape[1] != n_q_k:
-                    logging.error(f"Critical grid error at k-point {ikpt_idx}: wfc columns ({wfc_coeffs.shape[1]}) "
-                                  f"do not match reciprocal mesh count ({n_q_k}).")
                     raise ValueError("Wavefunction storage geometry and active plane-wave mesh are out of sync.")
                 
-                # Project the smooth valence wavefunctions and extract atom-centered projector weights
                 P_ps[ispin, ikpt_idx, :, :] = (wfc_coeffs @ chi_mat_k.conj().T) / np.sqrt(norm_factor)
                 for i_atom in range(num_atoms):
                     C_paw[i_atom][ispin, ikpt_idx, :, :] = wfc_coeffs @ P_G_atoms[i_atom].T
-
-        logging.info("Step 2 Complete: Reciprocal manifolds and projector arrays successfully mapped.")
                     
         #######################################################################
         # STEP 3: Core Augmentation Corrections & Phase Gauge Alignment
         #######################################################################
-        """
-        OBJECTIVE: Compute the real-space core-reconstruction discrepancy integrals 
-        (Delta_M) inside the PAW augmentation spheres, accumulate the multi-atom 
-        contributions, and verify phase gauge alignment.
-        
-        MECHANICS:
-          1. Correctly reconstruct the real-space radial wavefunction profile R(r)
-             over the PAW logarithmic grid using real-space coefficients.
-          2. Evaluate the 1D overlap integral between the LCAO basis and the 
-             all-electron minus pseudo partial wave difference up to the cutoff radius.
-          3. Contract the spatial projector weights (C_paw) with the discrepancy 
-             matrix (Delta_M) using an Einstein summation pass.
-          4. Audit the phase coherence sign between the smooth valence background 
-             and core corrections to prevent destructive manifold cancellation.
-        """
         logging.info("Step 3: Resolving real-space core augmentation corrections and phase gauge alignment.")
         
         Delta_M = []
@@ -1369,270 +1315,79 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             u_ae = dataset.all_electron_partial_waves
             u_ps = dataset.pseudo_partial_waves
             
-            # Map system basis functions onto localized atomic partial wave channels
             M_atom = np.zeros((n_basis, len(dataset.angular_momenta)), dtype=np.float64)
             
             for mu, orb in enumerate(basis_map):
-                # Spatial Guard: Skip evaluations for basis functions centered on other cell sites
                 if orb['atom_index'] != i_atom:
                     continue
                     
                 l_mu = orb['l']
-                # Map 0-indexed database layouts back to standard physical real harmonic conventions [-l, ..., +l]
-                m_physical = orb['m'] - l_mu
+                m_physical = orb['m']  # FIX: Directly extracts clean matching quantum number
                 
-                # Reconstruct the true real-space radial representation using real-space coefficients
                 R_mu_r = np.zeros(len(r_grid), dtype=np.float64)
                 for k in range(len(orb['alphas'])):
                     R_mu_r += orb['coeffs'][k] * np.exp(-orb['alphas'][k] * (r_grid**2))
                 if l_mu > 0:
                     R_mu_r *= (r_grid ** l_mu)
                 
-                # Integrate across every tabulated atomic projector/partial wave channel
                 for i in range(len(dataset.angular_momenta)):
-                    # Enforce strict angular momentum and physical magnetic quantum number matching
                     if dataset.angular_momenta[i] != l_mu or dataset.magnetic_nums[i] != m_physical:
                         continue
                         
-                    # Target only the region enclosed by the PAW augmentation sphere cutoff radius (r_c)
                     r_c = dataset.cutoff_radii[i]
                     active_mask = r_grid <= r_c
-                    
-                    # Core Integrand: R_mu(r) * [u_ae(r) - u_ps(r)] * r * dr
                     integrand = R_mu_r * (u_ae[i] - u_ps[i]) * r_grid
                     M_atom[mu, i] = np.trapezoid(integrand[active_mask], r_grid[active_mask])
             
             Delta_M.append(M_atom)
 
-        # Contract spatial projector weights with the core discrepancy matrices
         core_accum = np.zeros_like(P_ps)
         for i_atom in range(num_atoms):
             core_accum += np.einsum('sknp,bp->sknb', C_paw[i_atom], Delta_M[i_atom])
             
-        # Audit global directional phase alignment between the smooth background and core shells
         coherence = np.sum(P_ps.conj() * core_accum).real
-        logging.debug(f"Cross-manifold phase gauge coherence determined: {coherence:.4e}")
-        
-        # Apply automatic alignment fallback in case of global dataset inversion
         if coherence < 0:
-            logging.warning("Destructive phase interference caught between LCAO and PAW gauges. Aligning sign.")
             core_accum *= -1.0
             
         p_total = P_ps + core_accum
-        logging.info("Step 3 Complete: Core augmentation corrections successfully resolved and gauge-aligned.")
         
         #######################################################################
-        # PIPELINE SCALE AUDIT SUITE (DIAGNOSTIC)
+        # STEP 4: Vectorized Reciprocal Augmentation Grid Assembly
         #######################################################################
-        print(f"\n" + "="*80)
-        print(f"            PIPELINE RADIAL & PROJECTOR SCALE AUDIT SUITE              ")
-        print("="*80)
-        
-        # 1. Audit the real-space log-radial grid spacing metric
-        print(f"[AUDIT 1] Radial Grid Unit Integrity:")
-        for i_atom in range(num_atoms):
-            elem = structure[i_atom].species_string
-            dataset = post_wfc._aug_environment.paw_datasets[elem]
-            r = dataset.radial_grid
-            
-            # Compute the total integrated volume element of the core sphere: \int_0^{r_c} 4\pi r^2 dr
-            r_c = dataset.cutoff_radii[0]
-            mask = r <= r_c
-            sphere_vol = np.trapezoid(4.0 * np.pi * (r[mask]**2), r[mask])
-            print(f"  * Atom {i_atom} ({elem}): Cutoff Radius = {r_c:.4f} | Integrated Sphere Volume = {sphere_vol:.4f}")
-            
-        # 2. Audit the raw internal partial wave normalization
-        print(f"\n[AUDIT 2] PAW Dataset Partial Wave Completeness:")
-        for i_atom in range(num_atoms):
-            elem = structure[i_atom].species_string
-            dataset = post_wfc._aug_environment.paw_datasets[elem]
-            u_ae = dataset.all_electron_partial_waves
-            u_ps = dataset.pseudo_partial_waves
-            r = dataset.radial_grid
-            
-            for i in range(min(5, len(dataset.angular_momenta))):
-                r_c = dataset.cutoff_radii[i]
-                mask = r <= r_c
-                # Tabulated partial waves in VASP are u(r) = r*R(r), so norm is \int u^2 dr
-                norm_ae = np.trapezoid(u_ae[i][mask]**2, r[mask])
-                norm_ps = np.trapezoid(u_ps[i][mask]**2, r[mask])
-                deficit = norm_ae - norm_ps
-                print(f"  * Channel {i} (l={dataset.angular_momenta[i]}): AE Self-Norm = {norm_ae:.4f} | PS Self-Norm = {norm_ps:.4f} | Net Core Deficit = {deficit:.4f}")
-
-        # 3. Audit the Projector Weight Magnitude Relative to Smooth States
-        print(f"\n[AUDIT 3] Cross-Subsystem Magnitude Profile (k-point 0):")
-        for n in range(nbands):
-            raw_pps_norm = np.linalg.norm(P_ps[0, 0, n, :])
-            raw_core_norm = np.linalg.norm(core_accum[0, 0, n, :])
-            print(f"  * Band {n}: Smooth Projection Vector Norm = {raw_pps_norm:.4f} | Core Correction Vector Norm = {raw_core_norm:.4f}")
-        print("="*80 + "\n")
-        #######################################################################
-        # DIAGNOSTIC: LOGARITHMIC RADIAL SUPERCELL AUDIT SUITE
-        #######################################################################
-        print("\n" + "="*80)
-        print("        LOGARITHMIC RADIAL SUPERCELL PERIODIC INTEGRATION AUDIT       ")
-        print("="*80)
-        
-        lattice_vectors = structure.lattice.matrix
-        norms = np.linalg.norm(lattice_vectors, axis=1)
-        L_min = np.min(norms)
-        
-        # 1. Generate a high-fidelity logarithmic radial grid
-        # N_log points packed heavily near r_min (near nucleus) out to a large supercell radius
-        N_log = 2000
-        r_min = 1e-6
-        r_max = 25.0 
-        log_mesh = np.linspace(np.log(r_min), np.log(r_max), N_log)
-        r_log = np.exp(log_mesh)
-        dr_log = r_log * (log_mesh[1] - log_mesh[0]) # Jacobian included in differential element
-        
-        # Angular sampling baseline (Spherical Integration via \u03b8, \u03c6 quadrature)
-        # For l=0 cross-talk, a standard angular mesh is perfectly exact
-        n_theta, n_phi = 32, 64
-        theta = np.linspace(0, np.pi, n_theta)
-        phi = np.linspace(0, 2*np.pi, n_phi)
-        THETA, PHI = np.meshgrid(theta, phi, indexing='ij')
-        
-        # Angular integration weight element
-        d_omega = np.sin(THETA) * (theta[1] - theta[0]) * (phi[1] - phi[0])
-        
-        # Convert angular mesh to unit Cartesian directions
-        kx = np.sin(THETA) * np.cos(PHI)
-        ky = np.sin(THETA) * np.sin(PHI)
-        kz = np.cos(THETA)
-        
-        print(f"Evaluating exact log-radial overlap matrix over 5x5x5 lattice translations:")
-        print(f"{'Matrix Element':<16} | {'Grid-Based S_k':<16} | {'Log-Radial Supercell S_R':<25} | {'Delta'}")
-        print("-"*80)
-        
-        # Audit the target s-block subspace (Basis 0: 3s, Basis 4: 4s)
-        s_indices = [0, 4]
-        
-        for mu in s_indices:
-            for nu in s_indices:
-                if mu > nu: continue # Symmetric matrix
-                
-                orb_mu = basis_map[mu]
-                orb_nu = basis_map[nu]
-                
-                total_s_r = 0.0
-                
-                # Loop over periodic image shells R
-                range_mesh = np.arange(-2, 3)
-                for nx in range_mesh:
-                    for ny in range_mesh:
-                        for nz in range_mesh:
-                            R_vec = nx * lattice_vectors[0] + ny * lattice_vectors[1] + nz * lattice_vectors[2]
-                            
-                            # Integrate over the 3D spherical volume elements using our log-radial grid
-                            cell_overlap = 0.0
-                            
-                            for i_r in range(N_log):
-                                r = r_log[i_r]
-                                # Evaluate central orbital \chi_\mu(\vec{r})
-                                # R_\mu(r)
-                                R_mu_val = np.sum(orb_mu['coeffs'] * np.exp(-orb_mu['alphas'] * (r**2))) / np.sqrt(4.0 * np.pi)
-                                
-                                # Evaluate shifted coordinate vectors: \vec{r} - \vec{R}
-                                rx_vec = r * kx - R_vec[0]
-                                ry_vec = r * ky - R_vec[1]
-                                rz_vec = r * kz - R_vec[2]
-                                r_shift_sq = rx_vec**2 + ry_vec**2 + rz_vec**2
-                                
-                                # Evaluate shifted orbital profile \chi_\nu(\vec{r} - \vec{R})
-                                R_nu_shifted = np.zeros_like(r_shift_sq)
-                                for k in range(len(orb_nu['alphas'])):
-                                    R_nu_shifted += orb_nu['coeffs'][k] * np.exp(-orb_nu['alphas'][k] * r_shift_sq)
-                                R_nu_shifted /= np.sqrt(4.0 * np.pi)
-                                
-                                # Angular integration integration over solid angle
-                                angular_sum = np.sum(R_nu_shifted * d_omega)
-                                
-                                # Accumulate radial shell volume element: r^2 * dr * R_mu * \int R_nu d\Omega
-                                cell_overlap += (r**2) * dr_log[i_r] * R_mu_val * angular_sum
-                                
-                            total_s_r += cell_overlap
-                            
-                grid_val = S_k[0, mu, nu].real
-                delta = abs(grid_val - total_s_r)
-                print(f"  S_{mu}{nu} ({'3s' if mu==0 else '4s'}-{'3s' if nu==0 else '4s'}) | {grid_val:14.6f} | {total_s_r:23.6f}   | {delta:.6f}")
-                
-        print("="*80 + "\n")
-        #######################################################################
-        # STEP 4: Unified Log-Radial Supercell Subspace Assembly
-        #######################################################################
-        logging.info("Executing Step 4: Constructing unified periodic analytical metric.")
+        logging.info("Step 4: Constructing augmented periodic metric via manual G-grid.")
         
         c_final = np.zeros_like(p_total, dtype=np.complex128)
         S_AE = np.zeros_like(S_k)
         
-        # 1. Pre-calculate the exact log-radial periodic matrix for this crystal geometry
-        # (Using the identical kernel setup verified in your diagnostic audit)
-        N_log = 2000
-        r_mesh = np.linspace(np.log(1e-6), np.log(25.0), N_log)
-        r_log = np.exp(r_mesh)
-        dr_log = r_log * (r_mesh[1] - r_mesh[0])
+        augmentation_grid_multiplier = 3
+        base_shape = post_wfc._minimum_fft_size
+        aug_shape = [int(n * augmentation_grid_multiplier) for n in base_shape]
         
-        n_theta, n_phi = 32, 64
-        theta = np.linspace(0, np.pi, n_theta)
-        phi = np.linspace(0, 2*np.pi, n_phi)
-        THETA, PHI = np.meshgrid(theta, phi, indexing='ij')
-        d_omega = np.sin(THETA) * (theta[1] - theta[0]) * (phi[1] - phi[0])
+        nx = np.arange(-aug_shape[0]//2, aug_shape[0]//2)
+        ny = np.arange(-aug_shape[1]//2, aug_shape[1]//2)
+        nz = np.arange(-aug_shape[2]//2, aug_shape[2]//2)
         
-        kx = np.sin(THETA) * np.cos(PHI)
-        ky = np.sin(THETA) * np.sin(PHI)
-        kz = np.cos(THETA)
+        KX, KY, KZ = np.meshgrid(nx, ny, nz, indexing='ij')
+        g_integer_matrix = np.stack([KX.flatten(), KY.flatten(), KZ.flatten()], axis=1)
+        rgvec_augmented = g_integer_matrix @ (2 * np.pi * post_wfc.reciprocal_lattice)
+        n_q_augmented = rgvec_augmented.shape[0]
         
-        lattice_vectors = structure.lattice.matrix
-        range_mesh = np.arange(-2, 3)
-        
-        S_periodic_base = np.zeros((n_basis, n_basis), dtype=np.complex128)
-        
-        for mu in range(n_basis):
-            for nu in range(n_basis):
-                orb_mu = basis_map[mu]
-                orb_nu = basis_map[nu]
-                total_overlap = 0.0
-                
-                # Spatial translation loop over neighboring periodic cell shells
-                for nx in range_mesh:
-                    for ny in range_mesh:
-                        for nz in range_mesh:
-                            R_vec = nx * lattice_vectors[0] + ny * lattice_vectors[1] + nz * lattice_vectors[2]
-                            cell_overlap = 0.0
-                            
-                            for i_r in range(N_log):
-                                r = r_log[i_r]
-                                R_mu_val = np.sum(orb_mu['coeffs'] * np.exp(-orb_mu['alphas'] * (r**2))) / np.sqrt(4.0 * np.pi)
-                                
-                                rx = r * kx - R_vec[0]
-                                ry = r * ky - R_vec[1]
-                                rz = r * kz - R_vec[2]
-                                r_shift_sq = rx**2 + ry**2 + rz**2
-                                
-                                R_nu_shifted = np.zeros_like(r_shift_sq)
-                                for k in range(len(orb_nu['alphas'])):
-                                    R_nu_shifted += orb_nu['coeffs'][k] * np.exp(-orb_nu['alphas'][k] * r_shift_sq)
-                                R_nu_shifted /= np.sqrt(4.0 * np.pi)
-                                
-                                cell_overlap += (r**2) * dr_log[i_r] * R_mu_val * np.sum(R_nu_shifted * d_omega)
-                                
-                            total_overlap += cell_overlap
-                S_periodic_base[mu, nu] = total_overlap
-
-        # 2. Map the pre-calculated periodic target matrix across all k-points
-        for ikpt_idx in range(nkpoints):
-            for mu in range(n_basis):
-                for nu in range(n_basis):
-                    # Inject the unified log-radial periodic matrix element
-                    S_AE[ikpt_idx, mu, nu] = S_periodic_base[mu, nu]
-
-        # 3. Execute Subspace Inversion via Canonical Orthogonalization
-        for ikpt_idx in range(nkpoints):
-            s_eigenvals, s_eigenvecs = np.linalg.eigh(S_AE[ikpt_idx].real)
+        for ikpt_idx in track(range(nkpoints), description="[bold green]Inverting High-G Subspaces...[/]"):
+            q_vecs_k = rgvec_augmented + post_wfc.kpoints_cart[ikpt_idx][np.newaxis, :]
+            q_norms_k = np.linalg.norm(q_vecs_k, axis=1)
+            
+            chi_mat_augmented = np.zeros((n_basis, n_q_augmented), dtype=np.complex128)
+            for mu, orb in enumerate(basis_map):
+                chi_g = evaluate_orbital_g_space(q_vecs_k, q_norms_k, orb['l'], orb['m'], orb['alphas'], orb['g_coefficients'])
+                phase = np.exp(-1j * np.dot(q_vecs_k, atom_positions[orb['atom_index']]))
+                chi_mat_augmented[mu, :] = chi_g * phase
+            
+            S_AE[ikpt_idx] = (chi_mat_augmented.conj() @ chi_mat_augmented.T) / volume
+            
+            s_eigenvals, s_eigenvecs = np.linalg.eigh(S_AE[ikpt_idx])
             max_ev = np.max(s_eigenvals)
             
-            lin_dep_threshold = 1e-4 * max_ev
+            lin_dep_threshold = 5e-4 * max_ev
             keep_indices = np.where(s_eigenvals > lin_dep_threshold)[0]
             
             s_val_reduced = s_eigenvals[keep_indices]
@@ -1643,22 +1398,50 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             for ispin in range(nspin):
                 c_final[ispin, ikpt_idx, :, :] = p_total[ispin, ikpt_idx, :, :] @ s_inverse_k.conj()
 
-        # Finalize and print the clean spillage outputs
-        captured_manifold = np.einsum('sknb,sknb->skn', c_final.conj(), p_total).real
-        self.band_spillage = 1.0 - captured_manifold
+        raw_spillage = 1.0 - np.einsum('sknb,sknb->skn', c_final.conj(), p_total).real
         
-        print(f"\n[STEP 4 DIAGNOSTICS] Aligned All-Electron Band Spillage Profile (k-point 0):")
+        neg_spillage_threshold = 1e-4
+        most_negative_spillage = np.min(raw_spillage)
+        
+        if most_negative_spillage < -neg_spillage_threshold:
+            import warnings
+            spin_idx, kpt_idx, band_idx = np.unravel_index(np.argmin(raw_spillage), raw_spillage.shape)
+            error_msg = (
+                f"\n[METRIC VIOLATION]: Overlap matrix lost positive-semidefiniteness.\n"
+                f"  * Minimum Spillage Value Observed : {most_negative_spillage:.6f}\n"
+                f"  * Violation Coordinate Location   : Spin={spin_idx}, k-point={kpt_idx}, Band={band_idx}"
+            )
+            warnings.warn(error_msg, RuntimeWarning)
+            
+        self.band_spillage = raw_spillage
+        self.integrated_spillage = np.einsum('k,skn,skn->', post_wfc.kpoint_weights, post_wfc.occupancies, self.band_spillage) / np.sum(post_wfc.occupancies)
+        max_system_spillage = np.max(self.band_spillage)
+        
+        #######################################################################
+        # FINAL BALANCED TELEMETRY SUMMARY REPORT
+        #######################################################################
+        print("\n" + "="*80)
+        print("                 FINAL SYSTEM BAND MANIFOLD SPILLAGE REPORT                ")
+        print("="*80)
+        print(f"{'Band index':<12} | {'Occupancy (Γ-point)':<22} | {'Manifold Spillage (Γ-point)':<28} | Status")
+        print("-"*80)
         for n in range(nbands):
             state_spillage = self.band_spillage[0, 0, n]
-            print(f"  * Band {n:2d}: Occupancy = {post_wfc.occupancies[0,0,n]:.4f} | Manifold Spillage = {state_spillage:9.6f}")
-            
-        self.integrated_spillage = np.einsum('k,skn,skn->', post_wfc.kpoint_weights, post_wfc.occupancies, self.band_spillage) / np.sum(post_wfc.occupancies)
-        print("\n" + "="*80)
-        print(f"PRODUCTION SOLUTION RESOLVED -> Integrated System Spillage: {self.integrated_spillage:.6f}")
+            occupancy_val = post_wfc.occupancies[0, 0, n]
+            status = "❌ VIOLATION" if state_spillage < -neg_spillage_threshold else ("⚠️ LEAKAGE" if state_spillage > 0.05 else "✅ FULLY RESOLVED")
+            print(f"  Band {n:2d}      | {occupancy_val:22.4f} | {state_spillage:28.6f} | {status}")
+        print("-"*80)
+        print(f"  * Maximum Observed State Spillage Across System : {max_system_spillage:.6f}")
+        print(f"  * Integrated Total Crystal System Spillage     : {self.integrated_spillage:.6f}")
         print("="*80 + "\n")
         
-        return c_final
-        
+        # =====================================================================
+        # STATE ASSIGNMENT & RETURN INTERFACE
+        # =====================================================================
+        # FIX: Standardized non-prefixed fields to establish an explicit interface link with construct_coefficients
+        self._basis_map = basis_map
+        self._coefficients = c_final  # Shape: (nspin, nkpoints, nbands, n_basis)
+    
     @classmethod
     def from_directory(
         cls, 
