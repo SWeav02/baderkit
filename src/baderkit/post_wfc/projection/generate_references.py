@@ -4,14 +4,14 @@
 import json
 from pathlib import Path
 import numpy as np
-from pyscf import lib, gto
+from pyscf import lib
 
 # Physical Constants
 HARTREE_TO_EV = 27.211386245988
 BOHR_TO_ANG = 0.5291772109
 BOHR_SQ = BOHR_TO_ANG ** 2
 
-OUTPUT_PATH = Path.home() / Path("github/baderkit/src/baderkit/post_wfc/all_electron_references")
+OUTPUT_PATH = Path.home() / Path("github/baderkit/src/baderkit/post_wfc/projection/bases/dyall")
 
 def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.pbe"):
     """
@@ -111,34 +111,62 @@ def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.pbe"):
             angular_momenta = np.zeros(num_states, dtype=np.int_)
             packed_state_vectors = np.zeros((num_states, flat_vector_size), dtype=np.float64)
 
-            # Direct state vector mapping
+            # =================================================================
+            # Direct state vector mapping via Singular Value Decomposition
+            # =================================================================
             for istate, state in enumerate(active_states):
                 energies[istate] = state['energy']
                 occupancies[istate] = state['occ']
                 spin_channels[istate] = state['spin']
                 
                 coeff = state['coeff']
-                dominant_ao_idx = np.argmax(np.abs(coeff))
-                _, state_l, _, state_m = ao_map[dominant_ao_idx]
                 
+                # 1. Map out the absolute orbital weight across all available angular channels
+                l_weights = {}
+                for ao_idx, ao_l, p, ao_m in ao_map:
+                    l_weights[ao_l] = l_weights.get(ao_l, 0.0) + coeff[ao_idx]**2
+                state_l = max(l_weights, key=l_weights.get)
+                
+                # 2. Extract the contraction coefficient matrix for the dominant l subspace
+                n_contract = l_counts[state_l]
+                matrix_l = np.zeros((n_contract, 2 * state_l + 1))
+                
+                for ao_idx, ao_l, p, ao_m in ao_map:
+                    if ao_l == state_l:
+                        matrix_l[p, ao_m] = coeff[ao_idx]
+                        
+                # 3. Use SVD to compress all angular channels back into a single clean radial vector
+                U, S, Vt = np.linalg.svd(matrix_l, full_matrices=False)
+                c_p_pure = U[:, 0] * S[0]
+                
+                # 4. Identify the dominant magnetic orientation to preserve metadata mapping
+                m_weights = np.sum(matrix_l**2, axis=0)
+                state_m = np.argmax(m_weights)
+                
+                # Align signs with the original dominant component column to prevent phase inversion
+                if np.dot(matrix_l[:, state_m], c_p_pure) < 0:
+                    c_p_pure = -c_p_pure
+                    
                 angular_momenta[istate] = state_l
                 magnetic_quantum_numbers[istate] = state_m
                 
+                # 5. Distribute the complete reconstructed radial array into the flat state vector layout
                 state_vector = []
                 for l in sorted(l_counts.keys()):
                     mat_dim = l_counts[l]
                     c_p_vector = np.zeros(mat_dim, dtype=np.float64)
                     
                     if l == state_l:
-                        for ao_idx, ao_l, p, ao_m in ao_map:
-                            if ao_l == state_l and ao_m == state_m:
-                                c_p_vector[p] = coeff[ao_idx]
-                    
+                        # Feed the full, clean radial profile into the target state row
+                        c_p_vector[:] = c_p_pure
+                        
                     state_vector.extend(c_p_vector.tolist())
-                
+                    
                 packed_state_vectors[istate, :] = state_vector
 
-            # Build Header with Primitives scaled to Angstrom units
+            # =================================================================
+            # Build Header with Primitives scaled to Angstrom units (FIXED)
+            # =================================================================
             basis_primitives = {}
             for bas_id in range(mol.nbas):
                 l = mol.bas_angular(bas_id)
@@ -146,14 +174,23 @@ def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.pbe"):
                 if l_str not in basis_primitives:
                     basis_primitives[l_str] = []
                 
-                # Exponents scale as 1 / L^2
+                # Exponents scale inversely with the square of the length unit
                 exps_bohr = mol.bas_exp(bas_id)
                 exps_ang = exps_bohr / BOHR_SQ
                 
+                # Fetch raw contraction coefficients (coefficients of normalized primitives)
                 coeffs_mat = mol.bas_ctr_coeff(bas_id)
-                prim_norms = gto.gto_norm(l, exps_ang)
-                normalized_coeffs_mat = coeffs_mat * prim_norms[:, np.newaxis]
                 
+                # FIXED: Compute the primitive GTO normalization factors in Bohr units
+                gto_norms = np.array([mol.gto_norm(l, alpha) for alpha in exps_bohr], dtype=np.float64)
+                
+                # Reconstruct absolute coefficients of unnormalized primitives in Bohr space
+                absolute_coeffs_bohr = coeffs_mat * gto_norms[:, np.newaxis]
+                
+                # Apply the coordinate transformation scaling factor to normalize cleanly in Angstroms
+                normalized_coeffs_mat = absolute_coeffs_bohr * (BOHR_TO_ANG ** -(l + 1.5))
+                
+                # Compute G-space analytic prefactors for the Fourier Transform of the primitives
                 g_prefactors = (np.pi / exps_ang) ** 1.5 * (1.0 / (2.0 * exps_ang)) ** l
                 g_coeffs_mat = normalized_coeffs_mat * g_prefactors[:, np.newaxis]
                 

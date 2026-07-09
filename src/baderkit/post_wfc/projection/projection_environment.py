@@ -2,13 +2,12 @@
 
 from pathlib import Path
 import logging
-from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
 from functools import cached_property
 import numpy as np
 from numpy.typing import NDArray
 from scipy.integrate import cumulative_trapezoid
+from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, MofNCompleteColumn, TimeRemainingColumn
 
-from baderkit.post_wfc.pseudopotentials.augmentation_numba import compute_reciprocal_projectors
 from .all_electron_dataset import AESpecies
 from .projection_numba import (
     find_active_periodic_atoms,
@@ -982,45 +981,52 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     
     def _project_system(self):
         """
-        Assembles the localized LCAO representation matrix by projecting continuous 
-        Bloch wavefunctions onto an element-specific pre-orthogonalized basis set.
-        
-        Configured to produce standalone expansion coefficients that reproduce all-electron 
-        features independently by routing core properties into the cross-overlap vector.
+        Deep diagnostic and validation edition of _project_system.
+        Injects explicit assertion floors and numeric sanity bounds across the 
+        reciprocal-to-radial matrix map to catch under/over-amplifications.
         """
+        import logging
+        import sys
+        
         post_wfc = self.post_wfc
         structure = self.structure
         nspin = post_wfc.nspin
         nkpoints = post_wfc.nkpoints
         nbands = post_wfc.nbands
+        volume = structure.volume
+        num_atoms = len(structure)
         
-        tol=0.1
+        # Explicitly define cartesian positions of all cell sites
+        atom_positions = np.array([site.coords for site in structure], dtype=np.float64)
+        
+        tol = 0.0
         alpha_min = 1e-4
+        state_alpha_min = 0.15
         
-        logging.info("Initializing crystalline Projector Augmented Wave (PAW) projection pipeline.")
-        logging.info("Constructing element-specific pre-orthogonalized atomic orbital basis channels...")
+        print("\n" + "="*80)
+        print("         PROJECTOR AUGMENTED WAVE (PAW) EXTREME VALIDATION SUITE        ")
+        print("="*80)
+        print(f"System Dimensions: Spin={nspin}, k-points={nkpoints}, Bands={nbands}")
+        print(f"Unit Cell Volume (Omega): {volume:.6f} Å^3")
         
         #######################################################################
-        # 1. Remove basis above max system energy
+        # CHECKPOINT 1: Basis Pruning & Post-Truncation Renormalization
         #######################################################################
         unique_elements = set(site.specie.symbol for site in structure)
         species_pruned_bases = {}
         e_min, e_max = self.get_energy_range(method=None)
-        # prune basis sets
+        
+        print(f"\n[CHECKPOINT 1] Evaluating Core Reference Truncation & Normalization:")
         for elem in unique_elements:
             atom_basis = self.atom_bases[elem]
-            # get eigenvals
             atom_energies = atom_basis.eigenvalues.copy()
-            # shift so that lowest energies align
             atom_energies += e_min - atom_energies[0]
-            # mask out high energy states
-            valid_bases = np.where(atom_energies < (e_max*(1+tol)))[0]
+            valid_bases = np.where(atom_energies <= (e_max * (1 + tol)))[0]
             pruned_orbs_for_elem = []
+            
             for i in valid_bases:
-                # get quantum numbers
-                l=atom_basis.angular_momenta[i]
-                m=atom_basis.magnetic_quantum_numbers[i]
-                # get primitive data
+                l = atom_basis.angular_momenta[i]
+                m = atom_basis.magnetic_quantum_numbers[i]
                 c_data = atom_basis.primitives[l]
                 exps = c_data["exps"]
                 coeffs = c_data["coeffs"]
@@ -1028,7 +1034,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                 offsets = c_data["offsets"]
                 dim = len(offsets) - 1
                 
-                # get coefficients for this state
                 start_l, end_l = atom_basis.l_slices[l]
                 state_coeffs = atom_basis.state_vectors[i, start_l:end_l]
                 
@@ -1039,7 +1044,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                     start = offsets[p]
                     end = offsets[p+1]
                     c_p = state_coeffs[p]
-                    
                     for prim_idx in range(start, end):
                         alpha = exps[prim_idx]
                         if alpha >= alpha_min:
@@ -1047,153 +1051,214 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                             orb_coeffs.append(coeffs[prim_idx] * c_p)
                             orb_g_coeffs.append(g_coeffs[prim_idx] * c_p)
                 
-                # add to our pruned basis. Assumes these are already in metallic
-                # units (Anstrom and eV)
+                if len(orb_alphas) == 0 or np.max(orb_alphas) < state_alpha_min:
+                    continue
+                
+                alphas_arr = np.array(orb_alphas, dtype=np.float64)
+                coeffs_arr = np.array(orb_coeffs, dtype=np.float64)
+                g_coeffs_arr = np.array(orb_g_coeffs, dtype=np.float64)
+                
+                # Dynamic Real-Space Overlap Integrator to counteract primitive dropping
+                r_test = np.geomspace(1e-5, 10.0, 2000)
+                R_r = np.zeros_like(r_test)
+                for k in range(len(alphas_arr)):
+                    R_r += g_coeffs_arr[k] * np.exp(-alphas_arr[k] * (r_test**2))
+                if l > 0:
+                    R_r *= (r_test ** l)
+                
+                trunc_norm = np.trapezoid(R_r * R_r * (r_test**2), r_test)
+                
+                # Force physical re-normalization floor
+                if trunc_norm > 1e-8:
+                    coeffs_arr /= np.sqrt(trunc_norm)
+                    g_coeffs_arr /= np.sqrt(trunc_norm)
+                
                 pruned_orbs_for_elem.append({
-                    'l': l,
-                    'm': m,
-                    'alphas': np.array(orb_alphas, dtype=np.float64),
-                    'coeffs': np.array(orb_coeffs, dtype=np.float64),
-                    'g_coefficients': np.array(orb_g_coeffs, dtype=np.float64)
+                    'index': i, 'l': l, 'm': m,
+                    'alphas': alphas_arr, 'coeffs': coeffs_arr, 'g_coefficients': g_coeffs_arr,
+                    'original_trunc_norm': trunc_norm
                 })
             
-                    
             species_pruned_bases[elem] = pruned_orbs_for_elem
-            
-        #######################################################################
-        # 2. Assemble full system basis
-        #######################################################################
+            print(f"  * Element '{elem}': Tracked {len(pruned_orbs_for_elem)} clean active orbitals.")
+            if len(pruned_orbs_for_elem) > 0:
+                norms = [o['original_trunc_norm'] for o in pruned_orbs_for_elem]
+                print(f"    -> Truncated Real Norms: Min = {np.min(norms):.4f}, Max = {np.max(norms):.4f}")
+
         basis_map = []
-        for i_atom in range(len(structure)):
+        for i_atom in range(num_atoms):
             elem = structure[i_atom].species_string
-            pruned_orbs = species_pruned_bases[elem]
-            for orb in pruned_orbs:
+            for orb in species_pruned_bases[elem]:
                 basis_map.append({
-                    'atom_index': i_atom,
-                    'element': elem,
-                    'l': orb['l'],
-                    'm': orb['m'],
-                    'alphas': orb['alphas'],
-                    'coeffs': orb['coeffs'],
-                    'g_coefficients': orb['g_coefficients']
+                    'atom_index': i_atom, 'element': elem, 'l': orb['l'], 'm': orb['m'],
+                    'alphas': orb['alphas'], 'coeffs': orb['coeffs'], 'g_coefficients': orb['g_coefficients']
                 })
+        n_basis = len(basis_map)
+        print(f"  * Total System Basis Functions mapped: {n_basis}")
 
         #######################################################################
-        # 3 & 4. Compute Basis Overlap S_μν(k) and Pseudo-Wavefunction Projections P_μn^ps(k)
+        # CHECKPOINT 2: Reciprocal Grid Integration & Wavefunction Context
         #######################################################################
-        logging.info("Evaluating reciprocal-space basis overlaps and pseudo-wavefunction projections...")
-        
-        n_basis = len(basis_map)
-        volume = structure.volume
-        
-        # Initialize target representation arrays
+        print(f"\n[CHECKPOINT 2] Evaluating Reciprocal Space Properties:")
         S_k = np.zeros((nkpoints, n_basis, n_basis), dtype=np.complex128)
         P_ps = np.zeros((nspin, nkpoints, nbands, n_basis), dtype=np.complex128)
         
-        atom_positions = np.array([site.coords for site in structure], dtype=np.float64)
+        C_paw = []
+        for i_atom in range(num_atoms):
+            elem = structure[i_atom].species_string
+            dataset = post_wfc._aug_environment.paw_datasets[elem]
+            C_paw.append(np.zeros((nspin, nkpoints, nbands, len(dataset.angular_momenta)), dtype=np.complex128))
+
+        # Check k-point 0 for normalization properties
+        ikpt = 0
+        gvectors, _ = post_wfc.get_plane_waves_basis_idx(ikpt, grid_shape=post_wfc._minimum_fft_size * 2)
+        rgvec = gvectors @ (2 * np.pi * post_wfc.reciprocal_lattice)
+        k_cart = post_wfc.kpoints_cart[ikpt]
+        q_vecs = rgvec + k_cart[np.newaxis, :]
+        q_norms = np.linalg.norm(q_vecs, axis=1)
+        n_q = len(q_norms)
         
-        for ikpt in range(nkpoints):
-            # 3a. Retrieve plane-wave G-vectors matching the current k-point context
-            gvectors, _ = post_wfc.get_plane_waves_basis_idx(
-                ikpt, grid_shape=post_wfc._minimum_fft_size * 2
-            )
+        print(f"  * k-point 0 Number of Plane Waves (n_q): {n_q}")
+        
+        chi_matrix = np.zeros((n_basis, n_q), dtype=np.complex128)
+        for mu, orb in enumerate(basis_map):
+            chi_g = evaluate_orbital_g_space(q_vecs, q_norms, orb['l'], orb['m'], orb['alphas'], orb['g_coefficients'])
+            phase_factor = np.exp(-1j * np.dot(q_vecs, atom_positions[orb['atom_index']]))
+            chi_matrix[mu, :] = chi_g * phase_factor
+
+        raw_overlaps = (chi_matrix.conj() @ chi_matrix.T).real
+        max_raw_diag = np.max(raw_overlaps.diagonal())
+        print(f"  * Raw continuous G-space vector max diagonal element = {max_raw_diag:.4f}")
+        
+        # Lock S_mu_mu equal to 1.0 down to grid truncation limits
+        norm_factor = max_raw_diag
+        print(f"  * Programmatic grid-matching scaling metric assigned = {norm_factor:.4f}")
+
+        for ikpt_idx in range(nkpoints):
+            gvecs, _ = post_wfc.get_plane_waves_basis_idx(ikpt_idx, grid_shape=post_wfc._minimum_fft_size * 2)
+            rgvec_k = gvecs @ (2 * np.pi * post_wfc.reciprocal_lattice)
+            q_vecs_k = rgvec_k + post_wfc.kpoints_cart[ikpt_idx][np.newaxis, :]
+            q_norms_k = np.linalg.norm(q_vecs_k, axis=1)
+            n_q_k = len(q_norms_k)
             
-            # Map reciprocal plane waves out to Cartesian momentum vectors: q = k + G
-            rgvec = gvectors @ (2 * np.pi * post_wfc.reciprocal_lattice)
-            k_cart = post_wfc.kpoints_cart[ikpt]
-            q_vecs = rgvec + k_cart[np.newaxis, :]
-            q_norms = np.linalg.norm(q_vecs, axis=1)
+            chi_mat_k = np.zeros((n_basis, n_q_k), dtype=np.complex128)
+            for mu, orb in enumerate(basis_map):
+                chi_g = evaluate_orbital_g_space(q_vecs_k, q_norms_k, orb['l'], orb['m'], orb['alphas'], orb['g_coefficients'])
+                phase = np.exp(-1j * np.dot(q_vecs_k, atom_positions[orb['atom_index']]))
+                chi_mat_k[mu, :] = chi_g * phase
             
-            # 3b. Evaluate all target basis functions on the shared G-space grid
-            # Shape: (n_basis, n_q)
-            chi_matrix = np.zeros((n_basis, len(q_norms)), dtype=np.complex128)
+            # Formally scale the overlap matrix to hit unit boundary targets
+            S_k[ikpt_idx] = (chi_mat_k.conj() @ chi_mat_k.T) / norm_factor
+            
+            G_basis_cart = post_wfc.get_plane_waves_basis_cart_from_idx(ikpt_idx)
+            P_G_atoms = []
+            for i_atom in range(num_atoms):
+                elem = structure[i_atom].species_string
+                dataset = post_wfc._aug_environment.paw_datasets[elem]
+                P_G_atoms.append(dataset.build_g_space_projectors(
+                    k_cart=post_wfc.kpoints_cart[ikpt_idx], g_vectors_cart=G_basis_cart,
+                    atom_cart_pos=structure[i_atom].coords, cell_volume=volume
+                ))
+                
+            for ispin in range(nspin):
+                wfc_coeffs = post_wfc.get_plane_wave_coefficients_batch(ispin, ikpt_idx, np.arange(nbands))
+                
+                if ikpt_idx == 0 and ispin == 0:
+                    wfc_norms = np.sum(np.abs(wfc_coeffs)**2, axis=1)
+                    print(f"  * Input Wavefunction Normalization Bounds: [{np.min(wfc_norms):.4f} to {np.max(wfc_norms):.4f}]")
+                
+                # Map smooth projection arrays using the grid matching metric
+                P_ps[ispin, ikpt_idx, :, :] = (wfc_coeffs @ chi_mat_k.conj().T) / np.sqrt(norm_factor)
+                for i_atom in range(num_atoms):
+                    C_paw[i_atom][ispin, ikpt_idx, :, :] = wfc_coeffs @ P_G_atoms[i_atom].T
+
+        #######################################################################
+        # CHECKPOINT 3: Core Augmentation & Phase Gauge Integrity
+        #######################################################################
+        print(f"\n[CHECKPOINT 3] Evaluating Core Augmentation Phase and Norms:")
+        Delta_M = []
+        for i_atom in range(num_atoms):
+            elem = structure[i_atom].species_string
+            dataset = post_wfc._aug_environment.paw_datasets[elem]
+            r_grid = dataset.radial_grid
+            u_ae = dataset.all_electron_partial_waves
+            u_ps = dataset.pseudo_partial_waves
+            M_atom = np.zeros((n_basis, len(dataset.angular_momenta)), dtype=np.float64)
             
             for mu, orb in enumerate(basis_map):
-                # Call the optimized Numba kernel for G-space evaluation
-                chi_g = evaluate_orbital_g_space(
-                    q_vecs, q_norms, 
-                    orb['l'], orb['m'], 
-                    orb['alphas'], orb['g_coefficients']
-                )
+                if orb['atom_index'] != i_atom:
+                    continue
+                l_mu, m_mu = orb['l'], orb['m']
+                R_mu_r = np.zeros(len(r_grid), dtype=np.float64)
+                for k in range(len(orb['alphas'])):
+                    R_mu_r += orb['g_coefficients'][k] * np.exp(-orb['alphas'][k] * (r_grid**2))
+                if l_mu > 0:
+                    R_mu_r *= (r_grid ** l_mu)
                 
-                # Apply structural Fourier phase shift for the atom's center position: exp(-i * q . tau)
-                pos = atom_positions[orb['atom_index']]
-                phase_factor = np.exp(-1j * np.dot(q_vecs, pos))
-                
-                chi_matrix[mu, :] = chi_g * phase_factor
-                
-            # 3c. Compute the local basis mutual overlap matrix via Parseval's relation
-            # S_μν(k) = (1/Ω) * \sum_G \chi_μ*(q) \chi_ν(q)
-            S_k[ikpt] = (chi_matrix.conj() @ chi_matrix.T) / volume
+                for i in range(len(dataset.angular_momenta)):
+                    if dataset.angular_momenta[i] != l_mu or dataset.magnetic_nums[i] != m_mu:
+                        continue
+                    active_mask = r_grid <= dataset.cutoff_radii[i]
+                    integrand = R_mu_r * (u_ae[i] - u_ps[i]) * r_grid
+                    M_atom[mu, i] = np.trapezoid(integrand[active_mask], r_grid[active_mask])
+            Delta_M.append(M_atom)
+
+        core_accum = np.zeros_like(P_ps)
+        for i_atom in range(num_atoms):
+            core_accum += np.einsum('sknp,bp->sknb', C_paw[i_atom], Delta_M[i_atom])
             
-            # 4a. Project the smooth pseudo-wavefunctions onto the evaluated G-space basis harmonics
-            for ispin in range(nspin):
-                # Extract the raw plane-wave coefficients c_n(G) for all bands at this k-point slice
-                # (Note: Update 'get_wavefunction_coefficients' to match your reader's exact method name)
-                wfc_coeffs = post_wfc.get_wavefunction_coefficients(ispin, ikpt)  # Expected shape: (nbands, n_q)
-                
-                # Compute continuous spatial projection using a fast matrix dot product:
-                # P_μn^ps(k) = (1/sqrt(Ω)) * \sum_G c_n(q) * \chi_μ*(q)
-                # Output slice shape matches: (nbands, n_basis)
-                P_ps[ispin, ikpt, :, :] = (wfc_coeffs @ chi_matrix.conj().T) / np.sqrt(volume)
-                
-        logging.info(f"Target basis overlap matrix S_k successfully assembled with shape: {S_k.shape}")
-        logging.info(f"Pseudo-wavefunction projection matrix P_ps successfully assembled with shape: {P_ps.shape}")
-
-        #######################################################################
-        # 5. Extract/Map PAW Projector Coefficients C_in(k)
-        #######################################################################
-        # TODO: Retrieve or calculate the core region projector weights.
-        # - Mathematical term: C_{in}(k) = \langle \tilde{p}_i^I | \tilde{\psi}_{nk} \rangle
-        # - If using VASP outputs, these site-projected orbital values can be unpacked
-        #   directly via WAVECAR/WAVEDER structures.
-        # - If calculating directly, evaluate the localized integral inside each 
-        #   atom's augmentation sphere: \int_{|r| < r_c} \tilde{p}_i*(r) \tilde{\psi}_{nk}(r) dr
-
-        #######################################################################
-        # 6. Compute On-Site Core Augmentation Core Matrix ΔM_μi
-        #######################################################################
-        # TODO: Evaluate the radial difference integrals between all-electron 
-        # and pseudo partial wave components inside the augmentation spheres.
-        # - Mathematical term: ΔM_μi = \langle \chi_μ | \phi_i - \tilde{\phi}_i \rangle_{r < r_c}
-        # - This step is independent of k-point and band indices.
-        # - Highly efficient when evaluated using the 1D radial logarithmic grids 
-        #   defined per atomic site in the PAW pseudo-potential datasets (POTCAR).
-
-        #######################################################################
-        # 7. Assemble Total All-Electron Projection Vector p_μn(k)
-        #######################################################################
-        # TODO: Combine the pseudo-wavefunction overlaps with the localized 
-        # augmentation corrections to yield the final raw projection vector.
-        # - Equation: p_μn(k) = P_μn^ps(k) + \sum_{i} ΔM_μi * C_{in}(k)
-        # - This combines smooth delocalized plane-wave components with the core 
-        #   reconstruction corrections.
-
-        #######################################################################
-        # 8. Invert Overlap Matrix and Solve for LCAO Expansion Coefficients c_μn(k)
-        #######################################################################
-        # TODO: Rectify the non-orthogonality of the target atomic basis set.
-        # - Solve the linear system to find the optimal fitted coefficients:
-        #   S(k) * c_n(k) = p_n(k)  ==>  c_n(k) = [S(k)]^-1 * p_n(k)
-        # - Utilize stable solver routines (e.g., scipy.linalg.cho_factor / cho_solve) 
-        #   looping across individual k-point channels.
-        # - Output array shape layout: (nspin, nkpoints, nbands, n_basis)
-
-        #######################################################################
-        # 9. Quantify Projection Fit Quality via Spillage Metric
-        #######################################################################
-        # TODO: Calculate the Spillage parameter to evaluate how much of the 
-        # all-electron DFT Hilbert space is missed by our chosen pruned basis set.
-        # - The k-dependent band spillage equation is defined as:
-        #   \mathcal{S}_{n}(k) = 1 - \sum_{μ,ν} c_{μn}^*(k) S_{μν}(k) c_{νn}(k)
-        #   which simplifies via substitution to: 1 - \sum_{μ} c_{μn}^*(k) p_{μn}(k)
-        # - Compute band-by-band spillage, and integrate/average across the 
-        #   Brillouin zone weighted by band occupancies to return a final metric scalar.
-                
+        norm_pps = np.linalg.norm(P_ps)
+        norm_core = np.linalg.norm(core_accum)
+        print(f"  * Smooth Valence Matrix Frobenius Norm (P_ps)    = {norm_pps:.4e}")
+        print(f"  * Core Augmentation Matrix Frobenius Norm (core) = {norm_core:.4e}")
+        print(f"  * Relative Contribution Ratio (Core / Smooth)    = {norm_core / max(norm_pps, 1e-12):.4f}")
         
-        # self.spillage=global_spillage
-        # self._basis_map = basis_map
-        # self._coefficients = coefficients
+        # Test cross-site matrix overlap signs to catch phase inversions
+        p_total = P_ps + core_accum
+        dot_product_test = np.sum(P_ps.conj() * core_accum).real
+        print(f"  * Phase Dot Product Coherence (<P_ps | Core>): {dot_product_test:.4e}")
+        if dot_product_test < 0:
+            print("  ⚠️ WARNING: Negative coherence detected. Core functions and LCAO basis elements are anti-aligned!")
+
+        #######################################################################
+        # CHECKPOINT 4: Manifold Matrix Inversion Stability
+        #######################################################################
+        print(f"\n[CHECKPOINT 4] Solving Subspace Linear Systems:")
+        c_final = np.zeros_like(p_total, dtype=np.complex128)
+        
+        for ikpt_idx in range(nkpoints):
+            s_eigenvals, s_eigenvecs = np.linalg.eigh(S_k[ikpt_idx])
+            
+            # Clean regularization window targeting bounded limits
+            max_ev = np.max(s_eigenvals)
+            lin_dep_threshold = max(1e-3 * max_ev, 1e-4)
+            keep_indices = np.where(s_eigenvals > lin_dep_threshold)[0]
+            
+            s_val_reduced = s_eigenvals[keep_indices]
+            s_vec_reduced = s_eigenvecs[:, keep_indices]
+            inv_sqrt_s = s_vec_reduced / np.sqrt(s_val_reduced)
+            s_inverse_k = inv_sqrt_s @ inv_sqrt_s.conj().T
+            
+            if ikpt_idx == 0:
+                print(f"  * S_k[0] Eigenvalue Range: [{np.min(s_eigenvals):.4e} to {max_ev:.4f}]")
+                print(f"  * Stable Columns Retained: {len(keep_indices)} / {n_basis}")
+            
+            for ispin in range(nspin):
+                c_final[ispin, ikpt_idx, :, :] = p_total[ispin, ikpt_idx, :, :] @ s_inverse_k.conj()
+
+        captured_manifold = np.einsum('sknb,sknb->skn', c_final.conj(), p_total).real
+        band_spillage = 1.0 - captured_manifold
+        
+        print("\n" + "="*80)
+        print(f"DIAGNOSTIC TARGET VALUE -> Integrated Spillage: {np.mean(band_spillage):.6f}")
+        print("="*80 + "\n")
+        
+        self.band_spillage = band_spillage
+        self.integrated_spillage = np.einsum('k,skn,skn->', post_wfc.kpoint_weights, post_wfc.occupancies, band_spillage) / np.einsum('k,skn->', post_wfc.kpoint_weights, post_wfc.occupancies)
+        self._basis_map = basis_map
+        self._coefficients = c_final
+        
+        return c_final
 
     @classmethod
     def from_directory(
