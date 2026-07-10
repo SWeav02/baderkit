@@ -20,8 +20,20 @@ from baderkit.post_wfc.wfc_numba import _integrate_tetrahedra_spectral_density_n
 from baderkit.post_wfc.base import BaseWavefunctionEnvironment
 
 # TODO:
-    # Try to fix cusp difference. Might help to put atomic bases through an FFT filter of some kind. Might also help projection as well
-    # See if we can resove the spillage at higher unoccupied statess. I don't see why these should exist.
+    # 1. The real rho and reconstructed rho are extremely similar, but both have
+    # negative rho contribution at 0.3,0,0 at the p state. That is probably
+    # not physical and we should try and correct for it. It may also be the
+    # cause of the negative spillage.
+    # 2. The non-bonding construction can be greatly improved. From the pdos
+    # we can pre-build a map that connects the total charge to the radial rho
+    # of each atom. This would be a 2D array where the rows are total charge
+    # counts and the columns are the radial distance from the atom. This way,
+    # at a given total charge we just interpolate on the 2d matrix, which can
+    # likely be fairly sparse and could also be logarithmic.
+        # The workflow then becomes: Energy -> total charge -> interpolated rho
+        # In principal we need this map for every symmetrically unique atom, but
+        # we can probably reasonably approximate by using the total atom type
+        # projection
 
 class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     """
@@ -1007,35 +1019,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         alpha_min = 1e-4
         state_alpha_min = 0.15
         
-        # =====================================================================
-        # DIAGNOSTIC: RAW UNPRUNED ATOMIC BASE SPECTRUM
-        # =====================================================================
-        print("\n" + "="*80)
-        print("          RAW UNPRUNED ATOMIC DATABASE SPECTRUM (PRE-PRUNING)          ")
-        print("="*80)
-        unique_elements = set(site.specie.symbol for site in structure)
-        for elem in unique_elements:
-            if elem not in self.atom_bases:
-                print(f"Element {elem} not found in atom_bases library.")
-                continue
-            atom_basis = self.atom_bases[elem]
-            print(f"Element: {elem}")
-            print(f"{'Index':<5} | {'True Shell':<10} | {'Energy (eV)':<12} | {'Occupation':<10} | {'Spin':<5}")
-            print("-"*60)
-            
-            for idx in range(len(atom_basis.eigenvalues)):
-                l = atom_basis.angular_momenta[idx]
-                n = atom_basis.principal_quantum_numbers[idx]
-                energy = atom_basis.eigenvalues[idx]
-                occ = atom_basis.reference_occupations[idx]
-                spin = atom_basis.spin_channels[idx]
-                
-                l_sym = l_symbols.get(l, f"l={l}")
-                shell_label = f"{n}{l_sym}"
-                
-                print(f" {idx:<5} | {shell_label:<10} | {energy:12.4f} | {occ:10.4f} | {spin:<5}")
-        print("="*80 + "\n")
-        
         #######################################################################
         # STEP 1: Basis Pruning & Symmetry-Balanced Virtual Recovery
         #######################################################################
@@ -1354,34 +1337,61 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         #######################################################################
         # STEP 4: Vectorized Reciprocal Augmentation Grid Assembly
         #######################################################################
+        # NOTE: Spillage improves with increasing augmentation encut. Some states
+        # are still negative, but fewer. This section needs to be sped up though,
+        # probably with Numba
         logging.info("Step 4: Constructing augmented periodic metric via manual G-grid.")
         
         c_final = np.zeros_like(p_total, dtype=np.complex128)
         S_AE = np.zeros_like(S_k)
         
-        augmentation_grid_multiplier = 3
-        base_shape = post_wfc._minimum_fft_size
-        aug_shape = [int(n * augmentation_grid_multiplier) for n in base_shape]
+        # Map reciprocal lattice vectors natively in standard solid-state units
+        b_matrix = 2 * np.pi * post_wfc.reciprocal_lattice  # rows are b1, b2, b3
+        inv_b_matrix = np.linalg.inv(b_matrix)
         
-        nx = np.arange(-aug_shape[0]//2, aug_shape[0]//2)
-        ny = np.arange(-aug_shape[1]//2, aug_shape[1]//2)
-        nz = np.arange(-aug_shape[2]//2, aug_shape[2]//2)
+        # Calculate maximum reciprocal momentum norm based on energy cutoff: G_max = sqrt(E_cut)
+        g_max = np.sqrt(self.augmentation_encut)
+        
+        # Project the cutoff sphere onto each reciprocal lattice direction to find absolute integer limits
+        max_n = np.ceil(g_max * np.linalg.norm(inv_b_matrix, axis=0)).astype(np.int_)
+        
+        nx = np.arange(-max_n[0], max_n[0] + 1)
+        ny = np.arange(-max_n[1], max_n[1] + 1)
+        nz = np.arange(-max_n[2], max_n[2] + 1)
         
         KX, KY, KZ = np.meshgrid(nx, ny, nz, indexing='ij')
         g_integer_matrix = np.stack([KX.flatten(), KY.flatten(), KZ.flatten()], axis=1)
-        rgvec_augmented = g_integer_matrix @ (2 * np.pi * post_wfc.reciprocal_lattice)
+        rgvec_augmented = g_integer_matrix @ b_matrix
+        
+        # Spherical filtering to exactly match the anti-aliasing pruning cutoff sphere
+        g_norms_sq = np.sum(rgvec_augmented ** 2, axis=1)
+        inside_sphere_mask = g_norms_sq <= (self.augmentation_encut + 1e-5)
+        rgvec_augmented = rgvec_augmented[inside_sphere_mask]
         n_q_augmented = rgvec_augmented.shape[0]
         
         for ikpt_idx in track(range(nkpoints), description="[bold green]Inverting High-G Subspaces...[/]"):
             q_vecs_k = rgvec_augmented + post_wfc.kpoints_cart[ikpt_idx][np.newaxis, :]
             q_norms_k = np.linalg.norm(q_vecs_k, axis=1)
             
+            # -----------------------------------------------------------------
+            # OPTIMIZATION 1: Vectorized Atomic Phase Pre-computation (BLAS)
+            # -----------------------------------------------------------------
+            # q_vecs_k: (n_q_augmented, 3) @ atom_positions.T: (3, num_atoms)
+            # Resulting array is transposed to shape (num_atoms, n_q_augmented) 
+            # to make row slicing perfectly contiguous and L1/L2 cache-friendly.
+            atom_phases = np.exp(-1j * (q_vecs_k @ atom_positions.T)).T
+            
             chi_mat_augmented = np.zeros((n_basis, n_q_augmented), dtype=np.complex128)
             for mu, orb in enumerate(basis_map):
-                chi_g = evaluate_orbital_g_space(q_vecs_k, q_norms_k, orb['l'], orb['m'], orb['alphas'], orb['g_coefficients'])
-                phase = np.exp(-1j * np.dot(q_vecs_k, atom_positions[orb['atom_index']]))
-                chi_mat_augmented[mu, :] = chi_g * phase
+                chi_g = evaluate_orbital_g_space(
+                    q_vecs_k, q_norms_k, orb['l'], orb['m'], orb['alphas'], orb['g_coefficients']
+                )
+                # Pull the precomputed structural phase factor instantly with zero overhead
+                chi_mat_augmented[mu, :] = chi_g * atom_phases[orb['atom_index'], :]
             
+            # -----------------------------------------------------------------
+            # OPTIMIZATION 2: Single High-Performance Conjugate Transpose
+            # -----------------------------------------------------------------
             S_AE[ikpt_idx] = (chi_mat_augmented.conj() @ chi_mat_augmented.T) / volume
             
             s_eigenvals, s_eigenvecs = np.linalg.eigh(S_AE[ikpt_idx])

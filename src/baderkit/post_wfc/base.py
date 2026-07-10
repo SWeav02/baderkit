@@ -26,6 +26,7 @@ class BaseWavefunctionEnvironment(ABC):
         valence_counts=None,
         scipy_workers: int = -1,
         reference_env=None,
+        augmentation_encut=None,
         **kwargs
         ):
         """Initializes state or points straight to a companion reference environment."""
@@ -40,6 +41,7 @@ class BaseWavefunctionEnvironment(ABC):
         self._meta = wf_reader.meta
         self._aug_environment = aug_environment
         self.scipy_workers = scipy_workers
+        self._augmentation_encut = augmentation_encut
         
         self._structure = self._meta.structure
         self._lattice = self._structure.lattice.matrix               
@@ -139,6 +141,12 @@ class BaseWavefunctionEnvironment(ABC):
     @property
     def energy_cutoff(self):
         return self._reference_env.energy_cutoff if self._reference_env else self._meta.energy_cutoff
+    
+    @property
+    def augmentation_encut(self):
+        if self._augmentation_encut is None:
+            self._augmentation_encut = self.energy_cutoff * 8
+        return self._augmentation_encut
         
     @property
     def structure(self):
