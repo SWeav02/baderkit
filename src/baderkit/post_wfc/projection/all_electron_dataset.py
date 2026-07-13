@@ -8,6 +8,7 @@ from pymatgen.core import Element
 from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
+from scipy.interpolate import RegularGridInterpolator
 
 from baderkit.post_wfc.pseudopotentials.paw_dataset import PAWSpecies
 
@@ -78,6 +79,60 @@ class AESpecies:
     
     radial_tau: NDArray = field(init=False)
     """2D array of shape (channels, grid) containing radial kinetic energy density (in Angstrom^-5)."""
+    
+    @property
+    def max_occupancies(self):
+        if getattr(self, "_max_occupancies", None) is None:
+            self._max_occupancies = self.get_occupancies()
+        return self._max_occupancies
+    
+    @property
+    def cumulative_occupancies(self):
+        if getattr(self, "_cumulative_occupancies", None) is None:
+            self._cumulative_occupancies = np.cumulative_sum(self.max_occupancies, include_initial=True)
+        return self._cumulative_occupancies
+    
+    @property
+    def cumulative_radial_rho(self):
+        """
+        axis 0: electron count
+        axis 1: radial distance
+        data: rho
+        """
+        if getattr(self, "_cumulative_radial_rho", None) is None:
+            self._cumulative_radial_rho = np.cumulative_sum(self.max_occupancies[:, None] * self.radial_rho, axis=0, include_initial=True)
+        return self._cumulative_radial_rho
+    
+    @property
+    def cumulative_radial_tau(self):
+        """
+        axis 0: electron count
+        axis 1: radial distance
+        data: tau
+        """
+        if getattr(self, "_cumulative_radial_tau", None) is None:
+            self._cumulative_radial_tau = np.cumulative_sum(self.max_occupancies[:, None] * self.radial_tau, axis=0, include_initial=True)
+        return self._cumulative_radial_tau
+    
+    @property
+    def radial_rho_interpolator(self):
+        """
+        SciPy cubic interpolation of rho at a given atom electron count and
+        radial distance. Takes a list of points.
+        """
+        if getattr(self, "_radial_rho_interpolator", None) is None:
+            self._radial_rho_interpolator = RegularGridInterpolator((self.cumulative_occupancies, self.radial_grid), self.cumulative_radial_rho, method='linear')
+        return self._radial_rho_interpolator
+    
+    @property
+    def radial_tau_interpolator(self):
+        """
+        SciPy cubic interpolation of tau at a given atom electron count and
+        radial distance. Takes a list of points.
+        """
+        if getattr(self, "_radial_tau_interpolator", None) is None:
+            self._radial_tau_interpolator = RegularGridInterpolator((self.cumulative_occupancies, self.radial_grid), self.cumulative_radial_tau, method='linear')
+        return self._radial_tau_interpolator
     
     def __post_init__(self):
         """
@@ -210,12 +265,17 @@ class AESpecies:
             l_slices=self.l_slices
         )
     
-    def get_occupancies(self, min_electrons: float, max_electrons: float) -> NDArray:
+    def get_occupancies(self, min_electrons: float = None, max_electrons: float = None) -> NDArray:
         """
         Generates a 1D occupancy array of shape (n_channels,) containing the 
         number of electrons allocated to each subshell channel within the specified 
         electron window [min_electrons, max_electrons] using the Aufbau principle.
         """
+        if min_electrons is None:
+            min_electrons = 0
+        if max_electrons is None:
+            max_electrons = (self.angular_momenta*2 + 1).sum() * 2
+        
         if min_electrons > max_electrons:
             raise ValueError("min_electrons cannot be greater than max_electrons.")
         
@@ -236,7 +296,7 @@ class AESpecies:
             prev_count = current_count
                 
         return occs
-
+    
     def get_total_magnetic_moment(self, min_electrons: float, max_electrons: float) -> float:
         """
         Calculates the net integrated atomic magnetic moment (spin polarization: N_alpha - N_beta)
