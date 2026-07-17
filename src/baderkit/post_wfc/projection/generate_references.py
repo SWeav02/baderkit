@@ -211,29 +211,32 @@ def compress_checkpoint_to_radial_basis(root_dir, filename_pattern="chkpt.pbe"):
             
             for l_channel in sorted(l_counts.keys()):
                 S_metric = S_contracted_blocks[l_channel]
-                l_subshells = [s for s in unique_subshells if s['l'] == l_channel]
                 
-                orthogonalized_vectors = []
-                for idx, subshell in enumerate(l_subshells):
-                    v = subshell['c_p_pure'].copy()
+                # Loop over spin channels independently to prevent alpha/beta spatial corruption!
+                for spin_channel in ([0, 1] if is_unrestricted else [0]):
+                    l_subshells = [s for s in unique_subshells if s['l'] == l_channel and s['spin'] == spin_channel]
                     
-                    # Project out components belonging to all lower-energy core/valence shells
-                    for u in orthogonalized_vectors:
-                        proj = float(u.T @ S_metric @ v) / float(u.T @ S_metric @ u)
-                        v -= proj * u
+                    orthogonalized_vectors = []
+                    for idx, subshell in enumerate(l_subshells):
+                        v = subshell['c_p_pure'].copy()
                         
-                    # Re-normalize the state back to exact unit norm within the contracted space
-                    norm = np.sqrt(float(v.T @ S_metric @ v))
-                    
-                    # Strict threshold: if the remaining norm is too small, the state is redundant
-                    if norm > 1e-5:
-                        v /= norm
-                        orthogonalized_vectors.append(v)
-                        subshell['c_p_pure'] = v  
-                        final_retained_subshells.append(subshell)
-                    else:
-                        logging.info(f"Skipping redundant virtual subshell: Element {element}, l={l_channel}, Energy={subshell['energy']:.2f} eV (Linear Singularity)")
-
+                        # Project out components belonging to all lower-energy core/valence shells
+                        for u in orthogonalized_vectors:
+                            proj = float(u.T @ S_metric @ v) / float(u.T @ S_metric @ u)
+                            v -= proj * u
+                            
+                        # Re-normalize the state back to exact unit norm within the contracted space
+                        norm = np.sqrt(float(v.T @ S_metric @ v))
+                        
+                        # Strict threshold: if the remaining norm is too small, the state is redundant
+                        if norm > 1e-5:
+                            v /= norm
+                            orthogonalized_vectors.append(v)
+                            subshell['c_p_pure'] = v  
+                            final_retained_subshells.append(subshell)
+                        else:
+                            logging.info(f"Skipping redundant virtual subshell: Element {element}, l={l_channel}, Spin={spin_channel}, Energy={subshell['energy']:.2f} eV (Linear Singularity)")
+                            
             # Overwrite unique_subshells with only the linearly independent states
             unique_subshells = final_retained_subshells
             unique_subshells.sort(key=lambda x: x['energy'])

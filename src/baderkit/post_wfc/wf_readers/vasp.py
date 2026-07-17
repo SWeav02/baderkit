@@ -5,13 +5,13 @@ from baderkit.toolkit import Structure
 from .base import BaseWfcReader, WfcMetadata
 
 def get_reciprocal_index(
-        ispin,
-        ikpt,
-        iband,
-        nkpts,
-        nbands,
-        nspin
-        ):
+    ispin,
+    ikpt,
+    iband,
+    nkpts,
+    nbands,  # Must ALWAYS represent the physical max_nbands of the file
+    nspin
+):
     """
     Maps 1-indexed quantum numbers to direct-access binary record locations
     inside the rigid Fortran layout structure of a VASP WAVECAR file.
@@ -33,11 +33,15 @@ class VaspReader(BaseWfcReader):
         self,
         use_vasp4: bool = False,
         **kwargs
-            ):
+    ):
         self.use_vasp4 = use_vasp4
         super().__init__(**kwargs)
     
-    def read_metadata(self) -> WfcMetadata:
+    def read_metadata(
+        self,
+        nbands = None,
+        bands = None,
+    ) -> WfcMetadata:
         """
         Parses structural matrices and record maps out of POSCAR and WAVECAR files
         contained within the targeted calculation directory.
@@ -66,7 +70,20 @@ class VaspReader(BaseWfcReader):
             # 2. Advance to Record 2 to parse active dimensions, grids, and cells
             file.seek(self.recl)
             nkpts = int(np.fromfile(file, dtype=np.float64, count=1)[0])
-            nbands = int(np.fromfile(file, dtype=np.float64, count=1)[0])
+            max_nbands = int(np.fromfile(file, dtype=np.float64, count=1)[0])
+            
+            # Resolve physical bands we want to target
+            if bands is not None:
+                selected_bands = np.array(bands, dtype=np.int32)
+                if np.any(selected_bands < 0) or np.any(selected_bands >= max_nbands):
+                    raise ValueError(f"Selected band indices must be between 0 and {max_nbands - 1}")
+            elif nbands is not None:
+                assert 1 <= nbands <= max_nbands, f"Invalid manual nbands: {nbands}. Must be between 1 and {max_nbands}"
+                selected_bands = np.arange(nbands, dtype=np.int32)
+            else:
+                selected_bands = np.arange(max_nbands, dtype=np.int32)
+                
+            n_selected_bands = len(selected_bands)
             energy_cutoff = np.fromfile(file, dtype=np.float64, count=1)[0]
             
             # Real-space cell matrix layout (VASP standard 3x3 array row-wise)
@@ -78,16 +95,16 @@ class VaspReader(BaseWfcReader):
             else:
                 structure = Structure(lattice_matrix, species=["X"], coords=[[0, 0, 0]])
                 
-            # Pre-allocate array blocks for kpoint weights, coordinates, and energy channels
+            # Pre-allocate array blocks mapped to the SELECTED band size
             kpoints = np.zeros((nkpts, 3))
-            energies = np.zeros((nspin, nkpts, nbands))
-            occupancies = np.zeros((nspin, nkpts, nbands))
+            energies = np.zeros((nspin, nkpts, n_selected_bands))
+            occupancies = np.zeros((nspin, nkpts, n_selected_bands))
             
             # 3. Loop over records to extract eigenvalues, coordinates, and weights
             for ispin_idx in range(nspin):
                 for ikpt_idx in range(nkpts):
-                    # Seek to the header record corresponding to the current spin/kpoint combo
-                    rec_header = get_reciprocal_index(ispin_idx + 1, ikpt_idx + 1, 1, nkpts, nbands, nspin) - 1
+                    # Seek using physical max_nbands so file positions line up perfectly
+                    rec_header = get_reciprocal_index(ispin_idx + 1, ikpt_idx + 1, 1, nkpts, max_nbands, nspin) - 1
                     file.seek(rec_header * self.recl)
                     
                     # Read the plane-wave count and the fractional kpoint coordinates
@@ -95,10 +112,12 @@ class VaspReader(BaseWfcReader):
                     if ispin_idx == 0:
                         kpoints[ikpt_idx, :] = header_data[1:4]
                         
-                    # Energies, weights, and occupancies immediately follow the kpoint coordinates
-                    eb_data = np.fromfile(file, dtype=np.float64, count=3 * nbands).reshape(nbands, 3)
-                    energies[ispin_idx, ikpt_idx, :] = eb_data[:, 0]
-                    occupancies[ispin_idx, ikpt_idx, :] = eb_data[:, 2]
+                    # Energies, weights, and occupancies: must read the complete layout (3 * max_nbands)
+                    eb_data = np.fromfile(file, dtype=np.float64, count=3 * max_nbands).reshape(max_nbands, 3)
+                    
+                    # Store only the mapped physical bands
+                    energies[ispin_idx, ikpt_idx, :] = eb_data[selected_bands, 0]
+                    occupancies[ispin_idx, ikpt_idx, :] = eb_data[selected_bands, 2]
                     
             # Set a dynamic Fermi Level baseline using occupied bands if not explicitly given
             efermi = np.max(energies[occupancies > 0.1]) if np.any(occupancies > 0.1) else 0.0
@@ -112,7 +131,9 @@ class VaspReader(BaseWfcReader):
             efermi=efermi,
             nspin=nspin,
             nkpts=nkpts,
-            nbands=nbands,
+            nbands=n_selected_bands,
+            max_nbands=max_nbands,
+            bands=selected_bands,
             cplx_dtype=cplx_dtype
         )
         return self.meta
@@ -126,28 +147,30 @@ class VaspReader(BaseWfcReader):
         wavecar_filename = self.directory / "WAVECAR"
         
         with open(wavecar_filename, "rb") as file:
-            # Locate the baseline k-point header block to identify the active plane-wave array size
+            # Locate the baseline k-point header block using physical max_nbands
             rec_band_header = get_reciprocal_index(
                 ispin + 1,
                 ikpt + 1,
                 1,
                 self.meta.nkpts,
-                self.meta.nbands,
+                self.meta.max_nbands,
                 self.meta.nspin
             ) - 1
             
             file.seek(rec_band_header * self.recl)
             npw = int(np.fromfile(file, dtype=np.float64, count=1)[0])
             
-            # Stream the data block for each band requested sequentially
             coeffs_list = []
             for iband in bands:
+                # Map selected subspace index back to physical file-level index
+                abs_band = self.meta.bands[iband]
+                
                 rec_coeff = get_reciprocal_index(
                     ispin + 1,
                     ikpt + 1,
-                    iband + 2,
+                    abs_band + 2, # Account for VASP's 1-indexed offset + header record
                     self.meta.nkpts,
-                    self.meta.nbands,
+                    self.meta.max_nbands,
                     self.meta.nspin
                 ) - 1
                 
@@ -171,7 +194,7 @@ class VaspReader(BaseWfcReader):
         # Kinetic energy factor matching standard VASP convention exactly
         HSQDTM = 3.8100198740807945
         
-        # FIX: Include the 2*pi factor to get true Cartesian coordinates in A^-1
+        # Include the 2*pi factor to get true Cartesian coordinates in A^-1
         B_mat = 2 * np.pi * np.linalg.inv(lattice).T
         
         # Determine the maximum safe bounding box coordinates via Cauchy-Schwarz projection
@@ -190,11 +213,11 @@ class VaspReader(BaseWfcReader):
         N3, N2, N1 = np.meshgrid(seq3, seq2, seq1, indexing='ij')
         g_all = np.stack([N1.ravel(), N2.ravel(), N3.ravel()], axis=-1)
         
-        # Fetch expected plane wave count from the file header to test for boundary floating-point edge-cases
+        # Fetch expected plane wave count using max_nbands
         wavecar_file = self.directory / "WAVECAR"
         with open(wavecar_file, "rb") as f:
             rec_band_header = get_reciprocal_index(
-                1, ikpt + 1, 1, self.meta.nkpts, self.meta.nbands, self.meta.nspin
+                1, ikpt + 1, 1, self.meta.nkpts, self.meta.max_nbands, self.meta.nspin
             ) - 1
             f.seek(rec_band_header * self.recl)
             expected_npw = int(np.fromfile(f, dtype=np.float64, count=1)[0])
@@ -205,8 +228,7 @@ class VaspReader(BaseWfcReader):
         
         gvectors = g_all[energies_all <= encut]
         
-        # FIX: Avoid sorting the final gvectors array directly, which destroys the VASP FFT loop order.
-        # Instead, locate the exact indices matching the energy threshold limits to preserve native ordering.
+        # Avoid sorting the final gvectors array directly, which destroys the VASP FFT loop order.
         if len(gvectors) != expected_npw:
             indices = np.where(energies_all <= encut)[0]
             if len(indices) < expected_npw:

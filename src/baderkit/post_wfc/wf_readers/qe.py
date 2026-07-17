@@ -36,7 +36,11 @@ class QeReader(BaseWfcReader):
             )
         return binary_file
 
-    def read_metadata(self) -> WfcMetadata:
+    def read_metadata(
+        self,
+        nbands=None,
+        bands=None,
+    ) -> WfcMetadata:
         """
         Parses data-file-schema.xml inside the target directory to extract metadata,
         band records, and structural information in standard units (eV, Angstrom).
@@ -98,7 +102,7 @@ class QeReader(BaseWfcReader):
         nkpts = total_blocks // 2 if lsda else total_blocks
         
         first_eig_text = ks_energies_nodes[0].find("eigenvalues").text
-        nbands = len(np.fromstring(first_eig_text, sep=" "))
+        max_nbands = len(np.fromstring(first_eig_text, sep=" "))
         
         # DYNAMIC SELF-CORRECTION: Interrogate the binary record directly to see 
         # if the written wavefunction count differs from the calculated XML manifold.
@@ -114,14 +118,28 @@ class QeReader(BaseWfcReader):
                 _ = np.fromfile(f, dtype=np.int32, count=1)[0]  # n_gvec
                 _ = np.fromfile(f, dtype=np.int32, count=1)[0]  # nspin_file
                 nbands_file = np.fromfile(f, dtype=np.int32, count=1)[0]
-                if nbands_file > 0 and nbands_file < nbands:
-                    nbands = nbands_file
+                if 0 < nbands_file < max_nbands:
+                    max_nbands = nbands_file
         except Exception:
-            pass  # Fallback gracefully to full XML estimation if files are locked or inaccessible
+            pass  # Fallback gracefully to full XML estimation if files are locked
         
+        # Resolve selected bands based on absolute available bands
+        if bands is not None:
+            selected_bands = np.array(bands, dtype=np.int32)
+            if np.any(selected_bands < 0) or np.any(selected_bands >= max_nbands):
+                raise ValueError(f"Selected band indices must be between 0 and {max_nbands - 1}")
+        elif nbands is not None:
+            assert 1 <= nbands <= max_nbands, f"Invalid manual nbands: {nbands}. Must be between 1 and {max_nbands}"
+            selected_bands = np.arange(nbands, dtype=np.int32)
+        else:
+            selected_bands = np.arange(max_nbands, dtype=np.int32)
+            
+        n_selected_bands = len(selected_bands)
+        
+        # Initialize arrays mapped to the user-selected band counts
         kpoints = np.zeros((nkpts, 3), dtype=float)
-        energies = np.zeros((nspin, nkpts, nbands), dtype=float)
-        occupancies = np.zeros((nspin, nkpts, nbands), dtype=float)
+        energies = np.zeros((nspin, nkpts, n_selected_bands), dtype=float)
+        occupancies = np.zeros((nspin, nkpts, n_selected_bands), dtype=float)
         
         for idx, ks_node in enumerate(ks_energies_nodes):
             kp_coord = np.fromstring(ks_node.find("k_point").text, sep=" ")
@@ -139,11 +157,11 @@ class QeReader(BaseWfcReader):
             eig_vals = np.fromstring(ks_node.find("eigenvalues").text, sep=" ") * HARTREE_TO_EV
             occ_vals = np.fromstring(ks_node.find("occupations").text, sep=" ")
             
-            # Slice trailing items cleanly to match the validated binary band allocation
-            energies[ispin_idx, ikpt_idx, :] = eig_vals[:nbands]
-            occupancies[ispin_idx, ikpt_idx, :] = occ_vals[:nbands]
+            # Map eigenvalues and occupancies according to user-requested band indices
+            energies[ispin_idx, ikpt_idx, :] = eig_vals[selected_bands]
+            occupancies[ispin_idx, ikpt_idx, :] = occ_vals[selected_bands]
 
-        # Populate self.meta immediately to ensure downstream compatibility during initialization
+        # Populate self.meta with physical and selected dimensions
         self.meta = WfcMetadata(
             structure=structure,
             kpoints=kpoints,
@@ -153,7 +171,9 @@ class QeReader(BaseWfcReader):
             efermi=efermi,
             nspin=nspin,
             nkpts=nkpts,
-            nbands=nbands,
+            nbands=n_selected_bands,
+            max_nbands=max_nbands,
+            bands=selected_bands,
             cplx_dtype=np.complex128
         )
         
@@ -201,8 +221,11 @@ class QeReader(BaseWfcReader):
             
             coeffs_list = []
             for iband in bands:
+                # Map the user's relative index to the absolute index inside the file
+                abs_band = self.meta.bands[iband]
+                
                 # Direct seek to target band block using absolute addressing
-                f.seek(start_pos + iband * bytes_per_band_record)
+                f.seek(start_pos + abs_band * bytes_per_band_record)
                 f.seek(4, 1)  # Skip leading band delimiter
                 coeffs_list.append(np.fromfile(f, dtype=self.meta.cplx_dtype, count=nspin_file * n_gvec))
                 

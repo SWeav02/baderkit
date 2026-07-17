@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
+from numpy.typing import NDArray
 from numba import njit, prange
 from numba.typed import List
 from baderkit.post_wfc.pseudopotentials.augmentation_numba import interp1d_cubic_spline_numba, precompute_cubic_spline_derivs, eval_real_harmonics
@@ -111,7 +112,7 @@ def find_voxels_in_atom_range(atom_cart, lattice_matrix, grid_dims, r_cut):
                     
     return out_indices[:count], out_distances[:count]
 
-@njit(cache=True, fastmath=True)
+# @njit(cache=True, fastmath=True)
 def evaluate_orbital_g_space(q_vecs, q_norms, l, m, alphas, g_coeffs):
     """
     Ultra-optimized kernel leveraging pre-baked reciprocal space coefficients
@@ -121,16 +122,15 @@ def evaluate_orbital_g_space(q_vecs, q_norms, l, m, alphas, g_coeffs):
     out = np.zeros(n_q, dtype=np.complex128)
     
     # 1. Evaluate standard analytical phase factor (-1j)**l
-    if l == 0:
+    rem = l % 4
+    if rem == 0:
         phase = 1.0 + 0.0j
-    elif l == 1:
+    elif rem == 1:
         phase = 0.0 - 1.0j
-    elif l == 2:
+    elif rem == 2:
         phase = -1.0 + 0.0j
-    elif l == 3:
+    else: # rem == 3
         phase = 0.0 + 1.0j
-    else:
-        phase = (-1j) ** l
 
     n_alphas = len(alphas)
 
@@ -145,8 +145,8 @@ def evaluate_orbital_g_space(q_vecs, q_norms, l, m, alphas, g_coeffs):
             radial_val += g_coeffs[k] * np.exp(-q_sq / (4.0 * alphas[k]))
             
         if l > 0:
-            radial_val *= q_norm ** l
-        
+            radial_val *= q_norm ** float(l)
+            
         # --- B. Compute Normalized Direction Cosines & Harmonics ---
         if q_norm > 1e-12:
             x = q_vecs[i, 0] / q_norm
@@ -154,7 +154,6 @@ def evaluate_orbital_g_space(q_vecs, q_norms, l, m, alphas, g_coeffs):
             z = q_vecs[i, 2] / q_norm
             Y_lm = eval_real_harmonics(l, m, x, y, z)
         else:
-            # Origin cusp handler: l=0 resolves to a constant; l>=1 forces a node (0.0)
             Y_lm = eval_real_harmonics(l, m, 0.0, 0.0, 0.0)
             
         out[i] = phase * Y_lm * radial_val
@@ -243,3 +242,187 @@ def broadcast_atoms_to_grid(
             grid_flat[flat_idx] += interpolated_rhos[j]
             
     return grid_flat.reshape((nx, ny, nz))
+
+# @njit(cache=True, fastmath=True, parallel=True)
+def evaluate_real_harmonics_multi(l: int, m: int, q_vecs: NDArray) -> NDArray:
+    """
+    Computes standard orthonormal real spherical harmonics Y_lm in Cartesian coordinates.
+    Coordinates are normalized on-the-fly with a division-by-zero safeguard at q=0.
+    """
+    norms = np.linalg.norm(q_vecs, axis=1)
+    norms_safe = np.where(norms < 1e-12, 1.0, norms)
+    u = q_vecs / norms_safe[:, np.newaxis]
+    x, y, z = u[:, 0], u[:, 1], u[:, 2]
+    
+    if l == 0:
+        return np.full_like(norms, 0.5 * np.sqrt(1.0 / np.pi))
+    elif l == 1:
+        if m == -1:   return np.sqrt(3.0 / (4.0 * np.pi)) * y      # p_y
+        elif m == 0:  return np.sqrt(3.0 / (4.0 * np.pi)) * z      # p_z
+        elif m == 1:  return np.sqrt(3.0 / (4.0 * np.pi)) * x      # p_x
+    elif l == 2:
+        if m == -2:   return 0.5 * np.sqrt(15.0 / np.pi) * x * y   # d_xy
+        elif m == -1: return 0.5 * np.sqrt(15.0 / np.pi) * y * z   # d_yz
+        elif m == 0:  return 0.25 * np.sqrt(5.0 / np.pi) * (3.0 * z**2 - 1.0) # d_z2
+        elif m == 1:  return 0.5 * np.sqrt(15.0 / np.pi) * x * z   # d_xz
+        elif m == 2:  return 0.25 * np.sqrt(15.0 / np.pi) * (x**2 - y**2) # d_x2-y2
+    elif l == 3:
+        # f-orbitals
+        if m == -3:   return 0.25 * np.sqrt(35.0 / (2.0 * np.pi)) * y * (3.0 * x**2 - y**2)
+        elif m == -2: return 0.5 * np.sqrt(105.0 / np.pi) * x * y * z
+        elif m == -1: return 0.25 * np.sqrt(21.0 / (2.0 * np.pi)) * y * (5.0 * z**2 - 1.0)
+        elif m == 0:  return 0.25 * np.sqrt(7.0 / np.pi) * z * (5.0 * z**2 - 3.0)
+        elif m == 1:  return 0.25 * np.sqrt(21.0 / (2.0 * np.pi)) * x * (5.0 * z**2 - 1.0)
+        elif m == 2:  return 0.25 * np.sqrt(105.0 / (2.0 * np.pi)) * z * (x**2 - y**2)
+        elif m == 3:  return 0.25 * np.sqrt(35.0 / (2.0 * np.pi)) * x * (x**2 - 3.0 * y**2)
+    elif l == 4:
+        # g-orbitals
+        if m == -4:   return 0.75 * np.sqrt(35.0 / np.pi) * x * y * (x**2 - y**2)
+        elif m == -3: return 0.75 * np.sqrt(35.0 / (2.0 * np.pi)) * y * z * (3.0 * x**2 - y**2)
+        elif m == -2: return 0.75 * np.sqrt(5.0 / np.pi) * x * y * (7.0 * z**2 - 1.0)
+        elif m == -1: return 0.75 * np.sqrt(5.0 / (2.0 * np.pi)) * y * z * (7.0 * z**2 - 3.0)
+        elif m == 0:  return 0.1875 * np.sqrt(1.0 / np.pi) * (35.0 * z**4 - 30.0 * z**2 + 3.0)
+        elif m == 1:  return 0.75 * np.sqrt(5.0 / (2.0 * np.pi)) * x * z * (7.0 * z**2 - 3.0)
+        elif m == 2:  return 0.375 * np.sqrt(5.0 / np.pi) * (x**2 - y**2) * (7.0 * z**2 - 1.0)
+        elif m == 3:  return 0.75 * np.sqrt(35.0 / (2.0 * np.pi)) * x * z * (x**2 - 3.0 * y**2)
+        elif m == 4:  return 0.1875 * np.sqrt(35.0 / np.pi) * (x**4 - 6.0 * x**2 * y**2 + y**4)
+    return np.zeros_like(norms)
+
+def evaluate_real_harmonics_grad_multi(
+    self, l: int, m: int, q_vecs: NDArray, dists_safe: NDArray
+) -> NDArray:
+    """
+    Computes the spatial gradient (dY/dx, dY/dy, dY/dz) of real spherical harmonics 
+    with respect to unnormalized Cartesian coordinates.
+    
+    Args:
+        l: Orbital angular momentum quantum number.
+        m: Magnetic quantum number.
+        q_vecs: Normalized unit vectors directional array of shape (num_coords, 3).
+        dists_safe: Distance array with division-by-zero safeguard of shape (num_coords,).
+        
+    Returns:
+        NDArray of shape (3, num_coords) containing the [x, y, z] gradient components.
+    """
+    x, y, z = q_vecs[:, 0], q_vecs[:, 1], q_vecs[:, 2]
+    
+    # Initialize polynomial derivatives with respect to the unit vector components
+    da_dx = np.zeros_like(x)
+    da_dy = np.zeros_like(x)
+    da_dz = np.zeros_like(x)
+
+    if l == 0:
+        # Constant function -> gradient is strictly zero
+        pass
+
+    elif l == 1:
+        c = np.sqrt(3.0 / (4.0 * np.pi))
+        if m == -1:    # p_y
+            da_dy = np.full_like(x, c)
+        elif m == 0:   # p_z
+            da_dz = np.full_like(x, c)
+        elif m == 1:   # p_x
+            da_dx = np.full_like(x, c)
+
+    elif l == 2:
+        c2 = 0.5 * np.sqrt(15.0 / np.pi)
+        c2_0 = 0.25 * np.sqrt(5.0 / np.pi)
+        c2_2 = 0.25 * np.sqrt(15.0 / np.pi)
+        
+        if m == -2:    # d_xy
+            da_dx = c2 * y
+            da_dy = c2 * x
+        elif m == -1:  # d_yz
+            da_dy = c2 * z
+            da_dz = c2 * y
+        elif m == 0:   # d_z2
+            da_dz = c2_0 * 6.0 * z
+        elif m == 1:   # d_xz
+            da_dx = c2 * z
+            da_dz = c2 * x
+        elif m == 2:   # d_x2-y2
+            da_dx = c2_2 * 2.0 * x
+            da_dy = -c2_2 * 2.0 * y
+
+    elif l == 3:
+        c3_3 = 0.25 * np.sqrt(35.0 / (2.0 * np.pi))
+        c3_2 = 0.5 * np.sqrt(105.0 / np.pi)
+        c3_1 = 0.25 * np.sqrt(21.0 / (2.0 * np.pi))
+        c3_0 = 0.25 * np.sqrt(7.0 / np.pi)
+        c3_2a = 0.25 * np.sqrt(105.0 / (2.0 * np.pi))
+        
+        if m == -3:    # 3x^2*y - y^3
+            da_dx = c3_3 * 6.0 * x * y
+            da_dy = c3_3 * (3.0 * x**2 - 3.0 * y**2)
+        elif m == -2:  # x*y*z
+            da_dx = c3_2 * y * z
+            da_dy = c3_2 * x * z
+            da_dz = c3_2 * x * y
+        elif m == -1:  # y*(5z^2 - 1)
+            da_dy = c3_1 * (5.0 * z**2 - 1.0)
+            da_dz = c3_1 * 10.0 * y * z
+        elif m == 0:   # 5z^3 - 3z
+            da_dz = c3_0 * (15.0 * z**2 - 3.0)
+        elif m == 1:   # x*(5z^2 - 1)
+            da_dx = c3_1 * (5.0 * z**2 - 1.0)
+            da_dz = c3_1 * 10.0 * x * z
+        elif m == 2:   # z*(x^2 - y^2)
+            da_dx = c3_2a * 2.0 * x * z
+            da_dy = -c3_2a * 2.0 * y * z
+            da_dz = c3_2a * (x**2 - y**2)
+        elif m == 3:   # x^3 - 3x*y^2
+            da_dx = c3_3 * (3.0 * x**2 - 3.0 * y**2)
+            da_dy = -c3_3 * 6.0 * x * y
+
+    elif l == 4:
+        c4_4 = 0.75 * np.sqrt(35.0 / np.pi)
+        c4_3 = 0.75 * np.sqrt(35.0 / (2.0 * np.pi))
+        c4_2 = 0.75 * np.sqrt(5.0 / np.pi)
+        c4_1 = 0.75 * np.sqrt(5.0 / (2.0 * np.pi))
+        c4_0 = 0.1875 * np.sqrt(1.0 / np.pi)
+        c4_2a = 0.375 * np.sqrt(5.0 / np.pi)
+        c4_4a = 0.1875 * np.sqrt(35.0 / np.pi)
+        
+        if m == -4:    # x^3*y - x*y^3
+            da_dx = c4_4 * (3.0 * x**2 * y - y**3)
+            da_dy = c4_4 * (x**3 - 3.0 * x * y**2)
+        elif m == -3:  # 3x^2*y*z - y^3*z
+            da_dx = c4_3 * 6.0 * x * y * z
+            da_dy = c4_3 * z * (3.0 * x**2 - 3.0 * y**2)
+            da_dz = c4_3 * y * (3.0 * x**2 - y**2)
+        elif m == -2:  # x*y*(7z^2 - 1)
+            da_dx = c4_2 * y * (7.0 * z**2 - 1.0)
+            da_dy = c4_2 * x * (7.0 * z**2 - 1.0)
+            da_dz = c4_2 * 14.0 * x * y * z
+        elif m == -1:  # 7y*z^3 - 3y*z
+            da_dy = c4_1 * z * (7.0 * z**2 - 3.0)
+            da_dz = c4_1 * y * (21.0 * z**2 - 3.0)
+        elif m == 0:   # 35z^4 - 30z^2 + 3
+            da_dz = c4_0 * (140.0 * z**3 - 60.0 * z)
+        elif m == 1:   # 7x*z^3 - 3x*z
+            da_dx = c4_1 * z * (7.0 * z**2 - 3.0)
+            da_dz = c4_1 * x * (21.0 * z**2 - 3.0)
+        elif m == 2:   # (x^2 - y^2)*(7z^2 - 1)
+            da_dx = c4_2a * 2.0 * x * (7.0 * z**2 - 1.0)
+            da_dy = -c4_2a * 2.0 * y * (7.0 * z**2 - 1.0)
+            da_dz = c4_2a * 14.0 * z * (x**2 - y**2)
+        elif m == 3:   # x^3*z - 3x*y^2*z
+            da_dx = c4_3 * z * (3.0 * x**2 - 3.0 * y**2)
+            da_dy = -c4_3 * 6.0 * x * y * z
+            da_dz = c4_3 * x * (x**2 - 3.0 * y**2)
+        elif m == 4:   # x^4 - 6x^2*y^2 + y^4
+            da_dx = c4_4a * (4.0 * x**3 - 12.0 * x * y**2)
+            da_dy = c4_4a * (-12.0 * x**2 * y + 4.0 * y**3)
+    else:
+        return np.zeros((3, len(x)), dtype=np.float64)
+
+    # Compute directional derivative projection along the unit vector path
+    g_dot_u = da_dx * x + da_dy * y + da_dz * z
+
+    # Project onto tangent space and divide by safe real distances
+    grad_x = (da_dx - g_dot_u * x) / dists_safe
+    grad_y = (da_dy - g_dot_u * y) / dists_safe
+    grad_z = (da_dz - g_dot_u * z) / dists_safe
+
+    # Reshape and pack cleanly to match (3, num_coords) expected structure
+    return np.stack([grad_x, grad_y, grad_z], axis=0)

@@ -12,10 +12,11 @@ __version__ = metadata.version("baderkit")
 logging.basicConfig(
     format="%(message)s",
     level=logging.INFO,
-    datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[
         RichHandler(
-            show_path=False,
+            show_time=False,       # <-- Removes the timestamp completely
+            show_level=False,      # <-- Removes the [INFO] tag for ultimate simplicity
+            show_path=False,       # <-- Keeps the right-hand column clean
             markup=True,
             rich_tracebacks=True,
         )
