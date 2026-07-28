@@ -4,18 +4,23 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from functools import cached_property
 import logging
+import psutil
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.integrate import cumulative_trapezoid
 from scipy.fft import fftn, ifftn, set_workers
+from rich.progress import Progress
+
 from baderkit.post_wfc.wf_readers.base import HSQDTM
 
 from baderkit.post_wfc.wfc_numba import (
-    _integrate_tetrahedra_spectral_density_numba, 
-    _integrate_tetrahedra_analytic_charge_numba,
+    integrate_tetrahedra_spectral_density, 
+    integrate_tetrahedra_analytic_charge,
     evaluate_real_harmonics_multi, 
-    evaluate_real_harmonics_grad_multi
+    evaluate_real_harmonics_grad_multi,
+    accumulate_augmentation_core,
+    find_all_voxels_parallel
     )
 
 class BaseWavefunctionEnvironment(ABC):
@@ -36,6 +41,7 @@ class BaseWavefunctionEnvironment(ABC):
         reference_env=None,
         cutoff_radius: float = 15.0,
         g_cutoff_radius: float = 15.0,
+        grid_shape = None,
         **kwargs
         ):
         """Initializes state or points straight to a companion reference environment."""
@@ -84,8 +90,9 @@ class BaseWavefunctionEnvironment(ABC):
 
         self._kpoint_multiplicities = None
         self._kpoint_weights = None
-        self._grid_cache = {}  
         self._tetrahedra_indices = None
+        
+        self._fft_grid, self._fft_grid_shape = self._get_fft_grid(grid_shape)
 
     # --- FLUENT SWITCHING INTERFACE POOL ---
     @property
@@ -387,13 +394,19 @@ class BaseWavefunctionEnvironment(ABC):
     ###########################################################################
     # Plane wave methods
     ###########################################################################
-    def get_fft_grid(self, grid_shape=None):
+    @property
+    def fft_grid(self):
         """Generates fractional coordinate arrays for plane waves in standard FFT wrapped frequency order."""
+        return self._fft_grid
+    
+    @property
+    def fft_grid_shape(self):
+        return self._fft_grid_shape
+        
+    def _get_fft_grid(self, grid_shape):
         if grid_shape is None: 
             grid_shape = self._minimum_fft_size * 2
         grid_shape = tuple(grid_shape)
-        if grid_shape in self._grid_cache: 
-            return self._grid_cache[grid_shape]
             
         Nx, Ny, Nz = grid_shape
         fx = [ii if ii < Nx // 2 + 1 else ii - Nx for ii in range(Nx)]
@@ -401,15 +414,17 @@ class BaseWavefunctionEnvironment(ABC):
         fz = [kk if kk < Nz // 2 + 1 else kk - Nz for kk in range(Nz)]
         
         gx, gy, gz = np.meshgrid(fx, fy, fz, indexing='ij')
-        self._grid_cache[grid_shape] = (gx, gy, gz)
-        return gx, gy, gz
-
-    def get_fft_grid_cart(self, grid_shape=None):
+        return (gx, gy, gz), grid_shape
+        
+    @property
+    def fft_grid_cart(self):
         """Transforms integer fractional meshgrid coordinate axes into explicit Cartesian grid coordinates (in A^-1)."""
-        gx, gy, gz = self.get_fft_grid(grid_shape)
-        cx, cy, cz = np.tensordot(
-            self.reciprocal_lattice * np.pi * 2, [gx, gy, gz], axes=(0, 0))
-        return cx, cy, cz
+        if getattr(self, "_fft_grid_cart", None) is None:
+            gx, gy, gz = self.fft_grid
+            cx, cy, cz = np.tensordot(
+                self.reciprocal_lattice * np.pi * 2, [gx, gy, gz], axes=(0, 0))
+            self._fft_grid_cart = cx, cy, cz
+        return self._fft_grid_cart
         
     def get_g_vectors(self, ikpt):
         """Gathers explicit active g-vectors from the current wf_reader."""
@@ -430,143 +445,239 @@ class BaseWavefunctionEnvironment(ABC):
     # Property Calculations
     ###########################################################################
     
+    def _get_safe_chunk_size(
+        self,
+        n_gvectors: int, 
+        n_bands: int, 
+        mem_safety_fraction: float = 0.10
+    ) -> int:
+        """
+        Dynamically calculates a safe coordinate chunk size based on available system memory.
+        
+        Budgeting defaults to using only 10% of currently available RAM to remain fully
+        safe alongside existing array allocations and overhead.
+        """
+        available_mem = psutil.virtual_memory().available
+        
+        # We allocate a safe fraction (e.g., 10%) of available RAM for this chunk's workspace
+        mem_budget = available_mem * mem_safety_fraction
+        
+        # np.complex128 elements take up exactly 16 bytes
+        c128_bytes = 16 
+        
+        # Calculate bytes required per single grid point inside the loop execution:
+        # 1. phases_chunk: n_gvectors * 16 bytes
+        # 2. smooth arrays: phi (1) + lap (1) + grad (3) = 5 * n_bands * 16 bytes
+        bytes_per_point = (n_gvectors * c128_bytes) + (5 * n_bands * c128_bytes)
+        
+        # Calculate how many points fit into our allocated memory budget
+        chunk_size = int(mem_budget // bytes_per_point)
+        
+        # Guarantee at least a chunk size of 1 so the loop can always execute
+        return max(1, chunk_size)
+    
+    def _precompute_augmentation_geometry(self, frac_coords, compute_laplacian=True) -> list:
+        """
+        Precomputes all spin- and k-point-independent radial splines and spherical 
+        harmonics once for the given coordinate space to eliminate inner-loop overhead.
+        """
+        precomputed_aug_data = []
+        grid_shape = self.fft_grid_shape
+        
+        # Check if coordinates exactly match a full regular grid layout
+        is_grid = frac_coords.shape[0] == (grid_shape[0] * grid_shape[1] * grid_shape[2])
+        
+        if is_grid:
+            # get all voxel indices and distances
+            r_cuts = np.array([self.paw_datasets[site.specie.symbol].max_paw_cutoff for site in self.structure], dtype=np.float64)
+            grid_dims = np.array(grid_shape, dtype=np.int32)
+            all_indices, all_distances, all_d_vecs = find_all_voxels_parallel(self.structure.frac_coordss, self.lattice, grid_dims, r_cuts)
+        
+        # loop over atoms in the structure
+        for atom_idx, site in enumerate(self.structure):
+            symbol = site.specie.symbol
+            local_basis = self.paw_datasets[symbol]
+            
+            if is_grid:
+                # use idx/dists calculated earlier
+                idx = all_indices[atom_idx]
+                atom_dists = all_distances[atom_idx]
+                d_vecs_cart = all_d_vecs[atom_idx]
+            else:
+                # manually calculate distances
+                d_vecs_frac = frac_coords - site.frac_coords
+                # wrap
+                d_vecs_frac -= np.round(d_vecs_frac)
+                # convert to cart coords
+                d_vecs_cart = d_vecs_frac @ self.lattice
+                # get distances               
+                atom_dists = np.linalg.norm(d_vecs_cart, axis=1)
+                mask = atom_dists < local_basis.max_paw_cutoff
+                idx = np.where(mask)[0]
+                atom_dists = atom_dists[mask]
+                
+            if len(idx) == 0:
+                precomputed_aug_data.append(None)
+                continue
+                
+            # normalize atom vectors
+            atom_q_vecs = d_vecs_cart / np.where(atom_dists<1e-12, 1e-12, atom_dists)[:, np.newaxis]
+            
+            n_proj = len(local_basis.q_projectors)
+            n_masked = len(idx)
+            
+            # create arrays to store results
+            radial_diff_all = np.zeros((n_proj, n_masked), dtype=np.float64)
+            radial_diff_deriv_all = np.zeros((n_proj, n_masked), dtype=np.float64)
+            radial_laplacian_all = np.zeros((n_proj, n_masked), dtype=np.float64)
+            y_lm_all = np.zeros((n_proj, n_masked), dtype=np.float64)
+            grad_y_lm_all = np.zeros((n_proj, n_masked, 3), dtype=np.float64)
+            
+            for proj_idx in range(n_proj):
+                # get cutoff for this projector
+                r_c = local_basis.paw_cutoffs[proj_idx]
+                # get atom distances within this radius
+                ch_mask = atom_dists < r_c
+                atom_dists_ch = atom_dists[ch_mask]
+                atom_q_vecs_ch = atom_q_vecs[ch_mask]
+                if not np.any(ch_mask):
+                    continue
+                    
+                # get l and m
+                l = local_basis.angular_momenta[proj_idx]
+                m = local_basis.magnetic_quantum_numbers[proj_idx]
+                
+                # Get radial diff value at all points using cached spline
+                raw_diff = local_basis.partial_radial_diff_splines[proj_idx](atom_dists_ch)
+                # convert nan values to 0
+                radial_diff_all[proj_idx, ch_mask] = np.where(np.isnan(raw_diff), 0.0, raw_diff)
+                
+                # same for the derivatives
+                raw_deriv = local_basis.partial_radial_diff_splines[proj_idx].derivative(nu=1)(atom_dists_ch)
+                radial_diff_deriv_all[proj_idx, ch_mask] = np.where(np.isnan(raw_deriv), 0.0, raw_deriv)
+                
+                # evaluate real harmonics and their gradient for this atom
+                y_lm_all[proj_idx, ch_mask] = evaluate_real_harmonics_multi(l, m, atom_q_vecs_ch)
+                grad_y_lm_all[proj_idx, ch_mask] = evaluate_real_harmonics_grad_multi(l, m, atom_q_vecs_ch, atom_dists_ch).T
+                
+                if compute_laplacian:
+                    # get second derivatives
+                    raw_deriv2 = local_basis.partial_radial_diff_splines[proj_idx].derivative(nu=2)(atom_dists_ch)
+                    radial_diff_deriv2 = np.where(np.isnan(raw_deriv2), 0.0, raw_deriv2)
+                    
+                    # compute radial laplacian
+                    radial_laplacian_all[proj_idx, ch_mask] = (
+                        radial_diff_deriv2 + 
+                        (2.0 / atom_dists_ch) * radial_diff_deriv_all[proj_idx, ch_mask] - 
+                        (l * (l + 1) / atom_dists_ch**2) * radial_diff_all[proj_idx, ch_mask]
+                    )
+                    
+            # add aug data for this atom
+            precomputed_aug_data.append({
+                "idx": idx,
+                "atom_q_vecs": atom_q_vecs,
+                "radial_diff_all": radial_diff_all,
+                "radial_diff_deriv_all": radial_diff_deriv_all,
+                "radial_laplacian_all": radial_laplacian_all,
+                "y_lm_all": y_lm_all,
+                "grad_y_lm_all": grad_y_lm_all
+            })
+            
+        return precomputed_aug_data
+
     def _compute_phi_and_derivatives(
         self,
         ispin: int,
         ikpt: int,
         energy_range: tuple,
         use_partial_occ: bool,
-        cart_coord: np.ndarray,
+        cart_coords: np.ndarray,
         include_aug: bool,
         phi_callback,
+        precomputed_aug_data: list,
+        precomputed_projectors: list,
         custom_weights: np.ndarray = None,
+        compute_laplacian: bool = True,
+        
     ) -> tuple:
         """
-        Unified evaluation kernel that constructs total wavefunctions (psi), 
-        gradients, and Laplacians across both arbitrary points and uniform grids.
+        Streamlined evaluation kernel. Zero-allocates internal spline structures by streaming
+        precomputed geometry coordinates directly into the parallel Numba backend.
         """
-        ###################################################################
-        # K vector generation
-        ###################################################################
-        # Retrieve K-space vectors
+        # get K vectors
         gvectors = self.get_g_vectors_cart(ikpt)
         k_cart = self.kpoints_cart[ikpt]
         K_cart = gvectors + k_cart[np.newaxis, :]
         K_sq = np.sum(K_cart**2, axis=1)
-        # precalculate phases at all points
-        phases = np.exp(1j * np.dot(K_cart, cart_coord.T))
 
-        #######################################################################
-        # Projector matrices
-        #######################################################################
-        # collect projector matrices
-        paw_projector_matrices = []
-        if include_aug:
-            for atom_idx, site in enumerate(self.structure):
-                symbol = site.specie.symbol
-                local_basis = self.paw_datasets[symbol]
-                atom_phases = np.exp(-1j * np.dot(K_cart, self.structure.cart_coords[atom_idx]))
-                paw_projector_matrices.append(
-                    local_basis.build_g_space_projectors(K_cart, atom_phases)
-                )
-                
-        #######################################################################
-        # Energy Windows
-        #######################################################################
-        # get bands within requested energy range
+        # Get bands within energy range
         energies = self.energies[ispin, ikpt]
         active_bands = np.where((energy_range[0] <= energies) & (energies <= energy_range[1]))[0]
-
         if len(active_bands) == 0:
             return None, None, None, None
 
-        # Determine total weights applied to contributions
+        # Get kpoint weights
         if custom_weights is not None:
             weights = custom_weights
         elif use_partial_occ:
-            weights = self.spin_weight * self.kpoint_weights[ikpt] * self.occupancies[ispin, ikpt, active_bands]
+            occ_active = self.occupancies[ispin, ikpt, active_bands]
+            weights = self.spin_weight * self.kpoint_weights[ikpt] * occ_active
         else:
             weights = np.full(len(active_bands), self.spin_weight * self.kpoint_weights[ikpt])
 
+        # check for valid weights
         valid_mask = weights > 1e-8
         if not np.any(valid_mask):
             return None, None, None, None
         active_bands = active_bands[valid_mask]
         weights = weights[valid_mask]
 
-        #######################################################################
-        # Gather & Weight Coefficients
-        #######################################################################
-        # get coefficients for active bands and scale them by sqrt(weight)
+        # Extract wave function coefficients from the file reader or projection
         coeffs = self._construct_coefficients(ispin, ikpt, active_bands)
-        coeffs = coeffs * np.sqrt(weights)[:, np.newaxis]
         
-        #######################################################################
-        # Smooth Phi, gradient, and laplacian
-        #######################################################################
-        phi_smooth, grad_phi_smooth, lap_phi_smooth = phi_callback(
-            ispin, 
-            ikpt, 
-            active_bands, 
-            coeffs, 
-            K_cart, 
-            K_sq, 
-            phases
+        # Scale coefficients by the calculated normalization state weight
+        sqrt_weights = np.sqrt(weights)
+        coeffs = coeffs * sqrt_weights[:, np.newaxis]
+        
+        # Calculate smooth part of psi
+        psi, grad_psi, lap_psi = phi_callback(
+            ispin, ikpt, active_bands, coeffs, K_cart, K_sq, cart_coords, compute_laplacian=compute_laplacian
         )
-        
-        #######################################################################
-        # Augmentation Part
-        #######################################################################
-        if include_aug:
-            # Calculate augmentation part
-            phi_aug = np.zeros_like(phi_smooth)
-            grad_phi_aug = np.zeros_like(grad_phi_smooth)
-            lap_phi_aug = np.zeros_like(phi_smooth)
-    
-            for atom_idx, site in enumerate(self.structure):
-                symbol = site.specie.symbol
-                local_basis = self.paw_datasets[symbol]
-                d_vecs = cart_coord - self.structure.cart_coords[atom_idx]
-                dists = np.linalg.norm(d_vecs, axis=1)
-    
-                dists = np.where(dists == 0, 1e-12, dists)
-                q_vecs = d_vecs / dists[:, np.newaxis]
-    
-                # Overlaps are now automatically weighted!
-                overlaps = np.dot(coeffs, paw_projector_matrices[atom_idx].T.conj())
-    
-                for proj_idx in range(len(local_basis.q_projectors)):
-                    l = local_basis.angular_momenta[proj_idx]
-                    m = local_basis.principal_quantum_numbers[proj_idx]
-    
-                    # Extraction of radial splines up to the second derivative
-                    radial_diff = local_basis.partial_radial_diff_splines[proj_idx](dists)
-                    radial_diff_deriv = local_basis.partial_radial_diff_splines[proj_idx].derivative(nu=1)(dists)
-    
-                    y_lm = evaluate_real_harmonics_multi(l, m, q_vecs)
-                    olap_channel = overlaps[:, proj_idx, np.newaxis]
-    
-                    phi_aug += olap_channel * (radial_diff * y_lm)
-    
-                    grad_y_lm = evaluate_real_harmonics_grad_multi(l, m, q_vecs, dists)
-                    term_3c = (radial_diff_deriv * y_lm) * q_vecs.T + radial_diff * grad_y_lm
-                    # Standardize tracking alignment to shape layout: (num_bands, coord_shape, 3)
-                    grad_phi_aug += olap_channel[:, :, np.newaxis] * term_3c.T[np.newaxis, :, :]
-    
-                    radial_diff_deriv2 = local_basis.partial_radial_diff_splines[proj_idx].derivative(nu=2)(dists)
-                    # Purely radial mapping for the spherical Laplacian transformation
-                    radial_laplacian = (
-                        radial_diff_deriv2 + 
-                        (2.0 / dists) * radial_diff_deriv - 
-                        (l * (l + 1) / dists**2) * radial_diff
-                    )
-                    lap_phi_aug += olap_channel * (radial_laplacian * y_lm)
-    
-        # Combine smooth background and local atomic restorations
-        psi = phi_smooth + (phi_aug if include_aug else 0.0)
-        grad_psi = grad_phi_smooth + (grad_phi_aug if include_aug else 0.0)
-        lap_psi = (lap_phi_smooth + (lap_phi_aug if include_aug else 0.0))
-    
+
+        if not include_aug:
+            return psi, grad_psi, lap_psi, weights
+
+        # apply projector matrix
+        overlaps_list = [
+            np.dot(precomputed_projectors[atom_idx] , coeffs)
+            for atom_idx in range(len(self.structure))
+        ]
+
+        # Calculate augmentation parts
+        for atom_idx, site in enumerate(self.structure):
+            aug_cache = precomputed_aug_data[atom_idx]
+            if aug_cache is None:
+                continue
+                
+            # use dummy lap_psi if not requested for numba safety
+            lap_psi_param = np.empty((0, 0), dtype=np.complex128) if lap_psi is None else lap_psi
+            
+            # results are added to arrays in place
+            accumulate_augmentation_core(
+                psi, 
+                grad_psi, 
+                lap_psi_param, 
+                aug_cache["idx"], 
+                overlaps_list[atom_idx], 
+                aug_cache["atom_q_vecs"],
+                aug_cache["radial_diff_all"], 
+                aug_cache["radial_diff_deriv_all"], 
+                aug_cache["radial_laplacian_all"],
+                aug_cache["y_lm_all"], 
+                aug_cache["grad_y_lm_all"], 
+                lap_psi is not None
+            )
+
         return psi, grad_psi, lap_psi, weights
     
     def _compute_density_metrics_block(
@@ -574,25 +685,29 @@ class BaseWavefunctionEnvironment(ABC):
         return_grad_rho_sq: bool,
         return_lap_rho: bool,
         use_shrod_tau: bool,
+        compute_laplacian: bool = True,
         **kwargs
     ) -> dict:
         """
         Computes band-resolved components for density fields from total wavefunctions.
         Preserves the shape layout (num_bands, num_coords) across all metrics.
         """
-        
-        psi, grad_psi, lap_psi, weights = self._compute_phi_and_derivatives(**kwargs)
-        
+        # calculate psi and weights
+        psi, grad_psi, lap_psi, weights = self._compute_phi_and_derivatives(
+            compute_laplacian=compute_laplacian, **kwargs
+        )
+        # This returns none if there are no valid states
         if psi is None:
             return None
-            
-        # Compute standard background pseudo-charge distribution (already contains weight)
+        
+        # Compute standard background pseudo-charge distribution
         rho_bands = np.abs(psi) ** 2
         
-        # Construct standard background kinetic metric distributions (already contains weight)
+        # Construct standard background kinetic metric distributions
         grad_psi_sq = np.sum(np.abs(grad_psi) ** 2, axis=-1)
         tau_bands = 0.5 * grad_psi_sq
         
+        # build default metrics
         metrics = {
             "rho": rho_bands,
             "tau": tau_bands,
@@ -600,25 +715,25 @@ class BaseWavefunctionEnvironment(ABC):
             "lap_rho": None
         }
         
-        # Optionally compute spatial vector gradient parameters via chain-rule derivatives
         if return_grad_rho_sq:
             grad_rho_tensor = 2.0 * (psi[..., np.newaxis].conj() * grad_psi).real
-            # Divide by weights to keep the linear scaling factor consistent with the original code
+            # Divide by weights to keep the linear scaling factor consistent
             metrics["grad_rho_sq"] = np.sum(grad_rho_tensor ** 2, axis=-1) / weights[:, np.newaxis]
             
-        # Real component evaluation mapping exact Laplacian fields: Re(ψ* ∇²ψ) (already contains weight)
-        lap_rho_bands = 2.0 * (grad_psi_sq + (psi.conj() * lap_psi).real)
-        metrics["lap_rho"] = lap_rho_bands
-        
-        # Convert standard kinetic definition to true positive-definite representation
-        if not use_shrod_tau:
-            metrics["tau"] = tau_bands + lap_rho_bands / 2
+        # Real component evaluation mapping exact Laplacian fields: Re(ψ* ∇²ψ)
+        if lap_psi is not None:
+            lap_rho_tensor = 2.0 * (grad_psi_sq + (psi.conj() * lap_psi).real)
+            metrics["lap_rho"] = lap_rho_tensor
+            
+            # Convert standard kinetic definition to true positive-definite representation
+            if not use_shrod_tau:
+                metrics["tau"] = tau_bands + lap_rho_tensor / 2
                 
         return metrics
-    
+
     def _calculate_densities_core(
         self,
-        cart_coord,
+        frac_coords,
         coord_shape,
         spin_channel: int,
         energy_range: tuple,
@@ -628,56 +743,131 @@ class BaseWavefunctionEnvironment(ABC):
         return_lap_rho: bool,
         use_shrod_tau: bool,
         phi_callback,
+        compute_band_laplacian: bool = True,
     ) -> tuple:
-        
-        #######################################################################
-        # Grid creation
-        #######################################################################
-        # Running scalar density accumulators
+        """
+        Core density driver. Coordinates unweighted array reductions over active band spaces.
+        Hoists projector matrix generation outside the spin loops to avoid redundant evaluations.
+        """
+        # Create placeholders for densities
         rho = np.zeros(coord_shape, dtype=np.float64)
         tau = np.zeros(coord_shape, dtype=np.float64)
     
-        # Dependency tracking flags
-        need_laplacian = return_lap_rho or not use_shrod_tau
+        # simple boolean for if laplacian is needed
+        need_laplacian = (return_lap_rho or not use_shrod_tau) and compute_band_laplacian
+        
+        # normalize by structure volume
+        norm_factor = np.sqrt(self.structure.volume)
     
+        # placeholders for grad rho and lap rho
         if return_grad_rho_sq:
             grad_rho_sq = np.zeros(coord_shape, dtype=np.float64)
         if need_laplacian:
             lap_rho = np.zeros(coord_shape, dtype=np.float64)
+            
+        # get all cart coords
+        cart_coords = frac_coords @ self.lattice
     
+        # list out all spin indices. Get the total number of iterations for progress tracking
         spin_indices = [i for i in range(self.nspin)] if spin_channel == -1 else [spin_channel]
+        total_iterations = self.nkpoints * len(spin_indices)
     
-        for ikpt in range(self.nkpoints):
-            for ispin in spin_indices:
-                metrics_block = self._compute_density_metrics_block(
-                    return_grad_rho_sq, 
-                    return_lap_rho, 
-                    use_shrod_tau, 
-                    ispin=ispin, 
-                    ikpt=ikpt, 
-                    energy_range=energy_range, 
-                    use_partial_occ=use_partial_occ, 
-                    cart_coord=cart_coord, 
-                    include_aug=include_aug, 
-                    phi_callback=phi_callback, 
-                )
+        # precompute geometric augmentation data that is invariant to k point
+        precomputed_aug_data = None
+        if include_aug:
+            precomputed_aug_data = self._precompute_augmentation_geometry(
+                frac_coords, 
+                compute_laplacian=need_laplacian
+            )
+    
+        with Progress() as progress:
+            task = progress.add_task("[bold blue]Evaluating Quantum Densities...", total=total_iterations)
+            
+            for ikpt in range(self.nkpoints):
+                # Precompute G-space projectors once per k-point
+                k_projectors = []
+                if include_aug:
+                    K_cart = self.get_K_vectors_cart(ikpt)
+                    for atom_idx, site in enumerate(self.structure):
+                        symbol = site.specie.symbol
+                        local_basis = self.paw_datasets[symbol]
+                        atom_phases = np.exp(-1j * np.dot(K_cart, self.structure.cart_coords[atom_idx]))
+                        k_projectors.append(local_basis.build_g_space_conj_projectors(K_cart, atom_phases))
                 
-                if metrics_block is None:
-                    continue
+                for ispin in spin_indices:
+                    progress.update(
+                        task, 
+                        description=f"[bold blue]Evaluating Densities[/] (K-point {ikpt + 1}/{self.nkpoints}, Spin {ispin})"
+                    )
+                    
+                    # get rho/tau contributions at this k point
+                    metrics_block = self._compute_density_metrics_block(
+                        return_grad_rho_sq=return_grad_rho_sq, 
+                        return_lap_rho=return_lap_rho, 
+                        use_shrod_tau=use_shrod_tau, 
+                        compute_laplacian=need_laplacian,
+                        ispin=ispin, 
+                        ikpt=ikpt, 
+                        energy_range=energy_range, 
+                        use_partial_occ=use_partial_occ, 
+                        cart_coords=cart_coords, 
+                        include_aug=include_aug, 
+                        phi_callback=phi_callback, 
+                        precomputed_aug_data=precomputed_aug_data,
+                        precomputed_projectors=k_projectors,
+                    )
+                    
+                    if metrics_block is not None:
+                        rho += np.sum(metrics_block["rho"], axis=0)
+                        tau += np.sum(metrics_block["tau"], axis=0)
+        
+                        if return_grad_rho_sq:
+                            grad_rho_sq += np.sum(metrics_block["grad_rho_sq"], axis=0)
+        
+                        if need_laplacian and return_lap_rho:
+                            lap_rho += np.sum(metrics_block["lap_rho"], axis=0)
+                    
+                    progress.advance(task, 1)
+        
+        return (
+            rho/norm_factor, 
+            tau/norm_factor, 
+            (grad_rho_sq/norm_factor if return_grad_rho_sq else None), 
+            (lap_rho/norm_factor if need_laplacian else None),
+            )
     
-                # Clean, rapid unweighted reduction over the bands axis
-                rho += np.sum(metrics_block["rho"], axis=0)
-                tau += np.sum(metrics_block["tau"], axis=0)
-    
-                # Optional derivative fields contraction
-                if return_grad_rho_sq:
-                    grad_rho_sq += np.sum(metrics_block["grad_rho_sq"], axis=0)
-    
-                if need_laplacian and return_lap_rho:
-                    lap_rho += np.sum(metrics_block["lap_rho"], axis=0)
-    
-        return rho, tau, (grad_rho_sq if return_grad_rho_sq else None), (lap_rho if need_laplacian else None)
-    
+    # helper callbacks
+    def _point_phi_callback(self, ispin, ikpt, active_bands, coeffs, K_cart, K_sq, cart_coords, compute_laplacian=True):
+        n_points = cart_coords.shape[0]
+        n_gvectors = K_cart.shape[0]
+        n_bands = len(active_bands)
+        
+        # get array size that fits in memory
+        chunk_size = self._get_safe_chunk_size(n_gvectors, n_bands, mem_safety_fraction=0.10)
+        grad_prep = 1j * (coeffs[:, np.newaxis, :] * K_cart.T)
+        if compute_laplacian:
+            lap_prep = -(coeffs * K_sq)
+        
+        # Calculate phi for each chunk
+        phi_chunks, grad_chunks, lap_chunks = [], [], []
+        for start_idx in range(0, n_points, chunk_size):
+            end_idx = min(start_idx + chunk_size, n_points)
+            chunk_coord = cart_coords[start_idx:end_idx]
+            # Get phase of each coordinate. This array is why we need to
+            # do the calculation in chunks
+            phases_c = np.exp(1j * np.dot(K_cart, chunk_coord.T))
+            
+            phi_chunks.append(np.dot(coeffs, phases_c))
+            grad_chunks.append(np.moveaxis(grad_prep @ phases_c, 1, 2))
+            if compute_laplacian:
+                lap_chunks.append(np.dot(lap_prep, phases_c))
+            
+        # combine phi results
+        phi_smooth = np.concatenate(phi_chunks, axis=1)
+        grad_phi_smooth = np.concatenate(grad_chunks, axis=1)
+        lap_phi = np.concatenate(lap_chunks, axis=1) if compute_laplacian else None
+        return phi_smooth, grad_phi_smooth, lap_phi
+
     def calculate_densities_at_points(
         self,
         frac_coord,
@@ -690,42 +880,30 @@ class BaseWavefunctionEnvironment(ABC):
         use_shrod_tau=False,
     ):
         """
-        Calculates the total electronic charge density (rho) and kinetic energy density (tau).
-        Optionally returns the squared gradient magnitude and Laplacian of rho.
+        Calculates the charge density and kinetic energy density at a set
+        of arbitrary fractional coordinates
         """
-        frac_coord = np.atleast_2d(np.asarray(frac_coord, dtype=np.float64))
-        cart_coord = frac_coord @ self.lattice
+        frac_coords = np.atleast_2d(np.asarray(frac_coord, dtype=np.float64)) % 1.0
         coord_shape = frac_coord.shape[0]
-        norm_factor = np.sqrt(self.structure.volume)
     
-        def phi_callback(ispin, ikpt, active_bands, coeffs, K_cart, K_sq, phases):
-            # Calculate smooth part
-            phi_smooth = np.dot(coeffs, phases) / norm_factor
-            # Re-align shapes from point matrix multiplication to standard (num_bands, coord_shape, 3) layout
-            grad_phi_smooth = 1j * np.moveaxis(((coeffs[:, np.newaxis, :] * K_cart.T) @ phases), 1, 2) / norm_factor
-            
-            lap_phi = -np.dot(coeffs * K_sq, phases) / norm_factor
-            
-            return phi_smooth, grad_phi_smooth, lap_phi
-
         rho, tau, gsq, lap = self._calculate_densities_core(
-            cart_coord, 
-            coord_shape, 
-            spin_channel, 
-            energy_range, 
-            use_partial_occ, 
-            include_aug,
-            return_grad_rho_sq, 
-            return_lap_rho, 
-            use_shrod_tau, 
-            phi_callback,
+            frac_coords=frac_coords,
+            coord_shape=coord_shape,
+            spin_channel=spin_channel,
+            energy_range=energy_range,
+            use_partial_occ=use_partial_occ,
+            include_aug=include_aug,
+            return_grad_rho_sq=return_grad_rho_sq,
+            return_lap_rho=return_lap_rho,
+            use_shrod_tau=use_shrod_tau,
+            phi_callback=self._point_phi_callback,
         )
     
         results = [rho, tau]
         if return_grad_rho_sq: results.append(gsq)
         if return_lap_rho:    results.append(lap)
         return tuple(results)
-    
+
     def calculate_densities_along_line(
         self,
         start_frac,
@@ -749,11 +927,11 @@ class BaseWavefunctionEnvironment(ABC):
         start_frac = np.asarray(start_frac, dtype=np.float64)
         end_frac = np.asarray(end_frac, dtype=np.float64)
         
-        # 1. Linearly interpolate fractional coordinates between start and end
+        # Linearly interpolate fractional coordinates between start and end
         t = np.linspace(0.0, 1.0, num_points)[:, np.newaxis]
         frac_coords = start_frac + t * (end_frac - start_frac)
         
-        # 2. Delegate the calculation to the exact point-wise calculation engine
+        # Delegate the calculation to the exact point-wise calculation engine
         return self.calculate_densities_at_points(
             frac_coord=frac_coords,
             spin_channel=spin_channel,
@@ -767,7 +945,6 @@ class BaseWavefunctionEnvironment(ABC):
     
     def calculate_densities_on_grid(
         self,
-        grid_shape: tuple,
         spin_channel: int = -1,
         energy_range: tuple = (-np.inf, np.inf),
         use_partial_occ: bool = True,
@@ -777,79 +954,156 @@ class BaseWavefunctionEnvironment(ABC):
         use_shrod_tau: bool = False,
     ) -> tuple:
         """
-        Calculates the total electronic charge density (rho) and kinetic energy density (tau)
-        on a regular 3D grid using dense IFFT conversions for smooth components.
+        Calculates density fields on a regular 3D grid. Offloads gradient squared and 
+        Laplacian reductions completely to global Fourier transforms at the end.
         """
-        Nx, Ny, Nz = grid_shape
+        Nx, Ny, Nz = self.fft_grid_shape
         coord_shape = Nx * Ny * Nz
-        norm_factor = np.sqrt(self.structure.volume)
     
-        # Generate regular grid coordinate mappings
         x_axis, y_axis, z_axis = np.arange(Nx) / Nx, np.arange(Ny) / Ny, np.arange(Nz) / Nz
         X, Y, Z = np.meshgrid(x_axis, y_axis, z_axis, indexing='ij')
-        frac_coord = np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
-        cart_coord = frac_coord @ self.lattice
-    
-        def phi_callback(ispin, ikpt, active_bands, coeffs, K_cart, K_sq, phases):
-            # 1. Fetch raw integer G-vectors (Miller indices)
+        frac_coords = np.stack([X.ravel(), Y.ravel(), Z.ravel()], axis=-1)
+        
+        # Create buffers to avoid repeat creation
+        phi_buffer = np.zeros((self.nbands, Nx, Ny, Nz), dtype=np.complex128)
+        grad_buffer = np.zeros((self.nbands, Nx, Ny, Nz), dtype=np.complex128)
+        
+        def phi_callback(ispin, ikpt, active_bands, coeffs, K_cart, K_sq, cart_coords, compute_laplacian=True):
+            n_b = len(active_bands)
+            
+            # wrap g vectors
             gvectors = self.get_g_vectors(ikpt)
-            
-            # 2. Wrap them onto the FFT grid shape using element-wise modulo
             gvec_wrapped = gvectors % np.array([Nx, Ny, Nz])
-            
-            # Evaluate smooth wavefunctions on the grid using IFFT
-            phi_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
+
+            # slice buffer            
+            phi_k = phi_buffer[:n_b]
+            phi_k[:] = 0
             phi_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = coeffs
-            with set_workers(self.scipy_workers):
-                phi_smooth_r = ifftn(phi_k, axes=(1, 2, 3), norm='forward') / norm_factor
-            phi_smooth = phi_smooth_r.reshape(len(active_bands), coord_shape)
-        
-            # Evaluate smooth gradient components via IFFT
-            grad_phi_smooth = np.zeros((len(active_bands), coord_shape, 3), dtype=np.complex128)
-            for d in range(3):
-                grad_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
-                grad_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = 1j * K_cart[:, d] * coeffs
-                with set_workers(self.scipy_workers):
-                    grad_smooth_r = ifftn(grad_k, axes=(1, 2, 3), norm='forward') / norm_factor
-                grad_phi_smooth[:, :, d] = grad_smooth_r.reshape(len(active_bands), coord_shape)
-                
-            # Evaluate smooth laplacian components via IFFT
-            lap_k = np.zeros((len(active_bands), Nx, Ny, Nz), dtype=np.complex128)
-            lap_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = -K_sq[np.newaxis, :] * coeffs
-            with set_workers(self.scipy_workers):
-                lap_smooth_r = ifftn(lap_k, axes=(1, 2, 3), norm='forward') / norm_factor
-            laplacian_phi_smooth = lap_smooth_r.reshape(len(active_bands), coord_shape)
             
-            return phi_smooth, grad_phi_smooth, laplacian_phi_smooth
+            # calculate phi
+            with set_workers(self.scipy_workers):
+                phi_smooth_r = ifftn(phi_k, axes=(1, 2, 3), norm='forward')
+            phi_smooth = phi_smooth_r.reshape(n_b, coord_shape)
         
+            # calculate phi gardient
+            grad_phi_smooth = np.zeros((n_b, coord_shape, 3), dtype=np.complex128)
+            for d in range(3):
+                grad_k = grad_buffer[:n_b]
+                grad_k.fill(0.0)
+                grad_k[:, gvec_wrapped[:, 0], gvec_wrapped[:, 1], gvec_wrapped[:, 2]] = 1j * K_cart[:, d] * coeffs
+                
+                with set_workers(self.scipy_workers):
+                    grad_smooth_r = ifftn(grad_k, axes=(1, 2, 3), norm='forward')
+                grad_phi_smooth[:, :, d] = grad_smooth_r.reshape(n_b, coord_shape)
+                
+            return phi_smooth, grad_phi_smooth, None
         
-        flat_rho, flat_tau, flat_gsq, flat_lap = self._calculate_densities_core(
-            cart_coord, 
-            coord_shape, 
-            spin_channel, 
-            energy_range, 
-            use_partial_occ, 
-            include_aug,
-            return_grad_rho_sq, 
-            return_lap_rho, 
-            use_shrod_tau, 
-            phi_callback,
+        # calculate rho/tau. Don't calculate grad/lap of rho
+        flat_rho, flat_tau, _, _ = self._calculate_densities_core(
+            frac_coords=frac_coords, 
+            coord_shape=coord_shape, 
+            spin_channel=spin_channel, 
+            energy_range=energy_range, 
+            use_partial_occ=use_partial_occ, 
+            include_aug=include_aug,
+            return_grad_rho_sq=False, 
+            return_lap_rho=False, 
+            use_shrod_tau=use_shrod_tau, 
+            phi_callback=phi_callback,
+            compute_band_laplacian=False,
         )
     
-        # Final Reshaping and Symmetrization
-        rho = self._symmetrize_3d_grid(flat_rho.reshape(grid_shape))
-        tau = self._symmetrize_3d_grid(flat_tau.reshape(grid_shape))
+        rho_grid = flat_rho.reshape(self.fft_grid_shape)
+        tau_grid = flat_tau.reshape(self.fft_grid_shape)
+        
+        # Compute Laplacian
+        need_global_laplacian = return_lap_rho or not use_shrod_tau
+        if need_global_laplacian:
+            lap_rho_grid = self.calculate_laplacian(rho_grid)
+            if not use_shrod_tau:
+                tau_grid += lap_rho_grid / 2.0
+        else:
+            lap_rho_grid = None
+            
+        # Compute Gradient
+        if return_grad_rho_sq:
+            gx, gy, gz = self.calculate_gradient(rho_grid)
+            grad_rho_sq_grid = gx**2 + gy**2 + gz**2
+        else:
+            grad_rho_sq_grid = None
     
+        # smooth via symmetry
+        rho = self._symmetrize_3d_grid(rho_grid)
+        tau = self._symmetrize_3d_grid(tau_grid)
+        
         results = [rho, tau]
         if return_grad_rho_sq: 
-            results.append(self._symmetrize_3d_grid(flat_gsq.reshape(grid_shape)))
+            results.append(self._symmetrize_3d_grid(grad_rho_sq_grid))
         if return_lap_rho:    
-            results.append(self._symmetrize_3d_grid(flat_lap.reshape(grid_shape)))
+            results.append(self._symmetrize_3d_grid(lap_rho_grid))
+            
         return tuple(results)
     
     ###########################################################################
     # Spectral Methods
     ###########################################################################
+    
+    def calculate_densities_vs_energy(
+        self, 
+        frac_coord, 
+        return_grad_rho_sq = False,
+        return_lap_rho = False,
+        spin_channel = -1, 
+        include_aug=True,
+        cumulative=False,
+        return_plot=False,
+        plot_range=None,
+        use_shrod_tau=False,
+    ):
+        frac_coord = np.atleast_2d(np.asarray(frac_coord, dtype=np.float64))
+        
+        def point_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape):
+            
+            num_bands = coeffs_list.shape[0]
+            custom_weights = np.full(num_bands, weight, dtype=np.float64)
+
+            metrics_block = self._calculate_densities_core(
+                return_grad_rho_sq=return_grad_rho_sq, 
+                return_lap_rho=return_lap_rho, 
+                use_shrod_tau=use_shrod_tau,
+                ispin=ispin, 
+                ikpt=ikpt, 
+                energy_range=(-np.inf, np.inf), 
+                use_partial_occ=False,          
+                frac_coords=frac_coord, 
+                include_aug=include_aug, 
+                phi_callback=self._point_phi_callback,
+                custom_weights=custom_weights, 
+            )
+            
+            metrics = [metrics_block["rho"][:, 0].real, metrics_block["tau"][:, 0].real]
+            if return_grad_rho_sq or return_lap_rho:
+                metrics.append(metrics_block["grad_rho_sq"][:, 0].real if return_grad_rho_sq else None)
+                metrics.append(metrics_block["lap_rho"][:, 0].real if return_lap_rho else None)
+            return metrics
+    
+        num_metrics = 4 if (return_grad_rho_sq or return_lap_rho) else 2
+        smeared = self._execute_spectral_engine(num_metrics=num_metrics, spin_channel=spin_channel, eval_callback=point_callback)
+        smeared = [i for i in smeared if i is not None]
+        
+        if cumulative:
+            for idx in range(len(smeared)):
+                smeared[idx] = cumulative_trapezoid(smeared[idx], self.energy_grid, initial=0)
+    
+        if return_plot:
+            prefix = "Integrated " if cumulative else ""
+            x_label = "Accumulated Integrated Value" if cumulative else "Differential Density Magnitude (per eV)"
+            plot_curves = {f"{prefix}Charge Density $\\rho$": smeared[0], f"{prefix}Kinetic Density $\\tau$": smeared[1]}
+            if return_grad_rho_sq: plot_curves[f"{prefix}Gradient $|\\nabla\\rho|^2$"] = smeared[2]
+            if return_lap_rho: plot_curves[f"{prefix}Laplacian $\\nabla^2\\rho$"] = smeared[3]
+            return self._generate_property_plot(plot_curves=plot_curves, x_label=x_label, plot_range=plot_range)
+            
+        return smeared
     
     def get_density_of_states(
         self, 
@@ -879,108 +1133,6 @@ class BaseWavefunctionEnvironment(ABC):
                 plot_range=plot_range
             )
         return dos
-    
-    def calculate_densities_vs_energy(
-        self, 
-        frac_coord, 
-        return_grad_rho_sq = False,
-        return_lap_rho = False,
-        spin_channel = -1, 
-        include_aug=True,
-        cumulative=False,
-        return_plot=False,
-        plot_range=None,
-        use_shrod_tau=False,
-    ):
-        """
-        Calculates exact state-resolved kinetic and charge density metrics at a single point coordinate,
-        supporting both differential spectral slices and full cumulative accumulation options.
-        """
-        norm_factor = np.sqrt(self.structure.volume)
-        frac_coord = np.atleast_2d(np.asarray(frac_coord, dtype=np.float64))
-        point_cart = frac_coord @ self.lattice
-    
-        # Define function calculating required metrics
-        def point_callback(ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, weight, gshape, norm_factor_engine):
-            # Define localized smooth callbacks to mimic exact analytical tracking patterns
-            def phi_callback(ispin_cb, ikpt_cb, active_bands_cb, coeffs_cb, K_cart_cb, K_sq_cb, phases_cb):
-                phi_smooth = np.dot(coeffs_cb, phases_cb) / norm_factor
-                grad_phi_smooth = 1j * np.moveaxis(((coeffs_cb[:, np.newaxis, :] * K_cart_cb.T) @ phases_cb), 1, 2) / norm_factor
-                lap_phi_smooth = -np.dot(coeffs_cb * K_sq_cb, phases_cb) / norm_factor
-                return phi_smooth, grad_phi_smooth, lap_phi_smooth
-            
-            # Generate uniform weights array matching the specific slice shape expected by the spectral engine
-            num_bands = coeffs_list.shape[0]
-            custom_weights = np.full(num_bands, weight, dtype=np.float64)
-
-            # Delegate completely to the unified backend metrics engine
-            metrics_block = self._compute_density_metrics_block(
-                return_grad_rho_sq=return_grad_rho_sq,
-                return_lap_rho=return_lap_rho,
-                use_shrod_tau=use_shrod_tau,
-                ispin=ispin,
-                ikpt=ikpt,
-                energy_range=(-np.inf, np.inf), # Process all bands inside the engine window
-                use_partial_occ=False,          # Disable standard occupancy weighting
-                cart_coord=point_cart,
-                include_aug=include_aug,
-                phi_callback=phi_callback,
-                custom_weights=custom_weights
-            )
-            
-            # Extract single coordinate point slice (axis 1)
-            # Since custom_weights were applied early inside _compute_phi_and_derivatives,
-            # no extra trailing * weight scalar transformations are required.
-            rho_bands = metrics_block["rho"][:, 0]
-            tau_bands = metrics_block["tau"][:, 0]
-            
-            metrics = [rho_bands.real, tau_bands.real]
-            
-            # Dynamically append extra metrics to fit the expected spectral shape blocks exactly
-            if return_grad_rho_sq or return_lap_rho:
-                metrics.append(metrics_block["grad_rho_sq"][:, 0].real if return_grad_rho_sq else None)
-                metrics.append(metrics_block["lap_rho"][:, 0].real if return_lap_rho else None)
-                    
-            return metrics
-    
-        # Allocate required output arrays depending on optional structural flags
-        num_metrics = 4 if (return_grad_rho_sq or return_lap_rho) else 2
-    
-        # Route variables through our newly updated polymorphic engine
-        smeared = self._execute_spectral_engine(
-            num_metrics=num_metrics, 
-            spin_channel=spin_channel, 
-            eval_callback=point_callback
-        )
-        smeared = [i for i in smeared if i is not None]
-        
-        # Symmetrically integrate differential curves if cumulative mode is toggled active
-        if cumulative:
-            for idx in range(len(smeared)):
-                cum_array = cumulative_trapezoid(smeared[idx], self.energy_grid, initial=0)
-                smeared[idx] = cum_array
-    
-        # Construct and route visualization output curves
-        if return_plot:
-            prefix = "Integrated " if cumulative else ""
-            x_label = "Accumulated Integrated Value" if cumulative else "Differential Density Magnitude (per eV)"
-            
-            plot_curves = {
-                f"{prefix}Charge Density $\\rho$": smeared[0],
-                f"{prefix}Kinetic Density $\\tau$": smeared[1]
-            }
-            if return_grad_rho_sq:
-                plot_curves[f"{prefix}Gradient $|\\nabla\\rho|^2$"] = smeared[2]
-            if return_lap_rho:
-                plot_curves[f"{prefix}Laplacian $\\nabla^2\\rho$"] = smeared[3]
-                
-            return self._generate_property_plot(
-                plot_curves=plot_curves,
-                x_label=x_label,
-                plot_range=plot_range,
-            )
-            
-        return smeared
 
     def _execute_spectral_engine(
             self,
@@ -1000,8 +1152,7 @@ class BaseWavefunctionEnvironment(ABC):
         spin_indices = [i for i in range(self.nspin)] if spin_channel == -1 else [spin_channel]
         
         # Determine real-space FFT grid dimensions and volume normalization scaling
-        grid_shape = self._minimum_fft_size * 2
-        nx, ny, nz = grid_shape
+        nx, ny, nz = self.fft_grid_shape
         norm_factor = 1.0 / np.sqrt(self.structure.volume)
         
         # Allocate continuous block memory for state properties across metrics, spins, k-points, and bands
@@ -1037,7 +1188,7 @@ class BaseWavefunctionEnvironment(ABC):
                 # Fire the callback to evaluate spatial properties at this k-point/spin slice
                 metrics_block = eval_callback(
                     ispin, ikpt, coeffs_list, gvectors, kx_idx, ky_idx, kz_idx, 
-                    weight, grid_shape, norm_factor
+                    weight, norm_factor
                 )
                 
                 # Map computed properties back into the global state data cache
@@ -1071,7 +1222,7 @@ class BaseWavefunctionEnvironment(ABC):
             tetra_indices = self.tetrahedra_indices
             tetra_weight = 1.0 / len(tetra_indices)
         
-            smeared_output = _integrate_tetrahedra_spectral_density_numba(
+            smeared_output = integrate_tetrahedra_spectral_density(
                 self.energy_grid, tetra_indices, eigenvalues,
                 cached_metrics, tetra_weight,
             )
@@ -1132,7 +1283,7 @@ class BaseWavefunctionEnvironment(ABC):
                 c_w_full = channel_weights[c][spin_all][:, full_map, :]
                 w_t_c = w_t * c_w_full[..., np.newaxis]
                 
-                smeared_data[c] = _integrate_tetrahedra_spectral_density_numba(
+                smeared_data[c] = integrate_tetrahedra_spectral_density(
                     energy_grid, tetra_indices, eigenvalues, w_t_c, tetra_weight,
                 )[0].sum(axis=0)
                     
@@ -1182,7 +1333,6 @@ class BaseWavefunctionEnvironment(ABC):
 
     def get_localization_function(
             self, 
-            grid_shape=None, 
             include_aug=True,
             energy_range=(-np.inf, np.inf), 
             spin_channel=-1, 
@@ -1191,11 +1341,8 @@ class BaseWavefunctionEnvironment(ABC):
             use_partial_occ=True,
             ):
         """Calculates specific localized electron topological indicators (ELF, LOL, or ELI-D)."""
-        if grid_shape is None: 
-            grid_shape = self._minimum_fft_size * 2
             
         rho, tau = self.calculate_densities_on_grid(
-            grid_shape=grid_shape, 
             include_aug=include_aug,
             energy_range=energy_range, 
             spin_channel=spin_channel, 
@@ -1344,8 +1491,7 @@ class BaseWavefunctionEnvironment(ABC):
     ###########################################################################
     def calculate_laplacian(self, data, is_reciprocal=False):
         """Evaluates second-derivative field Laplacian grid profiles via algebraic Fourier space multiplication."""
-        # FIX: Dynamically resolve the Cartesian G-space grids using the incoming data shape
-        Gx, Gy, Gz = self.plane_waves_cart(grid_shape=data.shape)
+        Gx, Gy, Gz = self.fft_grid_cart
         G2 = Gx**2 + Gy**2 + Gz**2  
         
         if not is_reciprocal:
@@ -1367,8 +1513,7 @@ class BaseWavefunctionEnvironment(ABC):
         else: 
             recip_data = data
             
-        # FIX: Dynamically resolve the Cartesian G-space grids using the incoming data shape
-        Gx, Gy, Gz = self.plane_waves_cart(grid_shape=data.shape)
+        Gx, Gy, Gz = self.fft_grid_cart
         with set_workers(self.scipy_workers):
             grad_x = ifftn(1j * Gx * recip_data, norm='ortho')
             grad_y = ifftn(1j * Gy * recip_data, norm='ortho')
@@ -1573,7 +1718,7 @@ class BaseWavefunctionEnvironment(ABC):
             
             full_map = self.full_to_irr_map
             eigenvalues_full = self.energies[spin_indices][:, full_map, :]
-            total_charge = _integrate_tetrahedra_analytic_charge_numba(
+            total_charge = integrate_tetrahedra_analytic_charge(
                 energy_grid=energy_grid,
                 tetra_indices=tetra_indices,
                 eigenvalues=eigenvalues_full,
@@ -1591,7 +1736,7 @@ class BaseWavefunctionEnvironment(ABC):
             eigenvalues_full = self.energies[spin_indices][:, full_map, :]
             
             # 1. Compute the exact analytical un-smeared cumulative charge profile
-            total_charge_unsmeared = _integrate_tetrahedra_analytic_charge_numba(
+            total_charge_unsmeared = integrate_tetrahedra_analytic_charge(
                 energy_grid=energy_grid,
                 tetra_indices=tetra_indices,
                 eigenvalues=eigenvalues_full,

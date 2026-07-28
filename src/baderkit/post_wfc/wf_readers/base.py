@@ -46,6 +46,7 @@ class BaseWfcReader(ABC):
         directory: Path | str = Path("."),
         nbands: int = None,
         bands: list[int] = None,
+        **kwargs
     ):
         """Initializes the Reader base class and prepares the internal g-vector lookups."""
         self.directory = Path(directory)

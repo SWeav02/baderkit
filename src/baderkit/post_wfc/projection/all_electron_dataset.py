@@ -10,9 +10,12 @@ from numpy.typing import NDArray
 from scipy.interpolate import RegularGridInterpolator, CubicSpline
 from scipy.integrate import simpson
 from baderkit.post_wfc.paw.paw_dataset import PAWSpecies
+from baderkit.post_wfc.base_basis import BaseSpecies
+
+from baderkit.post_wfc.wfc_numba import evaluate_real_harmonics_multi
 
 @dataclass
-class AESpecies:
+class AESpecies(BaseSpecies):
     """
     Standardized, code-agnostic data representation of atomic core reconstruction 
     parameters. Overcomplete basis channels are canonically orthogonalized and sorted 
@@ -21,63 +24,27 @@ class AESpecies:
     """
     
     # BASIC INFORMATION
-    name: str
-    """Name of this all electron reference"""
     
-    element: str
-    """Chemical element symbol (e.g., 'Ca')."""
-    
-    Z: float
-    """Total electrons in this pseudopotential"""
-    
-    basis: str
+    basis: str = field(default_factory=None)
     """The basis set used to generate the reference"""
     
-    functional: str
+    functional: str = field(default_factory=None)
     """The XC functional used to generate the reference"""
 
-    unrestricted: bool
+    unrestricted: bool = field(default_factory=False)
     """Whether or not this reference is unrestricted (spin-polarized)"""
     
-    primitives: dict
+    primitives: dict = field(default_factory=None)
     """The primitive basis functions grouped by angular momentum"""
     
-    # GRID INFORMATION
-    radial_grid: NDArray
-    """1D array containing the radial coordinate mesh grid points, r (in Angstroms)."""
-    
-    q_radial_grid: NDArray
-    """1D array containing the radial coordinate mesh grid points in reciprocal space (in 1/Angstroms)"""
-    
-    real_is_log: bool
-    """Whether or not the real grid is on a logarithmic scale. Typically it is."""
-    
-    q_is_log: bool
-    """Whether or not the reciprocal grid is on a logarithmic scale."""
-
     # PARENT REFERENCE CONTEXT
     paw_species: PAWSpecies | None = None
     """The pseudopotential this species maps onto"""
     
     # QUANTUM NUMBERS
-    principal_quantum_numbers: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int_))
-    """1D array of principle quantum numbers quantum numbers for each active channel."""
-    
-    angular_momenta: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int_))
-    """1D array of orbital angular momentum quantum numbers, l, for each active channel."""
-    
-    magnetic_quantum_numbers: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int_))
-    """1D array of magnetic quantum numbers, m, for each active channel."""
 
     spin_channels: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int8))
     """1D array mapping spin channel projections (0 for alpha/restricted, 1 for beta)."""
-
-    # ENERGIES AND OCCUPATIONS
-    eigenvalues: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
-    """1D array of atomic reference state energy eigenvalues for each channel (in eV)."""
-    
-    reference_occupations: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
-    """1D array of reference atomic occupations for each channel."""
 
     # STATE RECONSTRUCTIONS & SLICING
     state_vectors: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
@@ -161,7 +128,7 @@ class AESpecies:
         
         self._generate_radial_functions()
 
-        self._calculate_radial_overlap()
+        self._calculate_correction_overlap()
         
     def get_occupancies(self, min_electrons: float = None, max_electrons: float = None) -> NDArray:
         """
@@ -475,10 +442,9 @@ class AESpecies:
     def _generate_radial_functions(self) -> None:
         """
         Generates radial coordinates, normalized real-space wavefunctions R_nl(r), 
-        and pre-calculates both the physical unmasked and the partition-of-unity masked 
-        reciprocal-space G-splines directly on the VASP radial grid coordinate system.
+        and pre-calculates the exact analytical reciprocal-space G-splines directly 
+        on the VASP radial grid coordinate system.
         """
-            
         real_grid = self.radial_grid
         q_grid = self.q_radial_grid
         
@@ -496,20 +462,19 @@ class AESpecies:
         self.q_radial_splines = []
         self.radial_splines = []
         
-        # construct radial basis functions
+        # Construct radial basis functions
         for idx in range(num_states):
             l = self.angular_momenta[idx]
-            # safety fallback if we don't have this angular momenta
+            # Safety fallback if we don't have this angular momentum
             if l not in self.primitives:
                 self.q_radial_splines.append(CubicSpline(q_grid, np.zeros_like(q_grid), extrapolate=False))
                 self.radial_splines.append(CubicSpline(real_grid, np.zeros_like(real_grid), extrapolate=False))
                 
-                # NEW: Append safe fallback placeholders to maintain index alignment
                 self.alphas_states.append(np.array([1.0], dtype=np.float64))
                 self.g_coeffs_states.append(np.array([0.0], dtype=np.float64))
                 continue
                 
-            # get basis exps and coefficients
+            # Get basis exponents and coefficients
             c_data = self.primitives[l]
             exps = c_data["exps"]
             coeffs = c_data["coeffs"]
@@ -520,7 +485,7 @@ class AESpecies:
             c_state = self.state_vectors[idx, start_l:end_l]
             dim = len(c_state)
             
-            # Combine the GTO primitives according to the state vector coefficients
+            # Combine GTO primitives according to state vector coefficients
             alphas_state = []
             coeffs_state = []
             for p in range(dim):
@@ -556,17 +521,8 @@ class AESpecies:
                 R_normalized = raw_R
                 
             self.radial_functions[idx, :] = R_normalized
-            
-            # Pre-compile the physical 1D real-space spline. Use extra padding
-            # point for stability at 0 (VASP trick)
-            ref_idx = 1 if real_grid[0] == 0 else 0
-            grid_padded = np.insert(real_grid, 0, -real_grid[ref_idx])
-            R_normalized_padded = np.insert(R_normalized, 0, R_normalized[ref_idx])
-            self.radial_splines.append(
-                CubicSpline(grid_padded, R_normalized_padded, extrapolate=False)
-            )
-            
-            # Construct the exact analytical spherical Bessel transform in G-space (Unmasked Baseline)
+    
+            # Construct exact analytical spherical Bessel transform in G-space
             phi_q = np.zeros_like(q_grid)
             for alpha, c in zip(alphas_state, coeffs_state):
                 amplitude_factor = (np.pi / alpha) ** 1.5
@@ -585,24 +541,23 @@ class AESpecies:
             
             self.q_radial_functions[idx, :] = phi_q_normalized
             
-            # Pre-compile the physical 1D reciprocal-space spline. Use extra
-            # padding point for stability at 0 (VASP trick)
-            ref_idx = 1 if q_grid[0] == 0 else 0
-            q_grid_padded = np.insert(q_grid, 0, -q_grid[ref_idx])
-            phi_q_norm_padded = np.insert(phi_q_normalized, 0, phi_q_normalized[ref_idx])
-            self.q_radial_splines.append(
-                CubicSpline(q_grid_padded, phi_q_norm_padded, extrapolate=False)
-            )
+        # Pre-compile physical 1D splines
+        self.radial_splines = self._create_1d_splines(real_grid, self.radial_functions)
+        self.q_radial_splines = self._create_1d_splines(q_grid, self.q_radial_functions)
             
-    def _calculate_radial_overlap(self):
+    def _calculate_correction_overlap(self):
         # get grid. Matches PAW grid but extends beyond it.
         grid = self.radial_grid
         grid_sq = grid ** 2
+        grid_cu = grid ** 3
         
-        # Detect if the grid is logarithmic by checking if the spacing of ln(r) is constant
-        # (Allowing a tiny numerical tolerance)
-        log_spacing = np.diff(np.log(grid))
+        # Detect if the grid is logarithmic
         is_logarithmic = self.real_is_log
+        if is_logarithmic:
+            spacing = np.diff(np.log(grid))
+        else:
+            spacing = np.diff(grid)
+        dx = spacing[0]
         
         # Get local basis radial functions and PAW partial waves
         local_functions = self.radial_functions
@@ -610,52 +565,52 @@ class AESpecies:
         paw_ps_waves = self.paw_species.pseudo_partial_waves
         
         # Get the cutoff radii for each paw channel
-        r_cs = self.paw_species.cutoff_radii
+        r_cs = self.paw_species.paw_cutoffs
         
         # Initialize containers (orbital_index, projector_index)
-        self.ae_overlaps = np.empty((len(local_functions), len(paw_ae_waves)))
-        self.pseudo_overlaps = np.empty((len(local_functions), len(paw_ae_waves)))
         self.core_correction_overlaps = np.empty((len(local_functions), len(paw_ae_waves)))
         
         # Loop over each basis function
         for alpha, chi_alpha in enumerate(local_functions):
+            l_a = self.angular_momenta[alpha]
+            m_a = self.magnetic_quantum_numbers[alpha]
             
             # Loop over the PAW partial wave channels (indexed by projector index i)
             for i, phi_ae in enumerate(paw_ae_waves):
+                l_b = self.paw_species.angular_momenta[i]
+                m_b = self.paw_species.magnetic_quantum_numbers[i]
+                
+                # enforce kronecker delta
+                if l_a != l_b or m_a != m_b:
+                    self.core_correction_overlaps[alpha, i] = 0.0
+                    continue
+                
                 # Get cutoff radius and mask
                 r_c = r_cs[i]
                 mask = np.where(grid < r_c)[0]
                 
-                grid_cut = grid[mask]
+                # cut down to maks size
                 chi_cut = chi_alpha[mask]
                 phi_ps = paw_ps_waves[i][mask]
                 phi_ae = paw_ae_waves[i][mask]
                 
+                # evaluate <chi|phi_ae> and <chi|phi_ps>:
                 if is_logarithmic:
                     # Log-grid integration: Integrate r^3 * chi * phi d(ln r)
-                    # Note: We use r^3 because dr = r * d(ln r)
-                    grid_cube_cut = grid_cut ** 3
-                    ae_integrand = grid_cube_cut * chi_cut * phi_ae
-                    ps_integrand = grid_cube_cut * chi_cut * phi_ps
-                    
-                    # Since the coordinate axis ln(r) has perfectly uniform spacing 'dx',
-                    # we can integrate directly using the dx parameter.
-                    ae_overlap = simpson(y=ae_integrand, dx=log_spacing[0])
-                    ps_overlap = simpson(y=ps_integrand, dx=log_spacing[0])
+                    # NOTE: We use r^3 because dr = r * d(ln r)
+                    grid_cut = grid_cu[mask]
                 else:
                     # Linear-grid integration: Integrate r^2 * chi * phi dr
-                    grid_sq_cut = grid_sq[mask]
-                    ae_integrand = grid_sq_cut * chi_cut * phi_ae
-                    ps_integrand = grid_sq_cut * chi_cut * phi_ps
+                    grid_cut = grid_sq[mask]
                     
-                    ae_overlap = simpson(y=ae_integrand, x=grid_cut)
-                    ps_overlap = simpson(y=ps_integrand, x=grid_cut)
+                # <chi|phi> = integral(r^2*chi(r)*phi(r)dr)
+                diff_integrand = grid_cut * chi_cut * (phi_ae-phi_ps)
+                
+                diff_overlap = simpson(y=diff_integrand, dx=dx)
                 
                 # Store results
-                self.ae_overlaps[alpha, i] = ae_overlap
-                self.pseudo_overlaps[alpha, i] = ps_overlap
-                self.core_correction_overlaps[alpha, i] = ae_overlap - ps_overlap
-        
+                self.core_correction_overlaps[alpha, i] = diff_overlap
+                
     def _calculate_radial_densities(self, alpha: float) -> tuple[NDArray, NDArray]:
         """
         Evaluates the radial charge density (rho) and positive-definite kinetic energy density (tau) 

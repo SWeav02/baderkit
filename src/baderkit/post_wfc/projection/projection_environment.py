@@ -6,8 +6,9 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.integrate import cumulative_trapezoid
 from scipy.interpolate import RegularGridInterpolator
-from rich.progress import track
-# from concurrent.futures import ThreadPoolExecutor, as_completed
+from rich.progress import Progress
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from rich import print as rprint
 
@@ -18,7 +19,7 @@ from baderkit.post_wfc.wfc_numba import (
     evaluate_real_harmonics_multi
 )
 
-from baderkit.post_wfc.base import BaseWavefunctionEnvironment
+from baderkit.post_wfc.base_env import BaseWavefunctionEnvironment
 
 # TODO:
     # 1. Update paw environment by removing redundant augmentation environment, etc.
@@ -128,6 +129,12 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         if getattr(self, "_core_correction_overlaps", None) is None:
             self._core_correction_overlaps = [i.core_correction_overlaps for i in self.basis_map]
         return self._core_correction_overlaps
+    
+    @property
+    def voxels_near_atoms(self):
+        if getattr(self, "_voxels_near_atoms", None) is None:
+            self._voxels_near_atoms = self._get_voxel_footprints()
+        return self._voxels_near_atoms
     
     ###########################################################################
     # PDOS Methods
@@ -278,11 +285,12 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
                 base_frac_coords[i] = site.frac_coords
                 atom_types[i] = element_to_idx[site.specie.symbol]
                 
-            cart_coords, element_indices, base_indices = find_active_periodic_atoms(
+            frac_coords, cart_coords, element_indices, base_indices = find_active_periodic_atoms(
                 self.lattice_matrix, base_frac_coords, atom_types, self.cutoff_radius
             )
             
             self._cache_semi_periodic_atoms = {
+                "frac_coords": frac_coords,
                 "cart_coords": cart_coords,
                 "element_indices": element_indices,
                 "base_indices": base_indices,
@@ -290,23 +298,23 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             }
         return self._cache_semi_periodic_atoms
 
-    def _get_voxel_footprints(self, grid_shape):
+    def _get_voxel_footprints(self):
         """
         Calculates and caches the voxel coordinate index mappings and scalar radial distances 
         for all translationally extended periodic atoms relative to a specified discrete 3D grid layout.
         """
-        grid_key = tuple(grid_shape)
         
-        if grid_key not in self._cache_voxel_footprints:
-            spa = self.semi_periodic_atoms
-            atom_carts = spa["cart_coords"]
+        spa = self.semi_periodic_atoms
+        frac_coords = spa["frac_coords"]
+        
+        all_indices, all_distances, _ = find_all_voxels_parallel(
+            frac_coords, 
+            self.lattice_matrix, 
+            self.fft_grid_shape, 
+            [self.cutoff_radius for _ in range(len(frac_coords))],
+        )
             
-            all_indices, all_distances = find_all_voxels_parallel(
-                atom_carts, self.lattice_matrix, grid_shape, self.cutoff_radius
-            )
-            self._cache_voxel_footprints[grid_key] = (all_indices, all_distances)
-            
-        return self._cache_voxel_footprints[grid_key]
+        return all_indices, all_distances
 
     def get_promolecular_densities_at_points(
         self, 
@@ -584,7 +592,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
 
     def get_promolecular_densities(
         self, 
-        grid_shape, 
         # spin_channel: int = -1,
         energy_range=(-np.inf, np.inf),
         use_partial_occ: bool = True,
@@ -593,7 +600,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         Generates continuous 3D promolecular charge and kinetic energy density reference grids
         across the unit cell, evaluated using the requested energy range bounds.
         """
-        # CACHED LOOKUP: Leverages the common calibration array cache hit layer
         # get cleaned energy range
         e_min, e_max = self._clean_energy_ranges(energy_range)
         
@@ -608,8 +614,7 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             max_occ_energy = np.interp(max_charge, self.total_charge_grid, self.energy_grid)
             e_max = min(e_max, max_occ_energy)
         
-        # build interpolator to get partial atomic charges from the total energy
-        # range
+        # build interpolator to get partial atomic charges from the total energy range
         energy_grid = self.energy_grid
         atom_electron_counts = atom_data["partial_charge"]
         atom_indices = np.arange(len(self.structure))
@@ -625,25 +630,35 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         min_charges[min_charges<1e-12] = 0.0 # set to exact 0
         
         # get voxel indices and distances
-        all_indices, all_distances = self._get_voxel_footprints(grid_shape)
+        all_indices, all_distances = self.voxels_near_atoms
         
         # create 1d arrays to store charge density and ked
-        rho_data = np.zeros(np.prod(grid_shape), dtype=np.float64)
-        tau_data = np.zeros(np.prod(grid_shape), dtype=np.float64)
+        total_voxels = np.prod(self.fft_grid_shape)
+        rho_data = np.zeros(total_voxels, dtype=np.float64)
+        tau_data = np.zeros(total_voxels, dtype=np.float64)
 
-        num_atoms_cell = len(self.semi_periodic_atoms)
+        # Extract periodic image attributes cleanly from the dictionary context
+        extended_structure = self.semi_periodic_atoms
+        atom_coords = extended_structure["cart_coords"]
+        element_indices = extended_structure["element_indices"]
+        mapping = extended_structure["element_mapping"]
+        base_indices = extended_structure["base_indices"]
         
-        for i_atom in range(num_atoms_cell):
-            symbol = self.structure[i_atom].specie.symbol
-            basis = self.atom_bases[symbol]
+        num_atoms_extended = len(atom_coords)
+        
+        # Loop over every single periodic image in the cutoff range
+        for i_atom in range(num_atoms_extended):
+            base_idx = base_indices[i_atom]
+            element = mapping[element_indices[i_atom]]
+            basis = self.atom_bases[element]
             
-            # get charge range for this atom
-            min_count = min_charges[i_atom]
-            max_count = max_charges[i_atom]
+            # FIXED: Reference the primary cell base atom index for partial charges
+            min_count = min_charges[base_idx]
+            max_count = max_charges[base_idx]
             
-            # interpolate radial values based on distances
+            # extract voxel indices and real physical distances (in Angstroms)
             grid_indices = all_indices[i_atom]
-            grid_dists = all_indices[i_atom]
+            grid_dists = all_distances[i_atom]
             
             min_coords_atom = np.column_stack((np.full_like(grid_dists, min_count, dtype=np.float64), grid_dists))
             max_coords_atom = np.column_stack((np.full_like(grid_dists, max_count, dtype=np.float64), grid_dists))
@@ -660,8 +675,8 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
             rho_data[grid_indices] += max_rhos - min_rhos
             tau_data[grid_indices] += max_taus - min_taus
         
-        rho_3d = rho_data.reshape(grid_shape)
-        tau_3d = tau_data.reshape(grid_shape)
+        rho_3d = rho_data.reshape(self.fft_grid_shape)
+        tau_3d = tau_data.reshape(self.fft_grid_shape)
         
         return rho_3d, tau_3d
     
@@ -671,7 +686,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
     
     def get_deformation_densities(
         self, 
-        grid_shape=None, 
         # spin_channel: int = -1, 
         energy_range=(-np.inf, np.inf),
         use_partial_occ: bool = True,
@@ -682,7 +696,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         """
         # 1. Evaluate the fully interacting crystalline state density arrays
         rho_int, tau_int = self.get_densities(
-            grid_shape=grid_shape,
             # spin_channel=spin_channel,
             energy_range=energy_range,
             use_partial_occ=use_partial_occ,
@@ -690,7 +703,6 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         
         # 2. Generate matching non-bonding overlapping atomic reference grids
         rho_pro, tau_pro = self.get_promolecular_densities(
-            grid_shape=rho_int.shape,
             # spin_channel=spin_channel,
             energy_range=energy_range,
             use_partial_occ=use_partial_occ,
@@ -841,171 +853,237 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         local_basis_matrix = self._local_basis_matrix[ikpt]
         
         # Slice raw projection_coefficients at the selected k-point & spin
-        # shape: (n_spin, n_kpoints, n_basis, nbands)
-        coeffs_lcao = self.projection_coefficients[ispin, ikpt, :, active_bands] 
+        # shape: (len(active_bands), nbasis)
+        coeffs_lcao = self.projection_coefficients[ispin, ikpt, :, active_bands]
         
-        # Synthesize wavefunction: (len(active_bands), n_basis) @ (n_basis, n_qvecs) -> (len(active_bands), n_qvecs)
-        return np.dot(coeffs_lcao, local_basis_matrix)
+        # Synthesize wavefunction: (len(active_bands), nbasis) @ (nbasis, n_Kvecs)
+        return np.dot(coeffs_lcao, local_basis_matrix)# / np.sqrt(self.structure.volume)
     
     def _project_system(self):
         """
         Production Projector Augmented Wave (PAW) projection engine.
-        Deconstructed into small, highly granular sub-steps for targeted debugging.
-        Includes in-place unweighted and occupancy-weighted spillage calculation.
+        Executed sequentially to leverage the native multi-threaded BLAS/LAPACK backend.
+        Utilizes a robust least-squares truncated SVD solver to handle overcomplete
+        basis sets and prevent unphysical coefficient explosions.
         """
-        # Get class properties
         structure = self.structure
         atom_positions = structure.cart_coords
         nspin = self.nspin
         nkpoints = self.nkpoints
         nbands = self.nbands
         volume = structure.volume
-        
         correction_overlaps = self.core_correction_overlaps
         
-        # --- Display Projection Engine Header ---
         rprint("\n" + "="*80)
-        rprint("[bold green]          PROJECTION ENGINE          [/bold green]")
+        rprint("[bold green]         PROJECTION ENGINE          [/bold green]")
         rprint("="*80)
         rprint(f"[bold white]System Dimensions:[/bold white] Spin={nspin}, k-points={nkpoints}, Bands={nbands}")
         rprint(f"[bold white]Unit Cell Volume (Omega):[/bold white] {volume:.6f} Å^3")
         
-        # count total number of local basis funcitons and projectors
-        n_basis = 0
-        n_projectors = 0
-        for i in self.basis_map:
-            n_basis += len(i.angular_momenta)
-            paw = i.paw_species
-            n_projectors += len(paw.q_projectors)
+        # Count total number of local basis functions
+        nbasis = sum(len(i.angular_momenta) for i in self.basis_map)
         
-        #######################################################################
-        # Smooth Projection, PAW Projection, and Spillage Setup
-        #######################################################################
         rprint("\n" + "="*80)
-        rprint("[bold blue]INFO: Executing Reciprocal Projections & PAW Augmentation Loop[/bold blue]")
+        rprint("[bold blue]INFO: Executing Reciprocal Projections & PAW Augmentation[/bold blue]")
         rprint("="*80)
         
-        # Initialize projection_coefficients array: shape (nspin, nkpoints, n_basis, nbands)
-        c_final = np.zeros((nspin, nkpoints, n_basis, nbands), dtype=np.complex128)
-    
-        # Initialize spillage accumulators
-        sum_unweighted_spillage = 0.0
-        weighted_spillage_numerator = 0.0
-        total_occupancy_denominator = 0.0
-        
-        # Initialize cache containers to avoid heavy G-space recalculations downstream
+        # Initialize containers to store final projection coefficient results
+        c_final = np.zeros((nspin, nkpoints, nbasis, nbands), dtype=np.complex128)
         self._local_basis_matrix = [None] * nkpoints
-        # self._overlap_matrix_cache = [None] * nkpoints
-    
-        for ikpt_idx in track(range(nkpoints), description="[bold blue]Mapping Reciprocal Projections...[/]"):
+        
+        # create arrays to store spillage per band
+        band_spillage = np.zeros(nbands)
+        occupied_band_spillage  = np.zeros(nbands)
+        occupied_band_spillage_norm = np.zeros(nbands)
+        
+        # Loop over k points
+        with Progress() as progress:
+            task = progress.add_task("[bold blue]Mapping Reciprocal Projections...", total=nkpoints)
             
-            # get reciprocal mesh at k-point
-            G_basis_cart = self.get_g_vectors_cart(ikpt_idx)
-            
-            k_cart = self.kpoints_cart[ikpt_idx]
-            
-            # get q vectors (k+G) and their norms
-            q_vecs = G_basis_cart + k_cart[np.newaxis, :]
-            q_norms = np.linalg.norm(q_vecs, axis=1)
-            n_qvecs = len(q_norms)
-            
-            ###################################################################
-            # Chi_k and p_k Construction
-            ###################################################################
-            # Construct local basis matrix (chi) and projector matrices (p) at this k point
-            local_basis_matrix = np.zeros((n_basis, n_qvecs), dtype=np.complex128)
-            paw_projector_matrices = []
-            for atom_idx, local_basis in enumerate(self.basis_map):
-                # get paw basis and overlap matrix
-                paw_basis = local_basis.paw_species
+            for ikpt_idx in range(nkpoints):
+                # get K vectors (k + G)
+                G_basis_cart = self.get_g_vectors_cart(ikpt_idx)
+                k_cart = self.kpoints_cart[ikpt_idx]
                 
-                # calculate phase
-                spatial_phase = np.exp(-1j * np.dot(q_vecs, atom_positions[atom_idx]))
+                K_vecs = G_basis_cart + k_cart[np.newaxis, :]
+                K_norms = np.linalg.norm(K_vecs, axis=1)
+                K_norms = np.where(K_norms < 1e-14, 1e-14, K_norms)
+                n_Kvecs = len(K_norms)
                 
-                # loop over local basis
-                for loc_idx in range(n_basis):
-                    spline = local_basis.q_radial_splines[loc_idx]
-                    l = local_basis.angular_momenta[loc_idx]
-                    m = local_basis.magnetic_quantum_numbers[loc_idx]
-                    
-                    # evaluate radial part
-                    chi_r = spline(q_norms)
-                    
-                    # evaluate angular part
-                    chi_a = evaluate_real_harmonics_multi(l, m, q_vecs)
-                    
-                    local_basis_matrix[loc_idx] = spatial_phase * chi_r * chi_a
+                # Normalize K_vecs for spherical harmonics
+                K_hat = K_vecs / K_norms[:, np.newaxis]
                 
-                paw_projector_matrices.append(paw_basis.build_g_space_projectors(
-                    q_vecs,
-                    spatial_phase,
-                    ))
+                k_weight = self.kpoint_weights[ikpt_idx]
                 
-                    
-            # Build the overlap matrix S(k) for spillage
-            # shape: (n_basis, n_basis)
-            overlap_matrix = (local_basis_matrix.conj() @ local_basis_matrix.T) / volume
-            
-            # Cache the evaluated representations for reconstruction
-            self._local_basis_matrix[ikpt_idx] = local_basis_matrix
-            # self._overlap_matrix_cache[ikpt_idx] = overlap_matrix
-                    
-            for ispin in range(nspin):
-                # get pseudo projection_coefficients for all bands at this kpoint
-                # wfc_coeffs shape: (nbands, n_qvecs)
-                wfc_coeffs = self._wf_reader.read_coefficients_batch(ispin, ikpt_idx, np.arange(nbands)).T
+                # create arrays/lists to store basis matrices, Chi_alpha, and
+                # projector matrices, p.
+                local_basis_matrix = np.zeros((nbasis, n_Kvecs), dtype=np.complex128)
+                paw_projector_matrices = []
                 
-                # SMOOTH PSEUDO PROJECTION
-                smooth_spin = local_basis_matrix.conj() @ wfc_coeffs
-    
-                # AE PROJECTION
-                aug_spin = np.zeros((n_basis, nbands), dtype=np.complex128())
+                # collect projector matrices
+                global_basis_idx = 0
+                for atom_idx, local_basis in enumerate(self.basis_map):
+                    paw_basis = local_basis.paw_species
+                    # get phase
+                    spatial_phase = np.exp(-1j * np.dot(K_vecs, atom_positions[atom_idx]))
+                    
+                    # Loop over local orbitals and assign them using a global index tracker
+                    for orb_idx in range(len(local_basis.angular_momenta)):
+                        # get quantum numbers
+                        l = local_basis.angular_momenta[orb_idx]
+                        m = local_basis.magnetic_quantum_numbers[orb_idx]
+                        
+                        # cubic spline interpolation of radial part
+                        chi_r = local_basis.q_radial_splines[orb_idx](K_norms)
+                        # exact angular part
+                        chi_a = evaluate_real_harmonics_multi(l, m, K_hat)
+                        # save basis matrix
+                        local_basis_matrix[global_basis_idx] = spatial_phase * chi_r * chi_a
+                        global_basis_idx += 1
+                    
+                    # get projector matrix (already conjugate)
+                    paw_projector_matrices.append(
+                        paw_basis.build_g_space_conj_projectors(K_vecs, spatial_phase)
+                    )
+                
+                # Read coefficients for each spin
+                coeffs_spins = [
+                    self._wf_reader.read_coefficients_batch(ispin, ikpt_idx, np.arange(nbands)).T 
+                    for ispin in range(nspin)
+                ]
+                coeff_spins = np.hstack(coeffs_spins)
+                
+                # !!! SMOOTH PART !!!
+                # Calculate <Chi|Psi_smooth>
+                smooth_part = local_basis_matrix.conj() @ coeff_spins
+                overlap_matrix_smooth = ((local_basis_matrix.conj() @ local_basis_matrix.T) / volume)
+                
+                # !!! AUG PART !!!
+                # Calculate Sum_r,i( <p|Psi_smooth> * (<Chi|Phi_ae>-<Chi|Phi_ps>))
+                aug_part = np.zeros((nbasis, nspin * nbands), dtype=np.complex128)
+                overlap_matrix_aug = np.zeros_like(overlap_matrix_smooth)
                 for atom_idx in range(len(structure)):
+                    # read precalculated correction overlaps (<Chi|Phi_ae>-<Chi|Phi_ps>)
                     correction_overlap = correction_overlaps[atom_idx]
-                    projector_matrix_conj = paw_projector_matrices[atom_idx].conj()
-                    aug_spin += correction_overlap @ (projector_matrix_conj @ wfc_coeffs) 
+                    # Get projector matrix (already conjugate)
+                    projector_matrix_conj = paw_projector_matrices[atom_idx]
+                    # Project and add to augmentation part
+                    aug_part += correction_overlap @ (projector_matrix_conj @ coeff_spins)
                     
-                # FULL PROJECTION
-                coeffs_spin = (smooth_spin + aug_spin) / np.sqrt(volume)
+                # !!! TOTAL !!!
+                # Get total part
+                coeff_spins = (smooth_part + aug_part) / np.sqrt(volume)
+                overlap_matrix = overlap_matrix_smooth + overlap_matrix_aug
                 
-                # correct self overlap
-                # C_lcao = overlap_matrix^-1 * C_active
-                coeffs_lcao = np.linalg.solve(overlap_matrix, coeffs_spin)
-                c_final[ispin, ikpt_idx] = coeffs_lcao
+                # Solve for LCAO coefficients
+                # rcond=1e-4 drops singular values below 1e-4 * max_singular_value
+                coeffs_lcao, residuals, rank, s_solver = np.linalg.lstsq(
+                    overlap_matrix, 
+                    coeff_spins, 
+                    rcond=1e-6
+                )
                 
-                # SPILLAGE
-                f_n = self.occupancies[ispin, ikpt_idx]
+                # !!! NORMALIZE !!!
+                # The coefficients must be normalized in the same manor as PAW
+                # codes, that is for the total system, not just the smooth part
                 
-                # Solve overlap_matrix * X = coeffs_spin
-                X = np.linalg.solve(overlap_matrix, coeffs_spin)
+                # Compute the norm squared of each reconstructed band: diag(C^dagger @ S @ C)
+                S_C = overlap_matrix @ coeffs_lcao
                 
-                # Compute diagonal of C_dagger * S^-1 * C
-                diag_captured = np.real(np.sum(coeffs_spin.conj() * X, axis=0))
-                diag_captured = np.clip(diag_captured, 0.0, 1.0)
-                spillage_n = 1.0 - diag_captured
+                O_nn = np.sum(coeffs_lcao.conj() * S_C, axis=0)
+                band_norms = np.sqrt(O_nn.real)
+                # ==============================================================================
+                # --- DIAGNOSTIC 3: CORE VS VALENCE DISSECTION & G-TRUNCATION (ikpt = 0) ---
+                # ==============================================================================
+                if ikpt_idx == 0:
+                    rprint("\n[bold yellow]" + "="*80)
+                    rprint("      DIAGNOSTIC 3: CORE VS VALENCE DISSECTION & G-TRUNCATION (ikpt = 0)")
+                    rprint("="*80)
+                    
+                    # 1. Local Basis Function G-Space Norms (S_ii)
+                    S_diag = np.real(np.diag(overlap_matrix))
+                    rprint("\n[bold white]1. Local Basis Function G-Space Norms (S_ii):[/bold white]")
+                    rprint("  (Values < 0.8 indicate severe reciprocal-space truncation at current ENCUT)")
+                    
+                    global_b_idx = 0
+                    for atom_idx, local_basis in enumerate(self.basis_map):
+                        for orb_idx in range(len(local_basis.angular_momenta)):
+                            l = local_basis.angular_momenta[orb_idx]
+                            m = local_basis.magnetic_quantum_numbers[orb_idx]
+                            s_val = S_diag[global_b_idx]
+                            rprint(f"  Atom {atom_idx} | Orb {orb_idx:2d} (l={l}, m={m:2d}) : S_ii = {s_val:10.6f}")
+                            global_b_idx += 1
                 
-                # Accumulate values
-                sum_unweighted_spillage += np.sum(spillage_n)
-                weighted_spillage_numerator += np.sum(f_n * spillage_n)
-                total_occupancy_denominator += np.sum(f_n)
+                    # 2. Smooth vs Augmentation Decomposition across Bands
+                    rprint("\n[bold white]2. Smooth vs. Augmentation Power Ratio per Band:[/bold white]")
+                    rprint("  Band  |  ||Smooth||^2  |   ||Aug||^2   | Aug/Total Ratio |  Spillage (1 - O_nn)")
+                    rprint("  -------------------------------------------------------------------------")
+                    
+                    smooth_norms_sq = np.sum(np.abs(smooth_part)**2, axis=0) / volume
+                    aug_norms_sq    = np.sum(np.abs(aug_part)**2, axis=0) / volume
+                    
+                    for b in range(nbands):
+                        sm_pwr = smooth_norms_sq[b]
+                        aug_pwr = aug_norms_sq[b]
+                        tot_pwr = sm_pwr + aug_pwr
+                        aug_ratio = aug_pwr / tot_pwr if tot_pwr > 1e-12 else 0.0
+                        o_val = O_nn[b].real
+                        
+                        rprint(f"  {b+1:4d}  | {sm_pwr:12.6f} | {aug_pwr:12.6f} | {aug_ratio*100:13.2f}% | {1.0 - o_val:+10.6f}")
                 
-        # Save projection_coefficients back to the class
+                    rprint("[bold yellow]" + "="*80 + "\n[/bold yellow]")
+                
+                # Safeguard against division-by-zero for uncaptured/empty states
+                safe_norms = np.where(band_norms < 1e-8, 1.0, band_norms)
+                
+                # Normalize the LCAO coefficients
+                coeffs_lcao = coeffs_lcao / safe_norms[np.newaxis, :]
+                
+                # Unpack and store results directly into target arrays
+                self._local_basis_matrix[ikpt_idx] = local_basis_matrix
+                c_final[:, ikpt_idx] = coeffs_lcao.reshape(nbasis, nspin, nbands).transpose(1, 0, 2)
+                
+                # !!! Spillage !!!
+                # calculate spillage
+                spillage = k_weight * np.abs(1-O_nn)
+                
+                # reshape by spin
+                spillage = spillage.reshape(nspin, nbands).T
+                
+                # calculate spillage from occupied states
+                occs = self.occupancies[:, ikpt_idx, :].T
+                occ_sum = occs.sum()
+                if occ_sum < 1e-12:
+                    occ_spillage = np.zeros(nbands)
+                else:
+                    occ_spillage = np.mean(spillage*occs, 1)
+                # calculate spillage from all states
+                spillage = np.mean(spillage, 1)
+                
+                # save per band
+                band_spillage += spillage
+                occupied_band_spillage += occ_spillage
+                occupied_band_spillage_norm += occ_spillage / occs.sum()
+                
+                progress.update(task, advance=1)
+    
+        # Save projection coefficients
         self._projection_coefficients = c_final
         
-        # calculate spillage
-        total_states_count = nkpoints * nspin * nbands
-        all_bands_spillage = (sum_unweighted_spillage / total_states_count) * 100.0
-        charge_spillage = (weighted_spillage_numerator / total_occupancy_denominator) * 100.0
+        # Calculate global spillage parameters
+        total_spillage = band_spillage.sum() / nbands * 100
+        occupied_total_spillage = occupied_band_spillage_norm.sum() * 100
         
-        # Save metrics to class instance
-        self.band_spillage = all_bands_spillage
-        self.charge_spillage = charge_spillage
-        
+        self.band_spillage = band_spillage
+        self.occupied_total_spillage = occupied_band_spillage
+        self.spillage = total_spillage
+        self.occupied_spillage = occupied_total_spillage
+
         rprint("\n" + "="*80)
         rprint("[bold yellow]            SPILLAGE METRICS REPORT            [/bold yellow]")
         rprint("="*80)
-        rprint(f"  -> [bold white]All-Bands Spillage (S):[/bold white]      {all_bands_spillage:.4f} %")
-        rprint(f"  -> [bold white]Charge (Occupancy) Spillage:[/bold white]  {charge_spillage:.4f} %")
+        rprint(f"  -> [bold white]All-Bands Spillage (S):[/bold white]      {total_spillage:.4f} %")
+        rprint(f"  -> [bold white]Charge (Occupancy) Spillage:[/bold white]  {occupied_total_spillage:.4f} %")
         rprint("="*80 + "\n")
         
     @classmethod

@@ -24,6 +24,7 @@ def find_active_periodic_atoms(lattice_matrix, base_frac_coords, atom_types, r_c
         
     est_max_images = num_atoms * (2 * max_bounds[0] + 1) * (2 * max_bounds[1] + 1) * (2 * max_bounds[2] + 1)
     
+    out_frac = np.zeros((est_max_images, 3), dtype=np.float64)
     out_cart = np.zeros((est_max_images, 3), dtype=np.float64)
     out_types = np.zeros(est_max_images, dtype=np.int32)
     out_base_indices = np.zeros(est_max_images, dtype=np.int32)
@@ -54,148 +55,156 @@ def find_active_periodic_atoms(lattice_matrix, base_frac_coords, atom_types, r_c
                     distance_to_cell = np.linalg.norm(img_cart - closest_cart)
                     
                     if distance_to_cell < r_cut:
+                        out_frac[count] = img_frac
                         out_cart[count] = img_cart
                         out_types[count] = atype
                         out_base_indices[count] = i
                         count += 1
                         
-    return out_cart[:count], out_types[:count], out_base_indices[:count]
+    return out_frac[:count], out_cart[:count], out_types[:count], out_base_indices[:count]
 
 @njit(cache=True, fastmath=True)
-def find_voxels_in_atom_range(atom_cart, lattice_matrix, grid_dims, r_cut):
-    """Determines which voxels fall within a cutoff radius of an atom position."""
+def find_voxels_in_atom_range(atom_frac, lattice_matrix, grid_dims, r_cut):
     nx, ny, nz = grid_dims[0], grid_dims[1], grid_dims[2]
-    inv_lattice = np.linalg.inv(lattice_matrix)
     
-    f_atom = atom_cart @ inv_lattice
+    fx, fy, fz = atom_frac[0], atom_frac[1], atom_frac[2]
     
-    f_ext_x = r_cut * np.linalg.norm(inv_lattice[:, 0])
-    f_ext_y = r_cut * np.linalg.norm(inv_lattice[:, 1])
-    f_ext_z = r_cut * np.linalg.norm(inv_lattice[:, 2])
+    # get fractional cutoff along each lattice vector
+    f_ext_x = r_cut / np.linalg.norm(lattice_matrix[0])
+    f_ext_y = r_cut / np.linalg.norm(lattice_matrix[1])
+    f_ext_z = r_cut / np.linalg.norm(lattice_matrix[2])
     
-    imin = max(0, int(np.floor((f_atom[0] - f_ext_x) * nx)))
-    imax = min(nx, int(np.ceil((f_atom[0] + f_ext_x) * nx)))
+    # Get max bounds, allowing points outside the lattice
+    imin = int(np.floor((fx - f_ext_x) * nx))
+    imax = int(np.ceil((fx + f_ext_x) * nx))
     
-    jmin = max(0, int(np.floor((f_atom[1] - f_ext_y) * ny)))
-    jmax = min(ny, int(np.ceil((f_atom[1] + f_ext_y) * ny)))
+    jmin = int(np.floor((fy - f_ext_y) * ny))
+    jmax = int(np.ceil((fy + f_ext_y) * ny))
     
-    kmin = max(0, int(np.floor((f_atom[2] - f_ext_z) * nz)))
-    kmax = min(nz, int(np.ceil((f_atom[2] + f_ext_z) * nz)))
+    kmin = int(np.floor((fz - f_ext_z) * nz))
+    kmax = int(np.ceil((fz + f_ext_z) * nz))
     
+    # get the maximum number of voxels in range and create placeholder arrays
     max_possible_voxels = (imax - imin) * (jmax - jmin) * (kmax - kmin)
     if max_possible_voxels <= 0:
         return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.float64)
         
     out_indices = np.zeros(max_possible_voxels, dtype=np.int64)
     out_distances = np.zeros(max_possible_voxels, dtype=np.float64)
+    out_vecs = np.zeros((max_possible_voxels, 3), dtype=np.float64)
     
+    # loop over all possible coords and calculate their distance
     count = 0
     for i in range(imin, imax):
-        f_x = float(i) / nx
+        df_x = (float(i) / nx) - fx
+        df_x -= np.round(df_x)  # wrap around cell
+        i_wrapped = i % nx
+        
         for j in range(jmin, jmax):
-            f_y = float(j) / ny
+            df_y = (float(j) / ny) - fy
+            df_y -= np.round(df_y)
+            j_wrapped = j % ny
+            
             for k in range(kmin, kmax):
-                f_z = float(k) / nz
+                df_z = (float(k) / nz) - fz
+                df_z -= np.round(df_z)
+                k_wrapped = k % nz
                 
-                v_cart_x = f_x * lattice_matrix[0, 0] + f_y * lattice_matrix[1, 0] + f_z * lattice_matrix[2, 0]
-                v_cart_y = f_x * lattice_matrix[0, 1] + f_y * lattice_matrix[1, 1] + f_z * lattice_matrix[2, 1]
-                v_cart_z = f_x * lattice_matrix[0, 2] + f_y * lattice_matrix[1, 2] + f_z * lattice_matrix[2, 2]
-                
-                dx = v_cart_x - atom_cart[0]
-                dy = v_cart_y - atom_cart[1]
-                dz = v_cart_z - atom_cart[2]
+                # Convert relative fractional distance to cartesian
+                dx = df_x * lattice_matrix[0, 0] + df_y * lattice_matrix[1, 0] + df_z * lattice_matrix[2, 0]
+                dy = df_x * lattice_matrix[0, 1] + df_y * lattice_matrix[1, 1] + df_z * lattice_matrix[2, 1]
+                dz = df_x * lattice_matrix[0, 2] + df_y * lattice_matrix[1, 2] + df_z * lattice_matrix[2, 2]
                 
                 r = np.sqrt(dx*dx + dy*dy + dz*dz)
                 
                 if r < r_cut:
-                    flat_idx = i * (ny * nz) + j * nz + k
+                    # Flat index in primary unit cell space [0, nx) x [0, ny) x [0, nz)
+                    flat_idx = i_wrapped * (ny * nz) + j_wrapped * nz + k_wrapped
                     out_indices[count] = flat_idx
                     out_distances[count] = r
+                    out_vecs[count] = (dx, dy, dz)
                     count += 1
                     
-    return out_indices[:count], out_distances[:count]
+    return out_indices[:count], out_distances[:count], out_vecs[count]
 
 @njit(parallel=True, fastmath=True, cache=True)
-def find_all_voxels_parallel(atom_carts, lattice_matrix, grid_dims, r_cut):
+def find_all_voxels_parallel(
+        atom_fracs, 
+        lattice_matrix, 
+        grid_dims, 
+        r_cuts,
+        ):
     """Executes the voxel range filter in parallel across an array of atomic coordinates."""
-    num_atoms = atom_carts.shape[0]
-    all_indices = List()
-    all_distances = List()
+    num_atoms = atom_fracs.shape[0]
+    all_indices = []
+    all_distances = []
+    all_vecs = []
     
+    # append placeholder arrays for numba typing
     for _ in range(num_atoms):
         all_indices.append(np.empty(0, dtype=np.int64))
         all_distances.append(np.empty(0, dtype=np.float64))
+        all_vecs.append(np.empty((0,0), dtype=np.float64))
         
+    # loop over atoms in parallel and calculate voxels in range
     for i in prange(num_atoms):
-        indices, distances = find_voxels_in_atom_range(
-            atom_carts[i], lattice_matrix, grid_dims, r_cut
+        indices, distances, vecs = find_voxels_in_atom_range(
+            atom_fracs[i], lattice_matrix, grid_dims, r_cuts[i]
         )
         all_indices[i] = indices
         all_distances[i] = distances
+        all_vecs[i] = vecs
         
-    return all_indices, all_distances
+    return all_indices, all_distances, all_vecs
 
-# @njit(fastmath=True, parallel=True, cache=True)
-# def interpolate_total_rho_multi(rho_vector, r_grid, distances, paw_r1):
-#     """
-#     Interpolates a single pre-computed 1D radial density profile for an array of distances.
-#     Mimics VASP/PAW core singularity flattening for distances closer than paw_r1.
-#     """
-#     n_distances = distances.shape[0]
-#     results = np.zeros(n_distances, dtype=np.float64)
+@njit(parallel=True, fastmath=True)
+def accumulate_augmentation_core(
+    psi, grad_psi, lap_psi, idx, overlaps, q_vecs,
+    radial_diff, radial_diff_deriv, radial_laplacian,
+    y_lm, grad_y_lm, has_lap
+):
+    """
+    Thread-safe, memory-allocation-free multi-threaded JIT contraction kernel 
+    for local atomic PAW augmentations.
+    """
+    n_bands = psi.shape[0]
+    n_proj = overlaps.shape[1]
+    n_masked = len(idx)
     
-#     # Precompute spline derivatives
-#     y_derivs = precompute_cubic_spline_derivs(r_grid, rho_vector)
-    
-#     for i in prange(n_distances):
-#         # Force the exact origin to evaluate at the flattened PAW grid radius shell
-#         r_eval = distances[i]
-#         if r_eval < paw_r1:
-#             r_eval = paw_r1
-            
-#         results[i] = interp1d_cubic_spline_numba(r_grid, rho_vector, y_derivs, r_eval)
-        
-#     return results
-
-# @njit(fastmath=True, cache=True)
-# def broadcast_atoms_to_grid(
-#     grid_dims,
-#     atom_types,
-#     all_indices,
-#     all_distances,
-#     rho_matrices_list,  # Numba List of 1D arrays
-#     r_grids_list,
-#     paw_r1_list,        # 1D NumPy array of shape (num_atoms_cell,)
-# ):
-#     """Accumulates the net density onto a unified 3D volumetric spatial grid using atom-specific cutoffs."""
-#     nx, ny, nz = grid_dims[0], grid_dims[1], grid_dims[2]
-#     total_voxels = nx * ny * nz
-    
-#     grid_flat = np.zeros(total_voxels, dtype=np.float64)
-#     num_atoms = atom_types.shape[0]
-    
-#     for i in range(num_atoms):
-#         voxel_indices = all_indices[i]
-#         distances = all_distances[i]
-        
-#         if voxel_indices.shape[0] == 0:
-#             continue
-            
-#         atype = atom_types[i]
-#         rho_vector = rho_matrices_list[atype]
-#         r_grid = r_grids_list[atype]
-#         paw_r1_val = paw_r1_list[atype]
-        
-#         # Uses the updated high-fidelity natural cubic spline mapping step
-#         interpolated_rhos = interpolate_total_rho_multi(
-#             rho_vector, r_grid, distances, paw_r1_val
-#         )
-        
-#         for j in range(voxel_indices.shape[0]):
-#             flat_idx = voxel_indices[j]
-#             grid_flat[flat_idx] += interpolated_rhos[j]
-            
-#     return grid_flat.reshape((nx, ny, nz))
+    # Parallelize over bands to ensure thread-isolated memory writes
+    for i_band in prange(n_bands):
+        for proj_idx in range(n_proj):
+            olap = overlaps[i_band, proj_idx]
+            if olap == 0.0 + 0.0j:
+                continue
+                
+            for i_p in range(n_masked):
+                g_idx = idx[i_p]
+                
+                # Cache scalar properties to stay close to CPU registers
+                r_diff = radial_diff[proj_idx, i_p]
+                ylm = y_lm[proj_idx, i_p]
+                r_diff_deriv = radial_diff_deriv[proj_idx, i_p]
+                
+                # 1. Phi_aug accumulation
+                psi[i_band, g_idx] += olap * r_diff * ylm
+                
+                # 2. Gradient phi_aug components accumulation
+                g_ylm_x = grad_y_lm[proj_idx, i_p, 0]
+                g_ylm_y = grad_y_lm[proj_idx, i_p, 1]
+                g_ylm_z = grad_y_lm[proj_idx, i_p, 2]
+                
+                t3c_x = (r_diff_deriv * ylm) * q_vecs[i_p, 0] + r_diff * g_ylm_x
+                t3c_y = (r_diff_deriv * ylm) * q_vecs[i_p, 1] + r_diff * g_ylm_y
+                t3c_z = (r_diff_deriv * ylm) * q_vecs[i_p, 2] + r_diff * g_ylm_z
+                
+                grad_psi[i_band, g_idx, 0] += olap * t3c_x
+                grad_psi[i_band, g_idx, 1] += olap * t3c_y
+                grad_psi[i_band, g_idx, 2] += olap * t3c_z
+                
+                # 3. Laplacian phi_aug accumulation
+                if has_lap:
+                    lap_psi[i_band, g_idx] += olap * radial_laplacian[proj_idx, i_p] * ylm
 
 ###############################################################################
 # Spherical Harmonics
@@ -389,7 +398,7 @@ def evaluate_real_harmonics_grad_multi(
 # Tetrahedron Smearing
 ###############################################################################
 @njit(parallel=True, fastmath=True, cache=True)
-def _integrate_tetrahedra_spectral_density_numba(
+def integrate_tetrahedra_spectral_density(
     egrid,
     tetra_indices,
     eigenvalues,
@@ -526,7 +535,7 @@ def _integrate_tetrahedra_spectral_density_numba(
 
 
 @njit(parallel=True, fastmath=True, cache=True)
-def _integrate_tetrahedra_analytic_charge_numba(
+def integrate_tetrahedra_analytic_charge(
     energy_grid: np.ndarray,
     tetra_indices: np.ndarray,
     eigenvalues: np.ndarray,
@@ -568,7 +577,7 @@ def _integrate_tetrahedra_analytic_charge_numba(
                 if e2 > e4: e2, e4 = e4, e2
                 if e2 > e3: e2, e3 = e3, e2
                 
-                # FIXED: Flat band step-function tracking protects against electron loss
+                # Flat band step-function tracking protects against electron loss
                 if e4 - e1 < 1e-7:
                     for w in range(num_points):
                         if energy_grid[w] >= e1:
@@ -617,51 +626,3 @@ def _integrate_tetrahedra_analytic_charge_numba(
             total_charge[w] += out_spin[s, w]
             
     return total_charge * rspin
-
-# @njit(cache=True, fastmath=True)
-# def evaluate_orbital_g_space(q_vecs, q_norms, l, m, alphas, g_coeffs):
-#     """
-#     Ultra-optimized kernel leveraging pre-baked reciprocal space coefficients
-#     and fully-resolved real spherical harmonics through l=3.
-#     """
-#     n_q = len(q_norms)
-#     out = np.zeros(n_q, dtype=np.complex128)
-    
-#     # 1. Evaluate standard analytical phase factor (-1j)**l
-#     rem = l % 4
-#     if rem == 0:
-#         phase = 1.0 + 0.0j
-#     elif rem == 1:
-#         phase = 0.0 - 1.0j
-#     elif rem == 2:
-#         phase = -1.0 + 0.0j
-#     else: # rem == 3
-#         phase = 0.0 + 1.0j
-
-#     n_alphas = len(alphas)
-
-#     # 2. Vectorized element-wise mapping loop
-#     for i in range(n_q):
-#         q_norm = q_norms[i]
-        
-#         # --- A. Compute Radial Wavefunction Summation ---
-#         radial_val = 0.0
-#         q_sq = q_norm * q_norm
-#         for k in range(n_alphas):
-#             radial_val += g_coeffs[k] * np.exp(-q_sq / (4.0 * alphas[k]))
-            
-#         if l > 0:
-#             radial_val *= q_norm ** float(l)
-            
-#         # --- B. Compute Normalized Direction Cosines & Harmonics ---
-#         if q_norm > 1e-12:
-#             x = q_vecs[i, 0] / q_norm
-#             y = q_vecs[i, 1] / q_norm
-#             z = q_vecs[i, 2] / q_norm
-#             Y_lm = eval_real_harmonics(l, m, x, y, z)
-#         else:
-#             Y_lm = eval_real_harmonics(l, m, 0.0, 0.0, 0.0)
-            
-#         out[i] = phase * Y_lm * radial_val
-        
-#     return out
