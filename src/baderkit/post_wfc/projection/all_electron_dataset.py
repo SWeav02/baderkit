@@ -7,11 +7,10 @@ from pymatgen.core import Element
 from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
-from scipy.interpolate import RegularGridInterpolator, CubicSpline
+from scipy.interpolate import CubicSpline
 from scipy.integrate import simpson
 from baderkit.post_wfc.paw.paw_dataset import PAWSpecies
 from baderkit.post_wfc.base_basis import BaseSpecies
-
 from baderkit.post_wfc.wfc_numba import evaluate_real_harmonics_multi
 
 @dataclass
@@ -67,15 +66,9 @@ class AESpecies(BaseSpecies):
     """2D array of shape (channels, grid) containing radial kinetic energy density (in Angstrom^-5)."""
 
     # CORE RECONSTRUCTION OVERLAPS
-    ae_overlaps: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
-    """2D array of shape (basis_channels, paw_channels) containing the overlap between this basis and the PAW all-electron partial waves."""
-
-    ps_overlaps: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
-    """2D array of shape (basis_channels, paw_channels) containing the overlap between this basis and the PAW pseudo partial waves"""
-
-    core_correction_overlaps: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
+    basis_aug_overlaps: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
     """2D array of shape (basis_channels, paw_channels) containing the overlap between this basis and the PAW partial waves needed for correcting the smooth wavefunction"""
-
+    
     # 1D CONTINUOUS SPLINES
     radial_splines: list = field(default_factory=list)
     """List of scipy.interpolate.CubicSpline objects representing 1D real-space wavefunctions R_nl(r)."""
@@ -83,98 +76,14 @@ class AESpecies(BaseSpecies):
     q_radial_splines: list = field(default_factory=list)
     """List of scipy.interpolate.CubicSpline objects representing 1D reciprocal-space NAO profiles."""
     
-    @property
-    def max_occupancies(self):
-        if getattr(self, "_max_occupancies", None) is None:
-            self._max_occupancies = self.get_occupancies()
-        return self._max_occupancies
-    
-    @property
-    def cumulative_occupancies(self):
-        if getattr(self, "_cumulative_occupancies", None) is None:
-            self._cumulative_occupancies = np.cumulative_sum(self.max_occupancies, include_initial=True)
-        return self._cumulative_occupancies
-    
-    @property
-    def cumulative_radial_rho(self):
-        if getattr(self, "_cumulative_radial_rho", None) is None:
-            self._cumulative_radial_rho = np.cumulative_sum(self.max_occupancies[:, None] * self.radial_rho, axis=0, include_initial=True)
-        return self._cumulative_radial_rho
-    
-    @property
-    def cumulative_radial_tau(self):
-        if getattr(self, "_cumulative_radial_tau", None) is None:
-            self._cumulative_radial_tau = np.cumulative_sum(self.max_occupancies[:, None] * self.radial_tau, axis=0, include_initial=True)
-        return self._cumulative_radial_tau
-    
-    @property
-    def radial_rho_interpolator(self):
-        if getattr(self, "_radial_rho_interpolator", None) is None:
-            self._radial_rho_interpolator = RegularGridInterpolator((self.cumulative_occupancies, self.radial_grid), self.cumulative_radial_rho, method='linear')
-        return self._radial_rho_interpolator
-    
-    @property
-    def radial_tau_interpolator(self):
-        if getattr(self, "_radial_tau_interpolator", None) is None:
-            self._radial_tau_interpolator = RegularGridInterpolator((self.cumulative_occupancies, self.radial_grid), self.cumulative_radial_tau, method='linear')
-        return self._radial_tau_interpolator
-    
     def __post_init__(self):
         """
         Generates the radial rho, kinetic energy density, and NAO radial splines on initialization
         only if they are not already provided (bypasses recalculation for valence subsets).
         """
-        self.radial_rho, self.radial_tau = self._calculate_radial_densities(alpha=1.0)
-        
         self._generate_radial_functions()
 
-        self._calculate_correction_overlap()
-        
-    def get_occupancies(self, min_electrons: float = None, max_electrons: float = None) -> NDArray:
-        """
-        Generates a 1D occupancy array of shape (n_channels,) containing the 
-        number of electrons allocated to each subshell channel within the specified 
-        electron window [min_electrons, max_electrons] using the Aufbau principle.
-        """
-        max_per_state = 1.0 if self.unrestricted else 2.0
-        
-        if min_electrons is None:
-            min_electrons = 0
-        if max_electrons is None:
-            max_electrons = len(self.angular_momenta) * max_per_state
-        
-        if min_electrons > max_electrons:
-            raise ValueError("min_electrons cannot be greater than max_electrons.")
-        
-        n_channels = len(self.eigenvalues)
-        occs = np.zeros(n_channels, dtype=np.float64)
-        
-        prev_count = 0.0
-        for idx in range(n_channels):
-            # Increment current_count
-            current_count = prev_count + max_per_state
-            overlap = max(0.0, min(current_count, max_electrons) - max(prev_count, min_electrons))
-            occs[idx] = overlap
-            prev_count = current_count
-                
-        return occs
-    
-    def get_radial_charge_density(self, min_electrons: float, max_electrons: float) -> NDArray:
-        """
-        Computes the total isotropic radial charge density profiles across a range of total electron counts.
-        """
-        occupancies = self.get_occupancies(min_electrons, max_electrons)
-        total_rho = np.sum(occupancies * self.radial_rho.T, axis=1)
-        return total_rho
-
-    def get_radial_kinetic_energy_density(self, min_electrons: float, max_electrons: float) -> NDArray:
-        """
-        Computes the total isotropic radial positive-definite kinetic energy density (KED) profiles 
-        across a range of total electron counts.
-        """
-        occupancies = self.get_occupancies(min_electrons, max_electrons)
-        total_tau = np.sum(occupancies * self.radial_tau.T, axis=1)
-        return total_tau
+        self._calculate_aug_overlap()
 
     @classmethod
     def from_file(
@@ -223,8 +132,6 @@ class AESpecies(BaseSpecies):
             keep_indices = cls._prune_basis(
                 paw_species, 
                 basis_data=data, 
-                energy_range=energy_range,
-                tol=energy_tol,
                 )
         else:
             keep_indices = [i for i in range(len(data["occupancies"]))]
@@ -291,6 +198,42 @@ class AESpecies(BaseSpecies):
             state_vectors=expanded_states,
             l_slices=l_slices,
         )
+    
+    def evaluate_q_functions(
+        self, 
+        K_vecs,
+        coord,
+        spatial_phase = None,
+    ) -> NDArray:
+        """
+        Calculates the value of the basis functions at the given K grid
+        
+        Returns:
+            NDArray: Complex matrix array of shape (num_channels, N_plane_waves)
+        """
+        n_qvecs = len(K_vecs)
+        n_proj = len(self.angular_momenta)
+        # get phase shift due to atom position
+        if spatial_phase is None:
+            spatial_phase = np.exp(-1j * np.dot(K_vecs, coord))
+                
+        # loop over projectors        
+        basis_vals = np.zeros((n_proj,n_qvecs), np.complex128)
+        for proj_idx in range(n_proj):
+            spline = self.q_radial_splines[proj_idx]
+            l = self.angular_momenta[proj_idx]
+            m = self.magnetic_quantum_numbers[proj_idx]
+            
+            # evaluate angular part
+            p_a, K_mags = evaluate_real_harmonics_multi(l, m, K_vecs)
+            
+            # evaluate radial part
+            p_r = spline(K_mags)
+            
+            # add this basis' values
+            basis_vals[proj_idx] = (spatial_phase * p_r * p_a)
+        
+        return basis_vals
         
     ###########################################################################
     # Utility Functions
@@ -331,10 +274,8 @@ class AESpecies(BaseSpecies):
     def _prune_basis(
         paw_species: PAWSpecies,
         basis_data: dict,
-        energy_range: tuple | None,
-        tol: float = 0.1,
         ):
-        # BELOW PSEUDO-CORE
+        # Prune basis below pseudo core
         Z = paw_species.Z
         
         occupancies = np.where(basis_data["occupancies"] > 1e-4, basis_data["occupancies"], 0.0)
@@ -342,27 +283,15 @@ class AESpecies(BaseSpecies):
         
         # loop over indices in reverse until we match pseudopotential
         accumulated_charge = 0.0
+        valid_bases = []
         for idx in occupied_indices:
             l = basis_data["angular_momenta"][idx]
             accumulated_charge += occupancies[idx] * (2 * l + 1)
+            valid_bases.append(idx)
             if accumulated_charge >= Z - 1e-4:
-                min_idx = idx
                 break
-            
-        if energy_range is None:
-            e_min = basis_data["energies"][min_idx]
-            e_max = basis_data["energies"].max()
-        else:
-            e_min, e_max = energy_range
         
-        # ABOVE SYSTEM ENERGY RANGE
-        # adjust to systems lowest energy
-        atom_energies = basis_data["energies"] + (e_min - basis_data["energies"][min_idx])
-        # get mask where basis is below max allowed energy
-        valid_bases = atom_energies <= (e_max * (1+tol))
-        valid_bases[:min_idx] = False
-        
-        return np.where(valid_bases)[0]
+        return np.flip(np.asarray(valid_bases))
         
     @staticmethod
     def _build_radial_grid(
@@ -522,7 +451,7 @@ class AESpecies(BaseSpecies):
                 
             self.radial_functions[idx, :] = R_normalized
     
-            # Construct exact analytical spherical Bessel transform in G-space
+            # Construct spherical Bessel transform in G-space
             phi_q = np.zeros_like(q_grid)
             for alpha, c in zip(alphas_state, coeffs_state):
                 amplitude_factor = (np.pi / alpha) ** 1.5
@@ -545,7 +474,13 @@ class AESpecies(BaseSpecies):
         self.radial_splines = self._create_1d_splines(real_grid, self.radial_functions)
         self.q_radial_splines = self._create_1d_splines(q_grid, self.q_radial_functions)
             
-    def _calculate_correction_overlap(self):
+    def _calculate_aug_overlap(self):
+        """
+        Calculates the local basis and augmentation overlap:
+            $$\langle \chi_{\rho\mathbf{k}} | \bar{\phi}_\alpha \rangle = \delta_{AA'} \delta_{ll'} \delta_{mm'} \int_0^{r_c^A} \chi_{\rho}^*(r) \bar{\phi}_\alpha(r) dr$$
+        We assume negligible overlap between orbitals on differing atom centers.
+        The output is a N-basis-channels x N-PAW-channels matrix where entries are the overlaps
+        """
         # get grid. Matches PAW grid but extends beyond it.
         grid = self.radial_grid
         grid_sq = grid ** 2
@@ -559,8 +494,9 @@ class AESpecies(BaseSpecies):
             spacing = np.diff(grid)
         dx = spacing[0]
         
-        # Get local basis radial functions and PAW partial waves
+        # Get local basis radial functions
         local_functions = self.radial_functions
+        # Get all electron and pseudo partial waves
         paw_ae_waves = self.paw_species.all_electron_partial_waves
         paw_ps_waves = self.paw_species.pseudo_partial_waves
         
@@ -568,7 +504,7 @@ class AESpecies(BaseSpecies):
         r_cs = self.paw_species.paw_cutoffs
         
         # Initialize containers (orbital_index, projector_index)
-        self.core_correction_overlaps = np.empty((len(local_functions), len(paw_ae_waves)))
+        self.basis_aug_overlaps = np.empty((len(local_functions), len(paw_ae_waves)))
         
         # Loop over each basis function
         for alpha, chi_alpha in enumerate(local_functions):
@@ -580,16 +516,16 @@ class AESpecies(BaseSpecies):
                 l_b = self.paw_species.angular_momenta[i]
                 m_b = self.paw_species.magnetic_quantum_numbers[i]
                 
-                # enforce kronecker delta
+                # enforce kronecker delta. Atom index is enforced by the class
                 if l_a != l_b or m_a != m_b:
-                    self.core_correction_overlaps[alpha, i] = 0.0
+                    self.basis_aug_overlaps[alpha, i] = 0.0
                     continue
                 
                 # Get cutoff radius and mask
                 r_c = r_cs[i]
                 mask = np.where(grid < r_c)[0]
                 
-                # cut down to maks size
+                # cut down to mask size
                 chi_cut = chi_alpha[mask]
                 phi_ps = paw_ps_waves[i][mask]
                 phi_ae = paw_ae_waves[i][mask]
@@ -604,90 +540,9 @@ class AESpecies(BaseSpecies):
                     grid_cut = grid_sq[mask]
                     
                 # <chi|phi> = integral(r^2*chi(r)*phi(r)dr)
-                diff_integrand = grid_cut * chi_cut * (phi_ae-phi_ps)
+                diff_integrand = grid_cut * chi_cut.conj() * (phi_ae-phi_ps)
                 
                 diff_overlap = simpson(y=diff_integrand, dx=dx)
                 
                 # Store results
-                self.core_correction_overlaps[alpha, i] = diff_overlap
-                
-    def _calculate_radial_densities(self, alpha: float) -> tuple[NDArray, NDArray]:
-        """
-        Evaluates the radial charge density (rho) and positive-definite kinetic energy density (tau) 
-        profiles natively in Angstrom units for a given primitive exponent scaling multiplier (alpha).
-        Calculations strictly enforce spherical averaging over the full angular harmonic space.
-        """
-        real_grid = self.radial_grid
-        
-        num_states = len(self.eigenvalues)
-        num_grid = len(self.radial_grid)
-        radial_rho = np.zeros((num_states, num_grid), dtype=np.float64)
-        radial_tau = np.zeros((num_states, num_grid), dtype=np.float64)
-        
-        for idx in range(num_states):
-            l = self.angular_momenta[idx]
-            if l in self.primitives:
-                c_data = self.primitives[l]
-                exps = alpha * c_data["exps"] 
-                coeffs = c_data["coeffs"]
-                offsets = c_data["offsets"]
-                
-                # Directly slice the linear state coefficients out of the flat database row
-                start_l, end_l = self.l_slices[l]
-                c_state = self.state_vectors[idx, start_l:end_l]
-                
-                dim = len(c_state)
-                phi = np.zeros((dim, num_grid), dtype=np.float64)
-                
-                r_pow_l = real_grid ** l
-                r_pow_l_plus_1 = real_grid ** (l + 1)
-                
-                # Analytical accumulation vectors to avoid division-by-zero errors at r=0
-                sum_0_matrix = np.zeros((dim, num_grid), dtype=np.float64)
-                sum_1_matrix = np.zeros((dim, num_grid), dtype=np.float64)
-                
-                for p in range(dim):
-                    start = offsets[p]
-                    end = offsets[p+1]
-                    
-                    sum_0 = np.zeros(num_grid, dtype=np.float64)
-                    sum_1 = np.zeros(num_grid, dtype=np.float64)
-                    for k in range(start, end):
-                        exp_factor = np.exp(-exps[k] * (real_grid ** 2))
-                        sum_0 += coeffs[k] * exp_factor
-                        sum_1 += coeffs[k] * exps[k] * exp_factor
-                    
-                    sum_0_matrix[p, :] = sum_0
-                    sum_1_matrix[p, :] = sum_1
-                    phi[p, :] = r_pow_l * sum_0
-                
-                # Pure state vector transformations 
-                phi_state = np.dot(c_state, phi)
-                sum_0_state = np.dot(c_state, sum_0_matrix)
-                sum_1_state = np.dot(c_state, sum_1_matrix)
-                
-                # Evaluate derivatives and kinetic components analytically.
-                if l == 0:
-                    phi_prime_state = -2.0 * real_grid * sum_1_state
-                    raw_tau = 0.5 * (phi_prime_state * phi_prime_state)
-                else:
-                    r_pow_l_minus_1 = real_grid ** (l - 1)
-                    phi_prime_state = l * r_pow_l_minus_1 * sum_0_state - 2.0 * r_pow_l_plus_1 * sum_1_state
-                    phi_state_over_r = r_pow_l_minus_1 * sum_0_state
-                    raw_tau = 0.5 * ((phi_prime_state * phi_prime_state) + l * (l + 1) * (phi_state_over_r * phi_state_over_r))
-                
-                # Scale by 1/(4*pi) to obtain the perfectly isotropic spherical average per electron
-                rho_final = (phi_state * phi_state) / (4.0 * np.pi)
-                tau_final = raw_tau / (4.0 * np.pi)
-                
-                # Normalize density profiles accurately inside r-space
-                integrated_charge = np.trapezoid(4.0 * np.pi * (self.radial_grid ** 2) * rho_final, self.radial_grid)
-                
-                if integrated_charge > 1e-6:
-                    rho_final /= integrated_charge
-                    tau_final /= integrated_charge
-                
-                radial_rho[idx, :] = rho_final
-                radial_tau[idx, :] = tau_final
-                
-        return radial_rho, radial_tau
+                self.basis_aug_overlaps[alpha, i] = diff_overlap

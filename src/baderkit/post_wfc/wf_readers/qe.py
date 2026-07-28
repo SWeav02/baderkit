@@ -229,7 +229,7 @@ class QeReader(BaseWfcReader):
                 f.seek(4, 1)  # Skip leading band delimiter
                 coeffs_list.append(np.fromfile(f, dtype=self.meta.cplx_dtype, count=nspin_file * n_gvec))
                 
-        return np.array(coeffs_list)
+        return np.array(coeffs_list).T
 
     def read_gvectors(self, ikpt: int) -> np.ndarray:
         """Extracts the precise integer Miller indices (h, k, l) from Record 4 ('mill')."""

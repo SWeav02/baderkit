@@ -5,12 +5,14 @@ from pathlib import Path
 from functools import cached_property
 import logging
 import psutil
+import h5py
 
 import numpy as np
 from numpy.typing import NDArray
 from scipy.integrate import cumulative_trapezoid
 from scipy.fft import fftn, ifftn, set_workers
-from rich.progress import Progress
+from rich.progress import Progress, track
+from rich import print as rprint
 
 from baderkit.post_wfc.wf_readers.base import HSQDTM
 
@@ -23,6 +25,10 @@ from baderkit.post_wfc.wfc_numba import (
     find_all_voxels_parallel
     )
 
+# TODO:
+    # - Update density calculations to use precalculated psi
+    # - Add validity check to ensure IAO construction works
+
 class BaseWavefunctionEnvironment(ABC):
     """
     Abstract baseline context managing shared structural parameters, k-point meshes,
@@ -31,6 +37,7 @@ class BaseWavefunctionEnvironment(ABC):
     """
     def __init__(
         self, 
+        directory=None,
         wf_reader=None, 
         paw_datasets=None,
         valence_counts=None,
@@ -52,6 +59,8 @@ class BaseWavefunctionEnvironment(ABC):
             return
             
         # Otherwise, this is the master instance: initialize state variables natively
+        self.directory = directory
+        self._psi_file = directory / "wave.h5"
         self._wf_reader = wf_reader
         self._meta = wf_reader.meta
         self._paw_datasets = paw_datasets
@@ -93,6 +102,8 @@ class BaseWavefunctionEnvironment(ABC):
         self._tetrahedra_indices = None
         
         self._fft_grid, self._fft_grid_shape = self._get_fft_grid(grid_shape)
+        
+        self._save_psi()
 
     # --- FLUENT SWITCHING INTERFACE POOL ---
     @property
@@ -491,7 +502,7 @@ class BaseWavefunctionEnvironment(ABC):
             # get all voxel indices and distances
             r_cuts = np.array([self.paw_datasets[site.specie.symbol].max_paw_cutoff for site in self.structure], dtype=np.float64)
             grid_dims = np.array(grid_shape, dtype=np.int32)
-            all_indices, all_distances, all_d_vecs = find_all_voxels_parallel(self.structure.frac_coordss, self.lattice, grid_dims, r_cuts)
+            all_indices, all_distances, all_d_vecs = find_all_voxels_parallel(self.structure.frac_coords, self.lattice, grid_dims, r_cuts)
         
         # loop over atoms in the structure
         for atom_idx, site in enumerate(self.structure):
@@ -548,21 +559,21 @@ class BaseWavefunctionEnvironment(ABC):
                 m = local_basis.magnetic_quantum_numbers[proj_idx]
                 
                 # Get radial diff value at all points using cached spline
-                raw_diff = local_basis.partial_radial_diff_splines[proj_idx](atom_dists_ch)
+                raw_diff = local_basis.partial_wave_diff_splines[proj_idx](atom_dists_ch)
                 # convert nan values to 0
                 radial_diff_all[proj_idx, ch_mask] = np.where(np.isnan(raw_diff), 0.0, raw_diff)
                 
                 # same for the derivatives
-                raw_deriv = local_basis.partial_radial_diff_splines[proj_idx].derivative(nu=1)(atom_dists_ch)
+                raw_deriv = local_basis.partial_wave_diff_splines[proj_idx].derivative(nu=1)(atom_dists_ch)
                 radial_diff_deriv_all[proj_idx, ch_mask] = np.where(np.isnan(raw_deriv), 0.0, raw_deriv)
                 
                 # evaluate real harmonics and their gradient for this atom
-                y_lm_all[proj_idx, ch_mask] = evaluate_real_harmonics_multi(l, m, atom_q_vecs_ch)
+                y_lm_all[proj_idx, ch_mask], _ = evaluate_real_harmonics_multi(l, m, atom_q_vecs_ch)
                 grad_y_lm_all[proj_idx, ch_mask] = evaluate_real_harmonics_grad_multi(l, m, atom_q_vecs_ch, atom_dists_ch).T
                 
                 if compute_laplacian:
                     # get second derivatives
-                    raw_deriv2 = local_basis.partial_radial_diff_splines[proj_idx].derivative(nu=2)(atom_dists_ch)
+                    raw_deriv2 = local_basis.partial_wave_diff_splines[proj_idx].derivative(nu=2)(atom_dists_ch)
                     radial_diff_deriv2 = np.where(np.isnan(raw_deriv2), 0.0, raw_deriv2)
                     
                     # compute radial laplacian
@@ -632,7 +643,7 @@ class BaseWavefunctionEnvironment(ABC):
         active_bands = active_bands[valid_mask]
         weights = weights[valid_mask]
 
-        # Extract wave function coefficients from the file reader or projection
+        # Extract wave function coefficients
         coeffs = self._construct_coefficients(ispin, ikpt, active_bands)
         
         # Scale coefficients by the calculated normalization state weight
@@ -649,7 +660,7 @@ class BaseWavefunctionEnvironment(ABC):
 
         # apply projector matrix
         overlaps_list = [
-            np.dot(precomputed_projectors[atom_idx] , coeffs)
+            np.dot(coeffs, precomputed_projectors[atom_idx].T)
             for atom_idx in range(len(self.structure))
         ]
 
@@ -661,7 +672,6 @@ class BaseWavefunctionEnvironment(ABC):
                 
             # use dummy lap_psi if not requested for numba safety
             lap_psi_param = np.empty((0, 0), dtype=np.complex128) if lap_psi is None else lap_psi
-            
             # results are added to arrays in place
             accumulate_augmentation_core(
                 psi, 
@@ -780,55 +790,50 @@ class BaseWavefunctionEnvironment(ABC):
                 compute_laplacian=need_laplacian
             )
     
-        with Progress() as progress:
-            task = progress.add_task("[bold blue]Evaluating Quantum Densities...", total=total_iterations)
+        for ikpt in track(range(self.nkpoints), description="[bold blue]Evaluating Quantum Densities...", total=total_iterations):
+            # Compute G-space projectors once per k-point
+            k_projectors = []
+            if include_aug:
+                # Get K = k + G
+                G_basis_cart = self.get_g_vectors_cart(ikpt)
+                k_cart = self.kpoints_cart[ikpt]
+                K_vecs = G_basis_cart + k_cart[np.newaxis, :]
+                for atom_idx, site in enumerate(self.structure):
+                    symbol = site.specie.symbol
+                    local_basis = self.paw_datasets[symbol]
+                    k_projectors.append(local_basis.evaluate_q_projectors(
+                        K_vecs, 
+                        site.coords,
+                        ))
             
-            for ikpt in range(self.nkpoints):
-                # Precompute G-space projectors once per k-point
-                k_projectors = []
-                if include_aug:
-                    K_cart = self.get_K_vectors_cart(ikpt)
-                    for atom_idx, site in enumerate(self.structure):
-                        symbol = site.specie.symbol
-                        local_basis = self.paw_datasets[symbol]
-                        atom_phases = np.exp(-1j * np.dot(K_cart, self.structure.cart_coords[atom_idx]))
-                        k_projectors.append(local_basis.build_g_space_conj_projectors(K_cart, atom_phases))
+            for ispin in spin_indices:
+                # get rho/tau contributions at this k point
+                metrics_block = self._compute_density_metrics_block(
+                    return_grad_rho_sq=return_grad_rho_sq, 
+                    return_lap_rho=return_lap_rho, 
+                    use_shrod_tau=use_shrod_tau, 
+                    compute_laplacian=need_laplacian,
+                    ispin=ispin, 
+                    ikpt=ikpt, 
+                    energy_range=energy_range, 
+                    use_partial_occ=use_partial_occ, 
+                    cart_coords=cart_coords, 
+                    include_aug=include_aug, 
+                    phi_callback=phi_callback, 
+                    precomputed_aug_data=precomputed_aug_data,
+                    precomputed_projectors=k_projectors,
+                )
                 
-                for ispin in spin_indices:
-                    progress.update(
-                        task, 
-                        description=f"[bold blue]Evaluating Densities[/] (K-point {ikpt + 1}/{self.nkpoints}, Spin {ispin})"
-                    )
-                    
-                    # get rho/tau contributions at this k point
-                    metrics_block = self._compute_density_metrics_block(
-                        return_grad_rho_sq=return_grad_rho_sq, 
-                        return_lap_rho=return_lap_rho, 
-                        use_shrod_tau=use_shrod_tau, 
-                        compute_laplacian=need_laplacian,
-                        ispin=ispin, 
-                        ikpt=ikpt, 
-                        energy_range=energy_range, 
-                        use_partial_occ=use_partial_occ, 
-                        cart_coords=cart_coords, 
-                        include_aug=include_aug, 
-                        phi_callback=phi_callback, 
-                        precomputed_aug_data=precomputed_aug_data,
-                        precomputed_projectors=k_projectors,
-                    )
-                    
-                    if metrics_block is not None:
-                        rho += np.sum(metrics_block["rho"], axis=0)
-                        tau += np.sum(metrics_block["tau"], axis=0)
-        
-                        if return_grad_rho_sq:
-                            grad_rho_sq += np.sum(metrics_block["grad_rho_sq"], axis=0)
-        
-                        if need_laplacian and return_lap_rho:
-                            lap_rho += np.sum(metrics_block["lap_rho"], axis=0)
-                    
-                    progress.advance(task, 1)
-        
+                if metrics_block is not None:
+                    rho += np.sum(metrics_block["rho"], axis=0)
+                    tau += np.sum(metrics_block["tau"], axis=0)
+    
+                    if return_grad_rho_sq:
+                        grad_rho_sq += np.sum(metrics_block["grad_rho_sq"], axis=0)
+    
+                    if need_laplacian and return_lap_rho:
+                        lap_rho += np.sum(metrics_block["lap_rho"], axis=0)
+                
         return (
             rho/norm_factor, 
             tau/norm_factor, 
@@ -1905,6 +1910,149 @@ class BaseWavefunctionEnvironment(ABC):
         
         plt.tight_layout()
         return fig
+    
+    ###########################################################################
+    # Convenient Storage
+    ###########################################################################
+    
+    
+    def _save_psi(self):
+        """Calculates and saves psi_ae, psi_ps, laplacian, and gradient vectors in reciprocal
+    
+        space grouped by k-point without padding.
+        """
+        structure = self.structure
+        atom_positions = structure.cart_coords
+        nspin = self.nspin
+        nkpoints = self.nkpoints
+        nbands = self.nbands
+        sqrt_vol = np.sqrt(structure.volume)
+    
+        with h5py.File(self._psi_file, "w") as file:
+            grp_psi_ae = file.create_group("psi_ae")
+            grp_psi_ps = file.create_group("psi_ps")
+            grp_lap_ae = file.create_group("laplacian_ae")
+            grp_grad_ae = file.create_group("gradient_ae")
+    
+            for ikpt in track(
+                range(nkpoints),
+                description="[bold blue]Calculating All-electron Psi & Derivatives...",
+                total=nkpoints,
+            ):
+                G_basis_cart = self.get_g_vectors_cart(ikpt)
+                ngvecs = len(G_basis_cart)
+                k_cart = self.kpoints_cart[ikpt]
+    
+                # Reciprocal wavevectors K = k + G  (shape: ngvecs, 3)
+                K_vecs = G_basis_cart + k_cart[np.newaxis, :]
+    
+                # Pre-compute |K|^2 for Laplacian operator
+                K_sq = np.sum(K_vecs**2, axis=1)  # shape: (ngvecs,)
+    
+                # Create datasets for this k-point
+                dset_ae_k = grp_psi_ae.create_dataset(
+                    f"{ikpt}",
+                    shape=(nspin, nbands, ngvecs),
+                    dtype=np.complex128,
+                    chunks=(1, nbands, ngvecs),
+                    compression="lzf",
+                )
+                dset_ps_k = grp_psi_ps.create_dataset(
+                    f"{ikpt}",
+                    shape=(nspin, nbands, ngvecs),
+                    dtype=np.complex128,
+                    chunks=(1, nbands, ngvecs),
+                    compression="lzf",
+                )
+                dset_lap_k = grp_lap_ae.create_dataset(
+                    f"{ikpt}",
+                    shape=(nspin, nbands, ngvecs),
+                    dtype=np.complex128,
+                    chunks=(1, nbands, ngvecs),
+                    compression="lzf",
+                )
+                # Shape: (nspin, 3_components, nbands, ngvecs)
+                dset_grad_k = grp_grad_ae.create_dataset(
+                    f"{ikpt}",
+                    shape=(nspin, 3, nbands, ngvecs),
+                    dtype=np.complex128,
+                    chunks=(1, 3, nbands, ngvecs),
+                    compression="lzf",
+                )
+    
+                # Build PAW matrices for this k-point
+                paw_projector_matrices = []
+                partial_diffs_list = []
+    
+                for atom_idx, site in enumerate(structure):
+                    paw_basis = self.paw_datasets[site.specie.symbol]
+                    pos = atom_positions[atom_idx]
+                    spatial_phase = np.exp(-1j * np.dot(K_vecs, pos))
+    
+                    proj = paw_basis.evaluate_q_projectors(
+                        K_vecs, pos, spatial_phase=spatial_phase
+                    )
+                    paw_projector_matrices.append(proj)
+    
+                    diff = paw_basis.evaluate_partial_diffs(
+                        K_vecs, pos, spatial_phase=spatial_phase
+                    )
+                    if diff.shape[0] != ngvecs:
+                        diff = diff.T
+                    partial_diffs_list.append(diff)
+    
+                paw_projector_matrix = np.vstack(paw_projector_matrices)
+                partial_diffs_mat = np.hstack(partial_diffs_list)
+    
+                for ispin in range(nspin):
+                    coeffs = self._wf_reader.read_coefficients_batch(
+                        ispin, ikpt, np.arange(nbands)
+                    ).T  # (ngvecs, nbands)
+    
+                    # 1. Compute All-Electron Wavefunction
+                    psi_ps = coeffs / sqrt_vol
+                    p_psi_ps = (paw_projector_matrix.conj() @ coeffs) / sqrt_vol
+                    psi_aug = partial_diffs_mat @ p_psi_ps
+                    psi_ae = psi_ps + psi_aug  # (ngvecs, nbands)
+    
+                    # 2. Compute Laplacian: \nabla^2 \psi_AE = -|K|^2 * \psi_AE
+                    lap_ae = -K_sq[:, np.newaxis] * psi_ae  # (ngvecs, nbands)
+    
+                    # 3. Compute Gradient vector: \nabla \psi_AE = i * K * \psi_AE
+                    # Broadcasting (ngvecs, 3, 1) * (ngvecs, 1, nbands) -> (ngvecs, 3, nbands)
+                    grad_ae = (
+                        1j * K_vecs[:, :, np.newaxis] * psi_ae[:, np.newaxis, :]
+                    )
+    
+                    # Save datasets
+                    dset_ps_k[ispin] = psi_ps.T
+                    dset_ae_k[ispin] = psi_ae.T
+                    dset_lap_k[ispin] = lap_ae.T
+                    # Reorder grad_ae from (ngvecs, 3, nbands) -> (3, nbands, ngvecs)
+                    dset_grad_k[ispin] = np.moveaxis(
+                        grad_ae, [0, 1, 2], [2, 0, 1]
+                    )
+                    
+    def fetch_psi(self, ispin, ikpt, iband, order=0, pseudo=False):
+        with h5py.File(self._psi_file, "r") as file:  # Fixed mode from 'w' to 'r'
+            if pseudo and order == 0:
+                group = f"psi_ps/{ikpt}"
+            elif not pseudo:
+                if order == 0:
+                    group = f"psi_ae/{ikpt}"
+                elif order == 1:
+                    group = f"gradient_ae/{ikpt}"
+                elif order == 2:
+                    group = f"laplacian_ae/{ikpt}"
+            else:
+                raise ValueError(
+                    f"Invalid order {order} for psi. Must be 0 for pseudo or 0-2"
+                    " for all electron"
+                )
+    
+            if order == 1:  # Shape (3, ngvecs)
+                return file[group][ispin, :, iband]
+            return file[group][ispin, iband]  # Shape (ngvecs,)
 
     ###########################################################################
     # From methods
@@ -1933,11 +2081,12 @@ class BaseWavefunctionEnvironment(ABC):
         
         # Safely pop out environment arguments to insulate reader construction from TypeErrors
         reader_kwargs = kwargs.copy()
-        cutoff_radius = reader_kwargs.pop("cutoff_radius", 15)
+        reader_kwargs.pop("cutoff_radius", 15)
         basis_dir = reader_kwargs.pop("basis_dir", None)
         valence_counts = reader_kwargs.pop("valence_counts", None)
         
         return cls(
+            directory=directory,
             wf_reader=wf_reader(directory=Path(directory), nbands=nbands, **reader_kwargs), 
             paw_datasets=paw_datasets,
             scipy_workers=scipy_workers,

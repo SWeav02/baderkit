@@ -63,7 +63,7 @@ def find_active_periodic_atoms(lattice_matrix, base_frac_coords, atom_types, r_c
                         
     return out_frac[:count], out_cart[:count], out_types[:count], out_base_indices[:count]
 
-@njit(cache=True, fastmath=True)
+# @njit(cache=True, fastmath=True)
 def find_voxels_in_atom_range(atom_frac, lattice_matrix, grid_dims, r_cut):
     nx, ny, nz = grid_dims[0], grid_dims[1], grid_dims[2]
     
@@ -127,7 +127,7 @@ def find_voxels_in_atom_range(atom_frac, lattice_matrix, grid_dims, r_cut):
                     
     return out_indices[:count], out_distances[:count], out_vecs[count]
 
-@njit(parallel=True, fastmath=True, cache=True)
+# @njit(parallel=True, fastmath=True, cache=True)
 def find_all_voxels_parallel(
         atom_fracs, 
         lattice_matrix, 
@@ -210,7 +210,6 @@ def accumulate_augmentation_core(
 # Spherical Harmonics
 ###############################################################################
 
-# @njit(cache=True, fastmath=True, parallel=True)
 def evaluate_real_harmonics_multi(l: int, m: int, q_vecs: NDArray) -> NDArray:
     """
     Computes standard orthonormal real spherical harmonics Y_lm in Cartesian coordinates.
@@ -222,37 +221,37 @@ def evaluate_real_harmonics_multi(l: int, m: int, q_vecs: NDArray) -> NDArray:
     x, y, z = u[:, 0], u[:, 1], u[:, 2]
     
     if l == 0:
-        return np.full_like(norms, 0.5 * np.sqrt(1.0 / np.pi))
+        return np.full_like(norms, 0.5 * np.sqrt(1.0 / np.pi)), norms
     elif l == 1:
-        if m == -1:   return np.sqrt(3.0 / (4.0 * np.pi)) * y      # p_y
-        elif m == 0:  return np.sqrt(3.0 / (4.0 * np.pi)) * z      # p_z
-        elif m == 1:  return np.sqrt(3.0 / (4.0 * np.pi)) * x      # p_x
+        if m == -1:   return np.sqrt(3.0 / (4.0 * np.pi)) * y, norms      # p_y
+        elif m == 0:  return np.sqrt(3.0 / (4.0 * np.pi)) * z, norms      # p_z
+        elif m == 1:  return np.sqrt(3.0 / (4.0 * np.pi)) * x, norms      # p_x
     elif l == 2:
-        if m == -2:   return 0.5 * np.sqrt(15.0 / np.pi) * x * y   # d_xy
-        elif m == -1: return 0.5 * np.sqrt(15.0 / np.pi) * y * z   # d_yz
-        elif m == 0:  return 0.25 * np.sqrt(5.0 / np.pi) * (3.0 * z**2 - 1.0) # d_z2
-        elif m == 1:  return 0.5 * np.sqrt(15.0 / np.pi) * x * z   # d_xz
-        elif m == 2:  return 0.25 * np.sqrt(15.0 / np.pi) * (x**2 - y**2) # d_x2-y2
+        if m == -2:   return 0.5 * np.sqrt(15.0 / np.pi) * x * y, norms   # d_xy
+        elif m == -1: return 0.5 * np.sqrt(15.0 / np.pi) * y * z, norms   # d_yz
+        elif m == 0:  return 0.25 * np.sqrt(5.0 / np.pi) * (3.0 * z**2 - 1.0), norms # d_z2
+        elif m == 1:  return 0.5 * np.sqrt(15.0 / np.pi) * x * z, norms   # d_xz
+        elif m == 2:  return 0.25 * np.sqrt(15.0 / np.pi) * (x**2 - y**2), norms # d_x2-y2
     elif l == 3:
         # f-orbitals
-        if m == -3:   return 0.25 * np.sqrt(35.0 / (2.0 * np.pi)) * y * (3.0 * x**2 - y**2)
-        elif m == -2: return 0.5 * np.sqrt(105.0 / np.pi) * x * y * z
-        elif m == -1: return 0.25 * np.sqrt(21.0 / (2.0 * np.pi)) * y * (5.0 * z**2 - 1.0)
-        elif m == 0:  return 0.25 * np.sqrt(7.0 / np.pi) * z * (5.0 * z**2 - 3.0)
-        elif m == 1:  return 0.25 * np.sqrt(21.0 / (2.0 * np.pi)) * x * (5.0 * z**2 - 1.0)
-        elif m == 2:  return 0.25 * np.sqrt(105.0 / (2.0 * np.pi)) * z * (x**2 - y**2)
-        elif m == 3:  return 0.25 * np.sqrt(35.0 / (2.0 * np.pi)) * x * (x**2 - 3.0 * y**2)
+        if m == -3:   return 0.25 * np.sqrt(35.0 / (2.0 * np.pi)) * y * (3.0 * x**2 - y**2), norms
+        elif m == -2: return 0.5 * np.sqrt(105.0 / np.pi) * x * y * z, norms
+        elif m == -1: return 0.25 * np.sqrt(21.0 / (2.0 * np.pi)) * y * (5.0 * z**2 - 1.0), norms
+        elif m == 0:  return 0.25 * np.sqrt(7.0 / np.pi) * z * (5.0 * z**2 - 3.0), norms
+        elif m == 1:  return 0.25 * np.sqrt(21.0 / (2.0 * np.pi)) * x * (5.0 * z**2 - 1.0), norms
+        elif m == 2:  return 0.25 * np.sqrt(105.0 / (2.0 * np.pi)) * z * (x**2 - y**2), norms
+        elif m == 3:  return 0.25 * np.sqrt(35.0 / (2.0 * np.pi)) * x * (x**2 - 3.0 * y**2), norms
     elif l == 4:
         # g-orbitals
-        if m == -4:   return 0.75 * np.sqrt(35.0 / np.pi) * x * y * (x**2 - y**2)
-        elif m == -3: return 0.75 * np.sqrt(35.0 / (2.0 * np.pi)) * y * z * (3.0 * x**2 - y**2)
-        elif m == -2: return 0.75 * np.sqrt(5.0 / np.pi) * x * y * (7.0 * z**2 - 1.0)
-        elif m == -1: return 0.75 * np.sqrt(5.0 / (2.0 * np.pi)) * y * z * (7.0 * z**2 - 3.0)
-        elif m == 0:  return 0.1875 * np.sqrt(1.0 / np.pi) * (35.0 * z**4 - 30.0 * z**2 + 3.0)
-        elif m == 1:  return 0.75 * np.sqrt(5.0 / (2.0 * np.pi)) * x * z * (7.0 * z**2 - 3.0)
-        elif m == 2:  return 0.375 * np.sqrt(5.0 / np.pi) * (x**2 - y**2) * (7.0 * z**2 - 1.0)
-        elif m == 3:  return 0.75 * np.sqrt(35.0 / (2.0 * np.pi)) * x * z * (x**2 - 3.0 * y**2)
-        elif m == 4:  return 0.1875 * np.sqrt(35.0 / np.pi) * (x**4 - 6.0 * x**2 * y**2 + y**4)
+        if m == -4:   return 0.75 * np.sqrt(35.0 / np.pi) * x * y * (x**2 - y**2), norms
+        elif m == -3: return 0.75 * np.sqrt(35.0 / (2.0 * np.pi)) * y * z * (3.0 * x**2 - y**2), norms
+        elif m == -2: return 0.75 * np.sqrt(5.0 / np.pi) * x * y * (7.0 * z**2 - 1.0), norms
+        elif m == -1: return 0.75 * np.sqrt(5.0 / (2.0 * np.pi)) * y * z * (7.0 * z**2 - 3.0), norms
+        elif m == 0:  return 0.1875 * np.sqrt(1.0 / np.pi) * (35.0 * z**4 - 30.0 * z**2 + 3.0), norms
+        elif m == 1:  return 0.75 * np.sqrt(5.0 / (2.0 * np.pi)) * x * z * (7.0 * z**2 - 3.0), norms
+        elif m == 2:  return 0.375 * np.sqrt(5.0 / np.pi) * (x**2 - y**2) * (7.0 * z**2 - 1.0), norms
+        elif m == 3:  return 0.75 * np.sqrt(35.0 / (2.0 * np.pi)) * x * z * (x**2 - 3.0 * y**2), norms
+        elif m == 4:  return 0.1875 * np.sqrt(35.0 / np.pi) * (x**4 - 6.0 * x**2 * y**2 + y**4), norms
     return np.zeros_like(norms)
 
 def evaluate_real_harmonics_grad_multi(

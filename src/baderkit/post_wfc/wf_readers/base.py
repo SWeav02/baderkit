@@ -83,6 +83,8 @@ class BaseWfcReader(ABC):
         """
         Streams complex plane-wave coefficients for multiple bands simultaneously 
         during a single file handle session to eliminate disk I/O thrashing.
+        
+        shape: nbands x nplanewaves
         """
         pass
     

@@ -4,7 +4,6 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
 from pathlib import Path
-from scipy.integrate import simpson
 
 from baderkit.post_wfc.wfc_numba import evaluate_real_harmonics_multi
 from baderkit.post_wfc.base_basis import BaseSpecies
@@ -35,15 +34,15 @@ class PAWSpecies(BaseSpecies):
     q_projector_splines: list = field(default_factory=list)
     """List of scipy.interpolate.CubicSpline objects representing 1D reciprocal-space projector profiles."""
     
-    partial_radial_diffs: list = field(default_factory=list)
+    partial_wave_diffs: list = field(default_factory=list)
     """List of 1D arrays representing the difference between the all electorn and pseudo partial waves"""
     
-    partial_radial_diff_splines: list = field(default_factory=list)
+    partial_wave_diff_splines: list = field(default_factory=list)
     """List of scipy.interpolate.CubicSpline objects representing 1D partial plane differences."""
     
     # OVERLAP MATRIX
-    paw_overlap_matrix: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
-    """2D array of shape (num_channels, num_channels) representing the overlap matrix"""
+    # paw_overlap_matrix: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
+    # """2D array of shape (num_channels, num_channels) representing the overlap matrix"""
 
     
     def __post_init__(self):
@@ -53,7 +52,6 @@ class PAWSpecies(BaseSpecies):
 
         self.q_projector_splines = self._create_1d_splines(self.q_radial_grid, self.q_projectors)
         self._precompute_radial_diffs()
-        self._precompute_overlap_matrices()
         
             
     def _precompute_radial_diffs(self):
@@ -68,7 +66,7 @@ class PAWSpecies(BaseSpecies):
         r_cs = self.paw_cutoffs
         
         # Initialize containers (orbital_index, projector_index)
-        self.partial_radial_diffs = []
+        self.partial_wave_diffs = []
         
         # Loop over each basis function
         for r_c, ae, ps in zip(r_cs, paw_ae_waves, paw_ps_waves):
@@ -79,14 +77,15 @@ class PAWSpecies(BaseSpecies):
             phi_ps = ae[mask]
             phi_ae = ps[mask]
             diff = phi_ae-phi_ps
-            self.partial_radial_diffs.append(diff)
+            self.partial_wave_diffs.append(diff)
         
-        self.partial_radial_diff_splines = self._create_1d_splines(self.radial_grid, self.partial_radial_diffs)
+        self.partial_wave_diff_splines = self._create_1d_splines(self.radial_grid, self.partial_wave_diffs)
         
-    def build_g_space_conj_projectors(
+    def evaluate_q_projectors(
         self, 
-        q_vecs: NDArray, 
-        spatial_phase: float,
+        K_vecs,
+        coord,
+        spatial_phase = None,
     ) -> NDArray:
         """
         Maps POTCAR reciprocal projectors onto a discrete G+k plane-wave grid using Numba acceleration.
@@ -94,79 +93,65 @@ class PAWSpecies(BaseSpecies):
         Returns:
             NDArray: Complex matrix array of shape (num_channels, N_plane_waves)
         """
-        # get q vectors (k+G) and their norms
-        q_norms = np.linalg.norm(q_vecs, axis=1)
-        n_qvecs = len(q_norms)
-        
-        # loop over projections
+        n_qvecs = len(K_vecs)
         n_proj = len(self.angular_momenta)
+        # get phase shift due to atom position
+        if spatial_phase is None:
+            spatial_phase = np.exp(-1j * np.dot(K_vecs, coord))
+                
+        # loop over projectors        
         atom_projector = np.zeros((n_proj,n_qvecs), np.complex128)
         for proj_idx in range(n_proj):
             spline = self.q_projector_splines[proj_idx]
             l = self.angular_momenta[proj_idx]
             m = self.magnetic_quantum_numbers[proj_idx]
             
-            # evaluate radial part
-            p_r = spline(q_norms)
-            
             # evaluate angular part
-            p_a = evaluate_real_harmonics_multi(l, m, q_vecs/q_norms[:, np.newaxis])
+            p_a, K_mags = evaluate_real_harmonics_multi(l, m, K_vecs)
+            
+            # evaluate radial part
+            p_r = spline(K_mags)
             
             # add this projectors contributions
             atom_projector[proj_idx] = (spatial_phase * p_r * p_a)
         
-        return atom_projector.conj()
+        return atom_projector
     
-    def _precompute_overlap_matrices(self):
+    def evaluate_partial_diffs(
+        self, 
+        K_vecs,
+        coord,
+        spatial_phase = None,
+    ) -> NDArray:
         """
-        Precomputes the PAW augmentation overlap matrix q_ij for each atom species.
-        q_ij = <phi_i_AE | phi_j_AE>_rc - <phi_i_PS | phi_j_PS>_rc
+        Maps POTCAR reciprocal projectors onto a discrete G+k plane-wave grid using Numba acceleration.
+        
+        Returns:
+            NDArray: Complex matrix array of shape (num_channels, N_plane_waves)
         """
-        grid = self.radial_grid
-        grid_sq = grid ** 2
-        grid_cu = grid ** 3
-        is_logarithmic = self.real_is_log
-        dx = np.diff(np.log(grid))[0] if is_logarithmic else np.diff(grid)[0]
-        
-        self.q_matrices = []
-        
-        paw_ae_waves = self.all_electron_partial_waves
-        paw_ps_waves = self.pseudo_partial_waves
-        r_cs = self.paw_cutoffs
-        num_projectors = len(paw_ae_waves)
-        
-        q_mat = np.zeros((num_projectors, num_projectors), dtype=np.float64)
-        
-        for i in range(num_projectors):
-            # get quantum nums and radial cutoff
-            l_i = self.angular_momenta[i]
-            m_i = self.magnetic_quantum_numbers[i]
-            r_c_i = r_cs[i]
+        n_qvecs = len(K_vecs)
+        n_proj = len(self.angular_momenta)
+        # get phase shift due to atom position
+        if spatial_phase is None:
+            spatial_phase = np.exp(-1j * np.dot(K_vecs, coord))
+                
+        # loop over projectors        
+        partial_diff = np.zeros((n_proj,n_qvecs), np.complex128)
+        for proj_idx in range(n_proj):
+            spline = self.partial_wave_diff_splines[proj_idx]
+            l = self.angular_momenta[proj_idx]
+            m = self.magnetic_quantum_numbers[proj_idx]
             
-            for j in range(num_projectors):
-                # get quantum nums and radial cutoff
-                l_j = self.angular_momenta[j]
-                m_j = self.magnetic_quantum_numbers[j]
-                r_c_j = r_cs[j]
-                
-                # Kronecker delta
-                if l_i != l_j or m_i != m_j:
-                    continue
-                    
-                r_c = min(r_c_i, r_c_j)
-                mask = np.where(grid < r_c)[0]
-                
-                phi_ae_i = paw_ae_waves[i][mask]
-                phi_ae_j = paw_ae_waves[j][mask]
-                phi_ps_i = paw_ps_waves[i][mask]
-                phi_ps_j = paw_ps_waves[j][mask]
-                
-                grid_cut = grid_cu[mask] if is_logarithmic else grid_sq[mask]
-                integrand = grid_cut * (phi_ae_i * phi_ae_j - phi_ps_i * phi_ps_j)
-                
-                q_mat[i, j] = simpson(y=integrand, dx=dx)
-        self.paw_overlap_matrix = q_mat
-                    
+            # evaluate angular part
+            p_a, K_mags = evaluate_real_harmonics_multi(l, m, K_vecs)
+            
+            # evaluate radial part
+            p_r = spline(K_mags)
+            
+            # add this projectors contributions
+            partial_diff[proj_idx] = (spatial_phase * p_r * p_a)
+        
+        return partial_diff
     
     @classmethod
     def from_filename(
