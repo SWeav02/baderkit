@@ -126,9 +126,10 @@ class VaspReader(BaseWfcReader):
             structure=structure,
             kpoints=kpoints,
             occupancies=occupancies,
-            energies=energies,
+            energies=energies-efermi,
             energy_cutoff=energy_cutoff,
-            efermi=efermi,
+            efermi=0.0,
+            original_efermi=efermi,
             nspin=nspin,
             nkpts=nkpts,
             nbands=n_selected_bands,
@@ -137,6 +138,10 @@ class VaspReader(BaseWfcReader):
             cplx_dtype=cplx_dtype
         )
         return self.meta
+    
+    def read_paw_dataset(self):
+        from baderkit.post_wfc.paw.vasp import parse_vasp_potcar as paw_reader
+        return paw_reader(self.directory)
 
     def read_coefficients(self, ispin: int, ikpt: int, iband: int) -> np.ndarray:
         """Extracts a flat 1D array of complex plane-wave coefficients for a single target state."""

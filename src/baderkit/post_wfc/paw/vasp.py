@@ -419,7 +419,12 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
         # q_radial_grid is explicitly generated above using np.linspace, so it is always linear
         q_is_log = False
 
-        # Instantiate the PAWSpecies object with fully expanded NumPy arrays
+        # Safely convert r * phi(r) -> phi(r) avoiding division by zero at r=0
+        r_safe = np.where(radial_grid > 0, radial_grid, 1e-12)
+        ae_waves = np.array(expanded_ae_partial_waves) / r_safe
+        ps_waves = np.array(expanded_ps_partial_waves) / r_safe
+
+        # Instantiate the PAWSpecies object
         species_obj = PAWSpecies(
             source="vasp",
             name=name,
@@ -432,17 +437,18 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
             paw_cutoffs=np.array(expanded_cutoff_radii, dtype=float),
             q_paw_cutoffs=np.array(expanded_q_cutoff_radii, dtype=float),
             max_paw_cutoff=rcut_global if rcut_global is not None else 0.0,
-            principal_quantum_numbers=np.array(expanded_principal_quantum_numbers, dtype=int),
+            principal_quantum_numbers=np.array(
+                expanded_principal_quantum_numbers, dtype=int
+            ),
             angular_momenta=np.array(expanded_ang_moms, dtype=int),
             magnetic_quantum_numbers=np.array(expanded_ms, dtype=int),
-            
-            # FIX: Divide by radial grid to keep consistent metrics
-            all_electron_partial_waves=np.array(expanded_ae_partial_waves)/radial_grid,
-            pseudo_partial_waves=np.array(expanded_ps_partial_waves)/radial_grid,
-            
+            all_electron_partial_waves=ae_waves,
+            pseudo_partial_waves=ps_waves,
             q_projectors=np.array(expanded_raw_projectors),
             eigenvalues=np.array(expanded_eigenvalues, dtype=float),
-            reference_occupations=np.array(expanded_ref_counts, dtype=float)
+            reference_occupations=np.array(
+                expanded_ref_counts, dtype=float
+            ),
         )
 
         master_dataset[element] = species_obj

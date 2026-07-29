@@ -13,15 +13,7 @@ from baderkit.post_wfc.projection.all_electron_dataset import AESpecies
 
 from baderkit.post_wfc.base_env import BaseWavefunctionEnvironment
 
-# TODO:
-    # 1. Update paw environment by removing redundant augmentation environment, etc.
-    # 2. Make base dataset class and ensure both datasets are solid
-    # 2. Combine numba files
-    # 3. parallelize
-    # 4. General cleanup
-    # 5. Add QE workfunction reading
-
-class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
+class AtomicProjectionEnvironment:
     """
     Manages the non-bonding atomic reference states by parsing compressed analytical 
     basis binaries with pre-applied primitive normalization constants.
@@ -135,7 +127,8 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         return self._voxels_near_atoms
     
     @property
-    def _save_file(self):
+    def _iao_file(self):
+        # NOTE: kept as property to update if user changes directory variable
         return self.directory / "iao.h5"
     ###########################################################################
     # PDOS Methods
@@ -294,15 +287,15 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         self._atom_contributions = normalized_data        
         
     def fetch_iao_coeffs(self, ispin, ikpt):
-        with h5py.File(self._save_file, "r") as file:
+        with h5py.File(self._iao_file, "r") as file:
             return file["A_coeffs"][ispin, ikpt]
         
     def fetch_mo_ceoffs(self, ispin, ikpt):
-        with h5py.File(self._save_file, "r") as file:
+        with h5py.File(self._iao_file, "r") as file:
             return file["mo_coeffs"][ispin, ikpt]
         
     def fetch_iao_hamiltonian(self, ispin, ikpt):
-        with h5py.File(self._save_file, "r") as file:
+        with h5py.File(self._iao_file, "r") as file:
             return file["H"][ispin, ikpt]
         
     ###########################################################################
@@ -391,7 +384,7 @@ class AtomicProjectionEnvironment(BaseWavefunctionEnvironment):
         rprint("[bold blue]INFO: Executing Reciprocal Projections & PAW Augmentation[/bold blue]")
         rprint("="*80)
         
-        with h5py.File(self._save_file, "w") as file:
+        with h5py.File(self._iao_file, "w") as file:
             dset_H = file.create_dataset(
                 "H",
                 shape=(nspin, nkpoints, nbasis, nbasis),

@@ -23,9 +23,6 @@ class BaseSpecies(ABC):
     element: str
     """Chemical element symbol (e.g., 'Ca')."""
     
-    Z: float
-    """Total electrons in this pseudopotential"""
-    
     # GRID INFORMATION
     radial_grid: NDArray
     """1D array containing the radial coordinate mesh grid points, r (in Angstroms)."""
