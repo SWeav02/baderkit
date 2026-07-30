@@ -626,6 +626,8 @@ class PostWFC:
         self,
         pts_frac: np.ndarray,
         D_atoms: np.ndarray,
+        use_shrod_tau: bool = False,
+        include_core: bool = False,
         return_grad_rho_sq: bool = False,
         return_lap_rho: bool = False,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -665,6 +667,7 @@ class PostWFC:
                 local_r, 
                 D_atom,
                 compute_tau=True,
+                use_shrod_tau=use_shrod_tau,
                 compute_grad_rho_sq=return_grad_rho_sq,
                 compute_lap_rho=return_lap_rho,
             )
@@ -676,6 +679,21 @@ class PostWFC:
             if return_lap_rho:
                 aug_lap_rho[mask] += lap_aug
                 
+            if not include_core:
+                continue
+            rho_core, tau_core, grad_sq_core, lap_core = paw_ds.evaluate_core_densities(
+                local_r,
+                compute_tau=True,
+                compute_grad_rho_sq=return_grad_rho_sq,
+                compute_lap_rho=return_lap_rho,
+                )
+            aug_rho[mask] += rho_core
+            aug_tau[mask] += tau_core
+            if return_grad_rho_sq:
+                aug_grad_sq[mask] += grad_sq_core
+            if return_lap_rho:
+                aug_lap_rho[mask] += lap_core
+                
         return aug_rho, aug_tau, aug_grad_sq, aug_lap_rho
     
     def calculate_densities_on_grid(
@@ -684,7 +702,8 @@ class PostWFC:
         spin_channel: int = -1,
         energy_range: tuple[float, float] = (-np.inf, np.inf),
         use_partial_occ: bool = True,
-        pseudo: bool = False,
+        aug: bool = True,
+        core: bool = False,
         return_grad_rho_sq: bool = False,
         return_lap_rho: bool = False,
         use_shrod_tau: bool = False,
@@ -693,7 +712,7 @@ class PostWFC:
     
         Uses volume-normalized wavefunctions psi_ps(G) [A^-3/2] cached by postwfc, evaluates smooth
         tau_ps via a scalar Laplacian FFT, symmetrizes smooth fields to eliminate FFT grid aliasing,
-        and applies exact atomic density matrix (D_ij) PAW sphere augmentations if pseudo=False.
+        and applies exact atomic density matrix (D_ij) PAW sphere augmentations if aug=True.
         """
         if grid_shape is None:
             grid_shape = self._minimum_fft_shape
@@ -767,7 +786,7 @@ class PostWFC:
                 active_weights_list.append(w_4d)
     
                 # Calculate projector overlaps & accumulate atomic density matrix D_{a, ij}
-                if not pseudo:
+                if aug:
                     P_all = self.fetch_projector_overlaps(
                         ikpt=ikpt, ispin=ispin, iband=mask
                     )  # Shape: (N_active, total_n_proj)
@@ -819,26 +838,28 @@ class PostWFC:
             grad_rho_sq = gradx**2 + grady**2 + gradz**2
     
         # 9. Apply real-space atomic sphere PAW sphere augmentations
-        if not pseudo:
+        if aug:
             grid_frac = self.get_fractional_grid(grid_shape)
-    
+            # Compute aug in Schrödinger form so Step 10 converts total combined tau uniformly
             rho_aug, tau_aug, grad_sq_aug, lap_rho_aug = self.calculate_aug_densities(
                 grid_frac,
                 D_atom,
+                include_core=core,
+                use_shrod_tau=True,  # Keep in Schrödinger form for Step 10 conversion
                 return_grad_rho_sq=return_grad_rho_sq,
                 return_lap_rho=calculate_lap,
             )
-    
+        
             rho += rho_aug.reshape(grid_shape)
-            tau += tau_aug.reshape(grid_shape)  # tau_aug is positive-definite
-    
+            tau += tau_aug.reshape(grid_shape)
+        
             if calculate_lap:
                 lap_rho += lap_rho_aug.reshape(grid_shape)
-    
+        
             if return_grad_rho_sq:
                 grad_rho_sq += grad_sq_aug.reshape(grid_shape)
-    
-        # 10. Convert total combined tau back to Schrödinger form if requested
+                
+        # 10. Convert total combined tau to positive-definite form if requested
         if not use_shrod_tau:
             tau += 0.5 * lap_rho
     
@@ -861,8 +882,8 @@ class PostWFC:
         spin_channel: int = -1,
         energy_range: tuple = (-np.inf, np.inf),
         use_partial_occ: bool = True,
-        pseudo: bool = False,
-        include_aug: bool = None,
+        aug: bool = True,
+        core: bool = False,
         return_grad_rho_sq: bool = False,
         return_lap_rho: bool = False,
         use_shrod_tau: bool = False,
@@ -871,8 +892,6 @@ class PostWFC:
     
         two fractional coordinates. Ideal for drawing 1D bonding profiles.
         """
-        if include_aug is not None:
-            pseudo = not include_aug
     
         start_frac = np.asarray(start_frac, dtype=np.float64)
         end_frac = np.asarray(end_frac, dtype=np.float64)
@@ -888,7 +907,8 @@ class PostWFC:
             spin_channel=spin_channel,
             energy_range=energy_range,
             use_partial_occ=use_partial_occ,
-            pseudo=pseudo,
+            aug=aug,
+            core=core,
             return_grad_rho_sq=return_grad_rho_sq,
             return_lap_rho=return_lap_rho,
             use_shrod_tau=use_shrod_tau,
@@ -897,18 +917,18 @@ class PostWFC:
     def calculate_densities_at_points(
         self,
         points: np.ndarray,
-        coords_are_cartesian: bool = True,
+        coords_are_cartesian: bool = False,
         spin_channel: int = -1,
         energy_range: tuple[float, float] = (-np.inf, np.inf),
         use_partial_occ: bool = True,
-        pseudo: bool = False,
+        aug: bool = True,
+        core: bool = False,
         return_grad_rho_sq: bool = False,
         return_lap_rho: bool = False,
         use_shrod_tau: bool = False,
         mem_safety_fraction: float = 0.10,
     ):
         """Calculates all-electron or pseudo charge density n(r) and kinetic energy density
-
         tau(r) at an arbitrary set of real-space coordinates using safe memory chunking.
         """
         pts = np.asarray(points, dtype=np.float64)
@@ -919,8 +939,6 @@ class PostWFC:
         pts_cart = pts @ self.lattice if not coords_are_cartesian else pts
 
         N_pts = len(pts_cart)
-        volume = self.structure.volume
-        sqrt_vol = np.sqrt(volume)
 
         # Determine spin channels
         if spin_channel == -1:
@@ -933,12 +951,12 @@ class PostWFC:
         density = np.zeros(N_pts, dtype=np.float64)
         tau = np.zeros(N_pts, dtype=np.float64)
 
-        calculate_lap = return_lap_rho or use_shrod_tau
+        calculate_lap = return_lap_rho or use_shrod_tau or True  # Always needed for tau_pos conversion
 
         grad_rho = (
             np.zeros((3, N_pts), dtype=np.float64) if return_grad_rho_sq else None
         )
-        lap_rho = np.zeros(N_pts, dtype=np.float64) if calculate_lap else None
+        lap_rho = np.zeros(N_pts, dtype=np.float64)
 
         # Initialize on-the-fly atomic density matrix D_{a, ij}
         atom_offsets = self._get_atom_channel_offsets()
@@ -978,29 +996,29 @@ class PostWFC:
                     occupancies[mask] if use_partial_occ else np.ones(np.sum(mask))
                 )
 
-                # Fetch smooth pseudo wavefunctions and gradients
+                # Fetch smooth pseudo wavefunctions, gradients, and Laplacians
                 psi_g = self.fetch_psi(
                     ikpt=ikpt, ispin=ispin, iband=mask, order=0
                 )
                 active_psi_list.append(psi_g)
 
-                grad_g = self.fetch_psi(
-                    ikpt=ikpt, ispin=ispin, iband=mask, order=1
-                ).transpose(1, 0, 2)
-                active_grad_list.append(grad_g)
+                lap_g = self.fetch_psi(
+                    ikpt=ikpt, ispin=ispin, iband=mask, order=2
+                )
+                active_lap_list.append(lap_g)
 
-                if calculate_lap:
-                    lap_g = self.fetch_psi(
-                        ikpt=ikpt, ispin=ispin, iband=mask, order=2
-                    )
-                    active_lap_list.append(lap_g)
+                if return_grad_rho_sq or calculate_lap:
+                    grad_g = self.fetch_psi(
+                        ikpt=ikpt, ispin=ispin, iband=mask, order=1
+                    ).transpose(1, 0, 2)
+                    active_grad_list.append(grad_g)
 
                 w_1d = k_weight * occ_vals * spin_weight
                 w_2d = w_1d[:, np.newaxis]
                 active_weights_list.append(w_2d)
 
                 # Calculate projector overlaps & accumulate D_{a, ij} on the fly
-                if not pseudo:
+                if aug:
                     P_all = self.fetch_projector_overlaps(
                         ikpt=ikpt, ispin=ispin, iband=mask
                     )
@@ -1017,18 +1035,14 @@ class PostWFC:
                 continue
 
             psi_g_all = np.concatenate(active_psi_list, axis=0)  # (N_active, ngvecs)
-            grad_g_all = np.concatenate(
-                active_grad_list, axis=0
-            )  # (N_active, 3, ngvecs)
-            weights_all = np.concatenate(
-                active_weights_list, axis=0
-            )  # (N_active, 1)
+            lap_g_all = np.concatenate(active_lap_list, axis=0)  # (N_active, ngvecs)
+            weights_all = np.concatenate(active_weights_list, axis=0)  # (N_active, 1)
             N_active = psi_g_all.shape[0]
 
-            if calculate_lap:
-                lap_g_all = np.concatenate(
-                    active_lap_list, axis=0
-                )  # (N_active, ngvecs)
+            if active_grad_list:
+                grad_g_all = np.concatenate(active_grad_list, axis=0)  # (N_active, 3, ngvecs)
+            else:
+                grad_g_all = None
 
             # Calculate safe chunk size for current RAM and k-point dimensions
             chunk_size = self._get_safe_chunk_size(
@@ -1045,26 +1059,26 @@ class PostWFC:
                 # Phase matrix for chunk: shape (N_pts_chunk, ngvecs)
                 phase_chunk = np.exp(1j * (pts_chunk @ K_vecs.T))
 
-                # Smooth Pseudo Wavefunctions and Gradients
-                psi_r = (psi_g_all @ phase_chunk.T) / sqrt_vol
-                grad_r = (
-                    np.matmul(grad_g_all, phase_chunk.T) / sqrt_vol
-                )
+                # Smooth Pseudo Wavefunctions and Laplacians
+                psi_r = (psi_g_all @ phase_chunk.T)
+                lap_r = (lap_g_all @ phase_chunk.T)
 
-                if calculate_lap:
-                    lap_r = (lap_g_all @ phase_chunk.T) / sqrt_vol
+                if grad_g_all is not None:
+                    grad_r = np.matmul(grad_g_all, phase_chunk.T)
+                else:
+                    grad_r = None
 
                 # 1. Accumulate smooth charge density n_ps(r)
                 density[p_start:p_end] += np.sum(
                     weights_all * (np.abs(psi_r) ** 2), axis=0
                 )
 
-                # 2. Accumulate smooth kinetic energy density tau_ps(r)
-                grad_sq_r = np.sum(np.abs(grad_r) ** 2, axis=1)
-                tau[p_start:p_end] += 0.5 * np.sum(weights_all * grad_sq_r, axis=0)
+                # 2. Accumulate smooth Schrödinger kinetic energy density tau_schr_ps(r)
+                tau_schr_band = -np.real(np.conj(psi_r) * lap_r) * weights_all
+                tau[p_start:p_end] += np.sum(tau_schr_band, axis=0)
 
                 # 3. Accumulate smooth density gradient \nabla n_ps(r)
-                if return_grad_rho_sq:
+                if return_grad_rho_sq and grad_r is not None:
                     psi_conj = np.conj(psi_r)[:, np.newaxis, :]
                     grad_rho[:, p_start:p_end] += 2.0 * np.real(
                         np.sum(
@@ -1074,7 +1088,7 @@ class PostWFC:
                     )
 
                 # 4. Accumulate smooth density Laplacian \nabla^2 n_ps(r)
-                if calculate_lap:
+                if calculate_lap and grad_r is not None:
                     term1 = np.conj(psi_r) * lap_r
                     term2 = np.sum(np.abs(grad_r) ** 2, axis=1)
                     lap_rho[p_start:p_end] += 2.0 * np.real(
@@ -1086,12 +1100,15 @@ class PostWFC:
         if return_grad_rho_sq and grad_rho is not None:
             grad_rho_sq = np.sum(grad_rho**2, axis=0)
 
-        if not pseudo:
+        if aug:
             pts_frac = pts_cart @ np.linalg.inv(self.lattice)
 
+            # Compute aug in Schrödinger form so uniform conversion happens afterwards
             rho_aug, tau_aug, grad_sq_aug, lap_rho_aug = self.calculate_aug_densities(
                 pts_frac,
                 D_atom,
+                include_core=core,
+                use_shrod_tau=True,  # Keep in Schrödinger form for uniform conversion
                 return_grad_rho_sq=return_grad_rho_sq,
                 return_lap_rho=calculate_lap,
             )
@@ -1105,8 +1122,9 @@ class PostWFC:
             if return_grad_rho_sq and grad_rho_sq is not None:
                 grad_rho_sq += grad_sq_aug
 
-        if use_shrod_tau and lap_rho is not None:
-            tau -= lap_rho / 4.0
+        # Convert total combined tau to positive-definite form if requested
+        if not use_shrod_tau:
+            tau += 0.5 * lap_rho
 
         results = [density, tau]
 
@@ -1117,14 +1135,15 @@ class PostWFC:
             results.append(lap_rho)
 
         return tuple(results)
-    
+
+
     def calculate_densities_vs_energy(
         self,
         frac_coord: list | np.ndarray,
         return_grad_rho_sq: bool = False,
         return_lap_rho: bool = False,
         spin_channel: int = -1,
-        pseudo: bool = False,
+        aug: bool = True,
         cumulative: bool = False,
         return_plot: bool = False,
         plot_range: tuple[float, float] = None,
@@ -1134,14 +1153,13 @@ class PostWFC:
         pts_frac = np.atleast_2d(np.asarray(frac_coord, dtype=np.float64))
         pts_cart = pts_frac @ self.lattice
         N_pts = len(pts_frac)
-        sqrt_vol = np.sqrt(self.structure.volume)
 
-        calculate_lap = return_lap_rho or use_shrod_tau
-        needs_gradients = True  # Always needed for tau
+        calculate_lap = return_lap_rho or use_shrod_tau or True  # Always needed for tau conversion
+        needs_gradients = return_grad_rho_sq or calculate_lap
 
         # Precompute target atom basis fields outside the k-point loop
         patch_data = []
-        if not pseudo:
+        if aug:
             atom_offsets = self._get_atom_channel_offsets()
             pts_frac_flat = pts_frac.reshape(-1, 3)
 
@@ -1163,7 +1181,7 @@ class PostWFC:
                 local_r = vecs_cart[mask]
                 start_ch, end_ch = atom_offsets[atom_idx]
 
-                # ONE LINE: Evaluate basis fields via PAWDataset
+                # Evaluate basis fields via PAWDataset
                 basis = paw_ds.evaluate_basis_fields(
                     local_r, compute_gradients=needs_gradients, compute_laplacian=calculate_lap
                 )
@@ -1181,39 +1199,44 @@ class PostWFC:
 
             # 1. Smooth pseudo fields
             psi_g = self.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands), order=0)
-            psi_r = (psi_g @ phase.T) / sqrt_vol  # (nbands, N_pts)
+            psi_r = (psi_g @ phase.T)  # (nbands, N_pts)
+
+            lap_g = self.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands), order=2)
+            lap_r = (lap_g @ phase.T)  # (nbands, N_pts)
 
             grad_g = self.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands), order=1).transpose(1, 0, 2)
-            grad_r = np.matmul(grad_g, phase.T) / sqrt_vol  # (nbands, 3, N_pts)
+            grad_r = np.matmul(grad_g, phase.T)  # (nbands, 3, N_pts)
 
+            # Smooth charge density per band
             rho_n = weight * np.mean(np.abs(psi_r) ** 2, axis=1)
-            grad_sq_r = np.sum(np.abs(grad_r) ** 2, axis=1)
-            tau_n = 0.5 * weight * np.mean(grad_sq_r, axis=1)
 
-            grad_rho_sq_n = lap_rho_n = None
+            # Smooth Schrödinger kinetic energy density per band: -Re(psi* * lap_r)
+            tau_n = -weight * np.mean(np.real(np.conj(psi_r) * lap_r), axis=1)
+
+            # Smooth density Laplacian per band
+            grad_sq_r = np.sum(np.abs(grad_r) ** 2, axis=1)
+            lap_rho_n = 2.0 * weight * np.mean(np.real(np.conj(psi_r) * lap_r) + grad_sq_r, axis=1)
+
+            grad_rho_sq_n = None
             if return_grad_rho_sq:
                 grad_rho_n = 2.0 * np.real(psi_r[:, np.newaxis, :] * np.conj(grad_r))
                 grad_rho_sq_n = weight * np.mean(np.sum(grad_rho_n**2, axis=1), axis=1)
 
-            if calculate_lap:
-                lap_g = self.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands), order=2)
-                lap_r = (lap_g @ phase.T) / sqrt_vol
-                lap_rho_n = 2.0 * weight * np.mean(np.real(np.conj(psi_r) * lap_r + grad_sq_r), axis=1)
-
             # 2. PAW sphere augmentations via PAWDataset state contraction
-            if not pseudo and patch_data:
+            if aug and patch_data:
                 P_all = self.fetch_projector_overlaps(ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands))
 
                 for patch in patch_data:
                     P_a = P_all[:, patch["start_ch"] : patch["end_ch"]]
                     paw_ds = patch["paw_ds"]
 
-                    # Contract precomputed basis fields with state projector overlaps
+                    # Contract precomputed basis fields in Schrödinger form for uniform conversion
                     d_rho, d_tau, d_grad_sq, d_lap = paw_ds.contract_state_overlaps(
                         patch["basis"],
                         P_a,
                         total_n_pts=N_pts,
                         compute_tau=True,
+                        use_shrod_tau=True,  # Keep in Schrödinger form for uniform post-conversion
                         compute_grad_rho_sq=return_grad_rho_sq,
                         compute_lap_rho=calculate_lap,
                     )
@@ -1222,28 +1245,27 @@ class PostWFC:
                     tau_n += weight * d_tau
                     if return_grad_rho_sq:
                         grad_rho_sq_n += weight * d_grad_sq
-                    if calculate_lap:
-                        lap_rho_n += weight * d_lap
+                    lap_rho_n += weight * d_lap
 
             metrics = [rho_n, tau_n]
             if return_grad_rho_sq:
                 metrics.append(grad_rho_sq_n)
-            if calculate_lap:
-                metrics.append(lap_rho_n)
+            metrics.append(lap_rho_n)  # Always appended at the end
 
             return metrics
 
-        num_metrics = 2 + (1 if return_grad_rho_sq else 0) + (1 if calculate_lap else 0)
+        num_metrics = 3 + (1 if return_grad_rho_sq else 0)
 
         smeared = self._execute_spectral_engine(
             num_metrics=num_metrics, spin_channel=spin_channel, eval_callback=point_callback
         )
 
-        lap_idx = 2 + (1 if return_grad_rho_sq else 0)
-        if use_shrod_tau:
-            smeared[1] -= smeared[lap_idx] / 4.0
+        lap_idx = -1
+        # Convert total combined tau to positive-definite form if requested
+        if not use_shrod_tau:
+            smeared[1] += 0.5 * smeared[lap_idx]
 
-        if not return_lap_rho and calculate_lap:
+        if not return_lap_rho:
             smeared.pop(lap_idx)
 
         if cumulative:
@@ -1346,7 +1368,8 @@ class PostWFC:
         spin_channel: int = -1,
         energy_range: tuple = (-np.inf, np.inf),
         use_partial_occ: bool = True,
-        pseudo: bool = False,
+        aug: bool = True,
+        core: bool = False,
         localization_function: str = "elf",
         savin_correction: bool = True,
     ) -> float | np.ndarray:
@@ -1368,7 +1391,63 @@ class PostWFC:
             spin_channel=spin_channel,
             energy_range=energy_range,
             use_partial_occ=use_partial_occ,
-            pseudo=pseudo,
+            aug=aug,
+            core=core,
+            use_shrod_tau=False,
+        )
+        
+        rho = contributions[0]
+        tau = contributions[1]
+        grad_sq = contributions[2] if need_derivatives else None
+        
+        is_spin = spin_channel != -1
+
+        # Evaluate topological expressions over the resulting point arrays
+        if loc_fn_lower == "lol":
+            from baderkit.post_wfc.localization_functions import lol
+            return lol(rho, tau, savin_correction, is_spin)
+        elif loc_fn_lower == "elid":
+            from baderkit.post_wfc.localization_functions import elid
+            return elid(rho, tau, grad_sq)
+        elif loc_fn_lower == "elf":
+            from baderkit.post_wfc.localization_functions import elf
+            return elf(rho, tau, grad_sq, savin_correction, is_spin)
+        
+    def calculate_elf_along_line(
+        self,
+        start_frac,
+        end_frac,
+        num_points: int = 100,
+        spin_channel: int = -1,
+        energy_range: tuple = (-np.inf, np.inf),
+        use_partial_occ: bool = True,
+        aug: bool = True,
+        core: bool = False,
+        localization_function: str = "elf",
+        savin_correction: bool = True,
+    ) -> float | np.ndarray:
+        """
+        Calculates topological electron localization indicators (ELF, LOL, or ELI-D)
+        directly at one or multiple discrete continuous fractional coordinate locations.
+        """
+        loc_fn_lower = localization_function.lower()
+        if loc_fn_lower not in ["elf", "lol", "elid"]:
+            raise ValueError(f"Unknown localization function identifier profile: {localization_function}")
+
+        need_derivatives = loc_fn_lower in ["elf", "elid"]
+        
+        # Accumulate total integrated point properties directly from the wavefunctions
+        contributions = self.calculate_densities_along_line(
+            start_frac=start_frac,
+            end_frac=end_frac,
+            num_points=num_points,
+            return_grad_rho_sq=need_derivatives,
+            return_lap_rho=False,
+            spin_channel=spin_channel,
+            energy_range=energy_range,
+            use_partial_occ=use_partial_occ,
+            aug=aug,
+            core=core,
             use_shrod_tau=False,
         )
         
@@ -1392,7 +1471,8 @@ class PostWFC:
     def calculate_elf_on_grid(
             self, 
             grid_shape=None,
-            pseudo=False,
+            aug=True,
+            core: bool = False,
             energy_range=(-np.inf, np.inf), 
             spin_channel=-1, 
             localization_function="elf", 
@@ -1414,7 +1494,8 @@ class PostWFC:
             spin_channel=spin_channel,
             energy_range=energy_range,
             use_partial_occ=use_partial_occ,
-            pseudo=pseudo,
+            aug=aug,
+            core=core,
             use_shrod_tau=False,
             )
         
@@ -1438,11 +1519,12 @@ class PostWFC:
         self, 
         frac_coord, 
         spin_channel=-1, 
-        pseudo=False,
+        aug=True,
         localization_function="elf", 
         savin_correction=True,
         cumulative=True,
         return_plot=False,
+        plot_range: tuple[float, float] = None,
     ) -> tuple:
         """
         Calculates topological electron localization indicators (ELF, LOL, or ELI-D)
@@ -1470,7 +1552,7 @@ class PostWFC:
             return_grad_rho_sq=need_derivatives,
             return_lap_rho=False,
             spin_channel=spin_channel,
-            pseudo=pseudo,
+            aug=aug,
             cumulative=True,
             return_plot=False,
             use_shrod_tau=False,
@@ -1502,6 +1584,7 @@ class PostWFC:
             return self._generate_property_plot(
                 plot_curves={label: loc_data},
                 x_label="Topological Indicator Value",
+                plot_range=plot_range,
             )
 
         return loc_data
@@ -1913,115 +1996,157 @@ class PostWFC:
     ###########################################################################
     # Plotting Helpers
     ###########################################################################
-    def _generate_property_plot(self, plot_curves, x_label, plot_range=None):
+    def _generate_property_plot(self, plot_curves, x_label, plot_range=None, subplots=True, sym_threshold=0.1):
         """
         Shared visualization module that converts point-resolved physical metrics 
         vs energy levels into a clean, publication-ready Matplotlib figure object.
+        
+        Parameters
+        ----------
+        plot_curves : dict
+            Mapping of curve labels to 1D numpy arrays aligned with self.energy_grid.
+        x_label : str
+            Label for the X-axis.
+        plot_range : tuple or list, optional
+            (ymin, ymax) energy cutoff limits.
+        subplots : bool, default=True
+            If True, plots each curve on its own panel arranged in a grid with shared Y-axes.
+            If False, overlays all curves on a single axes canvas.
+        sym_threshold : float, default=0.1
+            Fractional symmetry threshold (0.0 to 1.0). Symmetric X-axis bounds [-max, +max]
+            are applied only if the magnitude of the smaller side is at least `sym_threshold`
+            times the larger side. Otherwise, standard 5% padding is applied to both edges.
         """
         import matplotlib.pyplot as plt
-        
-        # Initialize figure frame with a high-resolution canvas size
-        fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
-        
-        max_val = 1e-6
-        # Loop over every property dataset passed in the plot tracking dictionary
-        for label, data in plot_curves.items():
-            if data is not None:
-                # Plot properties on the X-axis and energies on the Y-axis (swapped layout axis)
-                ax.plot(data, self.energy_grid, label=label, linewidth=2.5)
-                
-                # Dynamically determine visible viewport boundaries to prevent over-scaling the X-axis limit
-                ymin, ymax = self.energy_grid[0], self.energy_grid[-1]
-                if plot_range is not None:
-                    if plot_range[0] is not None and plot_range[0] != -np.inf: 
-                        ymin = plot_range[0]
-                    if plot_range[1] is not None and plot_range[1] != np.inf: 
-                        ymax = plot_range[1]
-                
-                max_val = data.max()
-            
-        # Enforce explicit axis viewport boundaries matching the calculation limits
-        ymin, ymax = self.energy_grid[0], self.energy_grid[-1]
-        if plot_range is not None:
-            if plot_range[0] is not None and plot_range[0] != -np.inf: 
-                ymin = plot_range[0]
-            if plot_range[1] is not None and plot_range[1] != np.inf: 
-                ymax = plot_range[1]
-                
-        # Apply a clean 5% padding on the right edge so line paths do not clip the border
-        ax.set_xlim(0.0, 1.05 * max_val)
-        ax.set_ylim(ymin, ymax)
-        
-        # Apply minimalist styling parameters reflecting the 'plotly_white' template canvas
-        ax.set_facecolor("white")
-        ax.grid(True, which="both", color="black", alpha=0.05, linestyle="-")
-        
-        # Hide top and right outer borders for a modern look
-        for spine in ["top", "right"]:
-            ax.spines[spine].set_visible(False)
-            
-        # Draw a clear dashed indicator tracking the system Fermi level (Energy = 0.0 eV)
-        ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
-        
-        # Position the EF label tracking data space on Y, but viewport space (1% from left border) on X
-        ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
-                color="gray", va="bottom", ha="left", fontsize=12)
-        
-        # Solid vertical baseline tracking the zero-density origin boundary
-        ax.axvline(0.0, color="black", linewidth=1)
-        
-        # Apply customized typography elements across axes frames
-        ax.set_xlabel(x_label, fontsize=14, family="sans-serif")
-        ax.set_ylabel("Energy - $E_F$ (eV)", fontsize=14, family="sans-serif")
-        ax.legend(fontsize=12, loc="upper right", frameon=True)
-        
-        plt.tight_layout()
-        return fig
+        import math
     
-    def _generate_dos_plot(self, total_dos, plot_curves, plot_range=None):
-        """
-        Shared high-performance plotting module that converts raw spectral data matrices 
-        into a polished, publication-ready Matplotlib figure object.
-        """
-        import matplotlib.pyplot as plt
+        # Filter out empty or None datasets
+        valid_curves = {k: v for k, v in plot_curves.items() if v is not None}
+        n_curves = len(valid_curves)
         
-        fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
-        
-        # Plot baseline Total DOS
-        ax.plot(total_dos, self.energy_grid, label="total", color="black", linewidth=2.5)
-        
-        # Plot individual contributing channels
-        for label, data in plot_curves.items():
-            ax.plot(data, self.energy_grid, label=label, linewidth=2.5)
-            
-        # Compute exact bounded viewport ranges 
+        if n_curves == 0:
+            fig, ax = plt.subplots(figsize=(6, 4), dpi=150)
+            ax.text(0.5, 0.5, "No data available", ha="center", va="center")
+            return fig
+    
+        # Determine visible Y-axis viewport boundaries matching calculation/plot limits
         ymin, ymax = self.energy_grid[0], self.energy_grid[-1]
         if plot_range is not None:
             if plot_range[0] is not None and plot_range[0] != -np.inf: 
                 ymin = plot_range[0]
             if plot_range[1] is not None and plot_range[1] != np.inf: 
                 ymax = plot_range[1]
-        
-        ax.set_xlim(0.0, 1.05 * total_dos.max())
-        ax.set_ylim(ymin, ymax)
-        
-        # Styling parameters mirroring the clean plotly_white layout
-        ax.set_facecolor("white")
-        ax.grid(True, which="both", color="black", alpha=0.05, linestyle="-")
-        for spine in ["top", "right"]:
-            ax.spines[spine].set_visible(False)
+    
+        mask = (self.energy_grid >= ymin) & (self.energy_grid <= ymax)
+    
+        # Extract distinct colors from Matplotlib's active property cycle
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+    
+        def _calc_x_limits(min_val, max_val):
+            if min_val < 0.0:
+                smaller_mag = min(abs(min_val), abs(max_val))
+                larger_mag = max(abs(min_val), abs(max_val))
+                
+                # Use symmetric bounds if smaller side meets or exceeds the threshold ratio
+                if larger_mag > 0 and (smaller_mag / larger_mag) >= sym_threshold:
+                    x_max = 1.05 * larger_mag
+                    x_min = -x_max
+                else:
+                    x_span = max_val - min_val
+                    x_min = min_val - 0.05 * x_span
+                    x_max = max_val + 0.05 * x_span
+            else:
+                x_min = 0.0
+                x_max = 1.05 * max_val if max_val > 0 else 1.0
+                
+            return x_min, x_max
+    
+        # Branch 1: Subplot Grid Layout
+        if subplots and n_curves > 1:
+            ncols = min(n_curves, 3)
+            nrows = math.ceil(n_curves / ncols)
             
-        # Structural reference lines and indicators
-        ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
-        ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
-                color="gray", va="bottom", ha="left", fontsize=12)
-        ax.axvline(0.0, color="black", linewidth=1)
-        
-        # Frame text elements
-        ax.set_xlabel("DOS (states/eV)", fontsize=14, family="sans-serif")
-        ax.set_ylabel("Energy - $E_F$ (eV)", fontsize=14, family="sans-serif")
-        ax.legend(fontsize=12, loc="upper right", frameon=True)
-        
+            fig, axes = plt.subplots(
+                nrows, ncols, 
+                figsize=(4.5 * ncols, 4.5 * nrows), 
+                sharey=True, 
+                dpi=150
+            )
+            axes_list = list(np.atleast_1d(axes).flat)
+            
+            # Hide any trailing unused subplot axes
+            for ax in axes_list[n_curves:]:
+                ax.set_visible(False)
+                
+            for idx, (label, data) in enumerate(valid_curves.items()):
+                ax = axes_list[idx]
+                color = colors[idx % len(colors)]
+                
+                ax.plot(data, self.energy_grid, label=label, color=color, linewidth=2.5)
+                ax.set_title(label, fontsize=13, family="sans-serif", pad=8)
+                
+                # Evaluate subplot-specific X-limit bounds
+                visible_data = data[mask] if np.any(mask) else data
+                min_val = float(visible_data.min()) if len(visible_data) > 0 else 0.0
+                max_val = float(visible_data.max()) if len(visible_data) > 0 else 1e-6
+                
+                x_min, x_max = _calc_x_limits(min_val, max_val)
+                    
+                ax.set_xlim(x_min, x_max)
+                ax.set_ylim(ymin, ymax)
+                
+                # Styling per subplot
+                ax.set_facecolor("white")
+                ax.grid(True, which="both", color="black", alpha=0.05, linestyle="-")
+                for spine in ["top", "right"]:
+                    ax.spines[spine].set_visible(False)
+                    
+                ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
+                ax.axvline(0.0, color="black", linewidth=1)
+                ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
+                        color="gray", va="bottom", ha="left", fontsize=11)
+                
+                ax.set_xlabel(x_label, fontsize=12, family="sans-serif")
+                
+                if idx % ncols == 0:
+                    ax.set_ylabel("Energy - $E_F$ (eV)", fontsize=13, family="sans-serif")
+    
+        # Branch 2: Combined Single Canvas Overlay
+        else:
+            fig, ax = plt.subplots(figsize=(8, 6), dpi=150)
+            
+            min_val, max_val = np.inf, -np.inf
+            for idx, (label, data) in enumerate(valid_curves.items()):
+                color = colors[idx % len(colors)]
+                ax.plot(data, self.energy_grid, label=label, color=color, linewidth=2.5)
+                
+                visible_data = data[mask] if np.any(mask) else data
+                if len(visible_data) > 0:
+                    min_val = min(min_val, float(visible_data.min()))
+                    max_val = max(max_val, float(visible_data.max()))
+                    
+            if min_val == np.inf:
+                min_val, max_val = 0.0, 1e-6
+                
+            x_min, x_max = _calc_x_limits(min_val, max_val)
+    
+            ax.set_xlim(x_min, x_max)
+            ax.set_ylim(ymin, ymax)
+            
+            ax.set_facecolor("white")
+            ax.grid(True, which="both", color="black", alpha=0.05, linestyle="-")
+            for spine in ["top", "right"]:
+                ax.spines[spine].set_visible(False)
+                
+            ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
+            ax.axvline(0.0, color="black", linewidth=1)
+            ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
+                    color="gray", va="bottom", ha="left", fontsize=12)
+            
+            ax.set_xlabel(x_label, fontsize=14, family="sans-serif")
+            ax.set_ylabel("Energy - $E_F$ (eV)", fontsize=14, family="sans-serif")
+            ax.legend(fontsize=12, loc="upper right", frameon=True)
+            
         plt.tight_layout()
         return fig
     
@@ -2050,3 +2175,10 @@ class PostWFC:
         wf_reader=wf_reader(directory=Path(directory), nbands=nbands, **kwargs)
         
         return wf_reader
+    
+    ###########################################################################
+    # To methods
+    ###########################################################################
+    def get_iao_projection(self):
+        from baderkit.post_wfc.projection.projection_environment import AtomicProjectionEnvironment
+        return AtomicProjectionEnvironment(self)

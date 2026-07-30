@@ -11,7 +11,7 @@ from rich import print as rprint
 
 from baderkit.post_wfc.projection.all_electron_dataset import AESpecies
 
-from baderkit.post_wfc.base_env import BaseWavefunctionEnvironment
+from baderkit.post_wfc.base_env import PostWFC
 
 class AtomicProjectionEnvironment:
     """
@@ -22,18 +22,21 @@ class AtomicProjectionEnvironment:
 
     def __init__(
         self, 
-        post_wfc,
+        post_wfc=None,
         basis_dir=None,
         **kwargs
     ):
         # Register post_wfc as the reference state context link
-        super().__init__(reference_env=post_wfc, **kwargs)
+        if post_wfc is None:
+            post_wfc = PostWFC(**kwargs)
 
         self.post_wfc = post_wfc
+        self._meta = post_wfc._meta
+        self.directory = post_wfc.directory
+        
         self.basis_dir = Path(basis_dir) if basis_dir is not None else (Path(__file__).parent / "bases" / "dyall")
         
         # Pulls structure and valence_counts directly from master post_wfc context smoothly
-        self.lattice_matrix = self.structure.lattice.matrix
         self.total_charge = sum(self.valence_counts[site.specie.symbol] for site in self.structure)
         
         self._cache_voxel_footprints = {}
@@ -42,6 +45,54 @@ class AtomicProjectionEnvironment:
         self._load_bases()
         self._project_system()
 
+    ###########################################################################
+    # Copied Properties
+    ###########################################################################
+    
+    @property
+    def structure(self):
+        return self._meta.structure
+        
+    @property
+    def lattice(self):
+        return self.post_wfc._lattice
+        
+    @property
+    def reciprocal_lattice(self):
+        return self.post_wfc._reciprocal_lattice
+
+    @property
+    def valence_counts(self):
+        """The number of valence electrons assigned to each species"""
+        return self.post_wfc.valence_counts
+
+    @property
+    def nspin(self) -> int:
+        return self._meta.nspin
+    
+    @property
+    def nkpoints(self) -> int:
+        return self._meta.nkpts
+        
+    @property
+    def nbands(self) -> int:
+        return self._meta.nbands
+        
+    @property
+    def occupancies(self):
+        return self._meta.occupancies
+        
+    @property
+    def energies(self):
+        return self._meta.energies
+    
+    @property
+    def energy_cutoff(self):
+        return self._meta.energy_cutoff
+    
+    @property
+    def efermi(self) -> float:
+        return self._meta.efermi
 
     ###########################################################################
     # Convenient Properties
@@ -312,44 +363,15 @@ class AtomicProjectionEnvironment:
                 raise FileNotFoundError(f"Missing analytical basis binary for element: {file_path}")
             basis = AESpecies.from_file(
                 file_path, 
-                paw_species=self.paw_datasets[element],
-                cutoff_radius=self.cutoff_radius,
-                g_cutoff_radius=self.g_cutoff_radius,
-                energy_range=self.unsmeared_energy_range,
+                paw_species=self.post_wfc.paw_datasets[element],
+                cutoff_radius=15,
+                g_cutoff_radius=15,
+                energy_range=self.post_wfc.unsmeared_energy_range,
                 energy_tol=0.1
                 )
             atom_bases[element] = basis
         self.atom_bases = atom_bases
         
-    def _construct_coefficients(self, ispin: int, ikpt: int, active_indices: np.ndarray) -> np.ndarray:
-        """
-        Constructs plane-wave coefficients for active states rebuilt from IAO molecular orbitals.
-        """
-        # 1. Read raw Bloch band coefficients -> shape: (nbands, ngvecs)
-        raw_coeffs = self._wf_reader.read_coefficients_batch(ispin, ikpt, np.arange(self.nbands))
-        if raw_coeffs.shape[0] != self.nbands:
-            raw_coeffs = raw_coeffs.T  # Ensure shape is (nbands, ngvecs)
-    
-        # Load pre-calculated orthogonalized IAO expansion matrix -> shape: (nbands, nbasis)
-        A = self.fetch_iao_coeffs(ispin, ikpt)
-    
-        # Load C_MO_IAO (eigenvectors of H_IAO) -> shape: (nbasis, nbasis)
-        C_MO = self.fetch_mo_ceoffs(ispin, ikpt)
-    
-        # 2. Build full IAO-MO transformation matrix M -> shape: (nbands, nbasis)
-        M_full = A @ C_MO
-        
-        # Slice M for active bands along the band axis -> shape: (len(active_indices), nbasis)
-        M_active = M_full[active_indices, :]
-    
-        # 3. Step A: Transform raw PWs into nbasis IAO-MO space -> shape: (nbasis, ngvecs)
-        iao_mo_pw = M_full.conj().T @ raw_coeffs
-    
-        # 4. Step B: Reconstruct PW coefficients for active bands -> shape: (len(active_indices), ngvecs)
-        reconstructed_coeffs = M_active @ iao_mo_pw
-
-        return reconstructed_coeffs
-    
     def _project_system(self):
         # We call the AE wavefunctions, Psi, our B1 basis
         # We want to form Bloch IAOs using a minimal atomic basis, Chi or B2
@@ -369,10 +391,6 @@ class AtomicProjectionEnvironment:
         nbands = self.nbands
         volume = structure.volume # Omega
         nbasis = self.nbasis
-        
-        # get augmentation overlaps and self-overlap for each species basis
-        aug_overlaps = self.basis_aug_overlaps # <Chi|Phi>
-        aug_overlap_matrix = np.vstack([aug_overlaps[i] for i in range(len(structure))])
         
         rprint("\n" + "="*80)
         rprint("[bold green]         STARTING PROJECTION          [/bold green]")
@@ -412,16 +430,14 @@ class AtomicProjectionEnvironment:
             for ikpt in track(range(nkpoints), description="[bold blue]Constructing IAOs...", total=nkpoints):
                 
                 # get K vectors (k + G)
-                G_basis_cart = self.get_g_vectors_cart(ikpt)
-                k_cart = self.kpoints_cart[ikpt]
-                K_vecs = G_basis_cart + k_cart[np.newaxis, :]
+                K_vecs = self.post_wfc.fetch_gvectors(ikpt, return_cart=True, add_k=True)
                 # get weight of this kpoint            
-                k_weight = self.kpoint_weights[ikpt]
+                k_weight = self.post_wfc.kpoint_weights[ikpt]
                 
                 # create lists to store basis matrices
                 local_basis_matrices = []
+                local_partial_overlaps = []
                 
-                # collect projector matrices, <P|Psi>
                 for atom_idx, local_basis in enumerate(self.basis_map):
                     # get phase
                     spatial_phase = np.exp(-1j * np.dot(K_vecs, atom_positions[atom_idx]))
@@ -434,8 +450,11 @@ class AtomicProjectionEnvironment:
                             spatial_phase=spatial_phase,
                             )    
                     )
+                    
+                    local_partial_overlaps.append(local_basis.basis_aug_overlaps)
                 # combine to single matrix for efficiency (shape: nbasis,nKvecs)
                 local_basis_matrix = np.vstack(local_basis_matrices)
+                local_partial_overlap_matrix = np.vstac(local_partial_overlaps)
                 
                 for ispin in range(nspin):
                     # read coefficients (shape: nbands, ngvecs)
@@ -443,13 +462,25 @@ class AtomicProjectionEnvironment:
                     ###################################################################
                     # S_12 and S_21
                     ###################################################################
-                    # We precalculate Psi_ae. Read from disk 
+                    # We precalculate Psi_ps. Read from disk 
                     # shape: ngvecs, nbands
-                    psi_ae = self.fetch_psi(ispin, ikpt, np.arange(nbands)).T
+                    psi_ps = self.post_wfc.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(nbands)).T
+                    
+                    # <Chi | Psi_ps>
+                    # shape: nbasis, nbands
+                    chi_psi_ps = local_basis_matrix.conj() @ psi_ps
+                    
+                    # <p | Psi_ps>
+                    # We also precalculate the paw projector overlaps, 
+                    # shape: nbands, nprojectors
+                    paw_psi_ps = self.post_wfc.fetch_projector_overlaps(ikpt=ikpt, ispin=ispin, iband=np.arange(nbands))
+                    
+                    # <chi | phi_diff>
+                    breakpoint()
 
-                    # Overlap S21 = <Chi | Psi_ae>
+                    # Overlap S21 = <Chi | Psi_ps> dot <p | Psi_ps>
                     # (nbasis, ngvecs) @ (ngvecs, nbands) -> (nbasis, nbands)
-                    S21 = local_basis_matrix.conj() @ psi_ae
+                    S21 = np.dot(chi_psi_ps, paw_psi_ps)
             
                     # 3. Transpose to get S12: shape (nbands, nbasis)
                     S12 = S21.T
@@ -467,6 +498,7 @@ class AtomicProjectionEnvironment:
                     # 1. Determine occupied band indices
                     # (For insulators/semiconductors occ > 1e-5; for metals use threshold or formal valence count)
                     occ_mask = self.occupancies[ispin, ikpt] > 1e-5
+                    breakpoint()
                     
                     ###################################################################
                     # C_tilde (Shape: nbands x n_occ)
@@ -520,21 +552,3 @@ class AtomicProjectionEnvironment:
                     dset_A[ispin, ikpt] = A * k_weight
                     dset_C[ispin, ikpt] = C_IAO * k_weight
                     dset_H[ispin, ikpt] = H_IAO * k_weight
-            
-            
-    @classmethod
-    def from_directory(
-        cls, 
-        directory: Path | str = Path("."), 
-        fmt: str = "vasp", 
-        scipy_workers: int = -1, 
-        **kwargs,
-    ):
-        from baderkit.post_wfc.paw.paw_environment import PAWEnvironment
-        post_wfc = PAWEnvironment.from_directory(
-            directory=directory, 
-            fmt=fmt, 
-            scipy_workers=scipy_workers, 
-            **kwargs,
-        )
-        return post_wfc.projection_environment

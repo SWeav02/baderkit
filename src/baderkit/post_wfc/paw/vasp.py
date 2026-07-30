@@ -4,23 +4,62 @@ from pathlib import Path
 import numpy as np
 from baderkit.post_wfc.paw.paw_dataset import PAWSpecies
 
-def parse_vasp_potcar(directory: Path | str) -> dict:
-    """
-    Parses a VASP POTCAR file, extracting real-space projector functions, 
-    partial wavefunctions, the DION coupling strength matrix, and the 
-    principal quantum numbers.
+def _parse_float_array(lines: list[str], start_idx: int, target_count: int | None = None) -> tuple[np.ndarray, int]:
+    """Reads contiguous floating point numbers from lines starting at start_idx.
     
-    Parameters
-    ----------
-    potcar_path : Path | str
-        The path to the POTCAR file containing the PAW datasets.
-        
-    Returns
-    -------
-    dict
-        A dictionary mapping element symbols directly to their simplified PAWSpecies data blocks.
+    Stops when target_count numbers are collected or when a text section header is encountered.
+    Returns the concatenated numpy array and the index of the next unparsed line.
     """
-    potcar_path = Path(directory) / "POTCAR"
+    vals = []
+    curr = start_idx
+    total_count = 0
+    
+    while curr < len(lines):
+        raw_line = lines[curr].split('#')[0].split('!')[0].strip()
+        if not raw_line:
+            curr += 1
+            continue
+            
+        tokens = raw_line.split()
+        # Check if line contains non-numeric text tokens (header line)
+        has_alpha_words = any(
+            any(c.isalpha() and c.lower() not in ['e', 'd'] for c in tok)
+            for tok in tokens
+        )
+        if has_alpha_words:
+            break
+            
+        try:
+            line_vals = np.fromstring(" ".join(tokens), sep=' ')
+            if len(line_vals) == 0:
+                break
+            vals.append(line_vals)
+            total_count += len(line_vals)
+            curr += 1
+            
+            if target_count is not None and total_count >= target_count:
+                break
+        except Exception:
+            break
+            
+    if vals:
+        arr = np.concatenate(vals)
+        if target_count is not None:
+            arr = arr[:target_count]
+        return arr, curr
+    else:
+        return np.empty(0, dtype=np.float64), curr
+
+
+def parse_vasp_potcar(directory: Path | str, verbose: bool = False) -> dict:
+    """Parses a VASP POTCAR file, extracting real-space projector functions, 
+    partial wavefunctions, the DION coupling strength matrix, principal quantum numbers,
+    and frozen core density data with core quantum numbers.
+    """
+    potcar_path = Path(directory)
+    if potcar_path.is_dir():
+        potcar_path = potcar_path / "POTCAR"
+
     if not potcar_path.is_file():
         raise FileNotFoundError(f"Target POTCAR file not found at: {potcar_path}")
         
@@ -47,7 +86,7 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
         num_points = 0
         angular_momenta = []
         cutoff_radii = []
-        psmaxn = None     # Automatically holds the maximum reciprocal grid limit
+        psmaxn = None     # Maximum reciprocal grid limit
         qcut_val = None   # Global reciprocal space cutoff QCUT
         
         title_line = name
@@ -56,7 +95,6 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
             if len(tokens) >= 2:
                 element = tokens[1].split('_')[0]
                 
-        # Map out the exact sequence indices of the upcoming channel states
         angular_energies = []
         atomic_config = [] # Keeps track of parsed tuples: (n, l, E, occ)
         in_atomic_config = False
@@ -64,7 +102,6 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
         for idx, line in enumerate(lines):
             line_stripped = line.strip()
             
-            # Context switch to parse reference configurations
             if "atomic configuration" in line_stripped.lower():
                 in_atomic_config = True
                 continue
@@ -81,7 +118,6 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
                     except ValueError:
                         pass
                 elif t_tokens and not t_tokens[0].isdigit() and "description" not in line_stripped.lower():
-                    # Switched to another block
                     in_atomic_config = False
 
             if line_stripped.lower() == "description":
@@ -92,7 +128,6 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
                     if t_tokens and t_tokens[0].isdigit():
                         angular_momenta.append(int(t_tokens[0]))
                         
-                        # Parse energy eigenvalue
                         try:
                             angular_energies.append(float(t_tokens[1]))
                         except (ValueError, IndexError):
@@ -130,7 +165,6 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
                 if next_tokens and next_tokens[0].isdigit():
                     num_points = int(next_tokens[0])
             
-            # Scan for the unlabeled line containing: [PSMAXN] [Logical Flag]
             clean_line = line_stripped.split('!')[0].split('#')[0].strip()
             tokens = clean_line.split()
             if len(tokens) == 2 and tokens[1] in ["T", "F", ".TRUE.", ".FALSE."]:
@@ -148,149 +182,62 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
         all_electron_partial_waves = []
         dion_matrix_raw = None
         
+        ae_core_charge_density = None
+        ps_core_charge_density = None
+        ae_core_kinetic_density = None
+        ps_core_kinetic_density = None
+        
         line_idx = 0
         in_radial_sets = False  
         
         while line_idx < len(lines):
             line_lbl = lines[line_idx].strip().lower()
+            norm_lbl = line_lbl.replace('-', ' ')
             
             if line_lbl.startswith("paw radial sets"):
                 in_radial_sets = True
                 line_idx += 1
                 continue
             
-            # Extract spatial grid points
             if in_radial_sets and line_lbl.startswith("grid"):
-                vals_list = []
-                total_count = 0
-
-                while total_count < num_points and (line_idx + 1) < len(lines):
-                    line_idx += 1
-                    cleaned_str = " ".join(lines[line_idx].split('#')[0].split())
-                    if not cleaned_str:
-                        continue
-                    try:
-                        line_vals = np.fromstring(cleaned_str, sep=' ')
-                    except ValueError:
-                        valid_tokens = []
-                        for t in cleaned_str.split():
-                            try:
-                                float(t)
-                                valid_tokens.append(t)
-                            except ValueError:
-                                break
-                        if not valid_tokens:
-                            continue
-                        line_vals = np.fromstring(" ".join(valid_tokens), sep=' ')
-                    
-                    vals_list.append(line_vals)
-                    total_count += len(line_vals)
-
-                radial_grid = np.concatenate(vals_list)[:num_points]
-                
-                if len(radial_grid) > 1:
-                    dr = np.zeros_like(radial_grid)
-                    dr[0] = radial_grid[1] - radial_grid[0]
-                    dr[1:-1] = 0.5 * (radial_grid[2:] - radial_grid[:-2])
-                    dr[-1] = radial_grid[-1] - radial_grid[-2]
-                line_idx += 1
+                radial_grid, line_idx = _parse_float_array(lines, line_idx + 1, target_count=num_points)
                 continue
-                
-            # Extract RECIPROCAL space projectors bounded strictly by NDATA
+
+            # AE Core Charge Density ("core charge-density")
+            elif in_radial_sets and "core charge" in norm_lbl and "pseudized" not in norm_lbl:
+                ae_core_charge_density, line_idx = _parse_float_array(lines, line_idx + 1, target_count=num_points)
+                continue
+
+            # PS Core Charge Density ("core charge-density (pseudized)")
+            elif in_radial_sets and "core charge" in norm_lbl and "pseudized" in norm_lbl:
+                ps_core_charge_density, line_idx = _parse_float_array(lines, line_idx + 1, target_count=num_points)
+                continue
+
+            # AE Core Kinetic Energy Density ("kinetic energy-density")
+            elif in_radial_sets and "kinetic" in norm_lbl and "pseudized" not in norm_lbl:
+                ae_core_kinetic_density, line_idx = _parse_float_array(lines, line_idx + 1, target_count=num_points)
+                continue
+
+            # PS Core Kinetic Energy Density ("mkinetic energy-density pseudized")
+            elif in_radial_sets and "kinetic" in norm_lbl and "pseudized" in norm_lbl:
+                ps_core_kinetic_density, line_idx = _parse_float_array(lines, line_idx + 1, target_count=num_points)
+                continue
+
             elif line_lbl.startswith("reciprocal space part"):
-                vals_list = []
-                total_count = 0
-                while total_count < ndata and (line_idx + 1) < len(lines):
-                    line_idx += 1
-                    cleaned_str = " ".join(lines[line_idx].split('#')[0].split())
-                    if not cleaned_str:
-                        continue
-                    if any(t in cleaned_str for t in ["PAW_PBE", "Ca_sv_GW"]):
-                        continue
-                    try:
-                        line_vals = np.fromstring(cleaned_str, sep=' ')
-                    except ValueError:
-                        valid_tokens = []
-                        for t in cleaned_str.split():
-                            try:
-                                float(t)
-                                valid_tokens.append(t)
-                            except ValueError:
-                                break
-                        if not valid_tokens:
-                            continue
-                        line_vals = np.fromstring(" ".join(valid_tokens), sep=' ')
-                    
-                    if len(line_vals) > 0:
-                        vals_list.append(line_vals)
-                        total_count += len(line_vals)
-                
-                if vals_list:
-                    raw_projectors.append(np.concatenate(vals_list)[:ndata])
-                line_idx += 1
+                proj, line_idx = _parse_float_array(lines, line_idx + 1, target_count=ndata)
+                raw_projectors.append(proj)
                 continue
                 
-            # Extract smooth pseudo partial waves (Real Space)
             elif in_radial_sets and line_lbl.startswith("pseudo wavefunction"):
-                vals_list = []
-                total_count = 0
-                while total_count < num_points and (line_idx + 1) < len(lines):
-                    line_idx += 1
-                    cleaned_str = " ".join(lines[line_idx].split('#')[0].split())
-                    if not cleaned_str:
-                        continue
-                    try:
-                        line_vals = np.fromstring(cleaned_str, sep=' ')
-                    except ValueError:
-                        valid_tokens = []
-                        for t in cleaned_str.split():
-                            try:
-                                float(t)
-                                valid_tokens.append(t)
-                            except ValueError:
-                                break
-                        if not valid_tokens:
-                            continue
-                        line_vals = np.fromstring(" ".join(valid_tokens), sep=' ')
-                        
-                    vals_list.append(line_vals)
-                    total_count += len(line_vals)
-                    
-                pseudo_partial_waves.append(np.concatenate(vals_list)[:num_points])
-                line_idx += 1
+                wave, line_idx = _parse_float_array(lines, line_idx + 1, target_count=num_points)
+                pseudo_partial_waves.append(wave)
                 continue
                 
-            # Extract true oscillatory all-electron partial waves (Real Space)
             elif in_radial_sets and line_lbl.startswith("ae wavefunction"):
-                vals_list = []
-                total_count = 0
-                while total_count < num_points and (line_idx + 1) < len(lines):
-                    line_idx += 1
-                    cleaned_str = " ".join(lines[line_idx].split('#')[0].split())
-                    if not cleaned_str:
-                        continue
-                    try:
-                        line_vals = np.fromstring(cleaned_str, sep=' ')
-                    except ValueError:
-                        valid_tokens = []
-                        for t in cleaned_str.split():
-                            try:
-                                float(t)
-                                valid_tokens.append(t)
-                            except ValueError:
-                                break
-                        if not valid_tokens:
-                            continue
-                        line_vals = np.fromstring(" ".join(valid_tokens), sep=' ')
-                        
-                    vals_list.append(line_vals)
-                    total_count += len(line_vals)
-                    
-                all_electron_partial_waves.append(np.concatenate(vals_list)[:num_points])
-                line_idx += 1
+                wave, line_idx = _parse_float_array(lines, line_idx + 1, target_count=num_points)
+                all_electron_partial_waves.append(wave)
                 continue
 
-            # Extract local coupling strength matrix (DION)
             elif line_lbl == "dion":
                 try:
                     dion_size = int(lines[line_idx + 1].strip())
@@ -299,6 +246,8 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
                         row_vals = np.fromstring(lines[line_idx + 2 + r_idx].strip(), sep=' ')
                         dion_rows.append(row_vals)
                     dion_matrix_raw = np.array(dion_rows, dtype=np.float64)
+                    line_idx += 2 + dion_size
+                    continue
                 except Exception:
                     pass
                 line_idx += 1
@@ -308,23 +257,29 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
 
         # --- 3. Pass C: Core Alignment and Master Synchronization Validation ---
         n_channels = len(angular_momenta)
-        
-        # Cross-reference Description channels against Atomic configurations using energy matching
-        energy_tol = 1e-2
         reference_counts = []
         principal_quantum_numbers = []
         l_counters = {}
+        matched_atomic_indices = set()
         
         for l_desc, E_desc in zip(angular_momenta, angular_energies):
             matched_n = None
             matched_occ = 0.0
-            for n_atom, l_atom, E_atom, occ_atom in atomic_config:
-                if l_desc == l_atom and abs(E_desc - E_atom) <= energy_tol:
-                    matched_n = n_atom
-                    matched_occ = occ_atom
-                    break
+            best_idx = None
+            min_e_diff = float('inf')
             
-            # Smart fallback if the valence configuration has no direct energy match
+            for idx_cfg, (n_atom, l_atom, E_atom, occ_atom) in enumerate(atomic_config):
+                if l_desc == l_atom:
+                    e_diff = abs(E_desc - E_atom)
+                    if e_diff < min_e_diff:
+                        min_e_diff = e_diff
+                        best_idx = idx_cfg
+            
+            if best_idx is not None and min_e_diff <= 5.0:
+                matched_n = atomic_config[best_idx][0]
+                matched_occ = atomic_config[best_idx][3]
+                matched_atomic_indices.add(best_idx)
+            
             if matched_n is None:
                 if l_desc not in l_counters:
                     l_counters[l_desc] = l_desc + 1
@@ -335,7 +290,18 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
             principal_quantum_numbers.append(matched_n)
             reference_counts.append(matched_occ)
 
-        # Pad raw blocks if any fields were omitted or under-parsed
+        core_n = []
+        core_l = []
+        core_energies = []
+        core_occupations = []
+        
+        for idx_cfg, (n_atom, l_atom, E_atom, occ_atom) in enumerate(atomic_config):
+            if idx_cfg not in matched_atomic_indices:
+                core_n.append(n_atom)
+                core_l.append(l_atom)
+                core_energies.append(E_atom)
+                core_occupations.append(occ_atom)
+
         while len(all_electron_partial_waves) < n_channels:
             all_electron_partial_waves.append(np.zeros(num_points))
         while len(pseudo_partial_waves) < n_channels:
@@ -348,11 +314,9 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
         if dion_matrix_raw is None or dion_matrix_raw.shape != (n_channels, n_channels):
             dion_matrix_raw = np.zeros((n_channels, n_channels), dtype=np.float64)
 
-        # --- GENERATE UNIFORM LINEAR RECIPROCAL GRID UP TO PSMAXN ---
         q_radial_grid = np.linspace(0, psmaxn if psmaxn is not None else 1.0, ndata if ndata is not None else 1)
         qcut_base = qcut_val if qcut_val is not None else (psmaxn if psmaxn is not None else 15.0)
 
-        # --- Simultaneous (l, m) Expansion Loop ---
         expanded_ang_moms = []
         expanded_ms = []
         expanded_principal_quantum_numbers = []
@@ -363,8 +327,6 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
         expanded_raw_projectors = []
         expanded_eigenvalues = []
         expanded_ref_counts = []
-        
-        # Track channel indices mappings for coupling DION expansion
         expanded_channel_map = []
         
         for idx in range(n_channels):
@@ -376,14 +338,10 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
             proj_1d = raw_projectors[idx]
             energy = angular_energies[idx] if idx < len(angular_energies) else 0.0
             total_count = reference_counts[idx] if idx < len(reference_counts) else 0.0
-            
-            # Spherically average the total shell occupancy across the 2l + 1 sub-channels
             sub_channel_occ = total_count / (2 * l + 1)
             
-            # Expand into 2l + 1 magnetic sub-channels
             for m in range(-l, l + 1):
                 expanded_channel_map.append((idx, l, m))
-                
                 expanded_ang_moms.append(l)
                 expanded_ms.append(m)
                 expanded_principal_quantum_numbers.append(n_p)
@@ -391,13 +349,10 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
                 expanded_q_cutoff_radii.append(qcut_base)
                 expanded_eigenvalues.append(energy)
                 expanded_ref_counts.append(sub_channel_occ)
-                
-                # Each magnetic sub-channel shares the same 1D radial profile
                 expanded_ae_partial_waves.append(ae_wave)
                 expanded_ps_partial_waves.append(ps_wave)
                 expanded_raw_projectors.append(proj_1d)
         
-        # --- Expand the DION matrix coupling matching channels ---
         num_expanded = len(expanded_ang_moms)
         expanded_dion = np.zeros((num_expanded, num_expanded), dtype=np.float64)
         
@@ -405,26 +360,19 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
             idx_A, l_A, m_A = expanded_channel_map[A]
             for B in range(num_expanded):
                 idx_B, l_B, m_B = expanded_channel_map[B]
-                # DION matrix terms couple channels only when they share the same l and m
                 if l_A == l_B and m_A == m_B:
                     expanded_dion[A, B] = dion_matrix_raw[idx_A, idx_B]
                     
-        # Check if grids are logarithmic or linear
         if radial_grid is not None and len(radial_grid) > 2:
-            # If the spacing between points is not uniform, it's a logarithmic/non-linear grid
             real_is_log = not np.allclose(np.diff(radial_grid), radial_grid[1] - radial_grid[0], rtol=1e-4)
         else:
             real_is_log = False
 
-        # q_radial_grid is explicitly generated above using np.linspace, so it is always linear
         q_is_log = False
-
-        # Safely convert r * phi(r) -> phi(r) avoiding division by zero at r=0
         r_safe = np.where(radial_grid > 0, radial_grid, 1e-12)
         ae_waves = np.array(expanded_ae_partial_waves) / r_safe
         ps_waves = np.array(expanded_ps_partial_waves) / r_safe
 
-        # Instantiate the PAWSpecies object
         species_obj = PAWSpecies(
             source="vasp",
             name=name,
@@ -437,21 +385,34 @@ def parse_vasp_potcar(directory: Path | str) -> dict:
             paw_cutoffs=np.array(expanded_cutoff_radii, dtype=float),
             q_paw_cutoffs=np.array(expanded_q_cutoff_radii, dtype=float),
             max_paw_cutoff=rcut_global if rcut_global is not None else 0.0,
-            principal_quantum_numbers=np.array(
-                expanded_principal_quantum_numbers, dtype=int
-            ),
+            principal_quantum_numbers=np.array(expanded_principal_quantum_numbers, dtype=int),
             angular_momenta=np.array(expanded_ang_moms, dtype=int),
             magnetic_quantum_numbers=np.array(expanded_ms, dtype=int),
             all_electron_partial_waves=ae_waves,
             pseudo_partial_waves=ps_waves,
             q_projectors=np.array(expanded_raw_projectors),
             eigenvalues=np.array(expanded_eigenvalues, dtype=float),
-            reference_occupations=np.array(
-                expanded_ref_counts, dtype=float
-            ),
+            reference_occupations=np.array(expanded_ref_counts, dtype=float),
+            
+            # --- CORE INFORMATION ---
+            core_charge_density=ae_core_charge_density,
+            ps_core_charge_density=ps_core_charge_density,
+            core_kinetic_density=ae_core_kinetic_density,
+            ps_core_kinetic_density=ps_core_kinetic_density,
+            core_principal_quantum_numbers=np.array(core_n, dtype=int),
+            core_angular_momenta=np.array(core_l, dtype=int),
+            core_eigenvalues=np.array(core_energies, dtype=float),
+            core_occupations=np.array(core_occupations, dtype=float),
         )
+
+        if verbose:
+            print(f"[POTCAR Parser Diagnostic - {element}]")
+            print(f"  AE Core Charge:  {ae_core_charge_density is not None} (size: {len(ae_core_charge_density) if ae_core_charge_density is not None else 0})")
+            print(f"  PS Core Charge:  {ps_core_charge_density is not None} (size: {len(ps_core_charge_density) if ps_core_charge_density is not None else 0})")
+            print(f"  AE Core Kinetic: {ae_core_kinetic_density is not None} (size: {len(ae_core_kinetic_density) if ae_core_kinetic_density is not None else 0})")
+            print(f"  PS Core Kinetic: {ps_core_kinetic_density is not None} (size: {len(ps_core_kinetic_density) if ps_core_kinetic_density is not None else 0})")
+            print(f"  Core States Parsed: {len(core_n)} (n: {core_n}, l: {core_l})")
 
         master_dataset[element] = species_obj
         
     return master_dataset
-

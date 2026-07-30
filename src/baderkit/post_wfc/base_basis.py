@@ -62,21 +62,37 @@ class BaseSpecies(ABC):
     reference_occupations: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
     """1D array of reference atomic occupations for each channel."""
 
-    def _create_1d_splines(self, grid, values):
-        """Generates scipy CubicSpline objects for a list of 1d functions."""
+    
+    def _create_1d_splines(self, grid, values, pad_points=3):
+        """Generates scipy CubicSpline objects for a list of 1d functions
+    
+        with anti-symmetric/symmetric padded boundary near 0.
+        """
         splines = []
-        
-        # pad grid
-        ref_idx = 1 if grid[0] == 0 else 0
-        padded_grid = np.insert(grid, 0, -grid[ref_idx])
-
-        # generate splines        
-        for idx in range(len(values)):
-            # pad projector
-            padded = np.insert(values[idx], 0, values[idx][ref_idx])
-            # ensure grid and values are the same length (important in PAW for example)
+    
+        # Filter out 0 if present at start to build proper negative grid reflection
+        start_idx = 1 if grid[0] == 0 else 0
+    
+        # Ensure pad_points doesn't exceed available grid data
+        n_pad = min(pad_points, len(grid) - start_idx)
+    
+        # Reflect initial grid points into the negative region (e.g., [x1, x2, x3] -> [-x3, -x2, -x1])
+        pad_grid = -grid[start_idx : start_idx + n_pad][::-1]
+        padded_grid = np.concatenate([pad_grid, grid])
+    
+        for val in values:
+            # Reflect values corresponding to the negative grid slice
+            # (For even symmetry, keep original order flipped; for odd symmetry, adjust sign)
+            pad_vals = val[start_idx : start_idx + n_pad][::-1]
+            padded = np.concatenate([pad_vals, val])
+    
+            # Align lengths in case grid and values differ
             max_len = min(len(padded_grid), len(padded))
-            
-            splines.append(CubicSpline(padded_grid[:max_len], padded[:max_len], extrapolate=False))
-            
+    
+            splines.append(
+                CubicSpline(
+                    padded_grid[:max_len], padded[:max_len], extrapolate=False
+                )
+            )
+    
         return splines

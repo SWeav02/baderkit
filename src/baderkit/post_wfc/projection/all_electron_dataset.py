@@ -3,7 +3,6 @@
 from pathlib import Path
 import json
 
-from pymatgen.core import Element
 from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
@@ -110,7 +109,6 @@ class AESpecies(BaseSpecies):
         metadata = json.loads(str(data["metadata"]))
         
         element = metadata["element"]
-        element_py = Element(element)
         matrix_dims = metadata["matrix_layout_dimensions"]
         
         # Precompute slicing masks
@@ -179,7 +177,6 @@ class AESpecies(BaseSpecies):
         return cls(
             name=f"{element}_{metadata['functional']}",
             element=element,
-            Z=float(element_py.Z),
             basis=metadata.get("basis", None),
             functional=metadata["functional"],
             unrestricted=int(np.max(data["spin_channels"])) > 0,
@@ -217,6 +214,9 @@ class AESpecies(BaseSpecies):
         if spatial_phase is None:
             spatial_phase = np.exp(-1j * np.dot(K_vecs, coord))
                 
+        # Calculate 1D magnitudes |K| for 1D radial splines
+        K_mags = np.linalg.norm(K_vecs, axis=1)
+        
         # loop over projectors        
         basis_vals = np.zeros((n_proj,n_qvecs), np.complex128)
         for proj_idx in range(n_proj):
@@ -225,13 +225,14 @@ class AESpecies(BaseSpecies):
             m = self.magnetic_quantum_numbers[proj_idx]
             
             # evaluate angular part
-            p_a, K_mags = evaluate_real_harmonics_multi(l, m, K_vecs)
+            p_a, _ = evaluate_real_harmonics_multi(l, m, K_vecs, compute_gradients=False)
             
             # evaluate radial part
-            p_r = spline(K_mags)
+            p_r = np.nan_to_num(spline(K_mags), 0.0)
             
             # add this basis' values
-            basis_vals[proj_idx] = (spatial_phase * p_r * p_a)
+            phase_l = (1j) ** l
+            basis_vals[proj_idx] = (phase_l * spatial_phase * p_r * p_a)
         
         return basis_vals
         
