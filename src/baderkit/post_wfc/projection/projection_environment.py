@@ -391,6 +391,7 @@ class AtomicProjectionEnvironment:
         nbands = self.nbands
         volume = structure.volume # Omega
         nbasis = self.nbasis
+        atom_offsets = self.post_wfc._get_atom_channel_offsets()
         
         rprint("\n" + "="*80)
         rprint("[bold green]         STARTING PROJECTION          [/bold green]")
@@ -454,7 +455,6 @@ class AtomicProjectionEnvironment:
                     local_partial_overlaps.append(local_basis.basis_aug_overlaps)
                 # combine to single matrix for efficiency (shape: nbasis,nKvecs)
                 local_basis_matrix = np.vstack(local_basis_matrices)
-                local_partial_overlap_matrix = np.vstac(local_partial_overlaps)
                 
                 for ispin in range(nspin):
                     # read coefficients (shape: nbands, ngvecs)
@@ -473,14 +473,18 @@ class AtomicProjectionEnvironment:
                     # <p | Psi_ps>
                     # We also precalculate the paw projector overlaps, 
                     # shape: nbands, nprojectors
-                    paw_psi_ps = self.post_wfc.fetch_projector_overlaps(ikpt=ikpt, ispin=ispin, iband=np.arange(nbands))
+                    paw_psi_ps_all = self.post_wfc.fetch_projector_overlaps(ikpt=ikpt, ispin=ispin, iband=np.arange(nbands))
                     
-                    # <chi | phi_diff>
-                    breakpoint()
+                    # <Chi | psi_aug>
+                    chi_psi_aug = np.zeros_like(chi_psi_ps)
+                    for atom_idx, paw_overlap in enumerate(local_partial_overlaps):
+                        start_ch, end_ch = atom_offsets[atom_idx]
+                        paw_psi_ps = paw_psi_ps_all[:, start_ch:end_ch]  # Shape: (N_active, n_proj_a)
+                        chi_psi_aug += np.dot(paw_overlap, paw_psi_ps.T)
 
                     # Overlap S21 = <Chi | Psi_ps> dot <p | Psi_ps>
                     # (nbasis, ngvecs) @ (ngvecs, nbands) -> (nbasis, nbands)
-                    S21 = np.dot(chi_psi_ps, paw_psi_ps)
+                    S21 = chi_psi_ps + chi_psi_aug
             
                     # 3. Transpose to get S12: shape (nbands, nbasis)
                     S12 = S21.T
@@ -498,7 +502,6 @@ class AtomicProjectionEnvironment:
                     # 1. Determine occupied band indices
                     # (For insulators/semiconductors occ > 1e-5; for metals use threshold or formal valence count)
                     occ_mask = self.occupancies[ispin, ikpt] > 1e-5
-                    breakpoint()
                     
                     ###################################################################
                     # C_tilde (Shape: nbands x n_occ)
