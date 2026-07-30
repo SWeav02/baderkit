@@ -87,9 +87,7 @@ class BaseWfcReader(ABC):
         # Expose convenient attributes
         self.structure = self.metadata.structure
         self.lattice = self.structure.lattice.matrix
-        self.reciprocal_lattice = (
-            2 * np.pi * np.linalg.inv(self.structure.lattice.matrix).T
-        )
+        self.reciprocal_lattice = 2 * np.pi * np.linalg.inv(self.lattice).T
         self.nspin = self.metadata.nspin
         self.nkpoints = self.metadata.nkpts
         self.nbands = self.metadata.nbands
@@ -319,30 +317,16 @@ class BaseWfcReader(ABC):
     def _save_psi(self):
         """Calculates and saves pseudo wavefunctions, derivatives, projector overlap scalars,
     
-        raw plane-wave coefficients, and precomputed total atomic density matrices (D_ij).
+        raw plane-wave coefficients, and precomputed total atomic density matrices (D_ij)
+        in exact physical volume units.
         """
         structure = self.structure
         atom_positions = structure.cart_coords
         nspin = self.nspin
         nkpoints = self.nkpoints
         nbands = self.nbands
-        sqrt_vol = np.sqrt(structure.volume)
-    
-        atom_offsets = self._get_atom_channel_offsets()
-        num_atoms = len(structure)
-    
-        # Determine max number of channels across all species for array allocation
-        max_n_proj = max(
-            end - start for start, end in atom_offsets
-        )
-    
-        # Initialize full ground-state density matrix accumulator
-        # Shape: (nspin, num_atoms, max_n_proj, max_n_proj)
-        D_total = np.zeros(
-            (nspin, num_atoms, max_n_proj, max_n_proj), dtype=np.float64
-        )
-    
-        spin_weight = 2 if self.nspin == 1 else 1
+        volume = structure.volume
+        sqrt_vol = np.sqrt(volume)
     
         with h5py.File(self.postwfc_file, "w") as file:
             self._write_metadata(file)
@@ -353,17 +337,16 @@ class BaseWfcReader(ABC):
                 description="[bold blue]Caching Pseudo Psi & PAW Overlaps...",
                 total=nkpoints,
             ):
-                k_weight = self.kpoint_weights[ikpt]
-    
-                # Get G vectors
+                # 1. Fetch integer G-vectors & Cartesian wavevectors K = G + k (in 1/A)
                 g_int = self.read_gvectors(ikpt)
-                G_basis_cart = g_int @ self.reciprocal_lattice
+                G_basis_cart = g_int @ self.reciprocal_lattice  # (ngvecs, 3) in 1/A
                 ngvecs = len(G_basis_cart)
-                k_cart = self.kpoints_cart[ikpt]
+                k_cart = self.kpoints_cart[ikpt]  # (3,) in 1/A
     
-                K_vecs = G_basis_cart + k_cart[np.newaxis, :]
-                K_sq = np.sum(K_vecs**2, axis=1)
+                K_vecs = G_basis_cart + k_cart[np.newaxis, :]  # (ngvecs, 3)
+                K_sq = np.sum(K_vecs**2, axis=1)  # (ngvecs,) in 1/A^2
     
+                # Store integer G-vectors
                 file.create_dataset(
                     f"gvectors/{ikpt}",
                     data=g_int,
@@ -371,6 +354,7 @@ class BaseWfcReader(ABC):
                     compression="lzf",
                 )
     
+                # Pre-allocate HDF5 datasets
                 raw_coeffs = file.create_dataset(
                     f"coefficients/{ikpt}",
                     shape=(nspin, nbands, ngvecs),
@@ -396,7 +380,7 @@ class BaseWfcReader(ABC):
                     compression="lzf",
                 )
     
-                # Evaluate PAW reciprocal projectors for all atomic centers
+                # 2. Evaluate PAW reciprocal-space projectors \tilde{p}_a(K) for all atomic centers
                 paw_projector_matrices = []
                 for atom_idx, site in enumerate(structure):
                     paw_basis = self.paw_datasets[site.specie.symbol]
@@ -405,10 +389,10 @@ class BaseWfcReader(ABC):
     
                     proj = paw_basis.evaluate_q_projectors(
                         K_vecs, pos, spatial_phase=spatial_phase
-                    )
+                    )  # Shape: (n_proj_a, ngvecs)
                     paw_projector_matrices.append(proj)
     
-                paw_projector_matrix = np.vstack(paw_projector_matrices)
+                paw_projector_matrix = np.vstack(paw_projector_matrices)  # (total_n_proj, ngvecs)
                 total_n_proj = paw_projector_matrix.shape[0]
     
                 proj_overlaps = file.create_dataset(
@@ -419,46 +403,29 @@ class BaseWfcReader(ABC):
                 )
     
                 for ispin in range(nspin):
+                    # Fetch raw band coefficients C_G (Shape: ngvecs, nbands)
                     coeffs = self.read_coefficients_batch(
                         ispin, ikpt, np.arange(nbands)
-                    ).T  # Shape: (ngvecs, nbands)
+                    ).T
     
-                    raw_coeffs[ispin] = coeffs.T
+                    raw_coeffs[ispin] = coeffs.T  # Shape: (nbands, ngvecs)
     
-                    # 1. Pseudo Wavefunction
-                    psi_ps_val = coeffs / sqrt_vol
-                    ps_psi[ispin] = psi_ps_val.T
+                    # Physical Volume-Normalized Pseudo Wavefunction: psi_ps(G) = C_G / sqrt(Omega)
+                    psi_ps_t = (coeffs / sqrt_vol).T  # Shape: (nbands, ngvecs) [A^-3/2]
+                    ps_psi[ispin] = psi_ps_t
     
-                    # 2. Projector Overlaps P_a = <p_a | psi_ps>
-                    p_psi_ps = (
-                        paw_projector_matrix.conj() @ coeffs
-                    ) / sqrt_vol
-                    P_all = p_psi_ps.T  # Shape: (nbands, total_n_proj)
-                    proj_overlaps[ispin] = P_all
+                    # Projector Overlaps P_a = <p_a | psi_ps> = sum_G \tilde{p}_a*(K) * psi_ps(G)
+                    # Result is dimensionless: (total_n_proj, ngvecs) @ (ngvecs, nbands) -> (total_n_proj, nbands)
+                    p_psi_ps = paw_projector_matrix.conj() @ (coeffs / sqrt_vol)
+                    proj_overlaps[ispin] = p_psi_ps.T  # Shape: (nbands, total_n_proj)
     
-                    # 3. Accumulate Atomic Density Matrix D_{a, ij}
-                    occ = self.metadata.occupancies[ispin, ikpt, :]
-                    weights = k_weight * occ * spin_weight  # Shape: (nbands,)
+                    # Physical Laplacian: -|K|^2 * psi_ps(G) [A^-7/2]
+                    ps_lap[ispin] = -K_sq[np.newaxis, :] * psi_ps_t
     
-                    for atom_idx in range(num_atoms):
-                        start_ch, end_ch = atom_offsets[atom_idx]
-                        n_proj_a = end_ch - start_ch
-                        P_a = P_all[:, start_ch:end_ch]  # Shape: (nbands, n_proj_a)
-    
-                        # D_a = Re( P_a^H @ diag(weights) @ P_a )
-                        D_a = np.real((P_a.conj().T * weights) @ P_a)
-                        D_total[ispin, atom_idx, :n_proj_a, :n_proj_a] += D_a
-    
-                    # 4. Pseudo Laplacian & Gradient
-                    ps_lap[ispin] = (-K_sq[:, np.newaxis] * psi_ps_val).T
-                    grad_ps = (
+                    # Physical Gradient: i * K_alpha * psi_ps(G) [A^-5/2]
+                    # Direct broadcasting: (3, 1, ngvecs) * (1, nbands, ngvecs) -> (3, nbands, ngvecs)
+                    ps_grad[ispin] = (
                         1j
-                        * K_vecs[:, :, np.newaxis]
-                        * psi_ps_val[:, np.newaxis, :]
+                        * K_vecs.T[:, np.newaxis, :]
+                        * psi_ps_t[np.newaxis, :, :]
                     )
-                    ps_grad[ispin] = np.moveaxis(
-                        grad_ps, [0, 1, 2], [2, 0, 1]
-                    )
-    
-            # Save precomputed total density matrices to HDF5
-            file.create_dataset("density_matrices", data=D_total, compression="lzf")

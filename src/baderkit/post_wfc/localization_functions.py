@@ -27,12 +27,6 @@ def eli(rho, tau, grad_rho_sq):
     )
     
     return tau - tau_bos
-    
-    # tau_w_corr = tau + tau_corr
-    # tau_bos = np.minimum(tau_w_corr, tau_bos)
-    
-    # D = (tau_w_corr - tau_bos)
-    # return D
 
 ###############################################################################
 # KERNELS

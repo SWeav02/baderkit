@@ -193,7 +193,7 @@ class PostWFC:
     
     @property
     def kpoints_cart(self):
-        return np.dot(self.kpoints, 2 * np.pi * self.reciprocal_lattice)
+        return np.dot(self.kpoints, self.reciprocal_lattice)
     
     @property
     def kpoint_multiplicities(self):
@@ -271,7 +271,7 @@ class PostWFC:
     @property
     def kpoints_cart_full(self):
         if getattr(self, "_kpoints_cart_full", None) is None:
-            self._kpoints_cart_full = np.dot(self.kpoints_full, 2 * np.pi * self.reciprocal_lattice)
+            self._kpoints_cart_full = np.dot(self.kpoints_full, self.reciprocal_lattice)
         return self._kpoints_cart_full
         
     @property
@@ -287,9 +287,37 @@ class PostWFC:
         return self._tetrahedra_indices
     
     ###########################################################################
-    # FFT Methods
+    # Grid Methods
     ###########################################################################
-    def get_fft_grid(self, grid_shape=None):
+    @staticmethod
+    def get_fractional_grid(grid_shape: tuple[int, int, int]) -> np.ndarray:
+        """Generates a (N, 3) array of fractional coordinates for a given 3D grid shape.
+        
+        Parameters
+        ----------
+        grid_shape : tuple[int, int, int]
+            Shape of the FFT real-space grid (Nx, Ny, Nz).
+            
+        Returns
+        -------
+        np.ndarray
+            Fractional coordinates of shape (Nx * Ny * Nz, 3), where each row
+            corresponds to a fractional vector [f_x, f_y, f_z] in [0, 1).
+        """
+        Nx, Ny, Nz = grid_shape
+        
+        # Generate 1D grid samples along each fractional axis
+        fx = np.linspace(0.0, 1.0, Nx, endpoint=False)
+        fy = np.linspace(0.0, 1.0, Ny, endpoint=False)
+        fz = np.linspace(0.0, 1.0, Nz, endpoint=False)
+        
+        # Build 3D meshgrids and stack along trailing dimension: shape (Nx, Ny, Nz, 3)
+        grid_3d = np.stack(np.meshgrid(fx, fy, fz, indexing="ij"), axis=-1)
+        
+        # Flatten spatial grid dimensions to shape (N, 3)
+        return grid_3d.reshape(-1, 3)
+    
+    def _get_fft_grid(self, grid_shape=None):
         if grid_shape is None: 
             grid_shape = self._minimum_fft_shape
         grid_shape = tuple(grid_shape)
@@ -302,11 +330,11 @@ class PostWFC:
         gx, gy, gz = np.meshgrid(fx, fy, fz, indexing='ij')
         return (gx, gy, gz)
         
-    def get_fft_grid_cart(self, grid_shape=None):
+    def _get_fft_grid_cart(self, grid_shape=None):
         """Transforms integer fractional meshgrid coordinate axes into explicit Cartesian grid coordinates (in A^-1)."""
-        gx, gy, gz = self.get_fft_grid(grid_shape)
+        gx, gy, gz = self._get_fft_grid(grid_shape)
         cx, cy, cz = np.tensordot(
-            self.reciprocal_lattice * np.pi * 2, [gx, gy, gz], axes=(0, 0))
+            self.reciprocal_lattice, [gx, gy, gz], axes=(0, 0))
         return cx, cy, cz
         
     ###########################################################################
@@ -580,40 +608,140 @@ class PostWFC:
     
         return results[0] if is_scalar_kpt else results
     
-    def fetch_density_matrix(
+    ###########################################################################
+    # Property Calculations
+    ###########################################################################
+    
+    def _get_atom_channel_offsets(self) -> list[tuple[int, int]]:
+        """Returns list of (start_idx, end_idx) channel slices for each atom in structure."""
+        offsets = []
+        curr = 0
+        for site in self.structure:
+            n_proj = len(self.paw_datasets[site.specie.symbol].angular_momenta)
+            offsets.append((curr, curr + n_proj))
+            curr += n_proj
+        return offsets
+    
+    def calculate_aug_densities(
         self,
+        pts_frac: np.ndarray,
+        D_atoms: np.ndarray,
+        return_grad_rho_sq: bool = False,
+        return_lap_rho: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Computes 3D real-space partial wave augmentation densities for all atoms on a target point set.
+        """
+        n_pts = len(pts_frac)
+        aug_rho = np.zeros(n_pts)
+        aug_tau = np.zeros(n_pts)
+        aug_grad_sq = np.zeros(n_pts)
+        aug_lap_rho = np.zeros(n_pts)
+        
+        # Calculate augmentation component for each atom
+        for atom_idx, site in enumerate(self.structure):
+            D_atom = D_atoms[atom_idx]
+            paw_ds = self.paw_datasets[site.specie.symbol]
+            max_rc = paw_ds.max_paw_cutoff
+            
+            # Minimum Image Convention (MIC) fractional displacement (N, 3)
+            atom_frac = self.structure.frac_coords[atom_idx]
+            d_frac = pts_frac - atom_frac
+            d_frac_mic = d_frac - np.round(d_frac)
+            
+            # Convert minimum-image fractional displacements to Cartesian vectors (N, 3)
+            r = d_frac_mic @ self.lattice
+            
+            # Identify grid points within PAW sphere cutoff radius
+            r_sq = np.sum(r**2, axis=1)
+            mask = np.where(r_sq < (max_rc**2))[0]
+            if len(mask) == 0:
+                continue
+                
+            local_r = r[mask]
+            
+            # Apply PAW sphere augmentations
+            rho_aug, tau_aug, grad_sq_aug, lap_aug = paw_ds.evaluate_paw_sphere_augmentations(
+                local_r, 
+                D_atom,
+                compute_tau=True,
+                compute_grad_rho_sq=return_grad_rho_sq,
+                compute_lap_rho=return_lap_rho,
+            )
+            
+            aug_rho[mask] += rho_aug
+            aug_tau[mask] += tau_aug
+            if return_grad_rho_sq:
+                aug_grad_sq[mask] += grad_sq_aug
+            if return_lap_rho:
+                aug_lap_rho[mask] += lap_aug
+                
+        return aug_rho, aug_tau, aug_grad_sq, aug_lap_rho
+    
+    def calculate_densities_on_grid(
+        self,
+        grid_shape: tuple[int, int, int] = None,
         spin_channel: int = -1,
         energy_range: tuple[float, float] = (-np.inf, np.inf),
         use_partial_occ: bool = True,
-    ) -> np.ndarray:
-        """Fetches or calculates the atomic density matrix D_{a, ij}.
+        pseudo: bool = False,
+        return_grad_rho_sq: bool = False,
+        return_lap_rho: bool = False,
+        use_shrod_tau: bool = False,
+    ) -> tuple[np.ndarray, ...]:
+        """Calculates charge density n(r) and kinetic energy density tau(r) on a 3D real-space grid via Inverse 3D FFT.
     
-        Returns shape: (num_atoms, max_n_proj, max_n_proj)
+        Uses volume-normalized wavefunctions psi_ps(G) [A^-3/2] cached by postwfc, evaluates smooth
+        tau_ps via a scalar Laplacian FFT, symmetrizes smooth fields to eliminate FFT grid aliasing,
+        and applies exact atomic density matrix (D_ij) PAW sphere augmentations if pseudo=False.
         """
-        has_energy_filter = energy_range != (-np.inf, np.inf)
+        if grid_shape is None:
+            grid_shape = self._minimum_fft_shape
     
-        # Use precalculated cached density matrix if evaluating full ground state
-        if not has_energy_filter and self._postwfc_file.exists():
-            with h5py.File(self._postwfc_file, "r") as file:
-                if "density_matrices" in file:
-                    D_cached = file["density_matrices"][:]
-                    if spin_channel == -1:
-                        return np.sum(D_cached, axis=0)
-                    return D_cached[spin_channel]
+        Nx, Ny, Nz = grid_shape
     
-        # Otherwise, compute D_{a, ij} dynamically for the requested subset
-        spins = list(range(self.nspin)) if spin_channel == -1 else [spin_channel]
+        # Determine active spin channels and weighting
+        if spin_channel == -1:
+            spins = list(range(self.nspin))
+        else:
+            spins = [spin_channel]
         spin_weight = 2 if (self.nspin == 1 or spin_channel != -1) else 1
+    
+        # Scale factor mapping cached physical psi(G) to real space via orthonormal IFFT
+        fft_scale = np.sqrt(Nx * Ny * Nz)
+    
+        # Initialize smooth pseudo real-space grids
+        density = np.zeros(grid_shape, dtype=np.float64)
+        tau = np.zeros(grid_shape, dtype=np.float64)
+    
+        # Initialize atomic density matrix D_{a, ij} accumulator
         atom_offsets = self._get_atom_channel_offsets()
         num_atoms = len(self.structure)
         max_n_proj = max(end - start for start, end in atom_offsets)
-    
-        D_out = np.zeros((num_atoms, max_n_proj, max_n_proj), dtype=np.float64)
+        D_atom = np.zeros((num_atoms, max_n_proj, max_n_proj), dtype=np.float64)
     
         e_min, e_max = energy_range
+        calculate_lap = return_lap_rho or use_shrod_tau or True  # Required for tau_pos conversion
     
-        for ikpt in range(self.nkpoints):
+        for ikpt in track(
+            range(self.nkpoints), description="[bold green]Building Densities..."
+        ):
             k_weight = self.kpoint_weights[ikpt]
+    
+            # 1. Map integer G-vectors onto FFT grid index bounds
+            G_int = self.fetch_gvectors(ikpt=ikpt)
+            idx_x = G_int[:, 0] % Nx
+            idx_y = G_int[:, 1] % Ny
+            idx_z = G_int[:, 2] % Nz
+    
+            # Cartesian wavevectors K = k + G in 1/A
+            K_vecs = self.fetch_gvectors(ikpt=ikpt, return_cart=True, add_k=True)
+            K2 = np.sum(K_vecs**2, axis=1)  # (ngvecs,) in 1/A^2
+    
+            # 2. Collect coefficients & weights for active band states in energy window
+            active_psi_list = []
+            active_weights_list = []
+    
             for ispin in spins:
                 energies = self.energies[ispin, ikpt, :]
                 occupancies = self.occupancies[ispin, ikpt, :]
@@ -625,25 +753,105 @@ class PostWFC:
                 if not np.any(mask):
                     continue
     
-                occ_vals = occupancies[mask] if use_partial_occ else np.ones(np.sum(mask))
-                weights = k_weight * occ_vals * spin_weight
+                occ_vals = (
+                    occupancies[mask] if use_partial_occ else np.ones(np.sum(mask))
+                )
     
-                P_all = self.fetch_projector_overlaps(ikpt=ikpt, ispin=ispin, iband=mask)
+                # Fetch cached volume-normalized wavefunctions psi_ps(G) [A^-3/2]
+                psi_g = self.fetch_psi(ikpt=ikpt, ispin=ispin, iband=mask, order=0)
+                active_psi_list.append(psi_g)
     
-                for atom_idx in range(num_atoms):
-                    start_ch, end_ch = atom_offsets[atom_idx]
-                    n_proj_a = end_ch - start_ch
-                    P_a = P_all[:, start_ch:end_ch]
+                # Weighting per state
+                w_1d = k_weight * occ_vals * spin_weight
+                w_4d = w_1d[:, np.newaxis, np.newaxis, np.newaxis]
+                active_weights_list.append(w_4d)
     
-                    D_out[atom_idx, :n_proj_a, :n_proj_a] += np.real(
-                        (P_a.conj().T * weights) @ P_a
-                    )
+                # Calculate projector overlaps & accumulate atomic density matrix D_{a, ij}
+                if not pseudo:
+                    P_all = self.fetch_projector_overlaps(
+                        ikpt=ikpt, ispin=ispin, iband=mask
+                    )  # Shape: (N_active, total_n_proj)
     
-        return D_out
+                    for atom_idx in range(num_atoms):
+                        start_ch, end_ch = atom_offsets[atom_idx]
+                        n_proj_a = end_ch - start_ch
+                        P_a = P_all[:, start_ch:end_ch]  # Shape: (N_active, n_proj_a)
     
-    ###########################################################################
-    # Property Calculations
-    ###########################################################################
+                        # D_{a, ij} += Re( P_a^H @ diag(w) @ P_a )
+                        D_a = np.real((P_a.conj().T * w_1d) @ P_a)
+                        D_atom[atom_idx, :n_proj_a, :n_proj_a] += D_a
+    
+            if not active_psi_list:
+                continue
+    
+            psi_g_all = np.concatenate(active_psi_list, axis=0)  # (N_active, ngvecs)
+            weights_all = np.concatenate(active_weights_list, axis=0)  # (N_active, 1, 1, 1)
+            N_active = psi_g_all.shape[0]
+    
+            # 3. Smooth Pseudo Wavefunctions via Orthonormal IFFT -> psi_r(r) [A^-3/2]
+            grid_g = np.zeros((N_active, Nx, Ny, Nz), dtype=np.complex128)
+            grid_g[:, idx_x, idx_y, idx_z] = psi_g_all * fft_scale
+            psi_r = ifftn(grid_g, axes=(-3, -2, -1), norm="ortho")
+    
+            # 4. Smooth Pseudo Laplacian (grad^2 psi) via Orthonormal IFFT -> lap_psi_r(r) [A^-7/2]
+            grid_lap_g = np.zeros((N_active, Nx, Ny, Nz), dtype=np.complex128)
+            grid_lap_g[:, idx_x, idx_y, idx_z] = -K2[np.newaxis, :] * psi_g_all * fft_scale
+            lap_psi_r = ifftn(grid_lap_g, axes=(-3, -2, -1), norm="ortho")
+    
+            # 5. Accumulate Smooth Pseudo Charge Density n_ps(r) [e/A^3]
+            density += np.sum(weights_all * (np.abs(psi_r) ** 2), axis=0)
+    
+            # 6. Accumulate Smooth Pseudo Schrödinger Kinetic Energy Density tau_schr_ps(r)
+            # tau_schr = -Re( psi* * grad^2 psi )
+            tau_schr_band = - np.real(np.conj(psi_r) * lap_psi_r) * weights_all
+            tau += np.sum(tau_schr_band, axis=0)
+    
+        # 7. Symmetrize smooth pseudo fields to suppress FFT grid aliasing
+        rho = self._symmetrize_3d_grid(density)
+        tau = self._symmetrize_3d_grid(tau)
+    
+        # 8. Compute smooth Laplacian lap_rho_ps = grad^2(rho_ps) and convert tau_schr -> tau_pos
+        # Note: calculate_laplacian applies -|G|^2 in reciprocal space
+        lap_rho = self.calculate_laplacian(rho) if calculate_lap else None
+    
+        if return_grad_rho_sq:
+            gradx, grady, gradz = self.calculate_gradient(rho)
+            grad_rho_sq = gradx**2 + grady**2 + gradz**2
+    
+        # 9. Apply real-space atomic sphere PAW sphere augmentations
+        if not pseudo:
+            grid_frac = self.get_fractional_grid(grid_shape)
+    
+            rho_aug, tau_aug, grad_sq_aug, lap_rho_aug = self.calculate_aug_densities(
+                grid_frac,
+                D_atom,
+                return_grad_rho_sq=return_grad_rho_sq,
+                return_lap_rho=calculate_lap,
+            )
+    
+            rho += rho_aug.reshape(grid_shape)
+            tau += tau_aug.reshape(grid_shape)  # tau_aug is positive-definite
+    
+            if calculate_lap:
+                lap_rho += lap_rho_aug.reshape(grid_shape)
+    
+            if return_grad_rho_sq:
+                grad_rho_sq += grad_sq_aug.reshape(grid_shape)
+    
+        # 10. Convert total combined tau back to Schrödinger form if requested
+        if not use_shrod_tau:
+            tau += 0.5 * lap_rho
+    
+        # Collect output fields
+        results = [rho, tau]
+    
+        if return_grad_rho_sq:
+            results.append(grad_rho_sq)
+    
+        if return_lap_rho:
+            results.append(lap_rho)
+    
+        return tuple(results)
     
     def calculate_densities_along_line(
         self,
@@ -685,168 +893,6 @@ class PostWFC:
             return_lap_rho=return_lap_rho,
             use_shrod_tau=use_shrod_tau,
         )
-    
-    def calculate_densities_on_grid(
-        self,
-        grid_size: tuple[int, int, int] = None,
-        spin_channel: int = -1,
-        energy_range: tuple[float, float] = (-np.inf, np.inf),
-        use_partial_occ: bool = True,
-        pseudo: bool = False,
-        return_grad_rho_sq: bool = False,
-        return_lap_rho: bool = False,
-        use_shrod_tau: bool = False,
-    ):
-        """Calculates charge density n(r) and kinetic energy density tau(r) on a 3D real-space grid via Inverse 3D FFT.
-
-        Symmetrizes the smooth pseudo fields first to eliminate FFT aliasing, then applies
-        exact atomic density matrix (D_ij) real-space PAW sphere augmentations if pseudo=False.
-        """
-        if grid_size is None:
-            grid_size = self._minimum_fft_shape
-
-        Nx, Ny, Nz = grid_size
-        N_grid = Nx * Ny * Nz
-
-        # Determine spin channels
-        if spin_channel == -1:
-            spins = list(range(self.nspin))
-        else:
-            spins = [spin_channel]
-        spin_weight = 2 if (self.nspin == 1 or spin_channel != -1) else 1
-
-        # Scaling factor relating Fourier coefficients to real-space grid values
-        fft_scale = Nx * Ny * Nz
-
-        # Initialize pseudo real-space grids
-        density = np.zeros(grid_size, dtype=np.float64)
-        tau = np.zeros(grid_size, dtype=np.float64)
-
-        e_min, e_max = energy_range
-
-        for ikpt in track(
-            range(self.nkpoints), description="[bold green]Building Densities..."
-        ):
-            k_weight = self.kpoint_weights[ikpt]
-
-            # 1. Map integer G vectors onto positive FFT grid indices
-            G_int = self.fetch_gvectors(ikpt=ikpt)
-            idx_x = G_int[:, 0] % Nx
-            idx_y = G_int[:, 1] % Ny
-            idx_z = G_int[:, 2] % Nz
-
-            K_vecs = self.fetch_gvectors(ikpt=ikpt, return_cart=True, add_k=True)
-
-            # 2. Collect coefficients & weights for active states in energy window
-            active_psi_list = []
-            active_weights_list = []
-
-            for ispin in spins:
-                energies = self.energies[ispin, ikpt, :]
-                occupancies = self.occupancies[ispin, ikpt, :]
-
-                mask = (energies >= e_min) & (energies <= e_max)
-                if use_partial_occ:
-                    mask = mask & (occupancies >= 1e-8)
-
-                if not np.any(mask):
-                    continue
-
-                occ_vals = (
-                    occupancies[mask] if use_partial_occ else np.ones(np.sum(mask))
-                )
-
-                psi_g = self.fetch_psi(
-                    ikpt=ikpt, ispin=ispin, iband=mask, order=0
-                )
-                active_psi_list.append(psi_g)
-
-                w = (k_weight * occ_vals * spin_weight)[
-                    :, np.newaxis, np.newaxis, np.newaxis
-                ]
-                active_weights_list.append(w)
-
-            if not active_psi_list:
-                continue
-
-            psi_g_all = np.concatenate(active_psi_list, axis=0)  # (N_active, ngvecs)
-            weights_all = np.concatenate(
-                active_weights_list, axis=0
-            )  # (N_active, 1, 1, 1)
-            N_active = psi_g_all.shape[0]
-
-            # 3. Smooth Pseudo Wavefunctions via Inverse 3D FFT
-            grid_g = np.zeros((N_active, Nx, Ny, Nz), dtype=np.complex128)
-            grid_g[:, idx_x, idx_y, idx_z] = psi_g_all
-            psi_r = (
-                ifftn(grid_g, axes=(-3, -2, -1)) * fft_scale
-            )  # (N_active, Nx, Ny, Nz)
-
-            # 4. Smooth Pseudo Gradients via Inverse 3D FFT
-            grid_grad_g = np.zeros((N_active, 3, Nx, Ny, Nz), dtype=np.complex128)
-            for dim in range(3):
-                grad_g_dim = 1j * K_vecs[:, dim][np.newaxis, :] * psi_g_all
-                grid_grad_g[:, dim, idx_x, idx_y, idx_z] = grad_g_dim
-
-            grad_r = (
-                ifftn(grid_grad_g, axes=(-3, -2, -1)) * fft_scale
-            )  # (N_active, 3, Nx, Ny, Nz)
-
-            # 5. Accumulate Smooth Pseudo Charge Density n_ps(r)
-            density += np.sum(weights_all * (np.abs(psi_r) ** 2), axis=0)
-
-            # 6. Accumulate Smooth Pseudo Kinetic Energy Density tau_ps(r)
-            grad_sq_r = np.sum(
-                np.abs(grad_r) ** 2, axis=1
-            )  # (N_active, Nx, Ny, Nz)
-            tau += 0.5 * np.sum(weights_all * grad_sq_r, axis=0)
-
-        # 7. Symmetrize smooth pseudo fields to remove FFT grid aliasing
-        rho = self._symmetrize_3d_grid(density)
-        tau = self._symmetrize_3d_grid(tau)
-
-        # 8. Apply atomic density matrix (D_ij) PAW real-space augmentations post-symmetrization
-        if not pseudo:
-            fx = np.linspace(0, 1, Nx, endpoint=False)
-            fy = np.linspace(0, 1, Ny, endpoint=False)
-            fz = np.linspace(0, 1, Nz, endpoint=False)
-            FFx, FFy, FFz = np.meshgrid(fx, fy, fz, indexing="ij")
-            grid_frac = np.stack([FFx, FFy, FFz], axis=-1)
-            grid_cart_flat = (grid_frac @ self.lattice).reshape(N_grid, 3)
-
-            patches = self._precompute_paw_patches(
-                pts_cart=grid_cart_flat, compute_gradients=True
-            )
-            D_matrix = self.fetch_density_matrix(
-                spin_channel=spin_channel,
-                energy_range=energy_range,
-                use_partial_occ=use_partial_occ,
-            )
-
-            self._apply_paw_augmentation(
-                density_matrix=D_matrix,
-                density=rho,
-                patches=patches,
-                tau=tau,
-            )
-
-        # 9. Calculate Laplacian and optional fields on total density
-        if return_lap_rho or use_shrod_tau:
-            lap_rho = self.calculate_laplacian(rho)
-            if use_shrod_tau:
-                tau -= lap_rho / 4.0
-
-        # Collect requested results
-        results = [rho, tau]
-
-        if return_grad_rho_sq:
-            gradx, grady, gradz = self.calculate_gradient(rho)
-            results.append(gradx**2 + grady**2 + gradz**2)
-
-        if return_lap_rho:
-            results.append(lap_rho)
-
-        return tuple(results)
 
     def calculate_densities_at_points(
         self,
@@ -887,14 +933,18 @@ class PostWFC:
         density = np.zeros(N_pts, dtype=np.float64)
         tau = np.zeros(N_pts, dtype=np.float64)
 
+        calculate_lap = return_lap_rho or use_shrod_tau
+
         grad_rho = (
             np.zeros((3, N_pts), dtype=np.float64) if return_grad_rho_sq else None
         )
-        lap_rho = (
-            np.zeros(N_pts, dtype=np.float64)
-            if (return_lap_rho or use_shrod_tau)
-            else None
-        )
+        lap_rho = np.zeros(N_pts, dtype=np.float64) if calculate_lap else None
+
+        # Initialize on-the-fly atomic density matrix D_{a, ij}
+        atom_offsets = self._get_atom_channel_offsets()
+        num_atoms = len(self.structure)
+        max_n_proj = max(end - start for start, end in atom_offsets)
+        D_atom = np.zeros((num_atoms, max_n_proj, max_n_proj), dtype=np.float64)
 
         e_min, e_max = energy_range
 
@@ -939,14 +989,29 @@ class PostWFC:
                 ).transpose(1, 0, 2)
                 active_grad_list.append(grad_g)
 
-                if return_lap_rho or use_shrod_tau:
+                if calculate_lap:
                     lap_g = self.fetch_psi(
                         ikpt=ikpt, ispin=ispin, iband=mask, order=2
                     )
                     active_lap_list.append(lap_g)
 
-                w = (k_weight * occ_vals * spin_weight)[:, np.newaxis]
-                active_weights_list.append(w)
+                w_1d = k_weight * occ_vals * spin_weight
+                w_2d = w_1d[:, np.newaxis]
+                active_weights_list.append(w_2d)
+
+                # Calculate projector overlaps & accumulate D_{a, ij} on the fly
+                if not pseudo:
+                    P_all = self.fetch_projector_overlaps(
+                        ikpt=ikpt, ispin=ispin, iband=mask
+                    )
+
+                    for atom_idx in range(num_atoms):
+                        start_ch, end_ch = atom_offsets[atom_idx]
+                        n_proj_a = end_ch - start_ch
+                        P_a = P_all[:, start_ch:end_ch]
+
+                        D_a = np.real((P_a.conj().T * w_1d) @ P_a)
+                        D_atom[atom_idx, :n_proj_a, :n_proj_a] += D_a
 
             if not active_psi_list:
                 continue
@@ -960,7 +1025,7 @@ class PostWFC:
             )  # (N_active, 1)
             N_active = psi_g_all.shape[0]
 
-            if return_lap_rho or use_shrod_tau:
+            if calculate_lap:
                 lap_g_all = np.concatenate(
                     active_lap_list, axis=0
                 )  # (N_active, ngvecs)
@@ -986,7 +1051,7 @@ class PostWFC:
                     np.matmul(grad_g_all, phase_chunk.T) / sqrt_vol
                 )
 
-                if return_lap_rho or use_shrod_tau:
+                if calculate_lap:
                     lap_r = (lap_g_all @ phase_chunk.T) / sqrt_vol
 
                 # 1. Accumulate smooth charge density n_ps(r)
@@ -1009,7 +1074,7 @@ class PostWFC:
                     )
 
                 # 4. Accumulate smooth density Laplacian \nabla^2 n_ps(r)
-                if return_lap_rho or use_shrod_tau:
+                if calculate_lap:
                     term1 = np.conj(psi_r) * lap_r
                     term2 = np.sum(np.abs(grad_r) ** 2, axis=1)
                     lap_rho[p_start:p_end] += 2.0 * np.real(
@@ -1017,23 +1082,28 @@ class PostWFC:
                     )
 
         # Apply atomic density matrix (D_ij) PAW real-space augmentations
+        grad_rho_sq = None
+        if return_grad_rho_sq and grad_rho is not None:
+            grad_rho_sq = np.sum(grad_rho**2, axis=0)
+
         if not pseudo:
-            patches = self._precompute_paw_patches(
-                pts_cart=pts_cart, compute_gradients=True
-            )
-            D_matrix = self.fetch_density_matrix(
-                spin_channel=spin_channel,
-                energy_range=energy_range,
-                use_partial_occ=use_partial_occ,
+            pts_frac = pts_cart @ np.linalg.inv(self.lattice)
+
+            rho_aug, tau_aug, grad_sq_aug, lap_rho_aug = self.calculate_aug_densities(
+                pts_frac,
+                D_atom,
+                return_grad_rho_sq=return_grad_rho_sq,
+                return_lap_rho=calculate_lap,
             )
 
-            self._apply_paw_augmentation(
-                density_matrix=D_matrix,
-                density=density,
-                patches=patches,
-                tau=tau,
-                grad_rho=grad_rho,
-            )
+            density += rho_aug
+            tau += tau_aug
+
+            if calculate_lap and lap_rho is not None:
+                lap_rho += lap_rho_aug
+
+            if return_grad_rho_sq and grad_rho_sq is not None:
+                grad_rho_sq += grad_sq_aug
 
         if use_shrod_tau and lap_rho is not None:
             tau -= lap_rho / 4.0
@@ -1041,164 +1111,13 @@ class PostWFC:
         results = [density, tau]
 
         if return_grad_rho_sq:
-            grad_rho_sq = np.sum(grad_rho**2, axis=0)
             results.append(grad_rho_sq)
 
         if return_lap_rho:
             results.append(lap_rho)
 
-        return tuple(results) if len(results) > 2 else (density, tau)
+        return tuple(results)
     
-    def _get_atom_channel_offsets(self) -> list[tuple[int, int]]:
-        """Returns list of (start_idx, end_idx) channel slices for each atom in structure."""
-        offsets = []
-        curr = 0
-        for site in self.structure:
-            n_proj = len(self.paw_datasets[site.specie.symbol].angular_momenta)
-            offsets.append((curr, curr + n_proj))
-            curr += n_proj
-        return offsets
-    
-    def _precompute_paw_patches(
-        self,
-        pts_cart: np.ndarray,
-        compute_gradients: bool = True,
-    ) -> list[PAWPatch]:
-        """Precomputes 3D real-space partial wave matrices for all atoms on a target point set.
-    
-        Called ONCE before the k-point loop.
-        """
-        recip_lattice_T_div_twopi = self.reciprocal_lattice.T / (2.0 * np.pi)
-        lattice = self.structure.lattice.matrix
-        atom_offsets = self._get_atom_channel_offsets()
-    
-        patches = []
-    
-        for atom_idx, site in enumerate(self.structure):
-            start_ch, end_ch = atom_offsets[atom_idx]
-            paw_sp = self.paw_datasets[site.specie.symbol]
-            pos = self.structure.cart_coords[atom_idx]
-            max_rc = np.max(paw_sp.paw_cutoffs)
-    
-            # 1. Minimum image displacement
-            dr = pts_cart - pos
-            dr_frac = dr @ recip_lattice_T_div_twopi
-            shift_frac = np.round(dr_frac)
-            dr_frac_mic = dr_frac - shift_frac
-            vecs = dr_frac_mic @ lattice
-    
-            r_sq = np.sum(vecs**2, axis=1)
-            mask = r_sq < (max_rc**2)
-    
-            if not np.any(mask):
-                continue
-    
-            local_vecs = vecs[mask]  # (N_local, 3)
-    
-            # 2. Evaluate AE and PS partial wave matrices
-            ae_mat, ps_mat = paw_sp.evaluate_partial_waves(local_vecs)
-    
-            # 3. Evaluate AE and PS gradient matrices if requested
-            grad_ae_mat, grad_ps_mat = None, None
-            if compute_gradients:
-                g_ae, g_ps = paw_sp.evaluate_partial_wave_gradients(local_vecs)
-                # Transpose to shape (3, N_local, n_proj_a)
-                grad_ae_mat = np.swapaxes(g_ae, 0, 1)
-                grad_ps_mat = np.swapaxes(g_ps, 0, 1)
-    
-            patches.append(
-                PAWPatch(
-                    atom_idx=atom_idx,
-                    mask=mask,
-                    start_ch=start_ch,
-                    end_ch=end_ch,
-                    ae_mat=ae_mat,
-                    ps_mat=ps_mat,
-                    grad_ae_mat=grad_ae_mat,
-                    grad_ps_mat=grad_ps_mat,
-                )
-            )
-    
-        return patches
-    
-    
-    def _apply_paw_augmentation(
-        self,
-        density_matrix: np.ndarray,
-        density: np.ndarray,
-        patches: list[PAWPatch],
-        tau: np.ndarray = None,
-        grad_rho: np.ndarray = None,
-    ):
-        """Applies atomic density matrix (D_ij) valence augmentations in-place.
-
-        Parameters
-        ----------
-        density_matrix : np.ndarray, shape (num_atoms, n_proj_max, n_proj_max)
-            Accumulated atomic density matrix D_{a, ij} = sum_{n, k} w_nk * Re(P_nki* P_nkj).
-        density : np.ndarray, shape (Nx, Ny, Nz) or (N_pts,)
-            Real-space electron charge density array. Modified in-place.
-        patches : list[PAWPatch]
-            Precomputed geometric and partial wave patches.
-        tau : np.ndarray, optional, shape (Nx, Ny, Nz) or (N_pts,)
-            Real-space kinetic energy density array. Modified in-place if provided.
-        grad_rho : np.ndarray, optional, shape (3, N_pts)
-            Real-space charge density gradient array. Modified in-place if provided.
-        """
-        if density_matrix is None or not patches:
-            return
-
-        density_flat = density.reshape(-1)
-        tau_flat = tau.reshape(-1) if tau is not None else None
-
-        for patch in patches:
-            atom_idx = patch.atom_idx
-            mask = patch.mask
-            n_proj_a = patch.ae_mat.shape[1]
-
-            # Extract real atomic density matrix D_{a, ij} for this atom
-            D_a = density_matrix[atom_idx, :n_proj_a, :n_proj_a]
-
-            # ------------------------------------------------------------------
-            # 1. Valence Charge Density Augmentation:
-            # \Delta n_a = \sum_{ij} D_{ij} [\Phi_i^AE \Phi_j^AE - \Phi_i^PS \Phi_j^PS]
-            # ------------------------------------------------------------------
-            ae_term = np.sum((patch.ae_mat @ D_a) * patch.ae_mat, axis=1)
-            ps_term = np.sum((patch.ps_mat @ D_a) * patch.ps_mat, axis=1)
-
-            density_flat[mask] += ae_term - ps_term
-
-            # ------------------------------------------------------------------
-            # 2. Valence Kinetic Energy Density Augmentation:
-            # \Delta \tau_a = 1/2 \sum_{dim=1}^3 \sum_{ij} D_{ij} [\nabla_dim \Phi_i^AE \nabla_dim \Phi_j^AE - ...]
-            # ------------------------------------------------------------------
-            if tau_flat is not None and patch.grad_ae_mat is not None:
-                d_tau = np.zeros(np.count_nonzero(mask), dtype=np.float64)
-                for dim in range(3):
-                    g_ae_dim = patch.grad_ae_mat[dim]  # (N_local, n_proj_a)
-                    g_ps_dim = patch.grad_ps_mat[dim]  # (N_local, n_proj_a)
-
-                    g_ae_term = np.sum((g_ae_dim @ D_a) * g_ae_dim, axis=1)
-                    g_ps_term = np.sum((g_ps_dim @ D_a) * g_ps_dim, axis=1)
-
-                    d_tau += 0.5 * (g_ae_term - g_ps_term)
-
-                tau_flat[mask] += d_tau
-
-            # ------------------------------------------------------------------
-            # 3. Valence Density Gradient Augmentation:
-            # \nabla \Delta n_a = 2 \sum_{ij} D_{ij} [(\nabla \Phi_i^AE) \Phi_j^AE - (\nabla \Phi_i^PS) \Phi_j^PS]
-            # ------------------------------------------------------------------
-            if grad_rho is not None and patch.grad_ae_mat is not None:
-                for dim in range(3):
-                    g_ae_dim = patch.grad_ae_mat[dim]
-                    g_ps_dim = patch.grad_ps_mat[dim]
-
-                    d_grad_ae = np.sum((g_ae_dim @ D_a) * patch.ae_mat, axis=1)
-                    d_grad_ps = np.sum((g_ps_dim @ D_a) * patch.ps_mat, axis=1)
-
-                    grad_rho[dim, mask] += 2.0 * (d_grad_ae - d_grad_ps)
-
     def calculate_densities_vs_energy(
         self,
         frac_coord: list | np.ndarray,
@@ -1211,102 +1130,121 @@ class PostWFC:
         plot_range: tuple[float, float] = None,
         use_shrod_tau: bool = False,
     ):
-        """Calculates energy-resolved local electron densities n(r, E), kinetic energy densities
-
-        tau(r, E), and density derivatives at target real-space coordinates.
-        """
+        """Calculates energy-resolved local electron densities n(r, E) and kinetic energy densities."""
         pts_frac = np.atleast_2d(np.asarray(frac_coord, dtype=np.float64))
         pts_cart = pts_frac @ self.lattice
+        N_pts = len(pts_frac)
         sqrt_vol = np.sqrt(self.structure.volume)
 
-        if not pseudo:
-            patches = self._precompute_paw_patches(
-                pts_cart=pts_cart, compute_gradients=True
-            )
-        else:
-            patches = None
+        calculate_lap = return_lap_rho or use_shrod_tau
+        needs_gradients = True  # Always needed for tau
 
-        def point_callback(
-            ispin,
-            ikpt,
-            weight,
-            **kwargs,
-        ):
+        # Precompute target atom basis fields outside the k-point loop
+        patch_data = []
+        if not pseudo:
+            atom_offsets = self._get_atom_channel_offsets()
+            pts_frac_flat = pts_frac.reshape(-1, 3)
+
+            for atom_idx, site in enumerate(self.structure):
+                paw_ds = self.paw_datasets[site.specie.symbol]
+                max_rc = paw_ds.max_paw_cutoff
+
+                atom_frac = site.frac_coords[:, None]
+                d_frac = pts_frac_flat - atom_frac
+                d_frac_mic = d_frac - np.round(d_frac)
+                vecs_cart = d_frac_mic @ self.lattice
+
+                r_sq = np.sum(vecs_cart**2, axis=1)
+                mask = r_sq < (max_rc**2)
+
+                if not np.any(mask):
+                    continue
+
+                local_r = vecs_cart[mask]
+                start_ch, end_ch = atom_offsets[atom_idx]
+
+                # ONE LINE: Evaluate basis fields via PAWDataset
+                basis = paw_ds.evaluate_basis_fields(
+                    local_r, compute_gradients=needs_gradients, compute_laplacian=calculate_lap
+                )
+
+                patch_data.append({
+                    "paw_ds": paw_ds,
+                    "start_ch": start_ch,
+                    "end_ch": end_ch,
+                    "basis": basis,
+                })
+
+        def point_callback(ispin, ikpt, weight, **kwargs):
             K_vecs = self.fetch_gvectors(ikpt=ikpt, return_cart=True, add_k=True)
             phase = np.exp(1j * (pts_cart @ K_vecs.T))
 
-            # 1. Fetch smooth pseudo wavefunctions and gradients
-            psi_g = self.fetch_psi(
-                ikpt=ikpt,
-                ispin=ispin,
-                iband=np.arange(self.nbands),
-                order=0,
-            )
+            # 1. Smooth pseudo fields
+            psi_g = self.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands), order=0)
             psi_r = (psi_g @ phase.T) / sqrt_vol  # (nbands, N_pts)
 
-            grad_g = self.fetch_psi(
-                ikpt=ikpt,
-                ispin=ispin,
-                iband=np.arange(self.nbands),
-                order=1,
-            ).transpose(1, 0, 2)
+            grad_g = self.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands), order=1).transpose(1, 0, 2)
             grad_r = np.matmul(grad_g, phase.T) / sqrt_vol  # (nbands, 3, N_pts)
 
-            # 2. Smooth state-resolved quantities
             rho_n = weight * np.mean(np.abs(psi_r) ** 2, axis=1)
             grad_sq_r = np.sum(np.abs(grad_r) ** 2, axis=1)
             tau_n = 0.5 * weight * np.mean(grad_sq_r, axis=1)
 
-            # 3. Add single-state density matrix augmentations post-eval if not pseudo
-            if not pseudo and patches:
-                P_all = self.fetch_projector_overlaps(
-                    ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands)
-                )  # (nbands, total_n_proj)
+            grad_rho_sq_n = lap_rho_n = None
+            if return_grad_rho_sq:
+                grad_rho_n = 2.0 * np.real(psi_r[:, np.newaxis, :] * np.conj(grad_r))
+                grad_rho_sq_n = weight * np.mean(np.sum(grad_rho_n**2, axis=1), axis=1)
 
-                for patch in patches:
-                    P_a = P_all[:, patch.start_ch : patch.end_ch]  # (nbands, n_proj_a)
+            if calculate_lap:
+                lap_g = self.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands), order=2)
+                lap_r = (lap_g @ phase.T) / sqrt_vol
+                lap_rho_n = 2.0 * weight * np.mean(np.real(np.conj(psi_r) * lap_r + grad_sq_r), axis=1)
 
-                    # Vectorized single-state partial wave evaluations across all bands
-                    phi_ae = P_a @ patch.ae_mat.T  # (nbands, N_pts)
-                    phi_ps = P_a @ patch.ps_mat.T  # (nbands, N_pts)
+            # 2. PAW sphere augmentations via PAWDataset state contraction
+            if not pseudo and patch_data:
+                P_all = self.fetch_projector_overlaps(ikpt=ikpt, ispin=ispin, iband=np.arange(self.nbands))
 
-                    # Delta charge density per band
-                    d_rho_n = np.mean(np.abs(phi_ae) ** 2 - np.abs(phi_ps) ** 2, axis=1)
-                    rho_n += weight * d_rho_n
+                for patch in patch_data:
+                    P_a = P_all[:, patch["start_ch"] : patch["end_ch"]]
+                    paw_ds = patch["paw_ds"]
 
-                    # Delta kinetic energy density per band
-                    if patch.grad_ae_mat is not None:
-                        d_tau_n = np.zeros(self.nbands, dtype=np.float64)
-                        for dim in range(3):
-                            g_ae = P_a @ patch.grad_ae_mat[dim].T  # (nbands, N_pts)
-                            g_ps = P_a @ patch.grad_ps_mat[dim].T  # (nbands, N_pts)
-                            d_tau_n += 0.5 * np.mean(
-                                np.abs(g_ae) ** 2 - np.abs(g_ps) ** 2, axis=1
-                            )
-                        tau_n += weight * d_tau_n
+                    # Contract precomputed basis fields with state projector overlaps
+                    d_rho, d_tau, d_grad_sq, d_lap = paw_ds.contract_state_overlaps(
+                        patch["basis"],
+                        P_a,
+                        total_n_pts=N_pts,
+                        compute_tau=True,
+                        compute_grad_rho_sq=return_grad_rho_sq,
+                        compute_lap_rho=calculate_lap,
+                    )
+
+                    rho_n += weight * d_rho
+                    tau_n += weight * d_tau
+                    if return_grad_rho_sq:
+                        grad_rho_sq_n += weight * d_grad_sq
+                    if calculate_lap:
+                        lap_rho_n += weight * d_lap
 
             metrics = [rho_n, tau_n]
-
-            # 4. Density gradient magnitude |grad n_i(r)|^2
             if return_grad_rho_sq:
-                grad_rho_n = 2.0 * np.real(
-                    psi_r[:, np.newaxis, :] * np.conj(grad_r)
-                )
-                grad_rho_sq_n = weight * np.mean(
-                    np.sum(grad_rho_n**2, axis=1), axis=1
-                )
                 metrics.append(grad_rho_sq_n)
+            if calculate_lap:
+                metrics.append(lap_rho_n)
 
             return metrics
 
-        num_metrics = 2 + (1 if return_grad_rho_sq else 0)
+        num_metrics = 2 + (1 if return_grad_rho_sq else 0) + (1 if calculate_lap else 0)
 
-        # Execute spectral broadening engine across energy grid
         smeared = self._execute_spectral_engine(
-            num_metrics=num_metrics,
-            spin_channel=spin_channel,
-            eval_callback=point_callback,
+            num_metrics=num_metrics, spin_channel=spin_channel, eval_callback=point_callback
         )
+
+        lap_idx = 2 + (1 if return_grad_rho_sq else 0)
+        if use_shrod_tau:
+            smeared[1] -= smeared[lap_idx] / 4.0
+
+        if not return_lap_rho and calculate_lap:
+            smeared.pop(lap_idx)
 
         if cumulative:
             smeared = [
@@ -1327,8 +1265,13 @@ class PostWFC:
                 f"{prefix}Kinetic Density $\\tau$": smeared[1],
             }
 
+            curr_idx = 2
             if return_grad_rho_sq:
-                plot_curves[f"{prefix}Gradient $|\\nabla\\rho|^2$"] = smeared[2]
+                plot_curves[f"{prefix}Gradient $|\\nabla\\rho|^2$"] = smeared[curr_idx]
+                curr_idx += 1
+
+            if return_lap_rho:
+                plot_curves[f"{prefix}Laplacian $\\nabla^2\\rho$"] = smeared[curr_idx]
 
             return self._generate_property_plot(
                 plot_curves=plot_curves, x_label=x_label, plot_range=plot_range
@@ -1397,7 +1340,7 @@ class PostWFC:
     ###########################################################################
     # LOCALIZATION METHODS
     ###########################################################################
-    def get_elf_at_points(
+    def calculate_elf_at_points(
         self,
         frac_coord,
         spin_channel: int = -1,
@@ -1446,8 +1389,9 @@ class PostWFC:
             from baderkit.post_wfc.localization_functions import elf
             return elf(rho, tau, grad_sq, savin_correction, is_spin)
 
-    def get_elf_on_grid(
+    def calculate_elf_on_grid(
             self, 
+            grid_shape=None,
             pseudo=False,
             energy_range=(-np.inf, np.inf), 
             spin_channel=-1, 
@@ -1464,6 +1408,7 @@ class PostWFC:
         need_derivatives = loc_fn_lower in ["elf", "elid"]
         
         contributions = self.calculate_densities_on_grid(
+            grid_shape=grid_shape,
             return_grad_rho_sq=need_derivatives,
             return_lap_rho=False,
             spin_channel=spin_channel,
@@ -1489,7 +1434,7 @@ class PostWFC:
             from baderkit.post_wfc.localization_functions import elf
             return elf(rho, tau, grad_sq, savin_correction, spin_channel != -1)
         
-    def get_elf_vs_energy(
+    def calculate_elf_vs_energy(
         self, 
         frac_coord, 
         spin_channel=-1, 
@@ -1573,7 +1518,7 @@ class PostWFC:
         else: 
             recip_data = data
             
-        Gx, Gy, Gz = self.get_fft_grid_cart(recip_data.shape)
+        Gx, Gy, Gz = self._get_fft_grid_cart(recip_data.shape)
         G2 = Gx**2 + Gy**2 + Gz**2  
             
         recip_lap = -G2 * recip_data
@@ -1589,7 +1534,7 @@ class PostWFC:
         else: 
             recip_data = data
             
-        Gx, Gy, Gz = self.get_fft_grid_cart(recip_data.shape)
+        Gx, Gy, Gz = self._get_fft_grid_cart(recip_data.shape)
         with set_workers(-1):
             grad_x = ifftn(1j * Gx * recip_data, norm='ortho')
             grad_y = ifftn(1j * Gy * recip_data, norm='ortho')
