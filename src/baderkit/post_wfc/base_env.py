@@ -1350,11 +1350,11 @@ class PostWFC:
     
         if return_plot:
             prefix = "Integrated " if cumulative else ""
-            y_label = "States" if cumulative else "States / eV"
+            x_label = "States" if cumulative else "States / eV"
             plot_curves = {f"{prefix}Density of States": dos}
     
             return self._generate_property_plot(
-                plot_curves=plot_curves, y_label=y_label, plot_range=plot_range
+                plot_curves=plot_curves, x_label=x_label, plot_range=plot_range
             )
     
         return dos

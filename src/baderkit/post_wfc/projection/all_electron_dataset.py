@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import json
+from rich import print as rprint
 
 from dataclasses import dataclass, field
 import numpy as np
@@ -275,14 +276,13 @@ class AESpecies(BaseSpecies):
     def _prune_basis(
         paw_species: PAWSpecies,
         basis_data: dict,
-        ):
-        # Prune basis below pseudo core
+    ):
         Z = paw_species.Z
         
         occupancies = np.where(basis_data["occupancies"] > 1e-4, basis_data["occupancies"], 0.0)
-        occupied_indices = np.flip(np.where(occupancies>0)[0])
+        occupied_indices = np.flip(np.where(occupancies > 0)[0])
         
-        # loop over indices in reverse until we match pseudopotential
+        # 1. Identify minimal valence subshells matching pseudopotential core charge
         accumulated_charge = 0.0
         valid_bases = []
         for idx in occupied_indices:
@@ -291,8 +291,35 @@ class AESpecies(BaseSpecies):
             valid_bases.append(idx)
             if accumulated_charge >= Z - 1e-4:
                 break
-        
-        return np.flip(np.asarray(valid_bases))
+    
+        # --- Logging Writeout ---
+        l_map = {0: 's', 1: 'p', 2: 'd', 3: 'f', 4: 'g'}
+        subshell_labels = []
+        total_orbitals = 0
+    
+        for idx in valid_bases:
+            l = basis_data["angular_momenta"][idx]
+            total_orbitals += 2 * l + 1
+            
+            # Build label using available keys (e.g., '3d' if n is present, otherwise 'd')
+            if "labels" in basis_data:
+                label = basis_data["labels"][idx]
+            elif "n_quantum" in basis_data:
+                label = f"{basis_data['n_quantum'][idx]}{l_map.get(l, l)}"
+            elif "principal_quantum_numbers" in basis_data:
+                label = f"{basis_data['principal_quantum_numbers'][idx]}{l_map.get(l, l)}"
+            else:
+                label = f"{l_map.get(l, f'l={l}')}"
+                
+            subshell_labels.append(label)
+    
+        species_name = getattr(paw_species, "symbol", f"Z={Z}")
+        rprint(
+            f"Selected IAO basis for {species_name}: "
+            f"{', '.join(subshell_labels)} ({total_orbitals} orbitals)"
+               )
+    
+        return valid_bases
         
     @staticmethod
     def _build_radial_grid(
