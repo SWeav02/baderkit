@@ -4,6 +4,8 @@ from pathlib import Path
 import json
 from rich import print as rprint
 
+from pymatgen.core import Element
+
 from dataclasses import dataclass, field
 import numpy as np
 from numpy.typing import NDArray
@@ -278,10 +280,11 @@ class AESpecies(BaseSpecies):
         basis_data: dict,
     ):
         Z = paw_species.Z
-        
+        elem = Element.from_Z(Z)
+    
         occupancies = np.where(basis_data["occupancies"] > 1e-4, basis_data["occupancies"], 0.0)
         occupied_indices = np.flip(np.where(occupancies > 0)[0])
-        
+    
         # 1. Identify minimal valence subshells matching pseudopotential core charge
         accumulated_charge = 0.0
         valid_bases = []
@@ -292,6 +295,33 @@ class AESpecies(BaseSpecies):
             if accumulated_charge >= Z - 1e-4:
                 break
     
+        # 2. Fill remaining subshells in the element's period (skipped for noble gas)
+        p_nums = basis_data["principal_quantum_numbers"]
+        l_nums = basis_data["angular_momenta"]
+        
+        # get offset from current last index
+        last = max(valid_bases)
+        offset = 0
+        p_last = p_nums[last]
+        l_last = l_nums[last]
+        if l_last == 0: #s
+            if p_last >= 6:
+                # lanthanide/actinide
+                offset = 3
+            else:
+                offset = 2
+        elif l_last == 1: #p
+            offset = 0
+        elif l_last == 2: #d
+            offset = 1
+        elif l_last == 3: #f
+            offset = 2
+        
+        for i in range(offset):
+            valid_bases.append(last+i+1)
+
+        valid_bases.sort()
+
         # --- Logging Writeout ---
         l_map = {0: 's', 1: 'p', 2: 'd', 3: 'f', 4: 'g'}
         subshell_labels = []
@@ -300,8 +330,7 @@ class AESpecies(BaseSpecies):
         for idx in valid_bases:
             l = basis_data["angular_momenta"][idx]
             total_orbitals += 2 * l + 1
-            
-            # Build label using available keys (e.g., '3d' if n is present, otherwise 'd')
+    
             if "labels" in basis_data:
                 label = basis_data["labels"][idx]
             elif "n_quantum" in basis_data:
@@ -310,14 +339,14 @@ class AESpecies(BaseSpecies):
                 label = f"{basis_data['principal_quantum_numbers'][idx]}{l_map.get(l, l)}"
             else:
                 label = f"{l_map.get(l, f'l={l}')}"
-                
+    
             subshell_labels.append(label)
     
-        species_name = getattr(paw_species, "symbol", f"Z={Z}")
+        species_name = getattr(paw_species, "symbol", elem.symbol)
         rprint(
             f"Selected IAO basis for {species_name}: "
             f"{', '.join(subshell_labels)} ({total_orbitals} orbitals)"
-               )
+        )
     
         return valid_bases
         

@@ -1523,6 +1523,7 @@ class PostWFC:
         localization_function="elf", 
         savin_correction=True,
         cumulative=True,
+        negative_deriv=False,
         return_plot=False,
         plot_range: tuple[float, float] = None,
     ) -> tuple:
@@ -1577,6 +1578,8 @@ class PostWFC:
         # if not cumulative, we get the derivative
         if not cumulative:
             loc_data = np.gradient(loc_data, self.energy_grid)
+            if negative_deriv:
+                loc_data = -loc_data
 
         if return_plot:
             mode_prefix = "Integrated" if cumulative else "Differential"
