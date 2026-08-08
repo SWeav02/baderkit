@@ -1,18 +1,17 @@
-# -*- coding: utf-8 -*-
 
 from pathlib import Path
-import numpy as np
-from scipy.integrate import cumulative_trapezoid
-from scipy.linalg import inv, sqrtm, eigh
-from rich.progress import track
+
 import h5py
-import warnings
-
+import numpy as np
 from rich import print as rprint
+from rich.progress import track
+from scipy.integrate import cumulative_trapezoid
+from scipy.linalg import eigh, inv, sqrtm
 
-from baderkit.post_wfc.wfc_numba import evaluate_real_harmonics_multi
-from baderkit.post_wfc.projection.all_electron_dataset import AESpecies
 from baderkit.post_wfc.base_env import PostWFC
+from baderkit.post_wfc.projection.all_electron_dataset import AESpecies
+from baderkit.post_wfc.wfc_numba import evaluate_real_harmonics_multi
+
 
 class AtomicProjectionEnvironment:
     """
@@ -25,6 +24,7 @@ class AtomicProjectionEnvironment:
         self, 
         post_wfc=None,
         basis_dir=None,
+        spillage_cutoff: float = 0.02,
         **kwargs
     ):
         # Register post_wfc as the reference state context link
@@ -34,6 +34,7 @@ class AtomicProjectionEnvironment:
         self.post_wfc = post_wfc
         self._meta = post_wfc._meta
         self.directory = post_wfc.directory
+        self._spillage_cutoff = spillage_cutoff
         
         self.basis_dir = Path(basis_dir) if basis_dir is not None else (Path(__file__).parent / "bases" / "dyall")
         
@@ -153,13 +154,13 @@ class AtomicProjectionEnvironment:
     @property
     def atom_to_basis_indices(self):
         if getattr(self, "_atom_to_basis_indices", None) is None:
-            self.all_bases
+            self.all_bases  # noqa: B018
         return self._atom_to_basis_indices
 
     @property
     def basis_atom_indices(self):
         if getattr(self, "_basis_atom_indices", None) is None:
-            self.all_bases
+            self.all_bases  # noqa: B018
         return self._basis_atom_indices
 
     @property
@@ -173,6 +174,14 @@ class AtomicProjectionEnvironment:
         if getattr(self, "_voxels_near_atoms", None) is None:
             self._voxels_near_atoms = self._get_voxel_footprints()
         return self._voxels_near_atoms
+    
+    @property
+    def spillage_cutoff(self):
+        return self._spillage_cutoff
+    
+    @property
+    def spillage(self):
+        return self._spillage
     
     @property
     def _iao_file(self):
@@ -326,7 +335,7 @@ class AtomicProjectionEnvironment:
         spin_channel: int = -1,
         cumulative: bool = False,
         return_plot: bool = False,
-        plot_range: tuple[float, float] = None,
+        plot_range: tuple[float, float] | None = None,
     ) -> dict[int | str | tuple[int, str], np.ndarray] | np.ndarray:
         """
         Calculates the Atom- and/or Orbital-Projected Density of States (PDOS) 
@@ -425,7 +434,7 @@ class AtomicProjectionEnvironment:
                     target_groups.append((key, matched_indices))
 
         def pdos_callback(ispin, ikpt, weight, **kwargs):
-            C_orth_k = self.fetch_orth_iao_coeffs(ispin, ikpt)
+            C_orth_k = self.fetch_iao_coeffs(ispin, ikpt)
             orbital_weights = np.abs(C_orth_k) ** 2
 
             band_weights = []
@@ -556,558 +565,267 @@ class AtomicProjectionEnvironment:
             q_spline = b_info["q_radial_spline"]
 
             # Evaluate radial spline and real spherical harmonic Y_lm
-            r_val = q_spline(r_dist) if callable(q_spline) else 0.0
+            r_val = np.nan_to_num(q_spline(r_dist),0.0)
             y_lm_array, _ = evaluate_real_harmonics_multi(l, m, d_vec)
             
             chi_vals[g_idx] = r_val * y_lm_array[0]
-
         return chi_vals
 
     ###########################################################################
     # COOP / COHP / rCOOP / rCOHP Core Engine
     ###########################################################################
-    def _check_intra_atomic_overlap(self, tol: float = 1e-4):
-        """
-        Calculates the real-space onsite overlap matrix S(R=0) and warns if non-zero
-        intra-atomic off-diagonal overlaps exist between orbitals on the same atom site.
-        """
-        nkpts = len(self._meta.kpoints)
-        # Compute S(R=0) by averaging S(k) over all k-points for spin 0
-        S_R0 = np.mean([self.fetch_iao_overlap(0, ikpt) for ikpt in range(nkpts)], axis=0)
 
-        atom_ids = np.array(self.basis_atom_indices)
-        same_atom_mask = atom_ids[:, None] == atom_ids[None, :]
-        np.fill_diagonal(same_atom_mask, False)
-
-        if np.any(same_atom_mask):
-            intra_overlaps = np.abs(S_R0[same_atom_mask])
-            max_overlap = np.max(intra_overlaps)
-            if max_overlap > tol:
-                warnings.warn(
-                    f"Non-zero intra-atomic IAO overlap detected (max |S_ij(R=0)| = {max_overlap:.2e} > {tol:.0e}). "
-                    "Basis functions on the same atom site should be orthogonalized to ensure strict physical "
-                    "separation of intra-atomic site energy from inter-atomic bonding.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-
-    def get_total_bonding_nature(
+    def get_real_space_crystal_orbital_population(
         self,
+        # Basic
+        r_point: tuple[float, float, float] | np.ndarray,
         pop_type: str = "cohp",
-        spin_channel: int = -1,
-        weighting_mode: str = "raw",
+
+        # Filters
         cumulative: bool = False,
-        plot_negative_cohp: bool = True,
-        return_plot: bool = False,
-        plot_range: tuple[float, float] = None,
-    ) -> np.ndarray:
-        """
-        Calculates the net total bonding nature at each energy level by summing 
-        all off-diagonal orbital interactions (mu != nu) across the system.
-        """
-        # Validate intra-atomic orthogonality
-        self._check_intra_atomic_overlap()
-
-        pop_type = pop_type.lower()
-        if pop_type not in ("coop", "cohp"):
-            raise ValueError("pop_type must be either 'coop' or 'cohp'")
-
-        weighting_mode = weighting_mode.lower()
-        if weighting_mode in ("h_scaled", "hamiltonian", "hamiltonian_scale"):
-            weighting_mode = "hamiltonian_scaled"
-
-        valid_modes = ("raw", "phase_only", "ldos", "tdos", "hamiltonian_scaled")
-        if weighting_mode not in valid_modes:
-            raise ValueError(f"weighting_mode must be one of {valid_modes}")
-
-        compute_tdos = weighting_mode == "tdos"
-        has_normalization = compute_tdos
-
-        def total_bonding_callback(ispin, ikpt, weight, **kwargs):
-            # Fetch precalculated orthogonal coefficients and overlap matrix
-            C_orth = self.fetch_orth_iao_coeffs(ispin, ikpt)
-            S_k = self.fetch_iao_overlap(ispin, ikpt)
-            H_k = self.fetch_iao_hamiltonian(ispin, ikpt)
-
-            # Map orthogonal C_orth back to unorthogonalized band expansion coefficients C_k
-            eigvals, eigvecs = np.linalg.eigh(S_k)
-            S_inv_sqrt = eigvecs @ (1.0 / np.sqrt(np.maximum(eigvals, 1e-12))[:, None] * eigvecs.conj().T)
-            C_k = C_orth @ S_inv_sqrt
-
-            M_k = S_k if pop_type == "coop" else H_k
-
-            if weighting_mode == "hamiltonian_scaled":
-                h_diag = np.abs(np.diag(H_k))
-                denom = 0.5 * (h_diag[:, None] + h_diag[None, :]) + 1e-12
-                M_k = M_k / denom
-
-            M_eff = M_k.copy()
-            # Zero out diagonal self-interactions directly without boolean mask indexing
-            np.fill_diagonal(M_eff, 0.0)
-
-            # Direct trace contraction over all off-diagonal terms
-            band_pop = np.real(np.einsum("ni,ij,nj->n", C_k.conj(), M_eff, C_k)) * weight
-
-            if pop_type == "cohp" and plot_negative_cohp:
-                band_pop = -band_pop
-
-            metrics = [band_pop]
-
-            if compute_tdos:
-                tdos_k = np.ones(self.nbands, dtype=float) * weight
-                metrics.append(tdos_k)
-
-            return metrics
-
-        num_metrics = 1 + (1 if has_normalization else 0)
-
-        smeared = self.post_wfc._execute_spectral_engine(
-            num_metrics=num_metrics,
-            spin_channel=spin_channel,
-            eval_callback=total_bonding_callback,
-        )
-
-        total_spectrum = smeared[0]
-
-        if has_normalization:
-            norm_spectrum = smeared[1]
-            eps_norm = 1e-10
-            norm_mask = norm_spectrum > eps_norm
-            total_spectrum = np.where(norm_mask, total_spectrum / norm_spectrum, 0.0)
-
-        if cumulative:
-            total_spectrum = cumulative_trapezoid(total_spectrum, self.post_wfc.energy_grid, initial=0)
-
-        if return_plot:
-            prefix = "Integrated " if cumulative else ""
-            metric_base = "tCOOP" if pop_type == "coop" else ("-tCOHP" if plot_negative_cohp else "tCOHP")
-            curve_label = f"Total Off-Diagonal {prefix}{metric_base}"
-            
-            return self.post_wfc._generate_property_plot(
-                plot_curves={curve_label: total_spectrum},
-                x_label=f"{prefix}{metric_base}",
-                plot_range=plot_range,
-                subplots=False,
-            )
-
-        return total_spectrum
-
-    def get_crystal_orbital_population(
-        self,
-        pop_type: str,
-        overlap_pairs: tuple | list[tuple] | str = "all_off_diagonal",
-        r_point: tuple[float, float, float] | np.ndarray | None = None,
-        psi_r: np.ndarray | None = None,
         spin_channel: int = -1,
-        cumulative: bool = False,
-        weighting_mode: str = "raw",
-        plot_negative_cohp: bool = True,
+
+        # Plotting
         return_plot: bool = False,
-        plot_range: tuple[float, float] = None,
+        plot_range: tuple[float, float] | None = None,
+        negative_cohp: bool = True,
         **kwargs,
     ) -> dict[str, np.ndarray] | np.ndarray:
         """
         Calculates COOP, COHP, rCOOP, or rCOHP using precalculated orthogonal IAO coefficients
         mapped back into the unorthogonalized basis to prevent inter-body tail folding.
         """
-        # Validate intra-atomic orthogonality
-        self._check_intra_atomic_overlap()
-
+        # Check which type to use (coop or cohp)
         pop_type = pop_type.lower()
         if pop_type not in ("coop", "cohp"):
             raise ValueError("pop_type must be either 'coop' or 'cohp'")
 
-        weighting_mode = weighting_mode.lower()
-        if weighting_mode in ("h_scaled", "hamiltonian", "hamiltonian_scale"):
-            weighting_mode = "hamiltonian_scaled"
+        # Get point
+        chi_r = self.evaluate_basis_at_point(r_point)
+        W_r = np.outer(chi_r.conj(), chi_r)
 
-        valid_modes = ("raw", "phase_only", "ldos", "tdos", "hamiltonian_scaled")
-        if weighting_mode not in valid_modes:
-            raise ValueError(f"weighting_mode must be one of {valid_modes}")
-
-        chi_r = None
-        if r_point is not None:
-            chi_r = self.evaluate_basis_at_point(r_point)
-        elif psi_r is not None:
-            chi_r = np.asarray(psi_r, dtype=complex)
-
-        is_real_space = chi_r is not None
-        prefix_name = "r" if is_real_space else ""
-
-        if weighting_mode == "ldos" and not is_real_space:
-            raise ValueError("weighting_mode='ldos' requires a valid real-space point (r_point or psi_r).")
-
-        if is_real_space and weighting_mode == "phase_only":
-            eps_phase = 1e-12
-            chi_mag = np.abs(chi_r)
-            chi_r_used = np.where(chi_mag > eps_phase, chi_r / chi_mag, 0.0)
-        else:
-            chi_r_used = chi_r
-
-        compute_ldos = is_real_space and (weighting_mode == "ldos")
-        compute_tdos = (weighting_mode == "tdos")
-        has_normalization = compute_ldos or compute_tdos
-
-        if compute_ldos:
-            suffix = " (LDOS-norm)"
-        elif compute_tdos:
-            suffix = " (TDOS-norm)"
-        elif weighting_mode == "phase_only":
-            suffix = " (Phase-only)"
-        elif weighting_mode == "hamiltonian_scaled":
-            suffix = " (H-scaled)"
-        else:
-            suffix = ""
-
-        if isinstance(overlap_pairs, str) and overlap_pairs.lower() in ("all_off_diagonal", "all"):
-            metric_name = f"{prefix_name}COOP" if pop_type == "coop" else (f"-{prefix_name}COHP" if plot_negative_cohp else f"{prefix_name}COHP")
-            curve_label = f"{metric_name} (All Off-Diagonal){suffix}"
+        def population_callback(ispin, ikpt, weight, **kwargs):
+            # get coefficients
+            C_k = self.fetch_iao_coeffs(ispin, ikpt)
+            # Get overlap or hamiltonian matrix at this kpoint
+            M_k = self.fetch_iao_overlap(ispin, ikpt) if pop_type == "coop" else self.fetch_iao_hamiltonian(ispin, ikpt)
+            if not len(M_k):
+                return [None]
             
-            def population_callback(ispin, ikpt, weight, **kwargs):
-                C_orth = self.fetch_orth_iao_coeffs(ispin, ikpt)
-                S_k = self.fetch_iao_overlap(ispin, ikpt)
-                H_k = self.fetch_iao_hamiltonian(ispin, ikpt)
-
-                # Unorthogonalized expansion coefficients C_k = C_orth @ S_k^(-1/2)
-                eigvals, eigvecs = np.linalg.eigh(S_k)
-                S_inv_sqrt = eigvecs @ (1.0 / np.sqrt(np.maximum(eigvals, 1e-12))[:, None] * eigvecs.conj().T)
-                C_k = C_orth @ S_inv_sqrt
-
-                M_k = S_k if pop_type == "coop" else H_k
-
-                if weighting_mode == "hamiltonian_scaled":
-                    h_diag = np.abs(np.diag(H_k))
-                    denom = 0.5 * (h_diag[:, None] + h_diag[None, :]) + 1e-12
-                    M_k = M_k / denom
-
-                if is_real_space:
-                    W_r = np.outer(chi_r_used.conj(), chi_r_used)
-                    M_eff = M_k * W_r
-                else:
-                    M_eff = M_k.copy()
-
-                # Zero out diagonal terms directly without boolean mask indexing
-                np.fill_diagonal(M_eff, 0.0)
-
-                band_pop = np.real(np.einsum("ni,ij,nj->n", C_k.conj(), M_eff, C_k)) * weight
-
-                if pop_type == "cohp" and plot_negative_cohp:
-                    band_pop = -band_pop
-
-                band_weights = [band_pop]
-
-                if compute_ldos:
-                    psi_k = C_k @ chi_r
-                    ldos_k = (np.abs(psi_k) ** 2) * weight
-                    band_weights.append(ldos_k)
-                elif compute_tdos:
-                    tdos_k = np.ones(self.nbands, dtype=float) * weight
-                    band_weights.append(tdos_k)
-
-                return band_weights
-
-            parsed_metrics = [(curve_label,)]
-
-        else:
-            pairs_list = [overlap_pairs] if isinstance(overlap_pairs, tuple) and len(overlap_pairs) == 2 and isinstance(overlap_pairs[0], (str, int)) else overlap_pairs
+            M_eff = M_k * W_r
+            # Zero out diagonal terms
+            np.fill_diagonal(M_eff, 0.0)
             
-            parsed_metrics = []
-            for pair in pairs_list:
-                idx1, img1, lbl1 = self._parse_overlap_spec(pair[0])
-                idx2, img2, lbl2 = self._parse_overlap_spec(pair[1])
+            # Sum off-diagonal parts and multiply by k-point weight
+            band_pop = np.zeros(self.nbands)
+            for band_idx in range(self.nbands):
+                current_sum = np.sum(C_k[band_idx, :].conj() * C_k[band_idx, :] * M_eff)
+                band_pop[band_idx] = current_sum
+            
+            band_pop *= weight
 
-                R_vec = np.array(img2, dtype=float) - np.array(img1, dtype=float)
-                has_disp = np.any(R_vec != 0)
+            if pop_type == "cohp" and negative_cohp:
+                band_pop = -band_pop
+            return [band_pop]
 
-                metric_name = f"{prefix_name}COOP" if pop_type == "coop" else (f"-{prefix_name}COHP" if plot_negative_cohp else f"{prefix_name}COHP")
-                curve_label = f"{metric_name} ({lbl1} - {lbl2}){suffix}"
-                parsed_metrics.append((idx1, idx2, R_vec, has_disp, curve_label))
-
-            def population_callback(ispin, ikpt, weight, **kwargs):
-                C_orth = self.fetch_orth_iao_coeffs(ispin, ikpt)
-                S_k = self.fetch_iao_overlap(ispin, ikpt)
-                H_k = self.fetch_iao_hamiltonian(ispin, ikpt)
-
-                eigvals, eigvecs = np.linalg.eigh(S_k)
-                S_inv_sqrt = eigvecs @ (1.0 / np.sqrt(np.maximum(eigvals, 1e-12))[:, None] * eigvecs.conj().T)
-                C_k = C_orth @ S_inv_sqrt
-
-                M_k = S_k if pop_type == "coop" else H_k
-
-                if weighting_mode == "hamiltonian_scaled":
-                    h_diag = np.abs(np.diag(H_k))
-                    denom = 0.5 * (h_diag[:, None] + h_diag[None, :]) + 1e-12
-                    M_k = M_k / denom
-
-                band_weights = []
-                for idx1, idx2, R_vec, has_disp, _ in parsed_metrics:
-                    C_1 = C_k[:, idx1]
-                    C_2 = C_k[:, idx2]
-                    M_12 = M_k[np.ix_(idx1, idx2)]
-
-                    if is_real_space:
-                        W_12 = np.outer(chi_r_used[idx1].conj(), chi_r_used[idx2])
-                        M_12 = M_12 * W_12
-
-                    band_pop_complex = np.einsum("ni,ij,nj->n", C_1.conj(), M_12, C_2)
-
-                    if has_disp:
-                        k_frac = self._meta.kpoints[ikpt]
-                        phase = np.exp(-2j * np.pi * np.dot(k_frac, R_vec))
-                        band_pop_complex = band_pop_complex * phase
-
-                    band_pop = np.real(band_pop_complex) * weight
-
-                    if pop_type == "cohp" and plot_negative_cohp:
-                        band_pop = -band_pop
-
-                    band_weights.append(band_pop)
-
-                if compute_ldos:
-                    psi_k = C_k @ chi_r
-                    ldos_k = (np.abs(psi_k) ** 2) * weight
-                    band_weights.append(ldos_k)
-                elif compute_tdos:
-                    tdos_k = np.ones(self.nbands, dtype=float) * weight
-                    band_weights.append(tdos_k)
-
-                return band_weights
-
+        metric_name = f"r{pop_type.capitalize()}"
+        
+        # Get spectral value
+        smeared = np.zeros((self.nbands,), dtype=float)  # Initialize with zeros for debugging
         smeared = self.post_wfc._execute_spectral_engine(
-            num_metrics=len(parsed_metrics) + (1 if has_normalization else 0),
+            num_metrics=1,
             spin_channel=spin_channel,
             eval_callback=population_callback,
-        )
+        )[0]
 
-        if has_normalization:
-            norm_spectrum = smeared[-1]
-            eps_norm = 1e-10
-            norm_mask = norm_spectrum > eps_norm
-
-            for i in range(len(parsed_metrics)):
-                smeared[i] = np.where(norm_mask, smeared[i] / norm_spectrum, 0.0)
-
-        pdos_dict = {}
-        for i, item in enumerate(parsed_metrics):
-            curve_label = item[-1] if isinstance(item, tuple) else item
-            pop_val = smeared[i]
-            if cumulative:
-                pop_val = cumulative_trapezoid(pop_val, self.post_wfc.energy_grid, initial=0)
-            pdos_dict[curve_label] = pop_val
+        if cumulative:
+            smeared = cumulative_trapezoid(smeared, self.post_wfc.energy_grid)
 
         if return_plot:
-            prefix = "Integrated " if cumulative else ""
-            metric_name = f"{prefix_name}COOP" if pop_type == "coop" else (f"-{prefix_name}COHP" if plot_negative_cohp else f"{prefix_name}COHP")
+            pdos_dict = {
+                metric_name: smeared
+            }
 
-            return self.post_wfc._generate_property_plot(
+            plot = self.post_wfc._generate_property_plot(
                 plot_curves=pdos_dict,
-                x_label=f"{prefix}{metric_name}",
+                x_label=metric_name,
                 plot_range=plot_range,
                 subplots=False,
             )
+            
+            return plot
 
-        if len(parsed_metrics) == 1:
-            return next(iter(pdos_dict.values()))
-
-        return pdos_dict
-
+        return smeared
+    
     ###########################################################################
-    # Dedicated rCOOP / rCOHP Wrappers
+    # Spillage visualization
     ###########################################################################
-
-    def get_rcoop(
+    def get_iao_dos(
         self,
-        r_point: tuple[float, float, float] | np.ndarray,
-        overlap_pairs: tuple | list[tuple] | str = "all_off_diagonal",
         spin_channel: int = -1,
         cumulative: bool = False,
         return_plot: bool = False,
-        plot_range: tuple[float, float] = None,
-        **kwargs
-    ) -> np.ndarray | dict[str, np.ndarray]:
-        """Calculates real-space Crystal Orbital Overlap Population (rCOOP) at point r."""
-        return self.get_crystal_orbital_population(
-            pop_type="coop",
-            overlap_pairs=overlap_pairs,
-            r_point=r_point,
+        plot_range: tuple[float, float] | None = None,
+    ) -> dict[str, np.ndarray]:
+        """
+        Calculates the total Density of States (DOS) projected onto the full IAO basis,
+        the exact Total DOS from the electronic structure calculation, and the difference
+        (unprojected spillage density) between them.
+    
+        Parameters
+        ----------
+        spin_channel : int, default=-1
+            Spin channel index (-1 for total/both, 0 for spin up, 1 for spin down).
+        cumulative : bool, default=False
+            If True, computes integrated DOS (number of states).
+        return_plot : bool, default=False
+            If True, returns a plot object comparing Total DOS, IAO DOS, and the Difference.
+        plot_range : tuple[float, float], optional
+            (E_min, E_max) energy range for plotting.
+    
+        Returns
+        -------
+        dict[str, np.ndarray]
+            Dictionary containing:
+            - `'total_dos'`: Exact total DOS from the underlying calculation.
+            - `'iao_dos'`: Summed projected DOS spanned by the complete IAO basis.
+            - `'difference'`: Residual/spillage DOS (`total_dos - iao_dos`).
+        """
+        def iao_dos_callback(ispin, ikpt, weight, **kwargs):
+            # C_orth_k shape: (nbands, nbasis)
+            C_orth_k = self.fetch_iao_coeffs(ispin, ikpt)
+            # Sum norm over all IAO basis functions for each band
+            band_iao_weight = np.sum(np.abs(C_orth_k) ** 2, axis=1) * weight
+            return [band_iao_weight]
+    
+        smeared = self.post_wfc._execute_spectral_engine(
+            num_metrics=1,
+            spin_channel=spin_channel,
+            eval_callback=iao_dos_callback,
+        )
+    
+        iao_dos = smeared[0]
+        if cumulative:
+            iao_dos = cumulative_trapezoid(iao_dos, self.post_wfc.energy_grid, initial=0)
+    
+        total_dos = self.post_wfc.get_density_of_states(
             spin_channel=spin_channel,
             cumulative=cumulative,
-            return_plot=return_plot,
-            plot_range=plot_range,
-            **kwargs
-        )
-
-    def get_rcohp(
-        self,
-        r_point: tuple[float, float, float] | np.ndarray,
-        overlap_pairs: tuple | list[tuple] | str = "all_off_diagonal",
-        spin_channel: int = -1,
-        cumulative: bool = False,
-        plot_negative_cohp: bool = True,
-        return_plot: bool = False,
-        plot_range: tuple[float, float] = None,
-        **kwargs
-    ) -> np.ndarray | dict[str, np.ndarray]:
-        """Calculates real-space Crystal Orbital Hamilton Population (rCOHP) at point r."""
-        return self.get_crystal_orbital_population(
-            pop_type="cohp",
-            overlap_pairs=overlap_pairs,
-            r_point=r_point,
-            spin_channel=spin_channel,
-            cumulative=cumulative,
-            plot_negative_cohp=plot_negative_cohp,
-            return_plot=return_plot,
-            plot_range=plot_range,
-            **kwargs
-        )
-
-    def get_ircoop(
-        self,
-        r_point: tuple[float, float, float] | np.ndarray,
-        overlap_pairs: tuple | list[tuple] | str = "all_off_diagonal",
-        spin_channel: int = -1,
-        **kwargs
-    ) -> float | dict[str, float]:
-        """Calculates Integrated rCOOP (irCOOP) at point r up to the Fermi level."""
-        res = self.get_rcoop(
-            r_point=r_point,
-            overlap_pairs=overlap_pairs,
-            spin_channel=spin_channel,
-            cumulative=False,
-            return_plot=False,
-            **kwargs
-        )
-        grid = self.post_wfc.energy_grid
-        fermi_mask = grid <= self.efermi
-
-        if isinstance(res, np.ndarray):
-            return float(np.trapz(res[fermi_mask], grid[fermi_mask]))
-
-        return {
-            lbl: float(np.trapz(curve[fermi_mask], grid[fermi_mask]))
-            for lbl, curve in res.items()
-        }
-
-    def get_ircohp(
-        self,
-        r_point: tuple[float, float, float] | np.ndarray,
-        overlap_pairs: tuple | list[tuple] | str = "all_off_diagonal",
-        spin_channel: int = -1,
-        plot_negative_cohp: bool = True,
-    ) -> float | dict[str, float]:
-        """Calculates Integrated rCOHP (irCOHP) at point r up to the Fermi level."""
-        res = self.get_rcohp(
-            r_point=r_point,
-            overlap_pairs=overlap_pairs,
-            spin_channel=spin_channel,
-            cumulative=False,
-            plot_negative_cohp=plot_negative_cohp,
             return_plot=False,
         )
-        grid = self.post_wfc.energy_grid
-        fermi_mask = grid <= self.efermi
-
-        if isinstance(res, np.ndarray):
-            return float(np.trapz(res[fermi_mask], grid[fermi_mask]))
-
-        return {
-            lbl: float(np.trapz(curve[fermi_mask], grid[fermi_mask]))
-            for lbl, curve in res.items()
+    
+        diff_dos = total_dos - iao_dos
+    
+        dos_results = {
+            "total_dos": total_dos,
+            "iao_dos": iao_dos,
+            "difference": diff_dos,
         }
-
-    def get_coop(
+    
+        if return_plot:
+            prefix = "Integrated " if cumulative else ""
+            x_label = "States" if cumulative else "States / eV"
+    
+            plot_curves = {
+                f"{prefix}Total DOS (Exact)": total_dos,
+                f"{prefix}IAO Projected DOS": iao_dos,
+                f"{prefix}Difference (Spillage)": diff_dos,
+            }
+    
+            return self.post_wfc._generate_property_plot(
+                plot_curves=plot_curves,
+                x_label=x_label,
+                plot_range=plot_range,
+                subplots=False,
+            )
+    
+        return dos_results
+    
+    def get_spillage_vs_energy(
         self,
-        overlap_pairs: tuple | list[tuple],
         spin_channel: int = -1,
+        as_percent: bool = True,
         cumulative: bool = False,
         return_plot: bool = False,
-        plot_range: tuple[float, float] = None,
-        **kwargs
+        plot_range: tuple[float, float] | None = None,
+        tol: float = 1e-8,
     ) -> np.ndarray | dict[str, np.ndarray]:
-        """Calculates Crystal Orbital Overlap Population (COOP) for overlap pair(s)."""
-        return self.get_crystal_orbital_population(
-            pop_type="coop",
-            overlap_pairs=overlap_pairs,
+        """
+        Calculates spillage of the Density of States (DOS) vs energy as either an
+        absolute state density difference or a percentage.
+    
+        Parameters
+        ----------
+        spin_channel : int, default=-1
+            Spin channel index (-1 for total/both, 0 for spin up, 1 for spin down).
+        as_percent : bool, default=True
+            If True, computes percentage spillage: ((Total DOS - IAO DOS) / Total DOS) * 100.
+            If False, computes absolute spillage: (Total DOS - IAO DOS).
+        cumulative : bool, default=False
+            If True, computes integrated DOS spillage.
+        return_plot : bool, default=False
+            If True, returns a plot object showing spillage vs energy.
+        plot_range : tuple[float, float], optional
+            (E_min, E_max) energy range for plotting.
+        tol : float, default=1e-8
+            Minimum Total DOS threshold below which percentage spillage is set to 0.0%
+            to avoid division-by-zero artifacts.
+    
+        Returns
+        -------
+        np.ndarray
+            1D numpy array containing the spillage values aligned with `self.energy_grid`.
+        """
+        def iao_dos_callback(ispin, ikpt, weight, **kwargs):
+            # C_orth_k shape: (nbands, nbasis)
+            C_orth_k = self.fetch_iao_coeffs(ispin, ikpt)
+            # Sum norm over all IAO basis functions for each band
+            band_iao_weight = np.sum(np.abs(C_orth_k) ** 2, axis=1) * weight
+            return [band_iao_weight]
+    
+        smeared = self.post_wfc._execute_spectral_engine(
+            num_metrics=1,
+            spin_channel=spin_channel,
+            eval_callback=iao_dos_callback,
+        )
+    
+        iao_dos = smeared[0]
+        if cumulative:
+            iao_dos = cumulative_trapezoid(iao_dos, self.post_wfc.energy_grid, initial=0)
+    
+        total_dos = self.post_wfc.get_density_of_states(
             spin_channel=spin_channel,
             cumulative=cumulative,
-            return_plot=return_plot,
-            plot_range=plot_range,
-            **kwargs
-        )
-
-    def get_cohp(
-        self,
-        overlap_pairs: tuple | list[tuple],
-        spin_channel: int = -1,
-        cumulative: bool = False,
-        plot_negative_cohp: bool = True,
-        return_plot: bool = False,
-        plot_range: tuple[float, float] = None,
-        **kwargs
-    ) -> np.ndarray | dict[str, np.ndarray]:
-        """Calculates Crystal Orbital Hamilton Population (-COHP or COHP) for overlap pair(s)."""
-        return self.get_crystal_orbital_population(
-            pop_type="cohp",
-            overlap_pairs=overlap_pairs,
-            spin_channel=spin_channel,
-            cumulative=cumulative,
-            plot_negative_cohp=plot_negative_cohp,
-            return_plot=return_plot,
-            plot_range=plot_range,
-            **kwargs
-        )
-
-    def get_icoop(
-        self,
-        overlap_pairs: tuple | list[tuple],
-        spin_channel: int = -1,
-        **kwargs
-    ) -> float | dict[str, float]:
-        """Calculates Integrated COOP (ICOOP) up to the Fermi energy level."""
-        res = self.get_coop(
-            overlap_pairs=overlap_pairs,
-            spin_channel=spin_channel,
-            cumulative=False,
             return_plot=False,
-            **kwargs
         )
-        grid = self.post_wfc.energy_grid
-        fermi_mask = grid <= self.efermi
-
-        if isinstance(res, np.ndarray):
-            return float(np.trapz(res[fermi_mask], grid[fermi_mask]))
-
-        return {
-            lbl: float(np.trapz(curve[fermi_mask], grid[fermi_mask]))
-            for lbl, curve in res.items()
-        }
-
-    def get_icohp(
-        self,
-        overlap_pairs: tuple | list[tuple],
-        spin_channel: int = -1,
-        plot_negative_cohp: bool = True,
-        **kwargs
-    ) -> float | dict[str, float]:
-        """Calculates Integrated COHP (-ICOHP or ICOHP) up to the Fermi energy level."""
-        res = self.get_cohp(
-            overlap_pairs=overlap_pairs,
-            spin_channel=spin_channel,
-            cumulative=False,
-            plot_negative_cohp=plot_negative_cohp,
-            return_plot=False,
-            **kwargs
-        )
-        grid = self.post_wfc.energy_grid
-        fermi_mask = grid <= self.efermi
-
-        if isinstance(res, np.ndarray):
-            return float(np.trapz(res[fermi_mask], grid[fermi_mask]))
-
-        return {
-            lbl: float(np.trapz(curve[fermi_mask], grid[fermi_mask]))
-            for lbl, curve in res.items()
-        }
+    
+        diff = np.maximum(0.0, total_dos - iao_dos)
+    
+        if as_percent:
+            with np.errstate(divide="ignore", invalid="ignore"):
+                spillage = np.where(total_dos > tol, (diff / total_dos) * 100.0, 0.0)
+                spillage = np.clip(spillage, 0.0, 100.0)
+            units_label = "Spillage (%)"
+        else:
+            spillage = diff
+            units_label = "Spillage (States)" if cumulative else "Spillage (States / eV)"
+    
+        if return_plot:
+            prefix = "Integrated " if cumulative else ""
+            x_label = f"{prefix}{units_label}"
+    
+            plot_curves = {
+                f"{prefix}IAO {units_label}": spillage,
+            }
+    
+            return self.post_wfc._generate_property_plot(
+                plot_curves=plot_curves,
+                x_label=x_label,
+                plot_range=plot_range,
+                subplots=False,
+            )
+    
+        return spillage
 
     ###########################################################################
     # Helper Fetch Functions
@@ -1116,10 +834,6 @@ class AtomicProjectionEnvironment:
     def fetch_iao_coeffs(self, ispin, ikpt):
         with h5py.File(self._iao_file, "r") as file:
             return file["A_coeffs"][ispin, ikpt]
-
-    def fetch_orth_iao_coeffs(self, ispin, ikpt):
-        with h5py.File(self._iao_file, "r") as file:
-            return file["C_orth"][ispin, ikpt]
 
     def fetch_mo_coeffs(self, ispin, ikpt):
         with h5py.File(self._iao_file, "r") as file:
@@ -1140,7 +854,7 @@ class AtomicProjectionEnvironment:
     def _load_bases(self):
         """Parses NPZ binaries, filters out target elements matching cell contents,
         and enforces site-wise L2 normalization on all radial atomic orbital bases."""
-        unique_elements = set(site.specie.symbol for site in self.structure)
+        unique_elements = {site.specie.symbol for site in self.structure}
         atom_bases = {}
 
         for element in unique_elements:
@@ -1186,6 +900,10 @@ class AtomicProjectionEnvironment:
         volume = structure.volume # Omega
         nbasis = self.nbasis
         atom_offsets = self.post_wfc._get_atom_channel_offsets()
+        spillage_cutoff = self.spillage_cutoff
+        
+        # Initialize spillage array: shape (nspin, nkpoints, nbands)
+        self._spillage = np.zeros((nspin, nkpoints, nbands), dtype=np.float64)
         
         rprint("\n" + "="*80)
         rprint("[bold green]          STARTING PROJECTION          [/bold green]")
@@ -1201,11 +919,11 @@ class AtomicProjectionEnvironment:
         max_energy_err = 0.0
         max_trace_err = 0.0
         max_cond_num = 0.0
-    
+        
         if self.nspin == 1:
-            target_n_occ = int(round(self.total_charge / 2.0))
+            target_n_occ = round(self.total_charge / 2.0)
         else:
-            target_n_occ = int(round(self.total_charge / 2.0))
+            target_n_occ = round(self.total_charge / 2.0)
         
         with h5py.File(self._iao_file, "w") as file:
             dset_H = file.create_dataset(
@@ -1232,14 +950,6 @@ class AtomicProjectionEnvironment:
                 compression="lzf",
             )
     
-            dset_C_orth = file.create_dataset(
-                "C_orth",
-                shape=(nspin, nkpoints, nbands, nbasis),
-                dtype=np.complex128,
-                chunks=(nspin, 1, nbands, nbasis),
-                compression="lzf",
-            )
-            
             # Loop over k points
             for ikpt in track(range(nkpoints), description="[bold blue]Constructing IAOs...", total=nkpoints):
                 
@@ -1267,19 +977,25 @@ class AtomicProjectionEnvironment:
                     ###################################################################
                     # S_12 and S_21
                     ###################################################################
+                    # |psi_ps>
                     psi_ps = self.post_wfc.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(nbands)).T
+                    # <chi | psi_ps>
                     chi_psi_ps = local_basis_matrix.conj() @ psi_ps
+                    # <p | psi_ps> (separated by atoms)
                     paw_psi_ps_all = self.post_wfc.fetch_projector_overlaps(ikpt=ikpt, ispin=ispin, iband=np.arange(nbands))
                     
-                    chi_psi_aug = np.zeros_like(chi_psi_ps)
+                    # <chi | psi_aug> (summed over atoms)
+                    chi_psi_aug = []
                     for atom_idx, paw_overlap in enumerate(local_partial_overlaps):
+                        # Get projector overlap for this atom
                         start_ch, end_ch = atom_offsets[atom_idx]
                         paw_psi_ps = paw_psi_ps_all[:, start_ch:end_ch]
-                        chi_psi_aug += np.dot(paw_overlap, paw_psi_ps.T)
-                    
+                        chi_psi_aug.append(np.dot(paw_overlap, paw_psi_ps.T))
+                    # combine into full <chi | psi_aug>
+                    chi_psi_aug = np.vstack(chi_psi_aug)
+                    # sum <chi | psi>
                     S21 = chi_psi_ps + chi_psi_aug
                     S12 = S21.conj().T
-                    
                     ###################################################################
                     # P_12 and P_21
                     ###################################################################
@@ -1297,6 +1013,7 @@ class AtomicProjectionEnvironment:
                     P21_occ = P21[:, occ_mask]
                     C_tilde_raw = P12 @ P21_occ
                     
+                    # Löwdin orthogonalization
                     ctc = C_tilde_raw.conj().T @ C_tilde_raw
                     ctc_inv_sqrt = inv(sqrtm(ctc))
                     C_tilde = C_tilde_raw @ ctc_inv_sqrt
@@ -1308,30 +1025,41 @@ class AtomicProjectionEnvironment:
                     O_tilde = C_tilde @ C_tilde.conj().T
                     
                     ###################################################################
-                    # Unorthogonalized IAO Coefficients A
+                    # IAO Coefficients A
                     ###################################################################
                     I_bands = np.eye(nbands)
                     A = (I_bands + 2*(O @ O_tilde) - O_tilde - O) @ P12
                     A_T = A.conj().T
-                    
+    
+                    # Löwdin orthogonalization
+                    S_IAO = A.conj().T @ A
+                    S_IAO_inv_sqrt = inv(sqrtm(S_IAO))
+                    A = A @ S_IAO_inv_sqrt
+                    A_T = A.conj().T
+    
                     ###################################################################
-                    # E, H_IAO, S_IAO, and C_orth
+                    # Spillage Calculation
+                    ###################################################################
+                    # Fraction of state m spanned by IAOs is sum_mu |A_{m, mu}|^2
+                    spillage_k = 1.0 - np.sum(np.abs(A)**2, axis=1)
+                    
+                    # Explicitly zero spillage for occupied states & clamp numerical noise
+                    spillage_k[occ_mask] = 0.0
+                    spillage_k = np.maximum(0.0, spillage_k)
+                    
+                    self._spillage[ispin, ikpt] = spillage_k
+    
+                    ###################################################################
+                    # E, H_IAO, S_IAO
                     ###################################################################
                     E = self.energies[ispin, ikpt]
                     H_IAO = A_T @ (E[:, None] * A)
                     S_IAO = A_T @ A
-    
-                    # Löwdin orthogonalization in IAO space: C_orth = A @ S^(-1/2)
-                    eigvals_S, eigvecs_S = eigh(S_IAO)
-                    eigvals_S = np.maximum(eigvals_S, 1e-12)
-                    S_inv_sqrt = eigvecs_S @ np.diag(1.0 / np.sqrt(eigvals_S)) @ eigvecs_S.conj().T
-                    C_orth = A @ S_inv_sqrt
                     
                     ###################################################################
                     # Save Results to disk
                     ###################################################################
                     dset_A[ispin, ikpt] = A
-                    dset_C_orth[ispin, ikpt] = C_orth
                     dset_H[ispin, ikpt] = H_IAO
                     dset_S[ispin, ikpt] = S_IAO
                     
@@ -1356,6 +1084,30 @@ class AtomicProjectionEnvironment:
                     cond_num = np.linalg.cond(S_IAO)
                     max_cond_num = max(max_cond_num, cond_num)
     
+        # Determine maximum safe energy threshold across all spin/k-point channels
+        unsafe_energies = []
+        for ispin in range(nspin):
+            for ikpt in range(nkpoints):
+                E_k = self.energies[ispin, ikpt]
+                spill_k = self._spillage[ispin, ikpt]
+                
+                # Sort states by energy
+                order = np.argsort(E_k)
+                sorted_E = E_k[order]
+                sorted_spill = spill_k[order]
+                
+                # Find first state exceeding spillage cutoff
+                exceeded = np.where(sorted_spill > spillage_cutoff)[0]
+                if len(exceeded) > 0:
+                    unsafe_energies.append(sorted_E[exceeded[0]])
+    
+        if unsafe_energies:
+            max_safe_energy = np.min(unsafe_energies)
+            safe_range_str = f"Up to {max_safe_energy:.4f} eV"
+        else:
+            max_safe_energy = np.max(self.energies)
+            safe_range_str = f"> {max_safe_energy:.4f} eV (All states within cutoff)"
+    
         # Print final summary
         status_energy = "[bold green]PASSED[/bold green]" if max_energy_err < 1e-6 else "[bold red]FAILED[/bold red]"
         status_trace  = "[bold green]PASSED[/bold green]" if max_trace_err < 1e-6 else "[bold red]FAILED[/bold red]"
@@ -1372,4 +1124,5 @@ class AtomicProjectionEnvironment:
         rprint(f" • [bold white]Occupied Energy Recovery Max Err :[/bold white] {max_energy_err:.2e} eV  [{status_energy}]")
         rprint(f" • [bold white]Projector Trace Max Err          :[/bold white] {max_trace_err:.2e}     [{status_trace}]")
         rprint(f" • [bold white]Max Basis Condition Number κ(S)  :[/bold white] {max_cond_num:.2f}     [{status_cond}]")
+        rprint(f" • [bold white]Safe Energy Range (spillage < {spillage_cutoff:.0%}):[/bold white] [bold cyan]{safe_range_str}[/bold cyan]")
         rprint("=" * 80 + "\n")

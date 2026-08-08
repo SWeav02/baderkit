@@ -1660,7 +1660,7 @@ class PostWFC:
     # Private Helper functions
     ###########################################################################
     def _execute_spectral_engine(
-        self, num_metrics: int, spin_channel: int, eval_callback
+        self, num_metrics: int, spin_channel: int, eval_callback, raw_data: np.ndarray=None,
     ) -> list[np.ndarray]:
         """Unified orchestration engine for plane-wave spectral decompositions.
     
@@ -1673,9 +1673,10 @@ class PostWFC:
         nx, ny, nz = self._minimum_fft_shape
     
         # Pre-allocate continuous state cache: (num_metrics, nspin, nkpoints, nbands)
-        raw_data = np.zeros(
-            (num_metrics, self.nspin, self.nkpoints, self.nbands), dtype=np.float64
-        )
+        if raw_data is None:
+            raw_data = np.zeros(
+                (num_metrics, self.nspin, self.nkpoints, self.nbands), dtype=np.float64
+            )
     
         # 2. Main execution loop across spin channels and k-points
         for ispin in spins:
@@ -1692,7 +1693,6 @@ class PostWFC:
                     ikpt,
                     weight,
                 )
-    
                 # Store metrics into state cache
                 for imetric, metric_bands in enumerate(metrics_block):
                     if metric_bands is not None:
@@ -2021,7 +2021,9 @@ class PostWFC:
             times the larger side. Otherwise, standard 5% padding is applied to both edges.
         """
         import matplotlib.pyplot as plt
+        import numpy as np
         import math
+        import warnings
     
         # Filter out empty or None datasets
         valid_curves = {k: v for k, v in plot_curves.items() if v is not None}
@@ -2033,12 +2035,39 @@ class PostWFC:
             return fig
     
         # Determine visible Y-axis viewport boundaries matching calculation/plot limits
-        ymin, ymax = self.energy_grid[0], self.energy_grid[-1]
+        grid_min = float(self.energy_grid[0])
+        grid_max = float(self.energy_grid[-1])
+        
+        ymin, ymax = grid_min, grid_max
+    
         if plot_range is not None:
-            if plot_range[0] is not None and plot_range[0] != -np.inf: 
-                ymin = plot_range[0]
-            if plot_range[1] is not None and plot_range[1] != np.inf: 
-                ymax = plot_range[1]
+            req_min = plot_range[0] if (plot_range[0] is not None and not np.isneginf(plot_range[0])) else grid_min
+            req_max = plot_range[1] if (plot_range[1] is not None and not np.isposinf(plot_range[1])) else grid_max
+    
+            min_oob = (req_min < grid_min) or (req_min > grid_max)
+            max_oob = (req_max < grid_min) or (req_max > grid_max)
+    
+            if min_oob and max_oob:
+                raise ValueError(
+                    f"Both plot_range bounds [{req_min:.4f}, {req_max:.4f}] are out of the available energy grid range [{grid_min:.4f}, {grid_max:.4f}]."
+                )
+            elif min_oob or max_oob:
+                if min_oob:
+                    warnings.warn(
+                        f"Lower plot_range bound {req_min:.4f} is out of energy grid bounds [{grid_min:.4f}, {grid_max:.4f}]. "
+                        f"Defaulting lower bound to {grid_min:.4f}.",
+                        UserWarning,
+                    )
+                if max_oob:
+                    warnings.warn(
+                        f"Upper plot_range bound {req_max:.4f} is out of energy grid bounds [{grid_min:.4f}, {grid_max:.4f}]. "
+                        f"Defaulting upper bound to {grid_max:.4f}.",
+                        UserWarning,
+                    )
+                ymin = float(np.clip(req_min, grid_min, grid_max))
+                ymax = float(np.clip(req_max, grid_min, grid_max))
+            else:
+                ymin, ymax = req_min, req_max
     
         mask = (self.energy_grid >= ymin) & (self.energy_grid <= ymax)
     
@@ -2104,10 +2133,12 @@ class PostWFC:
                 for spine in ["top", "right"]:
                     ax.spines[spine].set_visible(False)
                     
-                ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
+                if ymin <= 0.0 <= ymax:
+                    ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
+                    ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
+                            color="gray", va="bottom", ha="left", fontsize=11)
+                
                 ax.axvline(0.0, color="black", linewidth=1)
-                ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
-                        color="gray", va="bottom", ha="left", fontsize=11)
                 
                 ax.set_xlabel(x_label, fontsize=12, family="sans-serif")
                 
@@ -2141,10 +2172,12 @@ class PostWFC:
             for spine in ["top", "right"]:
                 ax.spines[spine].set_visible(False)
                 
-            ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
+            if ymin <= 0.0 <= ymax:
+                ax.axhline(0.0, linestyle="--", color="gray", alpha=0.8, linewidth=1.5)
+                ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
+                        color="gray", va="bottom", ha="left", fontsize=12)
+                
             ax.axvline(0.0, color="black", linewidth=1)
-            ax.text(0.01, 0.0, "$E_F$ ", transform=ax.get_yaxis_transform(), 
-                    color="gray", va="bottom", ha="left", fontsize=12)
             
             ax.set_xlabel(x_label, fontsize=14, family="sans-serif")
             ax.set_ylabel("Energy - $E_F$ (eV)", fontsize=14, family="sans-serif")

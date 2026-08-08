@@ -32,9 +32,6 @@ class AESpecies(BaseSpecies):
     functional: str = field(default_factory=None)
     """The XC functional used to generate the reference"""
 
-    unrestricted: bool = field(default_factory=False)
-    """Whether or not this reference is unrestricted (spin-polarized)"""
-    
     primitives: dict = field(default_factory=None)
     """The primitive basis functions grouped by angular momentum"""
     
@@ -42,11 +39,6 @@ class AESpecies(BaseSpecies):
     paw_species: PAWSpecies | None = None
     """The pseudopotential this species maps onto"""
     
-    # QUANTUM NUMBERS
-
-    spin_channels: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int8))
-    """1D array mapping spin channel projections (0 for alpha/restricted, 1 for beta)."""
-
     # STATE RECONSTRUCTIONS & SLICING
     state_vectors: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
     """2D array of shape (states, flat_basis) containing pre-diagonalized linear combination coefficients."""
@@ -60,12 +52,6 @@ class AESpecies(BaseSpecies):
 
     q_radial_functions: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
     """2D array of shape (channels, grid) containing normalized reciprocal-space wavefunctions R_nl(r)."""
-
-    radial_rho: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
-    """2D array of shape (channels, grid) containing radial charge density (in Angstrom^-3)."""
-    
-    radial_tau: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
-    """2D array of shape (channels, grid) containing radial kinetic energy density (in Angstrom^-5)."""
 
     # CORE RECONSTRUCTION OVERLAPS
     basis_aug_overlaps: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
@@ -142,7 +128,6 @@ class AESpecies(BaseSpecies):
         kept_n = data["principal_quantum_numbers"][keep_indices]
         kept_energies = data["energies"][keep_indices]
         kept_occupancies = data["occupancies"][keep_indices]
-        kept_spin = data["spin_channels"][keep_indices]
         kept_states = data["packed_state_vectors"][keep_indices, :]
         
         expanded_l = []
@@ -150,7 +135,6 @@ class AESpecies(BaseSpecies):
         expanded_m = []
         expanded_energies = []
         expanded_occupancies = []
-        expanded_spin = []
         expanded_states = []
         
         for i in range(len(keep_indices)):
@@ -164,7 +148,6 @@ class AESpecies(BaseSpecies):
                 # We retain the core occupancy per channel or distribute it if preferred.
                 # Usually we keep the base metadata of the parent state.
                 expanded_occupancies.append(kept_occupancies[i])
-                expanded_spin.append(kept_spin[i])
                 expanded_states.append(kept_states[i])
                 
         # Re-pack back into numpy arrays
@@ -173,7 +156,6 @@ class AESpecies(BaseSpecies):
         expanded_m = np.array(expanded_m, dtype=np.int32)
         expanded_energies = np.array(expanded_energies, dtype=np.float64)
         expanded_occupancies = np.array(expanded_occupancies, dtype=np.float64)
-        expanded_spin = np.array(expanded_spin, dtype=np.int32)
         expanded_states = np.vstack(expanded_states)
         
         # Instantiate instance with the explicit PAW parent context bound
@@ -182,7 +164,6 @@ class AESpecies(BaseSpecies):
             element=element,
             basis=metadata.get("basis", None),
             functional=metadata["functional"],
-            unrestricted=int(np.max(data["spin_channels"])) > 0,
             primitives=cls._flatten_basis_primitives(metadata["basis_primitives"]),
             radial_grid=radial_grid, 
             q_radial_grid=q_radial_grid,
@@ -194,7 +175,6 @@ class AESpecies(BaseSpecies):
             magnetic_quantum_numbers=expanded_m,
             eigenvalues=expanded_energies, 
             reference_occupations=expanded_occupancies,
-            spin_channels=expanded_spin,
             state_vectors=expanded_states,
             l_slices=l_slices,
         )
@@ -280,48 +260,23 @@ class AESpecies(BaseSpecies):
         basis_data: dict,
     ):
         Z = paw_species.Z
-        elem = Element.from_Z(Z)
+        elem = Element(paw_species.element)
     
         occupancies = np.where(basis_data["occupancies"] > 1e-4, basis_data["occupancies"], 0.0)
         occupied_indices = np.flip(np.where(occupancies > 0)[0])
     
         # 1. Identify minimal valence subshells matching pseudopotential core charge
         accumulated_charge = 0.0
-        valid_bases = []
+        core_cutoff_idx = len(basis_data["angular_momenta"]) - 1
         for idx in occupied_indices:
-            l = basis_data["angular_momenta"][idx]
-            accumulated_charge += occupancies[idx] * (2 * l + 1)
-            valid_bases.append(idx)
+            accumulated_charge += occupancies[idx]
+            core_cutoff_idx = min(core_cutoff_idx, idx)
             if accumulated_charge >= Z - 1e-4:
                 break
     
-        # 2. Fill remaining subshells in the element's period (skipped for noble gas)
-        p_nums = basis_data["principal_quantum_numbers"]
-        l_nums = basis_data["angular_momenta"]
-        
-        # get offset from current last index
-        last = max(valid_bases)
-        offset = 0
-        p_last = p_nums[last]
-        l_last = l_nums[last]
-        if l_last == 0: #s
-            if p_last >= 6:
-                # lanthanide/actinide
-                offset = 3
-            else:
-                offset = 2
-        elif l_last == 1: #p
-            offset = 0
-        elif l_last == 2: #d
-            offset = 1
-        elif l_last == 3: #f
-            offset = 2
-        
-        for i in range(offset):
-            valid_bases.append(last+i+1)
-
-        valid_bases.sort()
-
+        # 2. Keep all available functions in basis_data beyond the core states
+        valid_bases = list(range(core_cutoff_idx, len(basis_data["angular_momenta"])))
+    
         # --- Logging Writeout ---
         l_map = {0: 's', 1: 'p', 2: 'd', 3: 'f', 4: 'g'}
         subshell_labels = []

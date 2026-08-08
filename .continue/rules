@@ -1,0 +1,8 @@
+# Project Architecture
+
+This a python project designed for running grid based Bader analysis. 
+I am currently focused on a new section related to constructing PAW Bloch Intrinsic Atomic Orbitals. The relavent portion is under '/src/post_wfc'
+
+## Coding Standards
+Use black and isort for formatting and Standards.
+Always follow existing naming conventions.
