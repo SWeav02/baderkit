@@ -1660,17 +1660,12 @@ class PostWFC:
     # Private Helper functions
     ###########################################################################
     def _execute_spectral_engine(
-        self, num_metrics: int, spin_channel: int, eval_callback, raw_data: np.ndarray=None,
+        self, num_metrics: int, spin_channel: int, eval_callback, raw_data: np.ndarray = None,
     ) -> list[np.ndarray]:
-        """Unified orchestration engine for plane-wave spectral decompositions.
-    
-        Dispatches state collection paths for PAW and localized atomic environments,
-        then evaluates spectral broadenings or analytical tetrahedron integrations.
-        """
+        """Unified orchestration engine for plane-wave spectral decompositions."""
         # 1. Setup loop invariants
         spins = range(self.nspin) if spin_channel == -1 else [spin_channel]
         rspin = 2.0 if self.nspin == 1 else 1.0
-        nx, ny, nz = self._minimum_fft_shape
     
         # Pre-allocate continuous state cache: (num_metrics, nspin, nkpoints, nbands)
         if raw_data is None:
@@ -1688,12 +1683,7 @@ class PostWFC:
                 )
     
                 # Fire callback to evaluate spatial/spectral properties
-                metrics_block = eval_callback(
-                    ispin,
-                    ikpt,
-                    weight,
-                )
-                # Store metrics into state cache
+                metrics_block = eval_callback(ispin, ikpt, weight)
                 for imetric, metric_bands in enumerate(metrics_block):
                     if metric_bands is not None:
                         raw_data[imetric, ispin, ikpt] = metric_bands
@@ -1734,12 +1724,11 @@ class PostWFC:
     
             return results
     
-        # 4. Route 2: Continuous Smearing Matrix Fallback
+        # 4. Route 2: Continuous Smearing Matrix Fallback (Vectorized Matrix Multiplication)
         smear_matrix = self.smear_matrix
-        return [
-            np.dot(smear_matrix, raw_data[i, spins].ravel())
-            for i in range(num_metrics)
-        ]
+        reshaped_data = raw_data[:, spins].reshape(num_metrics, -1)
+        smeared_flat = smear_matrix @ reshaped_data.T  # Shape: (n_omega, num_metrics)
+        return [smeared_flat[:, i] for i in range(num_metrics)]
     
     def _get_tetrahedra(self):
         """Identifies uniform k-point grid dimensions and splits each micro-cell into 6 tetrahedra."""
@@ -1827,18 +1816,24 @@ class PostWFC:
         
     def _get_smear_matrix(self):
         """Helper matrix generator parsing customized analytical broadening distributions."""
+        energies_flat = self.energies.ravel()
+        n_states = energies_flat.size
+        num_pts = len(self.energy_grid)
         
-        # Manual construction for None
+        # Manual construction for "none" (delta functions)
         if self._smearing == "none":
-            e_min, e_max = self.energy_range
+            e_min = self.energy_grid[0]
             delta_e = self.energy_grid[1] - self.energy_grid[0]
-            smear_matrix = np.zeros((self._num_spectral_points, len(self.energies)))
-            closest_idx = np.round((self.energies - e_min) / delta_e).astype(int)
-            valid_mask = (closest_idx >= 0) & (closest_idx < self._num_spectral_points)
+            
+            smear_matrix = np.zeros((num_pts, n_states), dtype=np.float64)
+            closest_idx = np.round((energies_flat - e_min) / delta_e).astype(int)
+            
+            valid_mask = (closest_idx >= 0) & (closest_idx < num_pts)
             smear_matrix[closest_idx[valid_mask], np.where(valid_mask)[0]] = 1.0 / delta_e
             return smear_matrix
             
-        delta_E = self.energy_grid[:, None] - self.energies[None, :]
+        # Broadcast subtraction: (n_spectral_points, 1) - (1, n_states) -> (n_spectral_points, n_states)
+        delta_E = self.energy_grid[:, None] - energies_flat[None, :]
         x = delta_E / self._sigma
         
         if self._smearing == "gaussian":

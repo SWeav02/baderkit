@@ -24,7 +24,7 @@ class AtomicProjectionEnvironment:
         self, 
         post_wfc=None,
         basis_dir=None,
-        spillage_cutoff: float = 0.02,
+        spillage_cutoff: float = 0.10,
         **kwargs
     ):
         # Register post_wfc as the reference state context link
@@ -745,11 +745,10 @@ class AtomicProjectionEnvironment:
         self,
         spin_channel: int = -1,
         as_percent: bool = True,
-        cumulative: bool = False,
         return_plot: bool = False,
         plot_range: tuple[float, float] | None = None,
         tol: float = 1e-8,
-    ) -> np.ndarray | dict[str, np.ndarray]:
+    ):
         """
         Calculates spillage of the Density of States (DOS) vs energy as either an
         absolute state density difference or a percentage.
@@ -761,8 +760,6 @@ class AtomicProjectionEnvironment:
         as_percent : bool, default=True
             If True, computes percentage spillage: ((Total DOS - IAO DOS) / Total DOS) * 100.
             If False, computes absolute spillage: (Total DOS - IAO DOS).
-        cumulative : bool, default=False
-            If True, computes integrated DOS spillage.
         return_plot : bool, default=False
             If True, returns a plot object showing spillage vs energy.
         plot_range : tuple[float, float], optional
@@ -773,8 +770,8 @@ class AtomicProjectionEnvironment:
     
         Returns
         -------
-        np.ndarray
-            1D numpy array containing the spillage values aligned with `self.energy_grid`.
+        np.ndarray | matplotlib.figure.Figure
+            1D numpy array containing spillage values or a Matplotlib Figure if `return_plot=True`.
         """
         def iao_dos_callback(ispin, ikpt, weight, **kwargs):
             # C_orth_k shape: (nbands, nbasis)
@@ -790,12 +787,10 @@ class AtomicProjectionEnvironment:
         )
     
         iao_dos = smeared[0]
-        if cumulative:
-            iao_dos = cumulative_trapezoid(iao_dos, self.post_wfc.energy_grid, initial=0)
     
         total_dos = self.post_wfc.get_density_of_states(
             spin_channel=spin_channel,
-            cumulative=cumulative,
+            cumulative=False,
             return_plot=False,
         )
     
@@ -808,22 +803,28 @@ class AtomicProjectionEnvironment:
             units_label = "Spillage (%)"
         else:
             spillage = diff
-            units_label = "Spillage (States)" if cumulative else "Spillage (States / eV)"
+            units_label = "Spillage (States / eV)"
     
         if return_plot:
-            prefix = "Integrated " if cumulative else ""
+            prefix = ""
             x_label = f"{prefix}{units_label}"
     
             plot_curves = {
                 f"{prefix}IAO {units_label}": spillage,
             }
     
-            return self.post_wfc._generate_property_plot(
+            fig = self.post_wfc._generate_property_plot(
                 plot_curves=plot_curves,
                 x_label=x_label,
                 plot_range=plot_range,
                 subplots=False,
             )
+    
+            if as_percent:
+                for ax in fig.get_axes():
+                    ax.set_xlim(0.0, 100.0)
+    
+            return fig
     
         return spillage
 
@@ -888,10 +889,79 @@ class AtomicProjectionEnvironment:
 
         self.atom_bases = atom_bases
         
+    def _evaluate_spillage(self) -> tuple[float, str]:
+        """
+        Evaluates the maximum safe energy threshold where the continuous DOS spillage ratio
+        remains below the specified cutoff, using fast 1D energy histogramming and 1D smearing.
+    
+        Returns
+        -------
+        tuple[float, str]
+            - `max_safe_energy`: Lower bound energy limit (in eV) below which IAO projections are safe.
+            - `safe_range_str`: Formatted string for UI/diagnostic logging.
+        """
+        spillage_cutoff = getattr(self, "spillage_cutoff", 0.20)
+        sigma = getattr(self.post_wfc, "_sigma", 0.05)
+    
+        energies = self.energies.ravel()
+        spillages = self._spillage.ravel()
+    
+        # Expand k-point weights across spins and bands
+        weights = np.tile(
+            np.repeat(self.post_wfc.kpoint_weights, self.nbands),
+            self.nspin
+        )
+    
+        # Filter to unoccupied states at or above Fermi level (E >= 0.0 eV)
+        mask = energies >= 0.0
+        if not np.any(mask):
+            max_safe = float(np.max(self.energies))
+            return max_safe, f"> {max_safe:.4f} eV (All states within cutoff)"
+    
+        e_unocc = energies[mask]
+        s_unocc = spillages[mask]
+        w_unocc = weights[mask]
+    
+        e_min, e_max = float(e_unocc.min()), float(e_unocc.max())
+        if e_max - e_min < 1e-5:
+            return e_max, f"> {e_max:.4f} eV"
+    
+        # Construct fine 1D energy grid (300 energy bins)
+        num_bins = 300
+        grid, delta_e = np.linspace(e_min, e_max, num_bins, retstep=True)
+    
+        # Compute k-weighted 1D histograms for total DOS and spillage DOS
+        total_dos_hist, _ = np.histogram(e_unocc, bins=num_bins, range=(e_min, e_max), weights=w_unocc)
+        spill_dos_hist, _ = np.histogram(e_unocc, bins=num_bins, range=(e_min, e_max), weights=w_unocc * s_unocc)
+    
+        # Apply 1D Gaussian convolution matching smearing width sigma
+        if sigma > 0.0 and delta_e > 0.0:
+            n_kernel = int(np.ceil(4.0 * sigma / delta_e))
+            if n_kernel > 0:
+                x = np.arange(-n_kernel, n_kernel + 1) * delta_e
+                kernel = np.exp(-0.5 * (x / sigma) ** 2)
+                kernel /= kernel.sum()
+    
+                total_dos_hist = np.convolve(total_dos_hist, kernel, mode="same")
+                spill_dos_hist = np.convolve(spill_dos_hist, kernel, mode="same")
+    
+        # Compute continuous spillage ratio
+        tol = 1e-8
+        with np.errstate(divide="ignore", invalid="ignore"):
+            dos_spillage_ratio = np.where(total_dos_hist > tol, spill_dos_hist / total_dos_hist, 0.0)
+    
+        # Locate first energy bin where continuous DOS spillage exceeds cutoff
+        exceeded_indices = np.where(dos_spillage_ratio > spillage_cutoff)[0]
+    
+        if len(exceeded_indices) > 0:
+            max_safe_energy = float(grid[exceeded_indices[0]])
+            return max_safe_energy, f"Up to {max_safe_energy:.4f} eV"
+        else:
+            max_safe_energy = e_max
+            return max_safe_energy, f"> {max_safe_energy:.4f} eV (All states within cutoff)"
+    
+    
     def _project_system(self):
-        # We call the AE wavefunctions, Psi, our B1 basis
-        # We want to form Bloch IAOs using a minimal atomic basis, Chi or B2
-        
         structure = self.structure
         atom_positions = structure.cart_coords
         nspin = self.nspin
@@ -900,31 +970,27 @@ class AtomicProjectionEnvironment:
         volume = structure.volume # Omega
         nbasis = self.nbasis
         atom_offsets = self.post_wfc._get_atom_channel_offsets()
-        spillage_cutoff = self.spillage_cutoff
-        
+    
         # Initialize spillage array: shape (nspin, nkpoints, nbands)
         self._spillage = np.zeros((nspin, nkpoints, nbands), dtype=np.float64)
-        
+    
         rprint("\n" + "="*80)
         rprint("[bold green]          STARTING PROJECTION          [/bold green]")
         rprint("="*80)
         rprint(f"[bold white]System Dimensions:[/bold white] Spin={nspin}, k-points={nkpoints}, Bands={nbands}")
         rprint(f"[bold white]Unit Cell Volume (Omega):[/bold white] {volume:.6f} Å^3")
-        
+    
         rprint("\n" + "="*80)
         rprint("[bold blue]INFO: Executing Reciprocal Projections & PAW Augmentation[/bold blue]")
         rprint("="*80)
-        
+    
         # Diagnostic trackers
         max_energy_err = 0.0
         max_trace_err = 0.0
         max_cond_num = 0.0
-        
-        if self.nspin == 1:
-            target_n_occ = round(self.total_charge / 2.0)
-        else:
-            target_n_occ = round(self.total_charge / 2.0)
-        
+    
+        target_n_occ = round(self.total_charge / 2.0)
+    
         with h5py.File(self._iao_file, "w") as file:
             dset_H = file.create_dataset(
                 "H",
@@ -933,7 +999,7 @@ class AtomicProjectionEnvironment:
                 chunks=(nspin, 1, nbasis, nbasis),
                 compression="lzf",
             )
-            
+    
             dset_S = file.create_dataset(
                 "S",
                 shape=(nspin, nkpoints, nbasis, nbasis),
@@ -941,7 +1007,7 @@ class AtomicProjectionEnvironment:
                 chunks=(nspin, 1, nbasis, nbasis),
                 compression="lzf",
             )
-            
+    
             dset_A = file.create_dataset(
                 "A_coeffs",
                 shape=(nspin, nkpoints, nbands, nbasis),
@@ -952,15 +1018,15 @@ class AtomicProjectionEnvironment:
     
             # Loop over k points
             for ikpt in track(range(nkpoints), description="[bold blue]Constructing IAOs...", total=nkpoints):
-                
+    
                 K_vecs = self.post_wfc.fetch_gvectors(ikpt, return_cart=True, add_k=True)
-                
+    
                 local_basis_matrices = []
                 local_partial_overlaps = []
-                
+    
                 for atom_idx, local_basis in enumerate(self.basis_map):
                     spatial_phase = np.exp(-1j * np.dot(K_vecs, atom_positions[atom_idx]))
-                    
+    
                     local_basis_matrices.append(
                         local_basis.evaluate_q_functions(
                             K_vecs, 
@@ -969,61 +1035,54 @@ class AtomicProjectionEnvironment:
                         )    
                     )
                     local_partial_overlaps.append(local_basis.basis_aug_overlaps)
-                
+    
                 local_basis_matrix = np.vstack(local_basis_matrices)
-                
+    
                 for ispin in range(nspin):
-                    
+    
                     ###################################################################
                     # S_12 and S_21
                     ###################################################################
-                    # |psi_ps>
                     psi_ps = self.post_wfc.fetch_psi(ikpt=ikpt, ispin=ispin, iband=np.arange(nbands)).T
-                    # <chi | psi_ps>
                     chi_psi_ps = local_basis_matrix.conj() @ psi_ps
-                    # <p | psi_ps> (separated by atoms)
                     paw_psi_ps_all = self.post_wfc.fetch_projector_overlaps(ikpt=ikpt, ispin=ispin, iband=np.arange(nbands))
-                    
-                    # <chi | psi_aug> (summed over atoms)
+    
                     chi_psi_aug = []
                     for atom_idx, paw_overlap in enumerate(local_partial_overlaps):
-                        # Get projector overlap for this atom
                         start_ch, end_ch = atom_offsets[atom_idx]
                         paw_psi_ps = paw_psi_ps_all[:, start_ch:end_ch]
                         chi_psi_aug.append(np.dot(paw_overlap, paw_psi_ps.T))
-                    # combine into full <chi | psi_aug>
                     chi_psi_aug = np.vstack(chi_psi_aug)
-                    # sum <chi | psi>
                     S21 = chi_psi_ps + chi_psi_aug
                     S12 = S21.conj().T
+    
                     ###################################################################
                     # P_12 and P_21
                     ###################################################################
                     P12 = S12
                     P21 = S21
-                    
+    
                     energy_order = np.argsort(self.energies[ispin, ikpt])
-                    
+    
                     occ_mask = np.zeros(self.nbands, dtype=bool)
                     occ_mask[energy_order[:target_n_occ]] = True
-                    
+    
                     ###################################################################
                     # C_tilde
                     ###################################################################
                     P21_occ = P21[:, occ_mask]
                     C_tilde_raw = P12 @ P21_occ
-                    
-                    # Löwdin orthogonalization
+    
                     ctc = C_tilde_raw.conj().T @ C_tilde_raw
                     ctc_inv_sqrt = inv(sqrtm(ctc))
                     C_tilde = C_tilde_raw @ ctc_inv_sqrt
-                    
+    
                     ###################################################################
                     # Projectors O and O_tilde
                     ###################################################################
                     O = np.diag(occ_mask.astype(float))
                     O_tilde = C_tilde @ C_tilde.conj().T
-                    
+    
                     ###################################################################
                     # IAO Coefficients A
                     ###################################################################
@@ -1031,7 +1090,6 @@ class AtomicProjectionEnvironment:
                     A = (I_bands + 2*(O @ O_tilde) - O_tilde - O) @ P12
                     A_T = A.conj().T
     
-                    # Löwdin orthogonalization
                     S_IAO = A.conj().T @ A
                     S_IAO_inv_sqrt = inv(sqrtm(S_IAO))
                     A = A @ S_IAO_inv_sqrt
@@ -1040,13 +1098,12 @@ class AtomicProjectionEnvironment:
                     ###################################################################
                     # Spillage Calculation
                     ###################################################################
-                    # Fraction of state m spanned by IAOs is sum_mu |A_{m, mu}|^2
                     spillage_k = 1.0 - np.sum(np.abs(A)**2, axis=1)
-                    
+    
                     # Explicitly zero spillage for occupied states & clamp numerical noise
                     spillage_k[occ_mask] = 0.0
                     spillage_k = np.maximum(0.0, spillage_k)
-                    
+    
                     self._spillage[ispin, ikpt] = spillage_k
     
                     ###################################################################
@@ -1055,14 +1112,14 @@ class AtomicProjectionEnvironment:
                     E = self.energies[ispin, ikpt]
                     H_IAO = A_T @ (E[:, None] * A)
                     S_IAO = A_T @ A
-                    
+    
                     ###################################################################
                     # Save Results to disk
                     ###################################################################
                     dset_A[ispin, ikpt] = A
                     dset_H[ispin, ikpt] = H_IAO
                     dset_S[ispin, ikpt] = S_IAO
-                    
+    
                     ###################################################################
                     # Verify Results
                     ###################################################################
@@ -1074,39 +1131,18 @@ class AtomicProjectionEnvironment:
                         eigvals_gen = eigh(H_IAO, S_IAO, eigvals_only=True)
                         E_occ = np.sort(E[occ_mask])
                         iao_occ = np.sort(eigvals_gen[:target_n_occ])
-                        
+    
                         e_err = np.max(np.abs(iao_occ - E_occ))
                         max_energy_err = max(max_energy_err, e_err)
-                    
+    
                     t_err = np.abs(np.trace(O_tilde).real - target_n_occ)
                     max_trace_err = max(max_trace_err, t_err)
-                    
+    
                     cond_num = np.linalg.cond(S_IAO)
                     max_cond_num = max(max_cond_num, cond_num)
     
-        # Determine maximum safe energy threshold across all spin/k-point channels
-        unsafe_energies = []
-        for ispin in range(nspin):
-            for ikpt in range(nkpoints):
-                E_k = self.energies[ispin, ikpt]
-                spill_k = self._spillage[ispin, ikpt]
-                
-                # Sort states by energy
-                order = np.argsort(E_k)
-                sorted_E = E_k[order]
-                sorted_spill = spill_k[order]
-                
-                # Find first state exceeding spillage cutoff
-                exceeded = np.where(sorted_spill > spillage_cutoff)[0]
-                if len(exceeded) > 0:
-                    unsafe_energies.append(sorted_E[exceeded[0]])
-    
-        if unsafe_energies:
-            max_safe_energy = np.min(unsafe_energies)
-            safe_range_str = f"Up to {max_safe_energy:.4f} eV"
-        else:
-            max_safe_energy = np.max(self.energies)
-            safe_range_str = f"> {max_safe_energy:.4f} eV (All states within cutoff)"
+        # Evaluate energy range cutoff using helper method
+        _, safe_range_str = self._evaluate_spillage()
     
         # Print final summary
         status_energy = "[bold green]PASSED[/bold green]" if max_energy_err < 1e-6 else "[bold red]FAILED[/bold red]"
@@ -1117,12 +1153,12 @@ class AtomicProjectionEnvironment:
             status_cond = "[bold yellow]MODERATE[/bold yellow]"
         else:
             status_cond = "[bold red]ILL-CONDITIONED[/bold red]"
-        
+    
         rprint("\n" + "=" * 80)
         rprint("[bold green]          IAO PROJECTION DIAGNOSTIC SUMMARY          [/bold green]")
         rprint("=" * 80)
         rprint(f" • [bold white]Occupied Energy Recovery Max Err :[/bold white] {max_energy_err:.2e} eV  [{status_energy}]")
         rprint(f" • [bold white]Projector Trace Max Err          :[/bold white] {max_trace_err:.2e}     [{status_trace}]")
         rprint(f" • [bold white]Max Basis Condition Number κ(S)  :[/bold white] {max_cond_num:.2f}     [{status_cond}]")
-        rprint(f" • [bold white]Safe Energy Range (spillage < {spillage_cutoff:.0%}):[/bold white] [bold cyan]{safe_range_str}[/bold cyan]")
+        rprint(f" • [bold white]Safe Energy Range (spillage < {self.spillage_cutoff:.0%}):[/bold white] [bold cyan]{safe_range_str}[/bold cyan]")
         rprint("=" * 80 + "\n")
