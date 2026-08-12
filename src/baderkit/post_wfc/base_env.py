@@ -235,10 +235,11 @@ class PostWFC:
         for R in [-R for R in recip_rotations]:
             if not any(np.array_equal(R, ex_R) for ex_R in recip_rotations):
                 recip_rotations.append(R)
-
-        kpts_full, full_to_irr = [], []
+    
+        kpts_full, full_to_irr, full_to_rot = [], [], []
         for ikpt, k in enumerate(self.kpoints):
             star_kpts = []
+            star_rots = []
             for R in recip_rotations:
                 k_wrapped = np.mod(R @ k, 1.0)
                 is_duplicate = False
@@ -249,12 +250,34 @@ class PostWFC:
                         break
                 if not is_duplicate:
                     star_kpts.append(k_wrapped)
-            for unique_k in star_kpts:
+                    star_rots.append(R)
+            for unique_k, R in zip(star_kpts, star_rots):
                 kpts_full.append(unique_k)
                 full_to_irr.append(ikpt)
+                full_to_rot.append(R)
                     
         self._kpoints_full = np.array(kpts_full)
         self._full_to_irr_map = np.array(full_to_irr, dtype=int)
+        self._full_to_rot_map = np.array(full_to_rot, dtype=int)
+    
+    @property
+    def kpoint_rotations(self) -> np.ndarray:
+        """Integer reciprocal-space 3x3 rotation matrices mapping k_irr to k_full."""
+        if getattr(self, "_full_to_rot_map", None) is None:
+            self._unfold_brillouin_zone()
+        return self._full_to_rot_map
+    
+    @property
+    def kpoint_cart_rotations(self) -> np.ndarray:
+        """Cartesian 3x3 rotation matrices mapping K_cart(k_irr) to K_cart(k_full)."""
+        if getattr(self, "_kpoint_cart_rotations", None) is None:
+            B = self.reciprocal_lattice
+            B_inv = np.linalg.inv(B)
+            # R_cart = B^T @ R_recip @ (B^-1)^T
+            self._kpoint_cart_rotations = np.array([
+                B.T @ R @ B_inv.T for R in self.kpoint_rotations
+            ])
+        return self._kpoint_cart_rotations
 
     @property
     def kpoint_weights(self):
@@ -720,11 +743,7 @@ class PostWFC:
         Nx, Ny, Nz = grid_shape
     
         # Determine active spin channels and weighting
-        if spin_channel == -1:
-            spins = list(range(self.nspin))
-        else:
-            spins = [spin_channel]
-        spin_weight = 2 if (self.nspin == 1 or spin_channel != -1) else 1
+        spins, spin_weight = self._get_spin_channels_weights(spin_channel)
     
         # Scale factor mapping cached physical psi(G) to real space via orthonormal IFFT
         fft_scale = np.sqrt(Nx * Ny * Nz)
@@ -941,11 +960,7 @@ class PostWFC:
         N_pts = len(pts_cart)
 
         # Determine spin channels
-        if spin_channel == -1:
-            spins = list(range(self.nspin))
-        else:
-            spins = [spin_channel]
-        spin_weight = 2 if (self.nspin == 1 or spin_channel != -1) else 1
+        spins, spin_weight = self._get_spin_channels_weights(spin_channel)
 
         # Initialize density accumulators across all points
         density = np.zeros(N_pts, dtype=np.float64)
@@ -1664,7 +1679,7 @@ class PostWFC:
     ) -> list[np.ndarray]:
         """Unified orchestration engine for plane-wave spectral decompositions."""
         # 1. Setup loop invariants
-        spins = range(self.nspin) if spin_channel == -1 else [spin_channel]
+        spins, spin_weight = self._get_spin_channels_weights(spin_channel)
         rspin = 2.0 if self.nspin == 1 else 1.0
     
         # Pre-allocate continuous state cache: (num_metrics, nspin, nkpoints, nbands)
@@ -1990,6 +2005,15 @@ class PostWFC:
     
         # Guarantee at least a chunk size of 1 so execution never halts
         return max(1, chunk_size)
+    
+    def _get_spin_channels_weights(self, spin_channel=-1):
+        # Determine active spin channels and weighting
+        if spin_channel == -1:
+            spins = list(range(self.nspin))
+        else:
+            spins = [spin_channel]
+        spin_weight = 2 if (self.nspin == 1 or spin_channel != -1) else 1
+        return spins, spin_weight
     
     ###########################################################################
     # Plotting Helpers

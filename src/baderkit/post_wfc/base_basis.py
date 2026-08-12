@@ -7,6 +7,24 @@ import numpy as np
 from numpy.typing import NDArray
 from scipy.interpolate import CubicSpline
 
+# Angular momentum letter mapping
+L_SYMBOLS = {0: "s", 1: "p", 2: "d", 3: "f", 4: "g", 5: "h", 6: "i"}
+
+# Real spherical harmonic orbital sub-labels by (l, m)
+M_REAL_HARMONICS = {
+    1: {-1: "y", 0: "z", 1: "x"},
+    2: {-2: "xy", -1: "yz", 0: "z2", 1: "xz", 2: "x2-y2"},
+    3: {
+        -3: "y(3x2-y2)",
+        -2: "xyz",
+        -1: "yz2",
+        0: "z3",
+        1: "xz2",
+        2: "z(x2-y2)",
+        3: "x(x2-3y2)",
+    },
+}
+
 @dataclass
 class BaseSpecies(ABC):
     """
@@ -54,6 +72,9 @@ class BaseSpecies(ABC):
     
     magnetic_quantum_numbers: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.int_))
     """1D array of magnetic quantum numbers, m, for each active channel."""
+    
+    orbital_labels: list = field(default_factory=list)
+    """Orbital label strings, e.g. 1s, 2px, etc."""
 
     # ENERGIES AND OCCUPATIONS
     eigenvalues: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
@@ -61,6 +82,13 @@ class BaseSpecies(ABC):
     
     reference_occupations: NDArray = field(default_factory=lambda: np.empty(0, dtype=np.float64))
     """1D array of reference atomic occupations for each channel."""
+    
+    def __post_init__(self):
+        """
+        Generates the radial rho, kinetic energy density, and NAO radial splines on initialization
+        only if they are not already provided (bypasses recalculation for valence subsets).
+        """
+        self._get_channel_labels()
 
     
     def _create_1d_splines(self, grid, values, pad_points=3):
@@ -96,3 +124,74 @@ class BaseSpecies(ABC):
             )
     
         return splines
+    
+    def _get_channel_labels(
+        self,
+        use_real_harmonics: bool = True,
+        disambiguate_duplicates: bool = True,
+    ) -> list[str]:
+        """Generates string labels for each channel in a BaseSpecies object.
+    
+        Parameters
+        ----------
+        use_real_harmonics : bool, optional
+            If True, converts magnetic quantum numbers (m) into real orbital
+            labels (e.g., 'px', 'dz2'). If False, appends '_m=...' or omits m.
+        disambiguate_duplicates : bool, optional
+            If duplicate channel labels exist (e.g. multiple projectors for the
+            same quantum state), appends an index suffix (e.g. '3s_1', '3s_2').
+    
+        Returns
+        -------
+        List[str]
+            A list of channel labels matching the length of the channel arrays.
+        """
+        n_arr = self.principal_quantum_numbers
+        l_arr = self.angular_momenta
+        m_arr = self.magnetic_quantum_numbers
+    
+        # Determine total channels from available arrays
+        num_channels = max(len(n_arr), len(l_arr), len(m_arr), len(self.eigenvalues))
+        labels = []
+    
+        for idx in range(num_channels):
+            n = n_arr[idx] if idx < len(n_arr) else ""
+            l = l_arr[idx] if idx < len(l_arr) else None
+            m = m_arr[idx] if idx < len(m_arr) else None
+    
+            # Format n and l
+            n_str = str(int(n)) if n != "" else ""
+            l_str = L_SYMBOLS.get(int(l), f"l={l}") if l is not None else ""
+    
+            # Format m
+            m_str = ""
+            if m is not None and l is not None and l > 0:
+                m_val = int(m)
+                if use_real_harmonics and l in M_REAL_HARMONICS:
+                    m_str = M_REAL_HARMONICS[l].get(m_val, f"m={m_val}")
+                else:
+                    m_str = f"_m{m_val:+d}"
+    
+            label = f"{n_str}{l_str}{m_str}"
+            labels.append(label if label else f"channel_{idx}")
+    
+        # Optionally disambiguate duplicate labels
+        if disambiguate_duplicates:
+            counts = {}
+            for lab in labels:
+                counts[lab] = counts.get(lab, 0) + 1
+    
+            seen = {}
+            disambiguated = []
+            for lab in labels:
+                if counts[lab] > 1:
+                    seen[lab] = seen.get(lab, 0) + 1
+                    disambiguated.append(f"{lab}_{seen[lab]}")
+                else:
+                    disambiguated.append(lab)
+            labels = disambiguated
+    
+        self.orbital_labels = labels
+        return labels
+            
+        breakpoint()

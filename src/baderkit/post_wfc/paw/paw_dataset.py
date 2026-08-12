@@ -78,6 +78,8 @@ class PAWSpecies(BaseSpecies):
     ps_d2_core_charge_spline: object | None = None
 
     def __post_init__(self):
+        super().__post_init__()
+        
         if self.paw_cutoffs.size > 0 and self.max_paw_cutoff == 0.0:
             self.max_paw_cutoff = float(np.max(self.paw_cutoffs))
 

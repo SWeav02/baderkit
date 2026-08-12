@@ -251,7 +251,6 @@ def get_virtual_subshells(
     symbol: str, z: int, occ_subshell_counts: dict
 ) -> list:
     """Determines required virtual orbital counts per l-symmetry to complete all
-    
     partially filled or unpopulated valence subshells for a given element.
     """
     elem = get_mendeleev_element(symbol)
@@ -265,7 +264,7 @@ def get_virtual_subshells(
     if P == 1:
       subshells = ["1s"]
     elif P in (2, 3):
-      subshells = [f"{P}s", f"{P}p"] + (["3d"] if P == 3 else [])
+      subshells = [f"{P}s", f"{P}p"]
     elif P in (4, 5):
       subshells = [f"{P}s", f"{P-1}d", f"{P}p"]
     elif P in (6, 7):

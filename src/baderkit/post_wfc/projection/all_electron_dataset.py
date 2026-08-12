@@ -69,6 +69,7 @@ class AESpecies(BaseSpecies):
         Generates the radial rho, kinetic energy density, and NAO radial splines on initialization
         only if they are not already provided (bypasses recalculation for valence subsets).
         """
+        super().__post_init__()
         self._generate_radial_functions()
 
         self._calculate_aug_overlap()
@@ -217,6 +218,55 @@ class AESpecies(BaseSpecies):
             phase_l = (1j) ** l
             basis_vals[proj_idx] = (phase_l * spatial_phase * p_r * p_a)
         
+        return basis_vals
+    
+    def evaluate_r_functions(
+        self, 
+        r_vecs: NDArray, 
+        coord: NDArray = None
+    ) -> NDArray:
+        """
+        Calculates the value of the basis functions at the given real-space coordinates.
+        
+        Parameters
+        ----------
+        r_vecs : NDArray
+            Cartesian coordinates in real space of shape (N_points, 3).
+        coord : Optional[NDArray], optional
+            Origin/position of the basis functions. If provided, `r_vecs` will be shifted 
+            as `dr = r_vecs - coord`. If None, `r_vecs` are assumed to already be relative 
+            to the basis center at origin.
+            
+        Returns
+        -------
+        NDArray: Real matrix array of shape (num_channels, N_points)
+        """
+        # Shift coordinates if an atomic coordinate is explicitly passed
+        dr = r_vecs - coord if coord is not None else r_vecs
+    
+        n_rvecs = len(dr)
+        n_proj = len(self.angular_momenta)
+        
+        # Calculate 1D radial distances |r|
+        r_mags = np.linalg.norm(dr, axis=1)
+        
+        # Preallocate matrix (real-space basis functions are real-valued)
+        basis_vals = np.zeros((n_proj, n_rvecs), dtype=np.float64)
+        
+        for proj_idx in range(n_proj):
+            spline = self.radial_splines[proj_idx]
+            l = self.angular_momenta[proj_idx]
+            m = self.magnetic_quantum_numbers[proj_idx]
+            
+            # Evaluate real spherical harmonic Y_lm(r_hat)
+            p_a, _ = evaluate_real_harmonics_multi(l, m, dr, compute_gradients=False)
+            
+            # Evaluate real radial spline R(r)
+            p_r = np.nan_to_num(spline(r_mags), 0.0)
+            
+            # Product of radial and angular parts
+            basis_vals[proj_idx] = p_r * p_a
+            
         return basis_vals
         
     ###########################################################################
