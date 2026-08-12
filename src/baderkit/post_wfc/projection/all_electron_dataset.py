@@ -268,6 +268,20 @@ class AESpecies(BaseSpecies):
             basis_vals[proj_idx] = p_r * p_a
             
         return basis_vals
+    
+    def get_basis_idx(
+        self,
+        basis_label: str | int,
+            ):
+        if isinstance(basis_label, int):
+            match_idx = basis_label
+        else:
+            orbital_names = self.orbital_labels
+            try: 
+                match_idx = orbital_names.index(basis_label)
+            except ValueError: 
+                raise ValueError(f"Orbital '{basis_label}' not found for element {self.element}. Options are {' '.join(orbital_names)}")
+        return match_idx
         
     ###########################################################################
     # Utility Functions

@@ -6,6 +6,7 @@ import psutil
 import h5py
 from rich.progress import track
 from dataclasses import dataclass
+import math
 
 import numpy as np
 from numpy.typing import NDArray
@@ -74,6 +75,21 @@ class PostWFC:
         lattice_norm = np.linalg.norm(self._lattice, axis=1)
         CUTOFF = np.ceil(np.sqrt(self._meta.energy_cutoff / HSQDTM) / (2 * np.pi / lattice_norm))
         self._minimum_fft_shape = np.array(2 * CUTOFF + 1, dtype=int)
+        
+        # subshell rotation indexing
+        subshells = []
+        curr = 0
+        for site in self.structure:
+            paw_ds = self.paw_datasets[site.specie.symbol]
+            ang_moms = paw_ds.angular_momenta
+            idx = 0
+            while idx < len(ang_moms):
+                l = ang_moms[idx]
+                n_m = 2 * l + 1
+                subshells.append((curr, curr + n_m, l))
+                curr += n_m
+                idx += n_m
+        self._projector_subshells = subshells
         
     ###########################################################################
     # Base Metadata about System
@@ -235,11 +251,10 @@ class PostWFC:
         for R in [-R for R in recip_rotations]:
             if not any(np.array_equal(R, ex_R) for ex_R in recip_rotations):
                 recip_rotations.append(R)
-    
+
         kpts_full, full_to_irr, full_to_rot = [], [], []
         for ikpt, k in enumerate(self.kpoints):
-            star_kpts = []
-            star_rots = []
+            star_kpts, star_rots = [], []
             for R in recip_rotations:
                 k_wrapped = np.mod(R @ k, 1.0)
                 is_duplicate = False
@@ -255,25 +270,24 @@ class PostWFC:
                 kpts_full.append(unique_k)
                 full_to_irr.append(ikpt)
                 full_to_rot.append(R)
-                    
+
         self._kpoints_full = np.array(kpts_full)
         self._full_to_irr_map = np.array(full_to_irr, dtype=int)
         self._full_to_rot_map = np.array(full_to_rot, dtype=int)
-    
+
     @property
     def kpoint_rotations(self) -> np.ndarray:
         """Integer reciprocal-space 3x3 rotation matrices mapping k_irr to k_full."""
         if getattr(self, "_full_to_rot_map", None) is None:
             self._unfold_brillouin_zone()
         return self._full_to_rot_map
-    
+
     @property
     def kpoint_cart_rotations(self) -> np.ndarray:
         """Cartesian 3x3 rotation matrices mapping K_cart(k_irr) to K_cart(k_full)."""
         if getattr(self, "_kpoint_cart_rotations", None) is None:
             B = self.reciprocal_lattice
             B_inv = np.linalg.inv(B)
-            # R_cart = B^T @ R_recip @ (B^-1)^T
             self._kpoint_cart_rotations = np.array([
                 B.T @ R @ B_inv.T for R in self.kpoint_rotations
             ])
@@ -308,6 +322,121 @@ class PostWFC:
         if getattr(self, "_tetrahedra_indices", None) is None:
             self._tetrahedra_indices = self._get_tetrahedra()
         return self._tetrahedra_indices
+    
+    def get_kpoint_spherical_rotations(self, l: int) -> np.ndarray:
+        """Returns (2l+1) x (2l+1) real spherical harmonic rotation matrices 
+        for all FBZ k-points for angular momentum l.
+        """
+        if l == 0:
+            return np.ones((len(self.kpoint_rotations), 1, 1), dtype=np.float64)
+
+        if not hasattr(self, "_sph_rot_cache"):
+            self._sph_rot_cache = {}
+
+        if l not in self._sph_rot_cache:
+            unique_rot_map = {}
+            matrices = []
+            for R_cart in self.kpoint_cart_rotations:
+                R_key = R_cart.tobytes()
+                if R_key not in unique_rot_map:
+                    unique_rot_map[R_key] = self._get_real_sph_rotation_matrix(l, R_cart)
+                matrices.append(unique_rot_map[R_key])
+            self._sph_rot_cache[l] = np.array(matrices)
+
+        return self._sph_rot_cache[l]
+
+    def _get_real_sph_rotation_matrix(self, l: int, R: np.ndarray) -> np.ndarray:
+        """Computes the (2l+1) x (2l+1) real spherical harmonic rotation matrix for angular momentum l."""
+        if l == 0:
+            return np.ones((1, 1), dtype=np.float64)
+
+        R_cart = np.asarray(R, dtype=np.float64)
+
+        # Direct Cartesian transformation for p-orbitals (l = 1) mapped to (py, pz, px)
+        if l == 1:
+            perm = [1, 2, 0]
+            return R_cart[np.ix_(perm, perm)]
+
+        # Extract parity for improper rotations (det < 0)
+        det_R = np.linalg.det(R_cart)
+        parity = (-1.0) ** l if det_R < 0 else 1.0
+        R_proper = R_cart * (-1.0 if det_R < 0 else 1.0)
+
+        # Extract ZYZ Euler angles (alpha, beta, gamma)
+        cos_beta = np.clip(R_proper[2, 2], -1.0, 1.0)
+        beta = np.arccos(cos_beta)
+        sin_beta = np.sin(beta)
+
+        if sin_beta > 1e-10:
+            alpha = np.arctan2(R_proper[1, 2], R_proper[0, 2])
+            gamma = np.arctan2(R_proper[2, 1], -R_proper[2, 0])
+        else:
+            gamma = 0.0
+            if cos_beta > 0:  # beta ≈ 0
+                alpha = np.arctan2(R_proper[1, 0], R_proper[0, 0])
+            else:  # beta ≈ pi
+                alpha = np.arctan2(-R_proper[1, 0], R_proper[0, 0])
+
+        # Compute complex Wigner D-matrix
+        m_vals = np.arange(-l, l + 1)
+        dim = 2 * l + 1
+        D_comp = np.zeros((dim, dim), dtype=np.complex128)
+
+        cos_b2 = np.cos(beta / 2.0)
+        sin_b2 = np.sin(beta / 2.0)
+
+        for i, mp in enumerate(m_vals):
+            for j, m in enumerate(m_vals):
+                k_min = max(0, m - mp)
+                k_max = min(l + m, l - mp)
+
+                if k_min <= k_max:
+                    prefactor = math.sqrt(
+                        math.factorial(l + mp)
+                        * math.factorial(l - mp)
+                        * math.factorial(l + m)
+                        * math.factorial(l - m)
+                    )
+                    d_val = 0.0
+                    for k in range(k_min, k_max + 1):
+                        denom = (
+                            math.factorial(k)
+                            * math.factorial(l + m - k)
+                            * math.factorial(l - mp - k)
+                            * math.factorial(k - m + mp)
+                        )
+                        term = ((-1.0) ** (k - mp + m)) / denom
+                        term *= cos_b2 ** (2 * l + m - mp - 2 * k)
+                        term *= sin_b2 ** (2 * k - m + mp)
+                        d_val += term
+
+                    d_val *= prefactor
+                    D_comp[i, j] = (
+                        np.exp(-1j * mp * alpha) * d_val * np.exp(-1j * m * gamma)
+                    )
+
+        # Construct complex-to-real basis unitary transformation matrix U_l
+        U = np.zeros((dim, dim), dtype=np.complex128)
+        sqrt2_inv = 1.0 / np.sqrt(2.0)
+
+        for i, m_real in enumerate(m_vals):
+            if m_real == 0:
+                U[i, l] = 1.0
+            elif m_real > 0:
+                M = m_real
+                U[i, l + M] = ((-1.0) ** M) * sqrt2_inv
+                U[i, l - M] = sqrt2_inv
+            else:  # m_real < 0
+                M = -m_real
+                U[i, l + M] = -1j * ((-1.0) ** M) * sqrt2_inv
+                U[i, l - M] = 1j * sqrt2_inv
+
+        # Transform complex D-matrix to real spherical basis and apply parity
+        return np.real(U @ D_comp @ U.conj().T) * parity
+
+    def get_spherical_rotation(self, ikpt_full: int, l: int) -> np.ndarray:
+        """Returns the (2l+1) x (2l+1) rotation matrix for a single FBZ k-point."""
+        return self.get_kpoint_spherical_rotations(l)[ikpt_full]
     
     ###########################################################################
     # Grid Methods
@@ -364,84 +493,81 @@ class PostWFC:
     # Fetch Methods
     ###########################################################################
     
+    def _resolve_kpoints(
+        self, ikpt: int | list[int] | np.ndarray, ikpt_is_fbz: bool
+    ) -> tuple[np.ndarray, np.ndarray, bool]:
+        """Validates k-point indices and maps FBZ indices to IBZ indices if requested."""
+        if not self._postwfc_file.exists():
+            raise FileNotFoundError(f"HDF5 cache file not found: {self._postwfc_file}")
+    
+        is_scalar = np.ndim(ikpt) == 0
+        k_orig = np.atleast_1d(ikpt)
+    
+        # Validate index ranges based on whether FBZ or IBZ is passed
+        max_k = len(self.full_to_irr_map) if ikpt_is_fbz else self.nkpoints
+        if np.any(k_orig < 0) or np.any(k_orig >= max_k):
+            raise IndexError(
+                f"k-point index out of bounds. Requested: {ikpt}, valid range: [0, {max_k - 1}]"
+            )
+    
+        # Convert FBZ indices to IBZ indices using mapping array
+        k_ibz = self.full_to_irr_map[k_orig] if ikpt_is_fbz else k_orig
+        return k_ibz, k_orig, is_scalar
+    
+    
+    def _validate_indices(self, idx: int | list[int] | np.ndarray, max_val: int, name: str):
+        """Explicit bounds checking for spin and band indices."""
+        arr = np.asarray(idx)
+        if np.any(arr < 0) or np.any(arr >= max_val):
+            raise IndexError(
+                f"{name} index out of bounds. Requested: {idx}, valid range: [0, {max_val - 1}]"
+            )
+    
+    
     def fetch_psi(
         self,
         ikpt: int | list[int] | np.ndarray,
         ispin: int | list[int] | np.ndarray = 0,
         iband: int | list[int] | np.ndarray = 0,
         order: int = 0,
+        ikpt_is_fbz: bool = False,
     ) -> np.ndarray | list[np.ndarray]:
         """Retrieves pseudo wavefunctions or derivatives from the saved HDF5 file.
     
         Parameters
         ----------
-        ikpt : int, list, or np.ndarray
-            k-point index or array of indices.
-        ispin : int, list, or np.ndarray, optional
-            Spin index or array of indices. Defaults to 0.
-        iband : int, list, or np.ndarray, optional
-            Band index or array of indices. Defaults to 0.
-        order : int, optional
-            Derivative order: 0 for psi, 1 for gradient, 2 for laplacian. Defaults to 0.
-        pseudo : bool, optional
-            Must be True. Reciprocal all-electron quantities are not stored to avoid
-            Fourier-space truncation errors. Defaults to True.
-    
-        Returns
-        -------
-        np.ndarray or list of np.ndarray
-            If ikpt is a scalar, returns a single NumPy array for that k-point.
-            If ikpt is a list/array, returns a list of NumPy arrays (one per k-point).
+        ikpt_is_fbz : bool, optional
+            If True, treats `ikpt` as FBZ index/indices, maps to IBZ before fetching,
+            and rotates vector quantities (e.g., gradient) using Cartesian rotations.
         """
-        if not self._postwfc_file.exists():
-            raise FileNotFoundError(f"HDF5 cache file not found: {self._postwfc_file}")
-    
-        # Validate order parameter
         if order not in (0, 1, 2):
             raise ValueError(
                 f"Invalid order {order}. Must be 0 (psi), 1 (gradient), or 2 (laplacian)."
             )
     
-        order_map = {0: "psi", 1: "grad", 2: "lap"}
-        subgroup = order_map[order]
-        prefix = "ps"
+        self._validate_indices(ispin, self.nspin, "Spin")
+        self._validate_indices(iband, self.nbands, "Band")
+        k_ibz, k_orig, is_scalar = self._resolve_kpoints(ikpt, ikpt_is_fbz)
     
-        # Helper function for explicit bounds checking
-        def _validate_indices(idx, max_val, name):
-            arr = np.asarray(idx)
-            if np.any(arr < 0) or np.any(arr >= max_val):
-                raise IndexError(
-                    f"{name} index out of bounds. Requested: {idx}, valid range: [0, {max_val - 1}]"
-                )
-    
-        # Validate inputs against system dimensions
-        _validate_indices(ikpt, self.nkpoints, "k-point")
-        _validate_indices(ispin, self.nspin, "Spin")
-        _validate_indices(iband, self.nbands, "Band")
-    
-        # Flag whether ikpt was originally passed as a scalar
-        is_scalar_kpt = np.ndim(ikpt) == 0
-    
-        # Standardize inputs to 1D arrays or slices for indexing
-        k_indices = np.atleast_1d(ikpt)
-    
+        subgroup = {0: "psi", 1: "grad", 2: "lap"}[order]
         results = []
     
         with h5py.File(self._postwfc_file, "r") as file:
-            for k in k_indices:
-                dataset_path = f"{prefix}/{subgroup}/{k}"
-    
+            for k, k_src in zip(k_ibz, k_orig):
+                dataset_path = f"ps/{subgroup}/{k}"
                 if dataset_path not in file:
                     raise KeyError(f"Dataset '{dataset_path}' not found in HDF5 file.")
-    
                 dset = file[dataset_path]
-                if order == 1:
-                    data = dset[ispin, :, iband]
-                else:
-                    data = dset[ispin, iband]
+                data = dset[ispin, :, iband] if order == 1 else dset[ispin, iband]
+    
+                # Rotate gradient vector components (order=1) under point group symmetry
+                if ikpt_is_fbz and order == 1:
+                    R_cart = self.kpoint_cart_rotations[k_src]
+                    data = np.einsum("ij,j...->i...", R_cart, data)
+    
                 results.append(data)
     
-        return results[0] if is_scalar_kpt else results
+        return results[0] if is_scalar else results
     
     
     def fetch_projector_overlaps(
@@ -449,187 +575,117 @@ class PostWFC:
         ikpt: int | list[int] | np.ndarray,
         ispin: int | list[int] | np.ndarray = 0,
         iband: int | list[int] | np.ndarray = 0,
+        ikpt_is_fbz: bool = False,
     ) -> np.ndarray | list[np.ndarray]:
         """Retrieves precomputed PAW projector overlap scalar coefficients P_a = <p_a | psi_ps>
     
-        from the saved HDF5 file.
-    
         Parameters
         ----------
-        ikpt : int, list, or np.ndarray
-            k-point index or array of indices.
-        ispin : int, list, or np.ndarray, optional
-            Spin index or array of indices. Defaults to 0.
-        iband : int, list, or np.ndarray, optional
-            Band index or array of indices. Defaults to 0.
-    
-        Returns
-        -------
-        np.ndarray or list of np.ndarray
-            If ikpt is a scalar, returns array of shape (..., total_n_proj).
-            If ikpt is a list/array, returns a list of NumPy arrays (one per k-point).
+        ikpt_is_fbz : bool, optional
+            If True, treats `ikpt` as FBZ index/indices, maps to IBZ before fetching,
+            and rotates projector subshells (l > 0) with real spherical harmonic rotations.
         """
-        if not self._postwfc_file.exists():
-            raise FileNotFoundError(f"HDF5 cache file not found: {self._postwfc_file}")
-    
-        def _validate_indices(idx, max_val, name):
-            arr = np.asarray(idx)
-            if np.any(arr < 0) or np.any(arr >= max_val):
-                raise IndexError(
-                    f"{name} index out of bounds. Requested: {idx}, valid range: [0, {max_val - 1}]"
-                )
-    
-        _validate_indices(ikpt, self.nkpoints, "k-point")
-        _validate_indices(ispin, self.nspin, "Spin")
-        _validate_indices(iband, self.nbands, "Band")
-    
-        is_scalar_kpt = np.ndim(ikpt) == 0
-        k_indices = np.atleast_1d(ikpt)
+        self._validate_indices(ispin, self.nspin, "Spin")
+        self._validate_indices(iband, self.nbands, "Band")
+        k_ibz, k_orig, is_scalar = self._resolve_kpoints(ikpt, ikpt_is_fbz)
     
         results = []
-    
         with h5py.File(self._postwfc_file, "r") as file:
-            for k in k_indices:
+            for k, k_src in zip(k_ibz, k_orig):
                 dataset_path = f"projector_overlaps/{k}"
-    
                 if dataset_path not in file:
                     raise KeyError(f"Dataset '{dataset_path}' not found in HDF5 file.")
     
-                dset = file[dataset_path]
-                data = dset[ispin, iband]
+                data = file[dataset_path][ispin, iband]
+    
+                # Rotate subshell channels for l > 0 using Wigner D / spherical harmonic rotation matrices
+                if ikpt_is_fbz:
+                    for start, end, l in self._projector_subshells:
+                        if l > 0:
+                            D_l = self.get_spherical_rotation(k_src, l)
+                            data[..., start:end] = data[..., start:end] @ D_l.T
+    
                 results.append(data)
     
-        return results[0] if is_scalar_kpt else results
-    
+        return results[0] if is_scalar else results
     
     def fetch_paw_coefficients(
         self,
         ikpt: int | list[int] | np.ndarray,
         ispin: int | list[int] | np.ndarray = 0,
         iband: int | list[int] | np.ndarray = 0,
+        ikpt_is_fbz: bool = False,
     ) -> np.ndarray | list[np.ndarray]:
         """Retrieves raw plane-wave expansion coefficients from the saved HDF5 file.
     
         Parameters
         ----------
-        ikpt : int, list, or np.ndarray
-            k-point index or array of indices.
-        ispin : int, list, or np.ndarray, optional
-            Spin index or array of indices. Defaults to 0.
-        iband : int, list, or np.ndarray, optional
-            Band index or array of indices. Defaults to 0.
-    
-        Returns
-        -------
-        np.ndarray or list of np.ndarray
-            If ikpt is a scalar, returns a single NumPy array for that k-point.
-            If ikpt is a list/array, returns a list of NumPy arrays (one per k-point).
+        ikpt_is_fbz : bool, optional
+            If True, treats `ikpt` as FBZ index/indices and maps to IBZ before fetching.
+            (Coefficients correspond 1-to-1 with rotated G-vectors from `fetch_gvectors`).
         """
-        if not self._postwfc_file.exists():
-            raise FileNotFoundError(f"HDF5 cache file not found: {self._postwfc_file}")
-    
-        def _validate_indices(idx, max_val, name):
-            arr = np.asarray(idx)
-            if np.any(arr < 0) or np.any(arr >= max_val):
-                raise IndexError(
-                    f"{name} index out of bounds. Requested: {idx}, valid range: [0, {max_val - 1}]"
-                )
-    
-        _validate_indices(ikpt, self.nkpoints, "k-point")
-        _validate_indices(ispin, self.nspin, "Spin")
-        _validate_indices(iband, self.nbands, "Band")
-    
-        is_scalar_kpt = np.ndim(ikpt) == 0
-        k_indices = np.atleast_1d(ikpt)
+        self._validate_indices(ispin, self.nspin, "Spin")
+        self._validate_indices(iband, self.nbands, "Band")
+        k_ibz, _, is_scalar = self._resolve_kpoints(ikpt, ikpt_is_fbz)
     
         results = []
-    
         with h5py.File(self._postwfc_file, "r") as file:
-            for k in k_indices:
+            for k in k_ibz:
                 dataset_path = f"coefficients/{k}"
-    
                 if dataset_path not in file:
                     raise KeyError(f"Dataset '{dataset_path}' not found in HDF5 file.")
+                results.append(file[dataset_path][ispin, iband])
     
-                dset = file[dataset_path]
+        return results[0] if is_scalar else results
     
-                # Slice raw coefficients dataset of shape (nspin, nbands, ngvecs)
-                data = dset[ispin, iband]
-                results.append(data)
-    
-        return results[0] if is_scalar_kpt else results
     
     def fetch_gvectors(
         self,
         ikpt: int | list[int] | np.ndarray,
         return_cart: bool = False,
         add_k: bool = False,
+        ikpt_is_fbz: bool = False,
     ) -> np.ndarray | list[np.ndarray]:
-        """Retrieves reciprocal-space G-vectors from the saved HDF5 file.
-    
-        Parameters
-        ----------
-        ikpt : int, list, or np.ndarray
-            k-point index or array of indices.
-        return_cart : bool, optional
-            If True, transforms Miller indices to Cartesian reciprocal coordinates (in Å⁻¹).
-            If False, returns integer Miller indices (h, k, l). Defaults to False.
-        add_k : bool, optional
-            If True, adds the k-point wavevector to yield K = k + G. Defaults to False.
-    
-        Returns
-        -------
-        np.ndarray or list of np.ndarray
-            If ikpt is a scalar, returns a single array of shape (ngvecs, 3).
-            If ikpt is a list/array, returns a list of arrays (one per k-point).
-            Data type is int32 if return_cart=False and add_k=False, otherwise float64.
-        """
-        if not self._postwfc_file.exists():
-            raise FileNotFoundError(f"HDF5 cache file not found: {self._postwfc_file}")
-    
-        def _validate_indices(idx, max_val, name):
-            arr = np.asarray(idx)
-            if np.any(arr < 0) or np.any(arr >= max_val):
-                raise IndexError(
-                    f"{name} index out of bounds. Requested: {idx}, valid range: [0, {max_val - 1}]"
-                )
-    
-        _validate_indices(ikpt, self.nkpoints, "k-point")
-    
-        is_scalar_kpt = np.ndim(ikpt) == 0
-        k_indices = np.atleast_1d(ikpt)
-    
+        k_ibz, k_orig, is_scalar = self._resolve_kpoints(ikpt, ikpt_is_fbz)
         recip_matrix = self.reciprocal_lattice
         results = []
     
         with h5py.File(self._postwfc_file, "r") as file:
-            for k in k_indices:
+            for k, k_src in zip(k_ibz, k_orig):
                 dataset_path = f"gvectors/{k}"
-    
                 if dataset_path not in file:
                     raise KeyError(f"Dataset '{dataset_path}' not found in HDF5 file.")
     
-                dset = file[dataset_path]
-                g_int = dset[:]  # Integer Miller indices (ngvecs, 3)
+                g_int = file[dataset_path][:]  # Integer Miller indices (ngvecs, 3)
     
-                # 1. Coordinate transformation: integer Miller -> Cartesian
+                # 1. Transform Miller indices under FBZ k-point rotation
+                if ikpt_is_fbz:
+                    R_recip = self.kpoint_rotations[k_src]
+                    g_int = g_int @ R_recip.T
+                    
+                    # Add BZ wrapping shift G0 = R * k_irr - k_full to align total K = R * K_irr
+                    k_irr = self.kpoints[k]
+                    k_full = self.kpoints_full[k_src]
+                    G0 = np.round(R_recip @ k_irr - k_full).astype(int)
+                    g_int = g_int + G0
+    
+                # 2. Coordinate transformation: integer Miller -> Cartesian
                 if return_cart:
-                    data = g_int @ recip_matrix  # Shape: (ngvecs, 3) in Å⁻¹
+                    data = g_int @ recip_matrix
                 else:
                     data = g_int.astype(np.float64) if add_k else g_int
     
-                # 2. Add k-point wavevector K = k + G
+                # 3. Add k-point wavevector K = k + G
                 if add_k:
-                    if return_cart:
-                        k_vec = self.kpoints_cart[k]
+                    if ikpt_is_fbz:
+                        k_vec = self.kpoints_cart_full[k_src] if return_cart else self.kpoints_full[k_src]
                     else:
-                        k_vec = self.kpoints[k]
-    
+                        k_vec = self.kpoints_cart[k_src] if return_cart else self.kpoints[k_src]
                     data = data + k_vec
     
                 results.append(data)
     
-        return results[0] if is_scalar_kpt else results
+        return results[0] if is_scalar else results
     
     ###########################################################################
     # Property Calculations
@@ -1675,45 +1731,76 @@ class PostWFC:
     # Private Helper functions
     ###########################################################################
     def _execute_spectral_engine(
-        self, num_metrics: int, spin_channel: int, eval_callback, raw_data: np.ndarray = None,
+        self,
+        num_metrics: int,
+        spin_channel: int,
+        eval_callback,
+        raw_data: np.ndarray = None,
+        ikpt_is_fbz: bool = False,
     ) -> list[np.ndarray]:
-        """Unified orchestration engine for plane-wave spectral decompositions."""
+        """Unified orchestration engine for plane-wave spectral decompositions.
+
+        Evaluates band-resolved physical metrics (e.g., DOS, COHP, projections) across k-points
+        and spin channels, then projects them onto the energy grid via either analytical
+        tetrahedron integration or continuous smearing functions (Gaussian, MP, FD).
+        """
         # 1. Setup loop invariants
         spins, spin_weight = self._get_spin_channels_weights(spin_channel)
         rspin = 2.0 if self.nspin == 1 else 1.0
-    
-        # Pre-allocate continuous state cache: (num_metrics, nspin, nkpoints, nbands)
+
+        # Select target k-point domain size (Full BZ vs. Irreducible BZ)
+        nkpts = len(self.kpoints_full) if ikpt_is_fbz else self.nkpoints
+
+        # Pre-allocate continuous state tensor: (num_metrics, nspin, nkpoints, nbands)
         if raw_data is None:
             raw_data = np.zeros(
-                (num_metrics, self.nspin, self.nkpoints, self.nbands), dtype=np.float64
+                (num_metrics, self.nspin, nkpts, self.nbands), dtype=np.float64
             )
-    
+
         # 2. Main execution loop across spin channels and k-points
         for ispin in spins:
-            for ikpt in range(self.nkpoints):
-                weight = (
-                    rspin
-                    if self._smearing == "tetrahedron"
-                    else rspin * self.kpoint_weights[ikpt]
-                )
-    
-                # Fire callback to evaluate spatial/spectral properties
+            for ikpt in range(nkpts):
+                # Calculate integration weights according to BZ domain and smearing model
+                if ikpt_is_fbz:
+                    weight = (
+                        rspin / nkpts
+                        if self._smearing == "tetrahedron"
+                        else (rspin * spin_weight) / nkpts
+                    )
+                else:
+                    weight = (
+                        rspin
+                        if self._smearing == "tetrahedron"
+                        else rspin * self.kpoint_weights[ikpt]
+                    )
+
+                # Fire callback to evaluate spatial/spectral properties for current state
                 metrics_block = eval_callback(ispin, ikpt, weight)
                 for imetric, metric_bands in enumerate(metrics_block):
                     if metric_bands is not None:
                         raw_data[imetric, ispin, ikpt] = metric_bands
-    
+
         # 3. Route 1: Analytical Tetrahedron Brillouin Zone Integration
         if self._smearing == "tetrahedron":
-            full_map = self.full_to_irr_map
-            eigenvalues = self.energies[:, full_map, :]
-            cached_metrics = np.ascontiguousarray(
-                np.transpose(raw_data, (1, 2, 3, 0))[:, full_map, :, :]
-            )
-    
+            # Align band energies and metric arrays onto the FBZ micro-tetrahedra grid
+            if ikpt_is_fbz:
+                # Raw data is already formatted on the Full BZ grid: transpose to (nspin, nkpts_full, nbands, num_metrics)
+                eigenvalues = self.energies[:, self.full_to_irr_map, :]
+                cached_metrics = np.ascontiguousarray(
+                    np.transpose(raw_data, (1, 2, 3, 0))
+                )
+            else:
+                # Map IBZ metric results onto the Full BZ micro-cell mesh
+                full_map = self.full_to_irr_map
+                eigenvalues = self.energies[:, full_map, :]
+                cached_metrics = np.ascontiguousarray(
+                    np.transpose(raw_data, (1, 2, 3, 0))[:, full_map, :, :]
+                )
+
             tetra_indices = self.tetrahedra_indices
             tetra_weight = 1.0 / len(tetra_indices)
-    
+
+            # Execute Numba-accelerated analytical linear tetrahedron integration
             smeared_output = integrate_tetrahedra_spectral_density(
                 self.energy_grid,
                 tetra_indices,
@@ -1721,10 +1808,10 @@ class PostWFC:
                 cached_metrics,
                 tetra_weight,
             )
-    
+
             results = [np.sum(smeared_output[i], axis=0) for i in range(num_metrics)]
-    
-            # Symmetrically smooth step features if convolution smoothing is active
+
+            # Symmetrically smooth step features if convolution smoothing is active (sigma > 0)
             if self._sigma > 0.0:
                 delta_e = self.energy_grid[1] - self.energy_grid[0]
                 n_kernel = int(np.ceil(14.0 * self._sigma / delta_e))
@@ -1736,13 +1823,13 @@ class PostWFC:
                     results = [
                         np.convolve(res, kernel, mode="same") for res in results
                     ]
-    
+
             return results
-    
+
         # 4. Route 2: Continuous Smearing Matrix Fallback (Vectorized Matrix Multiplication)
         smear_matrix = self.smear_matrix
         reshaped_data = raw_data[:, spins].reshape(num_metrics, -1)
-        smeared_flat = smear_matrix @ reshaped_data.T  # Shape: (n_omega, num_metrics)
+        smeared_flat = smear_matrix @ reshaped_data.T  # Shape: (n_energy_points, num_metrics)
         return [smeared_flat[:, i] for i in range(num_metrics)]
     
     def _get_tetrahedra(self):
