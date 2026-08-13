@@ -1,14 +1,18 @@
 
 from pathlib import Path
-import math
 from typing import Literal
+import json
 
 import h5py
 import numpy as np
 from rich import print as rprint
 from rich.progress import track
 from scipy.integrate import cumulative_trapezoid
-from scipy.linalg import eigh
+from scipy.linalg import eigh, block_diag
+from scipy.optimize import minimize
+from scipy.spatial.transform import Rotation
+from scipy.interpolate import RegularGridInterpolator
+
 
 from baderkit.post_wfc.base_env import PostWFC
 from baderkit.post_wfc.projection.all_electron_dataset import AESpecies
@@ -188,7 +192,7 @@ class AtomicProjectionEnvironment:
         
         # Initialize basis structures and run heavy orbital projections
         self._load_bases()
-        self._project_system()
+        self._build_iaos()
 
     ###########################################################################
     # Copied Properties
@@ -812,21 +816,6 @@ class AtomicProjectionEnvironment:
     ###########################################################################
     # Helper Fetch Functions
     ###########################################################################
-    def _get_full_spherical_rotation(self, ikpt_fbz: int) -> np.ndarray:
-        """Constructs the full (n_iao, n_iao) block-diagonal real spherical harmonic 
-        rotation matrix for a given FBZ k-point.
-        """
-        D_full = np.eye(len(self.all_bases), dtype=np.float64)
-    
-        for subshells in self.subshell_map.values():
-            for info in subshells.values():
-                # Process each subshell once by matching the head orbital (target_in_shell_idx == 0)
-                if info["l"] > 0 and info["target_in_shell_idx"] == 0:
-                    idxs = info["shell_global_indices"]
-                    D_l = self.post_wfc.get_spherical_rotation(ikpt_fbz, info["l"])
-                    D_full[idxs[0] : idxs[-1] + 1, idxs[0] : idxs[-1] + 1] = D_l
-    
-        return D_full
     
     def _get_mapped_atom(self, atom_idx: int, ikpt_fbz: int) -> int:
         """Finds the preimage atom index i such that rotation R maps i -> atom_idx."""
@@ -892,6 +881,37 @@ class AtomicProjectionEnvironment:
 
         with h5py.File(self._iao_file, "r") as file:
             return file["H"][ispin, ikpt_idx]
+        
+    def fetch_atomic_rotations(self, atom_idx: int | None = None) -> np.ndarray:
+        """
+        Retrieves the optimal 3x3 SO(3) spatial rotation matrix R_a (or all matrices)
+        used to frame-align the reference atomic orbitals.
+    
+        Parameters
+        ----------
+        atom_idx : int | None, optional
+            If provided, returns the 3x3 rotation matrix for the specified atom index.
+            If None, returns an array of shape (natoms, 3, 3) for all atoms.
+    
+        Returns
+        -------
+        rotations : np.ndarray
+            3x3 rotation matrix for a single atom or (natoms, 3, 3) array for all atoms.
+        """
+        if hasattr(self, "atomic_rotations") and self.atomic_rotations is not None:
+            rotations = np.array(self.atomic_rotations)
+        else:
+            with h5py.File(self._iao_file, "r") as file:
+                if "atomic_rotations" in file:
+                    rotations = file["atomic_rotations"][:]
+                else:
+                    # Default fallback: Identity matrices if frame alignment was skipped
+                    rotations = np.tile(np.eye(3, dtype=np.float64), (len(self.structure), 1, 1))
+    
+        if atom_idx is not None:
+            return rotations[atom_idx]
+        
+        return rotations
 
     ###########################################################################
     # Primary Projection Functions
@@ -1008,6 +1028,47 @@ class AtomicProjectionEnvironment:
         else:
             max_safe_energy = e_max
             return max_safe_energy, f"> {max_safe_energy:.4f} eV (All states within cutoff)"
+        
+    def _build_iaos(self, temperature: float = 300.0) -> list[np.ndarray]:
+        """
+        Executes the full 3-pass pipeline to construct orientationally invariant IAOs.
+        """
+        rprint("\n" + "=" * 80)
+        rprint("[bold cyan]      STARTING ORIENTATIONALLY INVARIANT IAO PIPELINE      [/bold cyan]")
+        rprint("=" * 80)
+    
+        # -------------------------------------------------------------------------
+        # PASS 1: Initial projection with canonical reference basis
+        # -------------------------------------------------------------------------
+        rprint("\n[bold yellow]► STEP 1/3: Executing Initial Unaligned Projection (Pass 1)[/bold yellow]")
+        M_k_list = self._project_system(temperature=temperature, atomic_rotations=None)
+    
+        if M_k_list is None:
+            raise RuntimeError("Pass 1 projection failed to generate the k-resolved overlap tensors.")
+    
+        # -------------------------------------------------------------------------
+        # PASS 2: Local SO(3) orientation optimization using k-resolved squared metrics
+        # -------------------------------------------------------------------------
+        rprint("\n[bold yellow]► STEP 2/3: Optimizing Local Atomic Frames on SO(3) (Pass 2)[/bold yellow]")
+        rotations = self._optimize_atomic_orientations(M_k_list)
+    
+        # -------------------------------------------------------------------------
+        # PASS 3: Re-projection with frame-aligned reference atomic orbitals
+        # -------------------------------------------------------------------------
+        rprint("\n[bold yellow]► STEP 3/3: Reconstructing IAOs in Frame-Aligned Basis (Pass 3)[/bold yellow]")
+        self._project_system(temperature=temperature, atomic_rotations=rotations)
+    
+        # -------------------------------------------------------------------------
+        # Persist optimal rotations to instance state
+        # -------------------------------------------------------------------------
+        self.atomic_rotations = rotations
+    
+        rprint("\n" + "=" * 80)
+        rprint("[bold green]✔ PIPELINE COMPLETE: Orientationally Invariant IAOs Built Successfully![/bold green]")
+        rprint("=" * 80 + "\n")
+    
+        return rotations
+    
     
     @staticmethod
     def _lowdin_ortho(M: np.ndarray, max_iter: int = 100, tol: float = 1e-12) -> np.ndarray:
@@ -1018,32 +1079,71 @@ class AtomicProjectionEnvironment:
         norm = np.linalg.norm(M, ord=2)
         if norm < 1e-14:
             return M
-        
+    
         X = M / (norm * 1.01)
         I = np.eye(M.shape[1], dtype=M.dtype)
-        
+    
         for _ in range(max_iter):
             X_next = 0.5 * X @ (3.0 * I - X.conj().T @ X)
-            
+    
             # Check orthogonality error ||X^\dagger X - I||_\infty directly
             ortho_err = np.max(np.abs(X_next.conj().T @ X_next - I))
             if ortho_err < tol:
                 return X_next
             X = X_next
-            
+    
         return X
     
-    def _project_system(self, temperature: float = 300.0):
+    
+    def _get_atom_subshells(self, local_basis) -> list[int]:
+        """Extracts true subshell quantum numbers l from local_basis.angular_momenta."""
+        subshells = []
+        cursor = 0
+        l_list = list(local_basis.angular_momenta)
+        while cursor < len(l_list):
+            l = int(l_list[cursor])
+            subshells.append(l)
+            cursor += 2 * l + 1
+        return subshells
+    
+    
+    def _get_atom_wigner_d(self, local_basis, R_a: np.ndarray) -> np.ndarray:
+        """Builds the block-diagonal Wigner D-matrix for an atom using existing helper."""
+        blocks = []
+        subshells = self._get_atom_subshells(local_basis)
+        for l in subshells:
+            D_l = self.post_wfc._get_real_sph_rotation_matrix(l, R_a)
+            blocks.append(D_l)
+    
+        return block_diag(*blocks)
+    
+    def _project_system(
+        self, 
+        temperature: float = 300.0, 
+        atomic_rotations: list[np.ndarray] | None = None
+    ) -> list[np.ndarray] | None:
         """
         Constructs IAOs directly on the Full Brillouin Zone (FBZ) mesh using Fermi-Dirac 
-        continuous occupations and Lowdin symmetric orthogonalization, preserving exact 
-        canonical spherical harmonic orbital orientations.
-
+        continuous occupations and Lowdin symmetric orthogonalization. Saves full standalone 
+        data to HDF5 during Pass 3.
+    
         Parameters
         ----------
         temperature : float, optional
             Smearing temperature in Kelvin (default is 300.0 K).
-            Set to 0.0 K for step-function occupations at E <= E_F.
+        atomic_rotations : list[np.ndarray] | None, optional
+            List of 3x3 SO(3) rotation matrices R_a for each atom.
+            If None, computes initial unrotated IAOs and returns the k-resolved 
+            overlap tensors M_k_list across all k-points and spin channels.
+            If provided, applies R_a to reference basis functions and saves rotated IAOs to disk.
+    
+        Returns
+        -------
+        M_k_list : list[np.ndarray] | None
+            If atomic_rotations is None (Pass 1), returns a list of length natoms where each 
+            element is an array of shape (nspin, nkpoints_full, nbasis_atom, nbasis_atom) 
+            containing the k-resolved overlap matrices M_a(k, s) = S21_a(k, s) @ A_a(k, s).
+            Otherwise returns None (Pass 3).
         """
         structure = self.structure
         atom_positions = structure.cart_coords
@@ -1054,67 +1154,122 @@ class AtomicProjectionEnvironment:
         nbands = self.nbands
         volume = structure.volume
         nbasis = self.nbasis
-        atom_offsets = self.post_wfc._get_atom_channel_offsets()
-
+    
+        # PAW channel offsets (for PAW augmentation projectors)
+        paw_offsets = self.post_wfc._get_atom_channel_offsets()
+        total_paw_channels = paw_offsets[-1][1] if paw_offsets else 0
+    
+        # Reference basis channel offsets (for S21 slicing)
+        basis_offsets = [
+            (self.atom_to_basis_indices[i][0], self.atom_to_basis_indices[i][-1] + 1)
+            for i in range(len(self.basis_map))
+        ]
+    
         # Calculate smearing width sigma = k_B * T in eV
         k_B = 8.617333262145e-5
         sigma = k_B * temperature
-
-        # Initialize FBZ spillage array
+    
+        # Initialize FBZ spillage array and band energy accumulator
         self._spillage = np.zeros((nspin, nkpoints_full, nbands), dtype=np.float64)
-
+        energies_fbz = np.zeros((nspin, nkpoints_full, nbands), dtype=np.float64)
+    
+        # Initialize k-resolved overlap tensor list if running Pass 1
+        M_k_list = None
+        if atomic_rotations is None:
+            M_k_list = [
+                np.zeros((nspin, nkpoints_full, end_b - start_b, end_b - start_b), dtype=np.complex128)
+                for start_b, end_b in basis_offsets
+            ]
+    
+        # Precompute block-diagonal Wigner D-matrices for each atom if rotations are provided
+        wigner_D_blocks = []
+        if atomic_rotations is not None:
+            for atom_idx, local_basis in enumerate(self.basis_map):
+                R_a = atomic_rotations[atom_idx]
+                D_a = self._get_atom_wigner_d(local_basis, R_a)
+                wigner_D_blocks.append(D_a)
+    
         rprint("\n" + "=" * 80)
-        rprint("[bold green]          STARTING FBZ PROJECTION          [/bold green]")
+        pass_str = "PASS 1: UNALIGNED" if atomic_rotations is None else "PASS 3: FRAME-ALIGNED"
+        rprint(f"[bold green]          STARTING FBZ PROJECTION ({pass_str})          [/bold green]")
         rprint("=" * 80)
         rprint(f"[bold white]System Dimensions:[/bold white] Spin={nspin}, FBZ k-points={nkpoints_full}, Bands={nbands}")
         rprint(f"[bold white]Basis Dimensions :[/bold white] Total={nbasis}")
         rprint(f"[bold white]Fermi Level (E_F):[/bold white] {self.efermi:.4f} eV")
         rprint(f"[bold white]Smearing Temp (T):[/bold white] {temperature:.1f} K (sigma = {sigma:.4f} eV)")
         rprint(f"[bold white]Unit Cell Volume :[/bold white] {volume:.6f} Å^3")
-
+    
         rprint("\n" + "=" * 80)
         rprint("[bold blue]INFO: Executing Reciprocal Projections & PAW Augmentation across FBZ[/bold blue]")
         rprint("=" * 80)
-
+    
         # Diagnostic trackers
         max_energy_err = 0.0
         max_charge_err = 0.0
         max_trace_err = 0.0
         max_cond_num_raw = 0.0
         max_cond_num_final = 0.0
-
-        with h5py.File(self._iao_file, "w") as file:
-            dset_H = file.create_dataset(
+    
+        # -------------------------------------------------------------------------
+        # PASS 3: Open HDF5 File and Initialize Datasets / Metadata
+        # -------------------------------------------------------------------------
+        h5_file = None
+        if atomic_rotations is not None:
+            h5_file = h5py.File(self._iao_file, "w")
+    
+            # Save Root Metadata Attributes
+            h5_file.attrs["structure_json"] = json.dumps(structure.as_dict())
+            h5_file.attrs["efermi"] = float(self.efermi)
+            h5_file.attrs["temperature"] = float(temperature)
+            h5_file.attrs["sigma"] = float(sigma)
+            h5_file.attrs["spillage_cutoff"] = float(self.spillage_cutoff)
+            h5_file.attrs["nspin"] = int(nspin)
+            h5_file.attrs["nkpoints_full"] = int(nkpoints_full)
+            h5_file.attrs["nbands"] = int(nbands)
+            h5_file.attrs["nbasis"] = int(nbasis)
+            h5_file.attrs["atom_to_basis_indices_json"] = json.dumps(
+                {int(k): [int(x) for x in v] for k, v in self.atom_to_basis_indices.items()}
+            )
+            h5_file.attrs["paw_offsets_json"] = json.dumps([(int(s), int(e)) for s, e in paw_offsets])
+            h5_file.attrs["basis_offsets_json"] = json.dumps([(int(s), int(e)) for s, e in basis_offsets])
+    
+            # Create Core Datasets
+            dset_H = h5_file.create_dataset(
                 "H",
                 shape=(nspin, nkpoints_full, nbasis, nbasis),
                 dtype=np.complex128,
                 chunks=(nspin, 1, nbasis, nbasis),
                 compression="lzf",
             )
-
-            dset_A = file.create_dataset(
+    
+            dset_A = h5_file.create_dataset(
                 "A_coeffs",
                 shape=(nspin, nkpoints_full, nbands, nbasis),
                 dtype=np.complex128,
                 chunks=(nspin, 1, nbands, nbasis),
                 compression="lzf",
             )
-
+    
+            h5_file.create_dataset("atomic_rotations", data=np.array(atomic_rotations))
+            grid_group = h5_file.create_group("grid_data")
+    
+        try:
             # Loop over Full Brillouin Zone k points
             for ikpt_full in track(range(nkpoints_full), description="[bold blue]Constructing IAOs (FBZ)...", total=nkpoints_full):
                 ikpt_irr = full_to_irr[ikpt_full]
-
+    
                 K_vecs = self.post_wfc.fetch_gvectors(
                     ikpt=ikpt_full, return_cart=True, add_k=True, ikpt_is_fbz=True
                 )
-
+                n_gvecs = K_vecs.shape[0]
+    
                 local_basis_matrices = []
                 local_partial_overlaps = []
-
+    
                 # Collect <chi|phi_aug-phi_ps> and <chi|chi>
                 for atom_idx, local_basis in enumerate(self.basis_map):
                     spatial_phase = np.exp(-1j * np.dot(K_vecs, atom_positions[atom_idx]))
-
+    
                     local_basis_matrices.append(
                         local_basis.evaluate_q_functions(
                             K_vecs,
@@ -1123,114 +1278,156 @@ class AtomicProjectionEnvironment:
                         )
                     )
                     local_partial_overlaps.append(local_basis.basis_aug_overlaps)
-
+    
                 local_basis_matrix = np.vstack(local_basis_matrices)
-
+    
+                # Prepare per-kpoint grid dataset placeholders in HDF5 (Pass 3)
+                dset_C_pw, dset_P_paw = None, None
+                if h5_file is not None:
+                    k_group = grid_group.create_group(f"k_{ikpt_full}")
+                    k_group.create_dataset("K_vecs", data=K_vecs, compression="lzf")
+    
+                    dset_C_pw = k_group.create_dataset(
+                        "C_iao_pw", shape=(nspin, nbasis, n_gvecs), dtype=np.complex128, compression="lzf"
+                    )
+                    dset_P_paw = k_group.create_dataset(
+                        "P_iao_paw", shape=(nspin, nbasis, total_paw_channels), dtype=np.complex128, compression="lzf"
+                    )
+    
                 for ispin in range(nspin):
-
+    
                     ###################################################################
-                    # S_12 and S_21
+                    # S_12 and S_21 Construction
                     ###################################################################
-                    # Get pseudo part of Psi on FBZ
+                    # Get pseudo part of Psi on FBZ (shape: n_gvecs, nbands)
                     psi_ps = self.post_wfc.fetch_psi(
                         ikpt=ikpt_full, ispin=ispin, iband=np.arange(nbands), ikpt_is_fbz=True
                     ).T
+    
                     # Calculate <chi | psi_ps> (pseudo part of projection)
                     chi_psi_ps = local_basis_matrix.conj() @ psi_ps
-
-                    # Get projector overlaps <p | psi_ps> on FBZ
+    
+                    # Get projector overlaps <p | psi_ps> on FBZ (shape: nbands, total_paw_channels)
                     paw_psi_ps_all = self.post_wfc.fetch_projector_overlaps(
                         ikpt=ikpt_full, ispin=ispin, iband=np.arange(nbands), ikpt_is_fbz=True
                     )
-
+    
                     # Get augmentation part
                     chi_psi_aug = []
                     for atom_idx, paw_overlap in enumerate(local_partial_overlaps):
-                        start_ch, end_ch = atom_offsets[atom_idx]
+                        start_ch, end_ch = paw_offsets[atom_idx]
                         paw_psi_ps = paw_psi_ps_all[:, start_ch:end_ch]
                         chi_psi_aug.append(np.dot(paw_overlap, paw_psi_ps.T))
                     chi_psi_aug = np.vstack(chi_psi_aug)
-
-                    # Construct S21/S12
+    
+                    # Construct unrotated S21
                     S21 = chi_psi_ps + chi_psi_aug
+    
+                    ###################################################################
+                    # Apply SO(3) Atomic Rotations to S21 (if atomic_rotations passed)
+                    ###################################################################
+                    if atomic_rotations is not None:
+                        for atom_idx in range(len(self.basis_map)):
+                            start_b, end_b = basis_offsets[atom_idx]
+                            D_a = wigner_D_blocks[atom_idx]
+                            # Apply block-diagonal rotation D_a(R_a) directly to S21
+                            S21[start_b:end_b, :] = D_a @ S21[start_b:end_b, :]
+    
                     S12 = S21.conj().T
-
+    
                     ###################################################################
                     # P_12 and P_21
                     ###################################################################
                     P12 = S12
                     P21 = S21
-
+    
                     ###################################################################
                     # Get Occupations with Fermi-Dirac Smearing
                     ###################################################################
                     E = self.energies[ispin, ikpt_irr]
-
+                    energies_fbz[ispin, ikpt_full] = E
+    
                     if sigma > 0.0:
                         x = np.clip((E - self.efermi) / sigma, -100.0, 100.0)
                         f = 1.0 / (1.0 + np.exp(x))
                     else:
                         f = (E <= self.efermi).astype(np.float64)
-
+    
                     n_occ_eff = float(np.sum(f))
                     O = np.diag(f)
-
+    
                     ###################################################################
                     # C_tilde: depolarized space with continuous occupations
                     ###################################################################
                     f_threshold = 1e-10
                     active_mask = f > f_threshold
                     n_active = int(np.sum(active_mask))
-
+    
                     if n_active > 0:
                         sqrt_f_active = np.sqrt(f[active_mask])
                         P21_occ = P21[:, active_mask] * sqrt_f_active[None, :]
                         C_tilde_raw = P12 @ P21_occ
-
+    
                         C_tilde = self._lowdin_ortho(C_tilde_raw)
                         O_tilde = C_tilde @ C_tilde.conj().T
                     else:
                         O_tilde = np.zeros((nbands, nbands), dtype=np.complex128)
-
+    
                     ###################################################################
                     # IAO Coefficients A
                     ###################################################################
                     I_bands = np.eye(nbands)
                     A_raw = (I_bands + 2 * (O @ O_tilde) - O_tilde - O) @ P12
-
+    
                     # Measure RAW condition number before orthogonalization
                     S_raw = A_raw.conj().T @ A_raw
                     cond_num_raw = np.linalg.cond(S_raw)
-
+    
                     # Lowdin symmetric orthogonalization
                     A = self._lowdin_ortho(A_raw)
                     A_T = A.conj().T
-
+    
                     # Measure FINAL condition number after orthogonalization
                     S_final = A_T @ A
                     cond_num_final = np.linalg.cond(S_final)
-
+    
                     # Track max values
                     max_cond_num_raw = max(max_cond_num_raw, cond_num_raw)
                     max_cond_num_final = max(max_cond_num_final, cond_num_final)
-
+    
+                    ###################################################################
+                    # Store k-Resolved Overlap Tensor M_a(k, s) (Pass 1)
+                    ###################################################################
+                    if M_k_list is not None:
+                        for atom_idx in range(len(self.basis_map)):
+                            start_b, end_b = basis_offsets[atom_idx]
+                            S21_a = S21[start_b:end_b, :]  # Shape: (nbasis_atom, nbands)
+                            A_a = A[:, start_b:end_b]      # Shape: (nbands, nbasis_atom)
+                            M_k_list[atom_idx][ispin, ikpt_full] = S21_a @ A_a
+    
                     ###################################################################
                     # Spillage Calculation
                     ###################################################################
                     spillage_k = 1.0 - np.sum(np.abs(A) ** 2, axis=1)
                     self._spillage[ispin, ikpt_full] = np.maximum(0.0, spillage_k)
-
+    
                     ###################################################################
-                    # H_IAO and S_IAO construction
+                    # H_IAO Construction & Disk Persistence (Pass 3)
                     ###################################################################
                     H_IAO = A_T @ (E[:, None] * A)
-
-                    ###################################################################
-                    # Save Results to disk (Canonical Cartesian Frame)
-                    ###################################################################
-                    dset_A[ispin, ikpt_full] = A
-                    dset_H[ispin, ikpt_full] = H_IAO
-
+    
+                    if h5_file is not None:
+                        dset_A[ispin, ikpt_full] = A
+                        dset_H[ispin, ikpt_full] = H_IAO
+    
+                        # Contract plane waves over band index: C_iao_pw = A.T @ psi_ps.T
+                        # Resulting shape: (nbasis, n_gvecs)
+                        dset_C_pw[ispin] = A.T @ psi_ps.T
+    
+                        # Contract PAW projector overlaps over band index: P_iao_paw = A.T @ paw_psi_ps_all
+                        # Resulting shape: (nbasis, total_paw_channels)
+                        dset_P_paw[ispin] = A.T @ paw_psi_ps_all
+    
                     ###################################################################
                     # Verify Results
                     ###################################################################
@@ -1238,10 +1435,10 @@ class AtomicProjectionEnvironment:
                     q_iao = np.trace(IAO_density).real
                     q_err = np.abs(q_iao - n_occ_eff)
                     max_charge_err = max(max_charge_err, q_err)
-
+    
                     t_err = np.abs(np.trace(O_tilde).real - n_active)
                     max_trace_err = max(max_trace_err, t_err)
-
+    
                     if n_occ_eff > nbasis:
                         rprint(
                             f"[bold red]WARNING (ikpt={ikpt_full}, ispin={ispin}):[/bold red] Effective occupied bands ({n_occ_eff:.2f}) > nbasis ({nbasis})! "
@@ -1257,19 +1454,30 @@ class AtomicProjectionEnvironment:
                             iao_check = np.sort(eigvals_gen[:n_check])
                             e_err = np.max(np.abs(iao_check - E_check))
                             max_energy_err = max(max_energy_err, e_err)
-
-        # Evaluate energy range cutoff using helper method
-        self.max_safe_energy, safe_range_str = self._evaluate_spillage()
-
+    
+            # Evaluate energy range cutoff using helper method
+            self.max_safe_energy, safe_range_str = self._evaluate_spillage()
+    
+            # Finalize Pass 3 HDF5 persistence
+            if h5_file is not None:
+                h5_file.create_dataset("energies", data=energies_fbz)
+                h5_file.create_dataset("kpoints_cart", data=kpts_cart_full)
+                h5_file.create_dataset("spillage", data=self._spillage)
+                h5_file.attrs["max_safe_energy"] = float(self.max_safe_energy)
+    
+        finally:
+            if h5_file is not None:
+                h5_file.close()
+    
         # Print final summary
         status_energy = "[bold green]PASSED[/bold green]" if max_energy_err < 1e-6 else "[bold red]FAILED[/bold red]"
         status_charge = "[bold green]PASSED[/bold green]" if max_charge_err < 1e-6 else "[bold red]FAILED[/bold red]"
         status_trace = "[bold green]PASSED[/bold green]" if max_trace_err < 1e-6 else "[bold red]FAILED[/bold red]"
         status_cond_raw = "[bold green]PASSED[/bold green]" if max_cond_num_raw < 1e8 else "[bold yellow]MODERATE[/bold yellow]"
         status_cond_final = "[bold green]PASSED[/bold green]" if max_cond_num_final < 1.01 else "[bold red]FAILED[/bold red]"
-
+    
         rprint("\n" + "=" * 80)
-        rprint("[bold green]          IAO PROJECTION DIAGNOSTIC SUMMARY          [/bold green]")
+        rprint(f"[bold green]          IAO PROJECTION DIAGNOSTIC SUMMARY ({pass_str})          [/bold green]")
         rprint("=" * 80)
         rprint(f" • [bold white]Occupied Energy Recovery Max Err :[/bold white] {max_energy_err:.2e} eV  [{status_energy}]")
         rprint(f" • [bold white]Integrated Charge Max Err (Q_IAO):[/bold white] {max_charge_err:.2e}     [{status_charge}]")
@@ -1281,6 +1489,144 @@ class AtomicProjectionEnvironment:
         )
         rprint("=" * 80 + "\n")
     
+        return M_k_list
+
+    def _optimize_atomic_orientations(
+        self, M_k_list: list[np.ndarray]
+    ) -> list[np.ndarray]:
+        """
+        Finds the SO(3) rotation matrix R_a for each atom that minimizes orbital 
+        polarization/distortion by maximizing the k-integrated squared diagonal overlaps.
+    
+        Parameters
+        ----------
+        M_k_list : list[np.ndarray]
+            List of length natoms, where each element is an array of shape 
+            (nspin, nkpoints_full, nbasis_atom, nbasis_atom) containing the k-resolved 
+            overlap matrices M_a(k, s) = S21_a(k, s) @ A_a(k, s).
+    
+        Returns
+        -------
+        atomic_rotations : list[np.ndarray]
+            List of optimal 3x3 SO(3) rotation matrices R_a for each atom.
+        """
+        atomic_rotations = []
+    
+        for atom_idx, local_basis in enumerate(self.basis_map):
+            M_k_atom = M_k_list[atom_idx]  # Shape: (nspin, nkpoints_full, nbasis_atom, nbasis_atom)
+    
+            def _objective(omega: np.ndarray) -> float:
+                R_candidate = Rotation.from_rotvec(omega).as_matrix()
+                D_a = self._get_atom_wigner_d(local_basis, R_candidate)
+                D_a_H = D_a.conj().T
+    
+                # Apply D_a @ M_a(k, s) @ D_a^\dagger across all k-points and spins
+                # Matrix multiplication (@) automatically broadcasts over (nspin, nkpoints_full)
+                M_rotated = D_a @ M_k_atom @ D_a_H
+    
+                # Sum of squared diagonal elements (measures minimal orbital polarization)
+                diag_sq = np.abs(np.diagonal(M_rotated, axis1=-2, axis2=-1)) ** 2
+                
+                return -float(np.mean(diag_sq))
+    
+            # Perform L-BFGS-B optimization on SO(3) Lie algebra (rotvec)
+            res = minimize(
+                _objective, 
+                np.zeros(3), 
+                method="L-BFGS-B", 
+                options={"gtol": 1e-8, "ftol": 1e-10}
+            )
+            
+            R_opt = Rotation.from_rotvec(res.x).as_matrix()
+    
+            # Enforce det(R) = +1
+            if np.linalg.det(R_opt) < 0:
+                R_opt[:, -1] *= -1.0
+    
+            atomic_rotations.append(R_opt)
+    
+        return atomic_rotations
+    
+    
+    def _get_initial_orientation_seed(self, subshell_blocks: list[tuple[int, np.ndarray]]) -> np.ndarray:
+        """
+        Computes an initial 3D rotation seed R_0 in SO(3) for an atom based on its 
+        active angular momentum subshells (s, p, d, f).
+        """
+        # -------------------------------------------------------------------------
+        # CASE 1: p-shell exists (3x3 Kabsch / Procrustes SVD)
+        # -------------------------------------------------------------------------
+        p_block = next((M_l for l, M_l in subshell_blocks if l == 1), None)
+        if p_block is not None:
+            U, _, Vt = np.linalg.svd(p_block)
+            R_0 = Vt.T @ U.T
+            if np.linalg.det(R_0) < 0:
+                Vt[-1] *= -1.0
+                R_0 = Vt.T @ U.T
+            return R_0
+    
+        # -------------------------------------------------------------------------
+        # CASE 2: No p-shell, but higher shells (d or f) exist (3x3 Tensor Alignment)
+        # -------------------------------------------------------------------------
+        for l, M_l in subshell_blocks:
+            if l >= 2 and np.linalg.norm(M_l) > 1e-10:
+                Lx, Ly, Lz = self._get_real_angular_momentum_generators(l)
+                L_mats = [Lx, Ly, Lz]
+    
+                # Build 3x3 orientation tensor Q_a = Tr(M_l * L_i * L_j)
+                Q_a = np.array([[np.trace(M_l @ L_mats[i] @ L_mats[j]) for j in range(3)] for i in range(3)])
+                Q_a = 0.5 * (Q_a + Q_a.T)
+    
+                eigvals, V = np.linalg.eigh(Q_a)
+                V = V[:, np.argsort(np.abs(eigvals))[::-1]]  # Sort by tensor response magnitude
+                
+                if np.linalg.det(V) < 0:
+                    V[:, -1] *= -1.0  # Enforce proper rotation in SO(3)
+                return V
+    
+        # -------------------------------------------------------------------------
+        # CASE 3: Only s-shells or isotropic site
+        # -------------------------------------------------------------------------
+        return np.eye(3, dtype=np.float64)
+    
+    
+    @staticmethod
+    def _get_real_angular_momentum_generators(l: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Vectorized construction of real (2l+1) x (2l+1) angular momentum generators (Lx, Ly, Lz)."""
+        dim = 2 * l + 1
+        m = np.arange(-l, l)
+    
+        # Build complex J_z and sub-diagonal ladder operator J_+ using NumPy
+        Jz = np.diag(np.arange(-l, l + 1).astype(np.complex128))
+        c_plus = np.sqrt((l - m) * (l + m + 1))
+        Jplus = np.diag(c_plus, k=-1)
+        Jminus = Jplus.T  # J_- is the transpose of J_+
+    
+        Jx = 0.5 * (Jplus + Jminus)
+        Jy = -0.5j * (Jplus - Jminus)
+    
+        # Build complex-to-real unitary transformation matrix U
+        U = np.zeros((dim, dim), dtype=np.complex128)
+        U[l, l] = 1.0
+        inv_sqrt2 = 1.0 / np.sqrt(2.0)
+    
+        for m_val in range(1, l + 1):
+            phase = ((-1.0) ** m_val) * inv_sqrt2
+            U[l + m_val, l + m_val] = phase
+            U[l + m_val, l - m_val] = inv_sqrt2
+            U[l - m_val, l + m_val] = -1j * phase
+            U[l - m_val, l - m_val] = 1j * inv_sqrt2
+    
+        Lx = np.real(-1j * (U @ Jx @ U.conj().T))
+        Ly = np.real(-1j * (U @ Jy @ U.conj().T))
+        Lz = np.real(-1j * (U @ Jz @ U.conj().T))
+    
+        return Lx, Ly, Lz
+    
+    ###########################################################################
+    # IAO Evaluation
+    ###########################################################################
+    
     def _evaluate_pw_sum(
         self,
         grid_rel_3d: np.ndarray,
@@ -1288,10 +1634,14 @@ class AtomicProjectionEnvironment:
         V_all: np.ndarray,
         grid_size: tuple[int, int, int],
         eps: float = 1e-6,
-        sigma_factor: float = 0.85, # Smooth roll-off parameter
+        sigma_factor: float = 0.85,  # Smooth roll-off parameter
     ) -> np.ndarray:
+        """
+        Evaluates plane-wave Fourier sums onto a 3D grid using FINUFFT Type-1 (NUFFT3D1)
+        with super-Gaussian apodization to eliminate Gibbs ringing.
+        """
         steps = grid_rel_3d[1, 1, 1] - grid_rel_3d[0, 0, 0]
-        
+    
         # Calculate grid center offsets
         offsets = grid_rel_3d[0, 0, 0] + (np.array(grid_size) / 2.0) * steps
         targets_raw = K_all * steps  # Shape: (N, 3)
@@ -1305,8 +1655,8 @@ class AtomicProjectionEnvironment:
         # 2. Gaussian Apodization Filter to eliminate Gibbs ringing
         # Suppresses coefficients near the Nyquist limit (|K * step| -> pi) smoothly
         k_norm_sq = np.sum((targets_valid.T / np.pi) ** 2, axis=1)
-        window = np.exp(- (k_norm_sq / sigma_factor) ** 4)  # Super-Gaussian window
-        
+        window = np.exp(-((k_norm_sq / sigma_factor) ** 4))  # Super-Gaussian window
+    
         # 3. Apply phase modulation and window
         phase_offset = K_valid @ offsets
         c_coeffs = np.ascontiguousarray(
@@ -1337,11 +1687,21 @@ class AtomicProjectionEnvironment:
         include_paw_aug: bool = True,
         filename: str | Path | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Evaluates an IAO (Intrinsic Atomic Orbital) on a 3D real-space grid."""
+        """
+        Evaluates a frame-aligned Intrinsic Atomic Orbital (IAO) on a 3D real-space grid
+        using pre-contracted HDF5 grid data (zero dependence on post_wfc).
+        """
         structure = self.structure
         site_coords = structure[atom_idx].coords
         inv_lattice = structure.lattice.inv_matrix
         lattice_matrix = structure.lattice.matrix
+    
+        # Resolve exact global IAO basis index via self.fetch_iao_coeffs
+        c_sample = self.fetch_iao_coeffs(
+            ispin=spin_channel, ikpt=0, atom_idx=atom_idx, orbital_identifier=orbital_identifier, ikpt_is_fbz=True
+        )
+        A_sample = self.fetch_iao_coeffs(ispin=spin_channel, ikpt=0, ikpt_is_fbz=True)
+        iao_idx = int(np.argmin(np.linalg.norm(A_sample - c_sample[:, None], axis=0)))
     
         # =========================================================================
         # STEP 1: Real-Space Grid Construction
@@ -1352,90 +1712,76 @@ class AtomicProjectionEnvironment:
         grid_cart_3d = grid_rel_3d + site_coords
         grid_cart_flat = grid_cart_3d.reshape(-1, 3)
     
-        # =========================================================================
-        # STEP 2: PAW Augmentation Setup
-        # =========================================================================
-        atom_offsets = self.post_wfc._get_atom_channel_offsets()
-        paw_aug_data = []
+        # Open HDF5 archive containing contracted IAO grid fields
+        with h5py.File(self._iao_file, "r") as file:
+            paw_offsets = json.loads(file.attrs["paw_offsets_json"])
+            kpts_cart = file["kpoints_cart"][:]
+            n_kpts_full = len(kpts_cart)
+            w_fbz = 1.0 / n_kpts_full
     
-        if include_paw_aug:
-            box_radius = max(box_size_angstrom) / 2.0
-            for a_idx, site in enumerate(structure):
-                atom_basis = self.atom_bases[site.specie.symbol]
-                paw_sp = atom_basis.paw_species
-                rcut = atom_basis.max_paw_cutoff
+            # =========================================================================
+            # STEP 2: PAW Augmentation Setup
+            # =========================================================================
+            paw_aug_data = []
     
-                if np.linalg.norm(site.coords - site_coords) > (rcut + box_radius + 0.5):
-                    continue
+            if include_paw_aug:
+                box_radius = max(box_size_angstrom) / 2.0
+                for a_idx, site in enumerate(structure):
+                    atom_basis = self.atom_bases[site.specie.symbol]
+                    paw_sp = atom_basis.paw_species
+                    rcut = atom_basis.max_paw_cutoff
     
-                diff_cart = grid_cart_flat - site.coords
-                cand_indices = np.where(np.all(np.abs(diff_cart) <= rcut + 0.5, axis=1))[0]
-                if cand_indices.size == 0:
-                    continue
+                    if np.linalg.norm(site.coords - site_coords) > (rcut + box_radius + 0.5):
+                        continue
     
-                dr_frac = diff_cart[cand_indices] @ inv_lattice
-                dr_cart_min = (dr_frac - np.round(dr_frac)) @ lattice_matrix
-                inside = np.linalg.norm(dr_cart_min, axis=1) <= rcut
+                    diff_cart = grid_cart_flat - site.coords
+                    cand_indices = np.where(np.all(np.abs(diff_cart) <= rcut + 0.5, axis=1))[0]
+                    if cand_indices.size == 0:
+                        continue
     
-                if np.any(inside):
-                    fields = paw_sp.evaluate_basis_fields(
-                        dr_cart_min[inside], compute_gradients=False
-                    )
-                    start_ch, end_ch = atom_offsets[a_idx]
-                    paw_aug_data.append(
-                        {
-                            "active_indices": cand_indices[inside],
-                            "delta_phi": fields.phi_ae - fields.phi_ps,
-                            "c_P_a_total": np.zeros(
-                                end_ch - start_ch, dtype=np.complex128
-                            ),
-                            "start_ch": start_ch,
-                            "end_ch": end_ch,
-                        }
-                    )
+                    dr_frac = diff_cart[cand_indices] @ inv_lattice
+                    dr_cart_min = (dr_frac - np.round(dr_frac)) @ lattice_matrix
+                    inside = np.linalg.norm(dr_cart_min, axis=1) <= rcut
     
-        # =========================================================================
-        # STEP 3: Brillouin Zone Integration & FBZ Accumulation
-        # =========================================================================
-        kpts_cart_full = self.post_wfc.kpoints_cart_full
-        w_fbz = 1.0 / len(kpts_cart_full)
-        all_bands = np.arange(self.nbands)
+                    if np.any(inside):
+                        fields = paw_sp.evaluate_basis_fields(
+                            dr_cart_min[inside], compute_gradients=False
+                        )
+                        start_ch, end_ch = paw_offsets[a_idx]
+                        paw_aug_data.append(
+                            {
+                                "active_indices": cand_indices[inside],
+                                "delta_phi": fields.phi_ae - fields.phi_ps,
+                                "c_P_a_total": np.zeros(
+                                    end_ch - start_ch, dtype=np.complex128
+                                ),
+                                "start_ch": start_ch,
+                                "end_ch": end_ch,
+                            }
+                        )
     
-        all_K_vecs, all_V_coeffs = [], []
+            # =========================================================================
+            # STEP 3: Brillouin Zone Integration & FBZ Accumulation
+            # =========================================================================
+            all_K_vecs, all_V_coeffs = [], []
+            grid_group = file["grid_data"]
     
-        for ikpt_full, k_vec in enumerate(kpts_cart_full):
-            c_target = self.fetch_iao_coeffs(
-                ispin=spin_channel,
-                ikpt=ikpt_full,
-                atom_idx=atom_idx,
-                orbital_identifier=orbital_identifier,
-                ikpt_is_fbz=True,
-            )
+            for ikpt_full in range(n_kpts_full):
+                k_group = grid_group[f"k_{ikpt_full}"]
+                K_cart = k_group["K_vecs"][:]  # Shape: (n_gvecs, 3)
+                C_pw = k_group["C_iao_pw"][spin_channel, iao_idx, :]  # Shape: (n_gvecs,)
     
-            psi_ps = self.post_wfc.fetch_psi(
-                ikpt=ikpt_full, ispin=spin_channel, iband=all_bands, ikpt_is_fbz=True
-            )
-            g_cart = self.post_wfc.fetch_gvectors(
-                ikpt=ikpt_full, return_cart=True, ikpt_is_fbz=True
-            )
+                # Apply complete wavevector phase shift e^(i * K * R_site)
+                phase_K = np.exp(1j * (K_cart @ site_coords))
     
-            # Full wavevector K = k + G
-            K_cart = k_vec[None, :] + g_cart
+                all_K_vecs.append(K_cart)
+                all_V_coeffs.append(w_fbz * C_pw * phase_K)
     
-            # Apply complete wavevector phase shift e^(i * K * R_site)
-            phase_K = np.exp(1j * (K_cart @ site_coords))
-            v_k = c_target @ psi_ps
-    
-            all_K_vecs.append(K_cart)
-            all_V_coeffs.append(w_fbz * v_k * phase_K)
-    
-            if include_paw_aug and paw_aug_data:
-                paw_overlaps = self.post_wfc.fetch_projector_overlaps(
-                    ikpt=ikpt_full, ispin=spin_channel, iband=all_bands, ikpt_is_fbz=True
-                )
-                for item in paw_aug_data:
-                    P_a = paw_overlaps[:, item["start_ch"] : item["end_ch"]]
-                    item["c_P_a_total"] += w_fbz * (c_target @ P_a)
+                if include_paw_aug and paw_aug_data:
+                    P_paw = k_group["P_iao_paw"][spin_channel, iao_idx, :]  # Shape: (total_paw_channels,)
+                    for item in paw_aug_data:
+                        P_a = P_paw[item["start_ch"] : item["end_ch"]]
+                        item["c_P_a_total"] += w_fbz * P_a
     
         K_all = np.vstack(all_K_vecs)
         V_all = np.concatenate(all_V_coeffs)
@@ -1466,6 +1812,201 @@ class AtomicProjectionEnvironment:
             )
     
         return data, grid_cart_3d
+    
+    def evaluate_iao_real_space(
+        self,
+        r_point: tuple[float, float, float] | np.ndarray,
+        sites: list | None = None,
+        spin_channel: int = -1,
+        coords_are_cartesian: bool = False,
+    ) -> dict[int, np.ndarray]:
+        """
+        Evaluates frame-aligned Intrinsic Atomic Orbitals (IAOs) in real space at arbitrary 
+        coordinate(s) r_point by Fourier-transforming the Bloch IAO representations across the 
+        Full Brillouin Zone using FINUFFT grid evaluation and 3D cubic spline interpolation.
+    
+        Parameters
+        ----------
+        r_point : tuple[float, float, float] | np.ndarray
+            Cartesian or fractional coordinates of shape (3,) or (N_points, 3).
+        sites : list | None, optional
+            List of atom indices whose IAO basis functions to evaluate (default is all atoms).
+        spin_channel : int, optional
+            Spin channel index (-1 for all spin channels, or 0/1).
+        coords_are_cartesian : bool, optional
+            If True, r_point is treated as Cartesian Ångström coordinates; otherwise fractional.
+    
+        Returns
+        -------
+        phi_iao_real_dict : dict[int, np.ndarray]
+            Dictionary mapping spin channel indices to real-space IAO values of shape 
+            (n_eval_basis, N_points) or (n_eval_basis,) for single points.
+        """
+        structure = self.structure
+        inv_lattice = structure.lattice.inv_matrix
+        lattice_matrix = structure.lattice.matrix
+    
+        # Parse input coordinates into Cartesian (N_pts, 3)
+        r_cart = np.asarray(r_point, dtype=np.float64)
+        if not coords_are_cartesian:
+            r_cart = r_cart @ lattice_matrix
+    
+        is_single_point = (r_cart.ndim == 1)
+        if is_single_point:
+            r_cart = r_cart[None, :]  # Shape: (1, 3)
+    
+        N_pts = r_cart.shape[0]
+    
+        # Resolve atom indices and target IAO basis mapping
+        if sites is None:
+            sites = list(range(len(structure)))
+    
+        basis_map = []
+        for atom_idx in sites:
+            if atom_idx in self.atom_to_basis_indices:
+                unit_indices = [int(x) for x in self.atom_to_basis_indices[atom_idx]]
+            else:
+                unit_indices = [int(x) for x in self.atom_to_basis_indices[str(atom_idx)]]
+            basis_map.extend(unit_indices)
+    
+        basis_map = np.array(basis_map, dtype=np.intp)
+        n_eval_basis = len(basis_map)
+    
+        # =========================================================================
+        # STEP 1: Adaptive Bounding Box & Regular Grid Setup
+        # =========================================================================
+        r_min = np.min(r_cart, axis=0)
+        r_max = np.max(r_cart, axis=0)
+        center_coords = (r_min + r_max) / 2.0
+    
+        span = r_max - r_min
+        max_rcut = max(self.atom_bases[site.specie.symbol].max_paw_cutoff for site in structure)
+        box_padding = max_rcut + 2.0  # Safety buffer for PAW spheres and spline boundary conditions
+    
+        box_size_angstrom = tuple(np.maximum(span + 2 * box_padding, 8.0))
+        spacing = 0.13  # Grid spacing in Ångströms
+        grid_size = tuple(int(np.ceil(s / spacing)) for s in box_size_angstrom)
+    
+        steps = np.array(box_size_angstrom) / np.array(grid_size)
+        axes_rel = [(np.arange(n) - (n - 1) / 2.0) * s for n, s in zip(grid_size, steps)]
+        grid_rel_3d = np.stack(np.meshgrid(*axes_rel, indexing="ij"), axis=-1)
+        grid_cart_3d = grid_rel_3d + center_coords
+        grid_cart_flat = grid_cart_3d.reshape(-1, 3)
+    
+        # Absolute Cartesian axes for 3D Interpolator
+        grid_axes_cart = [
+            axes_rel[0] + center_coords[0],
+            axes_rel[1] + center_coords[1],
+            axes_rel[2] + center_coords[2],
+        ]
+    
+        # =========================================================================
+        # STEP 2: PAW Augmentation Setup on Regular Grid
+        # =========================================================================
+        with h5py.File(self._iao_file, "r") as file:
+            nspin = int(file.attrs["nspin"])
+            paw_offsets = json.loads(file.attrs["paw_offsets_json"])
+            kpts_cart = file["kpoints_cart"][:]
+            n_kpts_full = len(kpts_cart)
+            w_fbz = 1.0 / n_kpts_full
+            grid_group = file["grid_data"]
+    
+            if spin_channel == -1:
+                spins = list(range(nspin))
+            else:
+                spins = [spin_channel]
+    
+            paw_aug_data = []
+            box_radius = max(box_size_angstrom) / 2.0
+            for a_idx, site in enumerate(structure):
+                atom_basis = self.atom_bases[site.specie.symbol]
+                paw_sp = atom_basis.paw_species
+                rcut = atom_basis.max_paw_cutoff
+    
+                if np.linalg.norm(site.coords - center_coords) > (rcut + box_radius + 0.5):
+                    continue
+    
+                diff_cart = grid_cart_flat - site.coords
+                cand_indices = np.where(np.all(np.abs(diff_cart) <= rcut + 0.5, axis=1))[0]
+                if cand_indices.size == 0:
+                    continue
+    
+                dr_frac = diff_cart[cand_indices] @ inv_lattice
+                dr_cart_min = (dr_frac - np.round(dr_frac)) @ lattice_matrix
+                inside = np.linalg.norm(dr_cart_min, axis=1) <= rcut
+    
+                if np.any(inside):
+                    fields = paw_sp.evaluate_basis_fields(
+                        dr_cart_min[inside], compute_gradients=False
+                    )
+                    start_ch, end_ch = paw_offsets[a_idx]
+                    paw_aug_data.append(
+                        {
+                            "active_indices": cand_indices[inside],
+                            "delta_phi": fields.phi_ae - fields.phi_ps,
+                            "start_ch": start_ch,
+                            "end_ch": end_ch,
+                        }
+                    )
+    
+            phi_iao_real_dict = {s: np.zeros((n_eval_basis, N_pts), dtype=np.float64) for s in spins}
+    
+            # =========================================================================
+            # STEP 3: BZ Fourier Summation (FINUFFT) & Spline Interpolation
+            # =========================================================================
+            for ispin in spins:
+                for b_i, iao_idx in enumerate(basis_map):
+                    all_K_vecs = []
+                    all_V_coeffs = []
+    
+                    c_P_a_total_dict = {
+                        item["start_ch"]: np.zeros(item["end_ch"] - item["start_ch"], dtype=np.complex128)
+                        for item in paw_aug_data
+                    }
+    
+                    # Contract plane waves and PAW overlaps over Full Brillouin Zone
+                    for ikpt_full in range(n_kpts_full):
+                        k_group = grid_group[f"k_{ikpt_full}"]
+                        K_cart = k_group["K_vecs"][:]
+                        C_pw = k_group["C_iao_pw"][ispin, iao_idx, :]
+    
+                        # Phase shift for origin offset at center_coords
+                        phase_K = np.exp(1j * (K_cart @ center_coords))
+    
+                        all_K_vecs.append(K_cart)
+                        all_V_coeffs.append(w_fbz * C_pw * phase_K)
+    
+                        if paw_aug_data:
+                            P_paw = k_group["P_iao_paw"][ispin, iao_idx, :]
+                            for item in paw_aug_data:
+                                P_a = P_paw[item["start_ch"] : item["end_ch"]]
+                                c_P_a_total_dict[item["start_ch"]] += w_fbz * P_a
+    
+                    K_all = np.vstack(all_K_vecs)
+                    V_all = np.concatenate(all_V_coeffs)
+    
+                    # FINUFFT Type-1/2 fast plane-wave grid evaluation
+                    phi_grid_flat = self._evaluate_pw_sum(
+                        grid_rel_3d, K_all, V_all, grid_size=grid_size
+                    )
+    
+                    # Add PAW radial corrections on regular grid points
+                    for item in paw_aug_data:
+                        c_P_a = c_P_a_total_dict[item["start_ch"]]
+                        phi_grid_flat[item["active_indices"]] += item["delta_phi"] @ c_P_a
+    
+                    grid_data_real = np.real(phi_grid_flat).reshape(grid_size)
+    
+                    # Interpolate from 3D regular grid to sample coordinates
+                    interpolator = RegularGridInterpolator(
+                        grid_axes_cart, grid_data_real, method="cubic", bounds_error=False, fill_value=0.0
+                    )
+                    phi_iao_real_dict[ispin][b_i, :] = interpolator(r_cart)
+    
+        if is_single_point:
+            return {s: phi_arr[:, 0] for s, phi_arr in phi_iao_real_dict.items()}
+        else:
+            return phi_iao_real_dict
     
     def get_atom_pair_cohp(
         self,
@@ -1565,97 +2106,6 @@ class AtomicProjectionEnvironment:
 
         return smeared
 
-    def evaluate_iao_real_space(
-        self,
-        r_point: tuple[float, float, float] | np.ndarray,
-        sites: list | None = None,
-        spin_channel: int = -1,
-        coords_are_cartesian: bool = False,
-    ) -> dict[int, np.ndarray]:
-        """
-        Evaluates orthogonal Intrinsic Atomic Orbitals (IAOs) in real space at coordinate r_point
-        by Fourier-transforming the Bloch IAO representations across the Full Brillouin Zone.
-        """
-        structure = self.structure
-        if coords_are_cartesian:
-            r_cart = np.asarray(r_point, dtype=np.float64)
-        else:
-            r_cart = np.asarray(r_point, dtype=np.float64) @ structure.lattice.matrix
-
-        if sites is None:
-            sites = [i for i in structure]
-
-        spins, _ = self.post_wfc._get_spin_channels_weights(spin_channel)
-
-        # Determine basis index mapping and Cartesian site positions R_basis
-        basis_map = []
-        R_basis_list = []
-        for site in sites:
-            atom_idx = site.index
-            unit_indices = self.atom_to_basis_indices[atom_idx]
-            basis_map.extend(unit_indices)
-            R_basis_list.append(np.tile(site.coords, (len(unit_indices), 1)))
-        basis_map = np.array(basis_map, dtype=np.intp)
-        R_basis = np.vstack(R_basis_list)
-
-        n_eval_basis = len(basis_map)
-        phi_iao_real_dict = {s: np.zeros(n_eval_basis, dtype=np.complex128) for s in spins}
-
-        kpts_cart_full = self.post_wfc.kpoints_cart_full
-        n_kpts_full = len(kpts_cart_full)
-        w_fbz = 1.0 / n_kpts_full
-
-        atom_offsets = self.post_wfc._get_atom_channel_offsets()
-        all_bands = np.arange(self.nbands)
-
-        for ikpt_full in range(n_kpts_full):
-            k_vec = kpts_cart_full[ikpt_full]
-
-            # Fetch FBZ Cartesian K-vectors (k + G) directly
-            K_vecs_full = self.post_wfc.fetch_gvectors(
-                ikpt=ikpt_full, return_cart=True, add_k=True, ikpt_is_fbz=True
-            )
-
-            pw_phase = np.exp(1j * (K_vecs_full @ r_cart)) / np.sqrt(structure.volume)
-            phases = np.exp(-1j * (R_basis @ k_vec))
-
-            for ispin in spins:
-                # 1. Pseudo wavefunctions psi_ps(r) at r_cart
-                psi_ps = self.post_wfc.fetch_psi(
-                    ikpt=ikpt_full, ispin=ispin, iband=all_bands, ikpt_is_fbz=True
-                )
-                psi_r_k = psi_ps @ pw_phase  # Shape: (nbands,)
-
-                # 2. PAW sphere augmentations across sites
-                paw_overlaps_all = self.post_wfc.fetch_projector_overlaps(
-                    ikpt=ikpt_full, ispin=ispin, iband=all_bands, ikpt_is_fbz=True
-                )
-
-                for site in sites:
-                    atom_idx = site.index
-                    dr = r_cart - site.coords
-
-                    local_basis = self.atom_bases[site.specie.symbol]
-                    paw_sp = local_basis.paw_species
-
-                    fields = paw_sp.evaluate_basis_fields(np.atleast_2d(dr), compute_gradients=False)
-                    delta_phi_i = (fields.phi_ae - fields.phi_ps).squeeze(axis=0)
-
-                    start_ch, end_ch = atom_offsets[atom_idx]
-                    P_a = paw_overlaps_all[:, start_ch:end_ch]
-
-                    psi_r_k += P_a @ delta_phi_i
-
-                # 3. Transform Bloch band states to Bloch IAOs using FBZ coefficients
-                C_k = self.fetch_iao_coeffs(ispin, ikpt_full, ikpt_is_fbz=True)  # Shape: (nbands, nbasis)
-                phi_iao_k = C_k.T @ psi_r_k  # Shape: (nbasis,)
-
-                # 4. Phase shift to site position R_basis and average over FBZ
-                phi_iao_real_dict[ispin] += w_fbz * (phi_iao_k[basis_map] * phases)
-
-        return {s: np.real(phi_arr) for s, phi_arr in phi_iao_real_dict.items()}
-    
-    
     def get_rCOHP(
         self,
         r_point: tuple[float, float, float] | np.ndarray,

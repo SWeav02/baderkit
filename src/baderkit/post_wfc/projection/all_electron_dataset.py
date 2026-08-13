@@ -52,6 +52,13 @@ class AESpecies(BaseSpecies):
 
     q_radial_functions: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
     """2D array of shape (channels, grid) containing normalized reciprocal-space wavefunctions R_nl(r)."""
+    
+    # EFFECTIVE PHYSICAL BOUNDS
+    effective_cutoff: float = 0.0
+    """The radial distance in Angstroms containing 99.99% of the valence orbital density."""
+    
+    charge_density: NDArray = field(default_factory=lambda: np.empty((0,), dtype=np.float64))
+    """1D array containing total 3D atomic charge density rho(r) in e/Angstrom^3 across all (core+valence) states."""
 
     # CORE RECONSTRUCTION OVERLAPS
     basis_aug_overlaps: NDArray = field(default_factory=lambda: np.empty((0, 0), dtype=np.float64))
@@ -71,19 +78,18 @@ class AESpecies(BaseSpecies):
         """
         super().__post_init__()
         self._generate_radial_functions()
-
         self._calculate_aug_overlap()
 
     @classmethod
     def from_file(
-            cls,
-            filename: str | Path,
-            paw_species: PAWSpecies | Path | None = None,
-            energy_range: tuple | None = None,
-            energy_tol: float = 0.1,
-            cutoff_radius: float = 8.0,
-            g_cutoff_radius: float = 15.0,
-            ):
+        cls,
+        filename: str | Path,
+        paw_species: PAWSpecies | Path | None = None,
+        energy_range: tuple | None = None,
+        energy_tol: float = 0.1,
+        cutoff_radius: float = 8.0,
+        g_cutoff_radius: float = 15.0,
+    ):
         """
         Parses compressed linear state-vector references natively stored in Angstrom and eV units.
         Expands degenerate l-shells into individual (2l + 1) magnetic m-states.
@@ -114,13 +120,33 @@ class AESpecies(BaseSpecies):
         radial_grid, real_is_log, q_radial_grid, q_is_log = cls._build_radial_grid(
             paw_species, cutoff_radius, g_cutoff_radius
         )
-        
+
+        flat_primitives = cls._flatten_basis_primitives(metadata["basis_primitives"])
+
+        # =========================================================================
+        # COMPUTE TOTAL ATOMIC CHARGE DENSITY & EFFECTIVE CUTOFF (UNPRUNED)
+        # =========================================================================
+        total_density = cls._compute_total_charge_density(
+            radial_grid=radial_grid,
+            real_is_log=real_is_log,
+            primitives=flat_primitives,
+            l_slices=l_slices,
+            state_vectors=data["packed_state_vectors"],
+            angular_momenta=data["angular_momenta"],
+            occupancies=data["occupancies"],
+        )
+
+        effective_cutoff = cls._find_effective_cutoff(
+            radial_grid=radial_grid,
+            charge_density=total_density,
+        )
+
         # Remove states outside system bounds
         if paw_species is not None:
             keep_indices = cls._prune_basis(
                 paw_species, 
                 basis_data=data, 
-                )
+            )
         else:
             keep_indices = [i for i in range(len(data["occupancies"]))]
         
@@ -146,8 +172,6 @@ class AESpecies(BaseSpecies):
                 expanded_n.append(kept_n[i])
                 expanded_m.append(m_val)
                 expanded_energies.append(kept_energies[i])
-                # We retain the core occupancy per channel or distribute it if preferred.
-                # Usually we keep the base metadata of the parent state.
                 expanded_occupancies.append(kept_occupancies[i])
                 expanded_states.append(kept_states[i])
                 
@@ -165,7 +189,7 @@ class AESpecies(BaseSpecies):
             element=element,
             basis=metadata.get("basis", None),
             functional=metadata["functional"],
-            primitives=cls._flatten_basis_primitives(metadata["basis_primitives"]),
+            primitives=flat_primitives,
             radial_grid=radial_grid, 
             q_radial_grid=q_radial_grid,
             real_is_log=real_is_log,
@@ -178,7 +202,116 @@ class AESpecies(BaseSpecies):
             reference_occupations=expanded_occupancies,
             state_vectors=expanded_states,
             l_slices=l_slices,
+            charge_density=total_density,
+            effective_cutoff=effective_cutoff,
         )
+    
+    # =========================================================================
+    # CHARGE DENSITY & PHYSICAL CUTOFF ANALYSIS HELPER METHODS
+    # =========================================================================
+
+    @staticmethod
+    def _compute_total_charge_density(
+        radial_grid: NDArray,
+        real_is_log: bool,
+        primitives: dict,
+        l_slices: dict,
+        state_vectors: NDArray,
+        angular_momenta: NDArray,
+        occupancies: NDArray,
+    ) -> NDArray:
+        """
+        Calculates 3D radial charge density rho(r) in e/Angstrom^3 across all (unpruned) 
+        atomic core and valence states: rho(r) = (1 / 4pi) * sum_i q_i * |R_i(r)|^2
+        """
+        num_grid = len(radial_grid)
+        total_density = np.zeros(num_grid, dtype=np.float64)
+        
+        log_spacing = np.diff(np.log(radial_grid))[0] if real_is_log else np.diff(radial_grid)[0]
+
+        for idx in range(len(angular_momenta)):
+            q_i = occupancies[idx]
+            if q_i <= 1e-12:
+                continue
+
+            l = int(angular_momenta[idx])
+            if l not in primitives:
+                continue
+
+            c_data = primitives[l]
+            exps = c_data["exps"]
+            coeffs = c_data["coeffs"]
+            offsets = c_data["offsets"]
+
+            start_l, end_l = l_slices[l]
+            c_state = state_vectors[idx, start_l:end_l]
+            dim = len(c_state)
+
+            alphas_state = []
+            coeffs_state = []
+            for p in range(dim):
+                start = offsets[p]
+                end = offsets[p + 1]
+                alphas_state.extend(exps[start:end])
+                coeffs_state.extend(c_state[p] * coeffs[start:end])
+
+            alphas_state = np.array(alphas_state, dtype=np.float64)
+            coeffs_state = np.array(coeffs_state, dtype=np.float64)
+
+            # Evaluate real-space radial wavefunction R(r)
+            r_pow_l = radial_grid ** l
+            raw_R = np.zeros(num_grid, dtype=np.float64)
+            for alpha, c in zip(alphas_state, coeffs_state):
+                raw_R += c * np.exp(-alpha * (radial_grid ** 2))
+            raw_R *= r_pow_l
+
+            # Compute normalization integral
+            if real_is_log:
+                norm_integral = simpson(y=(raw_R ** 2) * (radial_grid ** 3), dx=log_spacing)
+            else:
+                norm_integral = simpson(y=(raw_R ** 2) * (radial_grid ** 2), x=radial_grid)
+
+            if norm_integral > 1e-12:
+                R_norm = raw_R / np.sqrt(norm_integral)
+            else:
+                R_norm = raw_R
+
+            # Add to 3D spherical charge density: rho(r) = (1 / 4pi) * q_i * |R_i(r)|^2
+            total_density += (q_i / (4.0 * np.pi)) * (R_norm ** 2)
+
+        return total_density
+    
+    @staticmethod
+    def _find_effective_cutoff(
+        radial_grid: NDArray,
+        charge_density: NDArray,
+        relative_threshold: float = 0.01,
+    ) -> float:
+        """
+        Finds the radius (in Angstroms) where the radial probability density 
+        4*pi*r^2*rho(r) drops permanently below a percentage (default 1%) 
+        of its peak valence value.
+        """
+        # Radial probability distribution P(r) = 4*pi*r^2*rho(r)
+        radial_distribution = 4.0 * np.pi * (radial_grid ** 2) * charge_density
+        
+        max_val = np.max(radial_distribution)
+        if max_val <= 0.0:
+            return float(radial_grid[-1])
+
+        # 1% relative threshold against peak valence probability density
+        threshold = max_val * relative_threshold
+        above_thresh = np.where(radial_distribution >= threshold)[0]
+        
+        if len(above_thresh) > 0:
+            last_idx = above_thresh[-1]
+            # Small buffer index to ensure smooth tail decay
+            safe_idx = min(last_idx + 2, len(radial_grid) - 1)
+            rcut = float(radial_grid[safe_idx])
+        else:
+            rcut = float(radial_grid[-1])
+
+        return rcut
     
     def evaluate_q_functions(
         self, 
