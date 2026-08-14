@@ -2,6 +2,7 @@
 from pathlib import Path
 from typing import Literal
 import json
+import warnings
 
 import h5py
 import numpy as np
@@ -9,9 +10,10 @@ from rich import print as rprint
 from rich.progress import track
 from scipy.integrate import cumulative_trapezoid
 from scipy.linalg import eigh, block_diag
+from scipy.interpolate import RegularGridInterpolator
 from scipy.optimize import minimize
 from scipy.spatial.transform import Rotation
-from scipy.interpolate import RegularGridInterpolator
+from pymatgen.analysis.local_env import CrystalNN
 
 
 from baderkit.post_wfc.base_env import PostWFC
@@ -28,7 +30,8 @@ def write_cube(
     atom_mode: Literal["center_atom", "full_cell", "in_box"] = "in_box",
     center_atom_idx: int = 0,
 ) -> None:
-    """Writes 3D volumetric grid data and atomic structure to a Gaussian Cube file.
+    """Writes 3D volumetric grid data and atomic structure to a Gaussian Cube file in
+    Cartesian space.
 
     Parameters
     ----------
@@ -52,35 +55,27 @@ def write_cube(
     center_atom_idx : int, optional
         Index of the target centered atom in `structure` for "center_atom" mode, by default 0.
     """
-    # Angstrom to Bohr conversion factor for Gaussian Cube format
     ANG_TO_BOHR = 1.8897261245650618
     nx, ny, nz = data.shape
 
-    # Convert origin and step vectors from Angstroms to Bohr
+    # Convert origin and step vectors from Angstroms to Bohr directly
     origin_bohr = origin_cart * ANG_TO_BOHR
     voxels_bohr = voxel_vectors * ANG_TO_BOHR
 
-    # Parse atom selection mode
     mode = str(atom_mode).lower().strip()
-
-    # Determine which atoms to write based on the selected mode
     atoms_to_write: list[tuple[int, np.ndarray]] = []
 
     if mode in ("1", "center_atom", "center", "single"):
-        # Option 1: Single atom at the center
         site = structure[center_atom_idx]
         z_num = getattr(site.specie, "Z", getattr(site.specie, "number", 1))
         atoms_to_write.append((z_num, site.coords * ANG_TO_BOHR))
 
     elif mode in ("2", "full_cell", "cell", "full"):
-        # Option 2: Full unit cell structure
         for site in structure:
             z_num = getattr(site.specie, "Z", getattr(site.specie, "number", 1))
             atoms_to_write.append((z_num, site.coords * ANG_TO_BOHR))
 
     elif mode in ("3", "in_box", "box", "grid_box"):
-        # Option 3: Every periodic atom image within the grid box
-        # Grid box vectors in Cartesian Angstroms
         grid_box = np.array([
             nx * voxel_vectors[0],
             ny * voxel_vectors[1],
@@ -88,18 +83,15 @@ def write_cube(
         ])
         inv_grid_box = np.linalg.inv(grid_box)
 
-        # Corner points of grid box in Cartesian space
         corners_unit = np.array([
             [0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1],
             [1, 1, 0], [1, 0, 1], [0, 1, 1], [1, 1, 1]
         ])
         corners_cart = origin_cart + corners_unit @ grid_box
 
-        # Convert grid box corners to structure lattice fractional coordinates
         inv_lattice = np.linalg.inv(structure.lattice.matrix)
         corners_frac = corners_cart @ inv_lattice
 
-        # Determine translation bounds along supercell lattice directions
         min_frac = np.floor(corners_frac.min(axis=0)).astype(int) - 1
         max_frac = np.ceil(corners_frac.max(axis=0)).astype(int) + 1
 
@@ -115,7 +107,6 @@ def write_cube(
                         )
                         pos_cart = site.coords + shift
 
-                        # Transform to fractional coordinates within grid box
                         grid_frac = (pos_cart - origin_cart) @ inv_grid_box
                         if np.all(grid_frac >= -0.1) and np.all(grid_frac <= 1.1):
                             atoms_to_write.append((z_num, pos_cart * ANG_TO_BOHR))
@@ -127,16 +118,13 @@ def write_cube(
     n_atoms = len(atoms_to_write)
 
     with open(filename, "w") as f:
-        # Lines 1 & 2: Comments
         f.write(f"{comment}\n")
         f.write("Generated for VESTA visualization\n")
 
-        # Line 3: Number of atoms + origin (in Bohr)
         f.write(
             f"{n_atoms:5d} {origin_bohr[0]:12.6f} {origin_bohr[1]:12.6f} {origin_bohr[2]:12.6f}\n"
         )
 
-        # Lines 4-6: Grid dimensions + voxel step vectors (in Bohr)
         f.write(
             f"{nx:5d} {voxels_bohr[0, 0]:12.6f} {voxels_bohr[0, 1]:12.6f} {voxels_bohr[0, 2]:12.6f}\n"
         )
@@ -147,13 +135,11 @@ def write_cube(
             f"{nz:5d} {voxels_bohr[2, 0]:12.6f} {voxels_bohr[2, 1]:12.6f} {voxels_bohr[2, 2]:12.6f}\n"
         )
 
-        # Atomic positions (Atomic number, charge=0.0, X, Y, Z in Bohr)
         for z_num, pos_bohr in atoms_to_write:
             f.write(
                 f"{z_num:5d} {0.0:12.6f} {pos_bohr[0]:12.6f} {pos_bohr[1]:12.6f} {pos_bohr[2]:12.6f}\n"
             )
 
-        # Volumetric scalar data: 6 values per line in (ix, iy, iz) loop order
         flat_data = data.ravel()
         for i in range(0, len(flat_data), 6):
             chunk = flat_data[i : i + 6]
@@ -1029,47 +1015,46 @@ class AtomicProjectionEnvironment:
             max_safe_energy = e_max
             return max_safe_energy, f"> {max_safe_energy:.4f} eV (All states within cutoff)"
         
-    def _build_iaos(self, temperature: float = 300.0) -> list[np.ndarray]:
+    def _build_iaos(self, temperature: float = 300.0) -> None:
         """
-        Executes the full 3-pass pipeline to construct orientationally invariant IAOs.
+        Executes the complete 3-pass IAO construction pipeline:
+          1. Pass 1: Computes initial unaligned IAOs to extract overlap tensor M_a.
+          2. Pass 2: Optimizes per-atom canonical local coordinate rotations R_a.
+          3. Pass 3: Constructs frame-aligned IAOs and persists full dataset to HDF5.
+
+        Parameters
+        ----------
+        temperature : float, optional
+            Smearing temperature in Kelvin (default is 300.0 K).
         """
         rprint("\n" + "=" * 80)
-        rprint("[bold cyan]      STARTING ORIENTATIONALLY INVARIANT IAO PIPELINE      [/bold cyan]")
+        rprint("[bold green]          INITIATING CANONICAL IAO GENERATION PIPELINE          [/bold green]")
         rprint("=" * 80)
-    
-        # -------------------------------------------------------------------------
-        # PASS 1: Initial projection with canonical reference basis
-        # -------------------------------------------------------------------------
-        rprint("\n[bold yellow]► STEP 1/3: Executing Initial Unaligned Projection (Pass 1)[/bold yellow]")
-        M_k_list = self._project_system(temperature=temperature, atomic_rotations=None)
-    
+
+        # Pass 1: Unaligned projection to compute M_a tensors
+        M_k_list = self._project_system(
+            temperature=temperature, 
+            atomic_rotations=None
+        )
+
         if M_k_list is None:
-            raise RuntimeError("Pass 1 projection failed to generate the k-resolved overlap tensors.")
-    
-        # -------------------------------------------------------------------------
-        # PASS 2: Local SO(3) orientation optimization using k-resolved squared metrics
-        # -------------------------------------------------------------------------
-        rprint("\n[bold yellow]► STEP 2/3: Optimizing Local Atomic Frames on SO(3) (Pass 2)[/bold yellow]")
-        rotations = self._optimize_atomic_orientations(M_k_list)
-    
-        # -------------------------------------------------------------------------
-        # PASS 3: Re-projection with frame-aligned reference atomic orbitals
-        # -------------------------------------------------------------------------
-        rprint("\n[bold yellow]► STEP 3/3: Reconstructing IAOs in Frame-Aligned Basis (Pass 3)[/bold yellow]")
-        self._project_system(temperature=temperature, atomic_rotations=rotations)
-    
-        # -------------------------------------------------------------------------
-        # Persist optimal rotations to instance state
-        # -------------------------------------------------------------------------
-        self.atomic_rotations = rotations
-    
-        rprint("\n" + "=" * 80)
-        rprint("[bold green]✔ PIPELINE COMPLETE: Orientationally Invariant IAOs Built Successfully![/bold green]")
-        rprint("=" * 80 + "\n")
-    
-        return rotations
-    
-    
+            raise RuntimeError("Pass 1 failed to return the overlap tensor list M_k_list.")
+
+        # Pass 2: Calculate canonical local rotations R_a per atom
+        atomic_rotations = self._optimize_atomic_orientations(
+            M_k_list=M_k_list, 
+            deg_tol=1e-4
+        )
+
+        # Pass 3: Construct frame-aligned IAOs using optimized rotations & save to HDF5
+        self._project_system(
+            temperature=temperature, 
+            atomic_rotations=atomic_rotations
+        )
+
+        rprint("[bold green]SUCCESS: Canonical IAO construction completed successfully![/bold green]\n")
+
+
     @staticmethod
     def _lowdin_ortho(M: np.ndarray, max_iter: int = 100, tol: float = 1e-12) -> np.ndarray:
         """
@@ -1079,22 +1064,22 @@ class AtomicProjectionEnvironment:
         norm = np.linalg.norm(M, ord=2)
         if norm < 1e-14:
             return M
-    
+
         X = M / (norm * 1.01)
         I = np.eye(M.shape[1], dtype=M.dtype)
-    
+
         for _ in range(max_iter):
             X_next = 0.5 * X @ (3.0 * I - X.conj().T @ X)
-    
+
             # Check orthogonality error ||X^\dagger X - I||_\infty directly
             ortho_err = np.max(np.abs(X_next.conj().T @ X_next - I))
             if ortho_err < tol:
                 return X_next
             X = X_next
-    
+
         return X
-    
-    
+
+
     def _get_atom_subshells(self, local_basis) -> list[int]:
         """Extracts true subshell quantum numbers l from local_basis.angular_momenta."""
         subshells = []
@@ -1105,8 +1090,8 @@ class AtomicProjectionEnvironment:
             subshells.append(l)
             cursor += 2 * l + 1
         return subshells
-    
-    
+
+
     def _get_atom_wigner_d(self, local_basis, R_a: np.ndarray) -> np.ndarray:
         """Builds the block-diagonal Wigner D-matrix for an atom using existing helper."""
         blocks = []
@@ -1114,8 +1099,205 @@ class AtomicProjectionEnvironment:
         for l in subshells:
             D_l = self.post_wfc._get_real_sph_rotation_matrix(l, R_a)
             blocks.append(D_l)
-    
+
         return block_diag(*blocks)
+
+    def _optimize_atomic_orientations(
+        self, 
+        M_k_list: list[np.ndarray], 
+        deg_tol: float = 1e-4
+    ) -> list[np.ndarray]:
+        """
+        Computes optimal canonical 3x3 SO(3) local coordinate rotations R_a for each atom.
+    
+        Uses closed-form hierarchical sub-diagonalization across three strict tiers:
+          1. Primary: Eigendecomposition of total M_3x3 accumulated across p-subshells.
+          2. Secondary: Subspace tie-breaking via CrystalNN neighbor shell tensor K_geom.
+          3. Tertiary: Subspace tie-breaking via an orthonormalized unit-cell lattice frame 
+             tensor K_cell (guarantees zero angular skew and strict covariance).
+    
+        Atoms containing strictly s-orbitals bypass optimization and return identity.
+    
+        Parameters
+        ----------
+        M_k_list : list[np.ndarray]
+            List of k-resolved overlap tensors M_a(s, k) from Pass 1.
+        deg_tol : float, optional
+            Tolerance threshold for grouping degenerate eigenvalues (default is 1e-4).
+    
+        Returns
+        -------
+        atomic_rotations : list[np.ndarray]
+            List of length natoms containing 3x3 SO(3) rotation matrices R_a.
+        """
+        structure = self.structure
+        atom_positions = structure.cart_coords
+        atomic_rotations = []
+    
+        # -------------------------------------------------------------------------
+        # Tertiary Anchor: Build Orthonormal Lattice Tensor K_cell (Gram-Schmidt)
+        # -------------------------------------------------------------------------
+        lat_mat = structure.lattice.matrix  # Rows are a1, a2, a3
+        
+        # Construct strictly orthonormal frame {e1, e2, e3} from lattice vectors
+        e1 = lat_mat[0] / np.linalg.norm(lat_mat[0])
+        e2_proj = lat_mat[1] - np.dot(lat_mat[1], e1) * e1
+        e2 = e2_proj / np.linalg.norm(e2_proj)
+        e3 = np.cross(e1, e2)
+        norm_e3 = np.linalg.norm(e3)
+        if norm_e3 > 1e-12:
+            e3 /= norm_e3
+    
+        # K_cell built from orthogonal e_i has e1, e2, e3 as exact principal axes (zero skew)
+        K_cell = 3.0 * np.outer(e1, e1) + 2.0 * np.outer(e2, e2) + 1.0 * np.outer(e3, e3)
+        K_cell = 0.5 * (K_cell + K_cell.T)
+    
+        # Initialize CrystalNN while suppressing pymatgen oxidation state warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            cnn = CrystalNN(weighted_cn=True)
+    
+        rprint("\n" + "=" * 80)
+        rprint("[bold blue]PASS 2: OPTIMIZING CANONICAL LOCAL ATOMIC ROTATIONS[/bold blue]")
+        rprint("=" * 80)
+    
+        for atom_idx, local_basis in enumerate(self.basis_map):
+            subshells = self._get_atom_subshells(local_basis)
+    
+            # Pure s-orbital atoms require no rotation
+            if all(l == 0 for l in subshells):
+                atomic_rotations.append(np.eye(3, dtype=np.float64))
+                rprint(
+                    f" • Atom {atom_idx:3d} ({structure[atom_idx].species_string}): "
+                    "Pure s-basis -> Rotation bypassed (R_a = I)"
+                )
+                continue
+    
+            # ---------------------------------------------------------------------
+            # Step 1: Average M_a over spin and k-points and extract M_3x3
+            # ---------------------------------------------------------------------
+            M_a = M_k_list[atom_idx]  # Shape: (nspin, nkpoints_full, nbasis_atom, nbasis_atom)
+            M_avg = np.mean(M_a.real, axis=(0, 1))
+            M_avg = 0.5 * (M_avg + M_avg.T)
+    
+            M_3x3 = np.zeros((3, 3), dtype=np.float64)
+            cursor = 0
+            for l in subshells:
+                dim = 2 * l + 1
+                if l == 1:
+                    p_slice = slice(cursor, cursor + 3)
+                    M_3x3 += M_avg[p_slice, p_slice]
+                cursor += dim
+    
+            # ---------------------------------------------------------------------
+            # Step 2: Build Neighbor Shell Alignment Tensor via CrystalNN (K_geom)
+            # ---------------------------------------------------------------------
+            K_geom = np.zeros((3, 3), dtype=np.float64)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                nn_info = cnn.get_nn_info(structure, atom_idx)
+    
+            for entry in nn_info:
+                neighbor_site = entry["site"]
+                vec = neighbor_site.coords - atom_positions[atom_idx]
+                r = np.linalg.norm(vec)
+                if r > 1e-5:
+                    u_vec = vec / r
+                    weight = entry.get("weight", 1.0)
+                    K_geom += weight * np.outer(u_vec, u_vec)
+    
+            K_geom = 0.5 * (K_geom + K_geom.T)
+    
+            # ---------------------------------------------------------------------
+            # Step 3: Exact Closed-Form Hierarchical Sub-Diagonalization
+            # ---------------------------------------------------------------------
+            # Tier 1: Diagonalize Primary Tensor M_3x3
+            vals_M, U = np.linalg.eigh(M_3x3)
+            idx_sort = np.argsort(vals_M)[::-1]
+            vals_M = vals_M[idx_sort]
+            U = U[:, idx_sort]
+    
+            # Partition into degenerate eigenvalue clusters
+            clusters_M = []
+            i = 0
+            while i < len(vals_M):
+                cluster = [i]
+                j = i + 1
+                while j < len(vals_M) and abs(vals_M[i] - vals_M[j]) < deg_tol:
+                    cluster.append(j)
+                    j += 1
+                clusters_M.append(cluster)
+                i = j
+    
+            U_canon = U.copy()
+    
+            # Tier 2: Diagonalize Secondary Tensor K_geom within M_3x3 degenerate subspaces
+            for cluster in clusters_M:
+                if len(cluster) == 1:
+                    continue
+    
+                idx = np.array(cluster)
+                U_sub = U_canon[:, idx]  # Shape: (3, k)
+    
+                K_sub_geom = U_sub.T @ K_geom @ U_sub
+                vals_K, R_K = np.linalg.eigh(K_sub_geom)
+                idx_K = np.argsort(vals_K)[::-1]
+                vals_K = vals_K[idx_K]
+                R_K = R_K[:, idx_K]
+    
+                # Partition into remaining degenerate clusters of K_geom
+                clusters_K = []
+                m = 0
+                while m < len(vals_K):
+                    sub_cluster = [m]
+                    n = m + 1
+                    while n < len(vals_K) and abs(vals_K[m] - vals_K[n]) < deg_tol:
+                        sub_cluster.append(n)
+                        n += 1
+                    clusters_K.append(sub_cluster)
+                    m = n
+    
+                R_combined = R_K.copy()
+    
+                # Tier 3: Diagonalize Orthonormal K_cell within remaining degenerate subspaces
+                for sub_cluster in clusters_K:
+                    if len(sub_cluster) == 1:
+                        continue
+    
+                    sub_idx = np.array(sub_cluster)
+                    U_sub_sub = U_sub @ R_K[:, sub_idx]
+                    K_sub_cell = U_sub_sub.T @ K_cell @ U_sub_sub
+    
+                    vals_cell, R_cell = np.linalg.eigh(K_sub_cell)
+                    idx_cell = np.argsort(vals_cell)[::-1]
+                    R_cell = R_cell[:, idx_cell]
+    
+                    R_combined[:, sub_idx] = R_K[:, sub_idx] @ R_cell
+    
+                U_canon[:, idx] = U_sub @ R_combined
+    
+            # ---------------------------------------------------------------------
+            # Step 4: Enforce Deterministic Sign Phase & SO(3) Right-Handedness
+            # ---------------------------------------------------------------------
+            for col in (0, 1):
+                max_row = np.argmax(np.abs(U_canon[:, col]))
+                if U_canon[max_row, col] < 0.0:
+                    U_canon[:, col] *= -1.0
+    
+            U_canon[:, 2] = np.cross(U_canon[:, 0], U_canon[:, 1])
+            norm_col2 = np.linalg.norm(U_canon[:, 2])
+            if norm_col2 > 1e-12:
+                U_canon[:, 2] /= norm_col2
+    
+            atomic_rotations.append(U_canon)
+    
+            rprint(
+                f" • Atom {atom_idx:3d} ({structure[atom_idx].species_string}): "
+                f"Optimized local rotation R_a det = {np.linalg.det(U_canon):+.4f}"
+            )
+    
+        rprint("=" * 80 + "\n")
+        return atomic_rotations
     
     def _project_system(
         self, 
@@ -1490,138 +1672,6 @@ class AtomicProjectionEnvironment:
         rprint("=" * 80 + "\n")
     
         return M_k_list
-
-    def _optimize_atomic_orientations(
-        self, M_k_list: list[np.ndarray]
-    ) -> list[np.ndarray]:
-        """
-        Finds the SO(3) rotation matrix R_a for each atom that minimizes orbital 
-        polarization/distortion by maximizing the k-integrated squared diagonal overlaps.
-    
-        Parameters
-        ----------
-        M_k_list : list[np.ndarray]
-            List of length natoms, where each element is an array of shape 
-            (nspin, nkpoints_full, nbasis_atom, nbasis_atom) containing the k-resolved 
-            overlap matrices M_a(k, s) = S21_a(k, s) @ A_a(k, s).
-    
-        Returns
-        -------
-        atomic_rotations : list[np.ndarray]
-            List of optimal 3x3 SO(3) rotation matrices R_a for each atom.
-        """
-        atomic_rotations = []
-    
-        for atom_idx, local_basis in enumerate(self.basis_map):
-            M_k_atom = M_k_list[atom_idx]  # Shape: (nspin, nkpoints_full, nbasis_atom, nbasis_atom)
-    
-            def _objective(omega: np.ndarray) -> float:
-                R_candidate = Rotation.from_rotvec(omega).as_matrix()
-                D_a = self._get_atom_wigner_d(local_basis, R_candidate)
-                D_a_H = D_a.conj().T
-    
-                # Apply D_a @ M_a(k, s) @ D_a^\dagger across all k-points and spins
-                # Matrix multiplication (@) automatically broadcasts over (nspin, nkpoints_full)
-                M_rotated = D_a @ M_k_atom @ D_a_H
-    
-                # Sum of squared diagonal elements (measures minimal orbital polarization)
-                diag_sq = np.abs(np.diagonal(M_rotated, axis1=-2, axis2=-1)) ** 2
-                
-                return -float(np.mean(diag_sq))
-    
-            # Perform L-BFGS-B optimization on SO(3) Lie algebra (rotvec)
-            res = minimize(
-                _objective, 
-                np.zeros(3), 
-                method="L-BFGS-B", 
-                options={"gtol": 1e-8, "ftol": 1e-10}
-            )
-            
-            R_opt = Rotation.from_rotvec(res.x).as_matrix()
-    
-            # Enforce det(R) = +1
-            if np.linalg.det(R_opt) < 0:
-                R_opt[:, -1] *= -1.0
-    
-            atomic_rotations.append(R_opt)
-    
-        return atomic_rotations
-    
-    
-    def _get_initial_orientation_seed(self, subshell_blocks: list[tuple[int, np.ndarray]]) -> np.ndarray:
-        """
-        Computes an initial 3D rotation seed R_0 in SO(3) for an atom based on its 
-        active angular momentum subshells (s, p, d, f).
-        """
-        # -------------------------------------------------------------------------
-        # CASE 1: p-shell exists (3x3 Kabsch / Procrustes SVD)
-        # -------------------------------------------------------------------------
-        p_block = next((M_l for l, M_l in subshell_blocks if l == 1), None)
-        if p_block is not None:
-            U, _, Vt = np.linalg.svd(p_block)
-            R_0 = Vt.T @ U.T
-            if np.linalg.det(R_0) < 0:
-                Vt[-1] *= -1.0
-                R_0 = Vt.T @ U.T
-            return R_0
-    
-        # -------------------------------------------------------------------------
-        # CASE 2: No p-shell, but higher shells (d or f) exist (3x3 Tensor Alignment)
-        # -------------------------------------------------------------------------
-        for l, M_l in subshell_blocks:
-            if l >= 2 and np.linalg.norm(M_l) > 1e-10:
-                Lx, Ly, Lz = self._get_real_angular_momentum_generators(l)
-                L_mats = [Lx, Ly, Lz]
-    
-                # Build 3x3 orientation tensor Q_a = Tr(M_l * L_i * L_j)
-                Q_a = np.array([[np.trace(M_l @ L_mats[i] @ L_mats[j]) for j in range(3)] for i in range(3)])
-                Q_a = 0.5 * (Q_a + Q_a.T)
-    
-                eigvals, V = np.linalg.eigh(Q_a)
-                V = V[:, np.argsort(np.abs(eigvals))[::-1]]  # Sort by tensor response magnitude
-                
-                if np.linalg.det(V) < 0:
-                    V[:, -1] *= -1.0  # Enforce proper rotation in SO(3)
-                return V
-    
-        # -------------------------------------------------------------------------
-        # CASE 3: Only s-shells or isotropic site
-        # -------------------------------------------------------------------------
-        return np.eye(3, dtype=np.float64)
-    
-    
-    @staticmethod
-    def _get_real_angular_momentum_generators(l: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Vectorized construction of real (2l+1) x (2l+1) angular momentum generators (Lx, Ly, Lz)."""
-        dim = 2 * l + 1
-        m = np.arange(-l, l)
-    
-        # Build complex J_z and sub-diagonal ladder operator J_+ using NumPy
-        Jz = np.diag(np.arange(-l, l + 1).astype(np.complex128))
-        c_plus = np.sqrt((l - m) * (l + m + 1))
-        Jplus = np.diag(c_plus, k=-1)
-        Jminus = Jplus.T  # J_- is the transpose of J_+
-    
-        Jx = 0.5 * (Jplus + Jminus)
-        Jy = -0.5j * (Jplus - Jminus)
-    
-        # Build complex-to-real unitary transformation matrix U
-        U = np.zeros((dim, dim), dtype=np.complex128)
-        U[l, l] = 1.0
-        inv_sqrt2 = 1.0 / np.sqrt(2.0)
-    
-        for m_val in range(1, l + 1):
-            phase = ((-1.0) ** m_val) * inv_sqrt2
-            U[l + m_val, l + m_val] = phase
-            U[l + m_val, l - m_val] = inv_sqrt2
-            U[l - m_val, l + m_val] = -1j * phase
-            U[l - m_val, l - m_val] = 1j * inv_sqrt2
-    
-        Lx = np.real(-1j * (U @ Jx @ U.conj().T))
-        Ly = np.real(-1j * (U @ Jy @ U.conj().T))
-        Lz = np.real(-1j * (U @ Jz @ U.conj().T))
-    
-        return Lx, Ly, Lz
     
     ###########################################################################
     # IAO Evaluation
@@ -1676,7 +1726,6 @@ class AtomicProjectionEnvironment:
         )
         return phi_3d.reshape(-1)
     
-    
     def evaluate_iao_on_grid(
         self,
         atom_idx: int,
@@ -1687,9 +1736,8 @@ class AtomicProjectionEnvironment:
         include_paw_aug: bool = True,
         filename: str | Path | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Evaluates a frame-aligned Intrinsic Atomic Orbital (IAO) on a 3D real-space grid
-        using pre-contracted HDF5 grid data (zero dependence on post_wfc).
+        """Evaluates a frame-aligned Intrinsic Atomic Orbital (IAO) on a 3D real-space grid
+        using pre-contracted HDF5 grid data.
         """
         structure = self.structure
         site_coords = structure[atom_idx].coords
@@ -1716,6 +1764,7 @@ class AtomicProjectionEnvironment:
         with h5py.File(self._iao_file, "r") as file:
             paw_offsets = json.loads(file.attrs["paw_offsets_json"])
             kpts_cart = file["kpoints_cart"][:]
+            atomic_rotations = file["atomic_rotations"][:] if "atomic_rotations" in file else None
             n_kpts_full = len(kpts_cart)
             w_fbz = 1.0 / n_kpts_full
     
@@ -1744,8 +1793,12 @@ class AtomicProjectionEnvironment:
                     inside = np.linalg.norm(dr_cart_min, axis=1) <= rcut
     
                     if np.any(inside):
+                        # Rotate displacement vectors into the atom's local frame
+                        R_a = atomic_rotations[a_idx] if atomic_rotations is not None else np.eye(3)
+                        dr_local = dr_cart_min[inside] @ R_a
+    
                         fields = paw_sp.evaluate_basis_fields(
-                            dr_cart_min[inside], compute_gradients=False
+                            dr_local, compute_gradients=False
                         )
                         start_ch, end_ch = paw_offsets[a_idx]
                         paw_aug_data.append(
@@ -1768,17 +1821,16 @@ class AtomicProjectionEnvironment:
     
             for ikpt_full in range(n_kpts_full):
                 k_group = grid_group[f"k_{ikpt_full}"]
-                K_cart = k_group["K_vecs"][:]  # Shape: (n_gvecs, 3)
-                C_pw = k_group["C_iao_pw"][spin_channel, iao_idx, :]  # Shape: (n_gvecs,)
+                K_cart = k_group["K_vecs"][:]
+                C_pw = k_group["C_iao_pw"][spin_channel, iao_idx, :]
     
-                # Apply complete wavevector phase shift e^(i * K * R_site)
                 phase_K = np.exp(1j * (K_cart @ site_coords))
     
                 all_K_vecs.append(K_cart)
                 all_V_coeffs.append(w_fbz * C_pw * phase_K)
     
                 if include_paw_aug and paw_aug_data:
-                    P_paw = k_group["P_iao_paw"][spin_channel, iao_idx, :]  # Shape: (total_paw_channels,)
+                    P_paw = k_group["P_iao_paw"][spin_channel, iao_idx, :]
                     for item in paw_aug_data:
                         P_a = P_paw[item["start_ch"] : item["end_ch"]]
                         item["c_P_a_total"] += w_fbz * P_a
@@ -1820,8 +1872,7 @@ class AtomicProjectionEnvironment:
         spin_channel: int = -1,
         coords_are_cartesian: bool = False,
     ) -> dict[int, np.ndarray]:
-        """
-        Evaluates frame-aligned Intrinsic Atomic Orbitals (IAOs) in real space at arbitrary 
+        """Evaluates frame-aligned Intrinsic Atomic Orbitals (IAOs) in real space at arbitrary 
         coordinate(s) r_point by Fourier-transforming the Bloch IAO representations across the 
         Full Brillouin Zone using FINUFFT grid evaluation and 3D cubic spline interpolation.
     
@@ -1901,12 +1952,13 @@ class AtomicProjectionEnvironment:
         ]
     
         # =========================================================================
-        # STEP 2: PAW Augmentation Setup on Regular Grid
+        # STEP 2: PAW Augmentation Setup on Regular Grid (Frame-Aligned)
         # =========================================================================
         with h5py.File(self._iao_file, "r") as file:
             nspin = int(file.attrs["nspin"])
             paw_offsets = json.loads(file.attrs["paw_offsets_json"])
             kpts_cart = file["kpoints_cart"][:]
+            atomic_rotations = file["atomic_rotations"][:] if "atomic_rotations" in file else None
             n_kpts_full = len(kpts_cart)
             w_fbz = 1.0 / n_kpts_full
             grid_group = file["grid_data"]
@@ -1936,8 +1988,12 @@ class AtomicProjectionEnvironment:
                 inside = np.linalg.norm(dr_cart_min, axis=1) <= rcut
     
                 if np.any(inside):
+                    # Rotate displacement vectors into atom a_idx's local canonical frame
+                    R_a = atomic_rotations[a_idx] if atomic_rotations is not None else np.eye(3)
+                    dr_local = dr_cart_min[inside] @ R_a
+    
                     fields = paw_sp.evaluate_basis_fields(
-                        dr_cart_min[inside], compute_gradients=False
+                        dr_local, compute_gradients=False
                     )
                     start_ch, end_ch = paw_offsets[a_idx]
                     paw_aug_data.append(
