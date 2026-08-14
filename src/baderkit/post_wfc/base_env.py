@@ -2321,6 +2321,6 @@ class PostWFC:
     ###########################################################################
     # To methods
     ###########################################################################
-    def get_iao_projection(self):
+    def get_iao_projection(self, **kwargs):
         from baderkit.post_wfc.projection.projection_environment import AtomicProjectionEnvironment
-        return AtomicProjectionEnvironment(self)
+        return AtomicProjectionEnvironment(self, **kwargs)

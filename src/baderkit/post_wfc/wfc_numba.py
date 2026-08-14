@@ -3,208 +3,125 @@
 import numpy as np
 from numpy.typing import NDArray
 from numba import njit, prange
-from numba.typed import List
 
 ###############################################################################
 # Promolecular Methods
 ###############################################################################
+@njit(fastmath=True)
+def get_pbc_displacements(
+    diff_cart: np.ndarray,
+    inv_lattice: np.ndarray,
+    lattice_matrix: np.ndarray,
+    rcut_sq: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Computes fractional wrapping, 27-image Cartesian shift generation, and
 
-@njit(fastmath=True, cache=True)
-def find_active_periodic_atoms(lattice_matrix, base_frac_coords, atom_types, r_cut):
+    minimum image distance filtering inside Numba.
+
+    Parameters
+    ----------
+    diff_cart : np.ndarray
+        Raw Cartesian displacement vectors (N, 3) from atom to grid points.
+    inv_lattice : np.ndarray
+        Inverse lattice matrix (3, 3) for Cartesian -> Fractional conversion.
+    lattice_matrix : np.ndarray
+        Lattice matrix (3, 3) where rows are lattice vectors a1, a2, a3.
+    rcut_sq : float
+        Square of the cutoff radius (rcut**2) for distance filtering.
+
+    Returns
+    -------
+    dr_cart_min : np.ndarray
+        Minimum Cartesian displacement vectors (M, 3) for points within rcut.
+    inside_mask : np.ndarray
+        Boolean mask (N,) indicating which input points fell within rcut.
     """
-    Finds all periodic images of the atoms whose cutoff spheres overlap with the
-    primary unit cell volume [0, 1]^3.
-    """
-    num_atoms = base_frac_coords.shape[0]
-    inv_lattice = np.linalg.inv(lattice_matrix)
-    
-    max_bounds = np.zeros(3, dtype=np.int32)
-    for i in range(3):
-        max_bounds[i] = int(np.ceil(r_cut * np.linalg.norm(inv_lattice[:, i]))) + 1
-        
-    est_max_images = num_atoms * (2 * max_bounds[0] + 1) * (2 * max_bounds[1] + 1) * (2 * max_bounds[2] + 1)
-    
-    out_frac = np.zeros((est_max_images, 3), dtype=np.float64)
-    out_cart = np.zeros((est_max_images, 3), dtype=np.float64)
-    out_types = np.zeros(est_max_images, dtype=np.int32)
-    out_base_indices = np.zeros(est_max_images, dtype=np.int32)
-    
-    count = 0
-    for i in range(num_atoms):
-        frac_base = base_frac_coords[i]
-        atype = atom_types[i]
-        
-        for dx in range(-max_bounds[0], max_bounds[0] + 1):
-            for dy in range(-max_bounds[1], max_bounds[1] + 1):
-                for dz in range(-max_bounds[2], max_bounds[2] + 1):
-                    
-                    shift = np.array([float(dx), float(dy), float(dz)], dtype=np.float64)
-                    img_frac = frac_base + shift
-                    img_cart = img_frac @ lattice_matrix
-                    
-                    closest_frac = np.zeros(3, dtype=np.float64)
-                    for d in range(3):
-                        if img_frac[d] < 0.0:
-                            closest_frac[d] = 0.0
-                        elif img_frac[d] > 1.0:
-                            closest_frac[d] = 1.0
-                        else:
-                            closest_frac[d] = img_frac[d]
-                            
-                    closest_cart = closest_frac @ lattice_matrix
-                    distance_to_cell = np.linalg.norm(img_cart - closest_cart)
-                    
-                    if distance_to_cell < r_cut:
-                        out_frac[count] = img_frac
-                        out_cart[count] = img_cart
-                        out_types[count] = atype
-                        out_base_indices[count] = i
-                        count += 1
-                        
-    return out_frac[:count], out_cart[:count], out_types[:count], out_base_indices[:count]
+    # 1. Generate all 27 Cartesian shift vectors directly from lattice_matrix
+    cart_shifts = np.empty((27, 3), dtype=np.float64)
+    shift_idx = 0
+    for i in range(-1, 2):
+        for j in range(-1, 2):
+            for k in range(-1, 2):
+                for d in range(3):
+                    cart_shifts[shift_idx, d] = (
+                        i * lattice_matrix[0, d]
+                        + j * lattice_matrix[1, d]
+                        + k * lattice_matrix[2, d]
+                    )
+                shift_idx += 1
 
-# @njit(cache=True, fastmath=True)
-def find_voxels_in_atom_range(atom_frac, lattice_matrix, grid_dims, r_cut):
-    nx, ny, nz = grid_dims[0], grid_dims[1], grid_dims[2]
-    
-    fx, fy, fz = atom_frac[0], atom_frac[1], atom_frac[2]
-    
-    # get fractional cutoff along each lattice vector
-    f_ext_x = r_cut / np.linalg.norm(lattice_matrix[0])
-    f_ext_y = r_cut / np.linalg.norm(lattice_matrix[1])
-    f_ext_z = r_cut / np.linalg.norm(lattice_matrix[2])
-    
-    # Get max bounds, allowing points outside the lattice
-    imin = int(np.floor((fx - f_ext_x) * nx))
-    imax = int(np.ceil((fx + f_ext_x) * nx))
-    
-    jmin = int(np.floor((fy - f_ext_y) * ny))
-    jmax = int(np.ceil((fy + f_ext_y) * ny))
-    
-    kmin = int(np.floor((fz - f_ext_z) * nz))
-    kmax = int(np.ceil((fz + f_ext_z) * nz))
-    
-    # get the maximum number of voxels in range and create placeholder arrays
-    max_possible_voxels = (imax - imin) * (jmax - jmin) * (kmax - kmin)
-    if max_possible_voxels <= 0:
-        return np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.float64)
-        
-    out_indices = np.zeros(max_possible_voxels, dtype=np.int64)
-    out_distances = np.zeros(max_possible_voxels, dtype=np.float64)
-    out_vecs = np.zeros((max_possible_voxels, 3), dtype=np.float64)
-    
-    # loop over all possible coords and calculate their distance
-    count = 0
-    for i in range(imin, imax):
-        df_x = (float(i) / nx) - fx
-        df_x -= np.round(df_x)  # wrap around cell
-        i_wrapped = i % nx
-        
-        for j in range(jmin, jmax):
-            df_y = (float(j) / ny) - fy
-            df_y -= np.round(df_y)
-            j_wrapped = j % ny
-            
-            for k in range(kmin, kmax):
-                df_z = (float(k) / nz) - fz
-                df_z -= np.round(df_z)
-                k_wrapped = k % nz
-                
-                # Convert relative fractional distance to cartesian
-                dx = df_x * lattice_matrix[0, 0] + df_y * lattice_matrix[1, 0] + df_z * lattice_matrix[2, 0]
-                dy = df_x * lattice_matrix[0, 1] + df_y * lattice_matrix[1, 1] + df_z * lattice_matrix[2, 1]
-                dz = df_x * lattice_matrix[0, 2] + df_y * lattice_matrix[1, 2] + df_z * lattice_matrix[2, 2]
-                
-                r = np.sqrt(dx*dx + dy*dy + dz*dz)
-                
-                if r < r_cut:
-                    # Flat index in primary unit cell space [0, nx) x [0, ny) x [0, nz)
-                    flat_idx = i_wrapped * (ny * nz) + j_wrapped * nz + k_wrapped
-                    out_indices[count] = flat_idx
-                    out_distances[count] = r
-                    out_vecs[count] = (dx, dy, dz)
-                    count += 1
-                    
-    return out_indices[:count], out_distances[:count], out_vecs[count]
+    n_pts = diff_cart.shape[0]
+    dr_out = np.empty((n_pts, 3), dtype=np.float64)
+    inside_mask = np.zeros(n_pts, dtype=np.bool_)
+    n_inside = 0
 
-# @njit(parallel=True, fastmath=True, cache=True)
-def find_all_voxels_parallel(
-        atom_fracs, 
-        lattice_matrix, 
-        grid_dims, 
-        r_cuts,
-        ):
-    """Executes the voxel range filter in parallel across an array of atomic coordinates."""
-    num_atoms = atom_fracs.shape[0]
-    all_indices = []
-    all_distances = []
-    all_vecs = []
-    
-    # append placeholder arrays for numba typing
-    for _ in range(num_atoms):
-        all_indices.append(np.empty(0, dtype=np.int64))
-        all_distances.append(np.empty(0, dtype=np.float64))
-        all_vecs.append(np.empty((0,0), dtype=np.float64))
-        
-    # loop over atoms in parallel and calculate voxels in range
-    for i in prange(num_atoms):
-        indices, distances, vecs = find_voxels_in_atom_range(
-            atom_fracs[i], lattice_matrix, grid_dims, r_cuts[i]
+    for p in range(n_pts):
+        # 2. Fractional conversion: f = diff_cart @ inv_lattice
+        f0 = (
+            diff_cart[p, 0] * inv_lattice[0, 0]
+            + diff_cart[p, 1] * inv_lattice[1, 0]
+            + diff_cart[p, 2] * inv_lattice[2, 0]
         )
-        all_indices[i] = indices
-        all_distances[i] = distances
-        all_vecs[i] = vecs
-        
-    return all_indices, all_distances, all_vecs
+        f1 = (
+            diff_cart[p, 0] * inv_lattice[0, 1]
+            + diff_cart[p, 1] * inv_lattice[1, 1]
+            + diff_cart[p, 2] * inv_lattice[2, 1]
+        )
+        f2 = (
+            diff_cart[p, 0] * inv_lattice[0, 2]
+            + diff_cart[p, 1] * inv_lattice[1, 2]
+            + diff_cart[p, 2] * inv_lattice[2, 2]
+        )
 
-@njit(parallel=True, fastmath=True)
-def accumulate_augmentation_core(
-    psi, grad_psi, lap_psi, idx, overlaps, q_vecs,
-    radial_diff, radial_diff_deriv, radial_laplacian,
-    y_lm, grad_y_lm, has_lap
-):
-    """
-    Thread-safe, memory-allocation-free multi-threaded JIT contraction kernel 
-    for local atomic PAW augmentations.
-    """
-    n_bands = psi.shape[0]
-    n_proj = overlaps.shape[1]
-    n_masked = len(idx)
-    
-    # Parallelize over bands to ensure thread-isolated memory writes
-    for i_band in prange(n_bands):
-        for proj_idx in range(n_proj):
-            olap = overlaps[i_band, proj_idx]
-            if olap == 0.0 + 0.0j:
-                continue
-                
-            for i_p in range(n_masked):
-                g_idx = idx[i_p]
-                
-                # Cache scalar properties to stay close to CPU registers
-                r_diff = radial_diff[proj_idx, i_p]
-                ylm = y_lm[proj_idx, i_p]
-                r_diff_deriv = radial_diff_deriv[proj_idx, i_p]
-                
-                # 1. Phi_aug accumulation
-                psi[i_band, g_idx] += olap * r_diff * ylm
-                
-                # 2. Gradient phi_aug components accumulation
-                g_ylm_x = grad_y_lm[proj_idx, i_p, 0]
-                g_ylm_y = grad_y_lm[proj_idx, i_p, 1]
-                g_ylm_z = grad_y_lm[proj_idx, i_p, 2]
-                
-                t3c_x = (r_diff_deriv * ylm) * q_vecs[i_p, 0] + r_diff * g_ylm_x
-                t3c_y = (r_diff_deriv * ylm) * q_vecs[i_p, 1] + r_diff * g_ylm_y
-                t3c_z = (r_diff_deriv * ylm) * q_vecs[i_p, 2] + r_diff * g_ylm_z
-                
-                grad_psi[i_band, g_idx, 0] += olap * t3c_x
-                grad_psi[i_band, g_idx, 1] += olap * t3c_y
-                grad_psi[i_band, g_idx, 2] += olap * t3c_z
-                
-                # 3. Laplacian phi_aug accumulation
-                if has_lap:
-                    lap_psi[i_band, g_idx] += olap * radial_laplacian[proj_idx, i_p] * ylm
+        # 3. Primary fractional centering
+        f0 -= round(f0)
+        f1 -= round(f1)
+        f2 -= round(f2)
+
+        # 4. Base Cartesian position: r_base = f @ lattice_matrix
+        x0 = (
+            f0 * lattice_matrix[0, 0]
+            + f1 * lattice_matrix[1, 0]
+            + f2 * lattice_matrix[2, 0]
+        )
+        y0 = (
+            f0 * lattice_matrix[0, 1]
+            + f1 * lattice_matrix[1, 1]
+            + f2 * lattice_matrix[2, 1]
+        )
+        z0 = (
+            f0 * lattice_matrix[0, 2]
+            + f1 * lattice_matrix[1, 2]
+            + f2 * lattice_matrix[2, 2]
+        )
+
+        # 5. Search all 27 Cartesian shifts for global minimum distance
+        best_d2 = 1e300
+        best_x = 0.0
+        best_y = 0.0
+        best_z = 0.0
+
+        for k in range(27):
+            dx = x0 + cart_shifts[k, 0]
+            dy = y0 + cart_shifts[k, 1]
+            dz = z0 + cart_shifts[k, 2]
+
+            d2 = dx * dx + dy * dy + dz * dz
+            if d2 < best_d2:
+                best_d2 = d2
+                best_x = dx
+                best_y = dy
+                best_z = dz
+
+        # 6. Apply distance cutoff filter
+        if best_d2 <= rcut_sq:
+            dr_out[n_inside, 0] = best_x
+            dr_out[n_inside, 1] = best_y
+            dr_out[n_inside, 2] = best_z
+            inside_mask[p] = True
+            n_inside += 1
+
+    return dr_out[:n_inside], inside_mask
 
 ###############################################################################
 # Spherical Harmonics
