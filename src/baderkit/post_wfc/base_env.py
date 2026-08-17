@@ -253,6 +253,8 @@ class PostWFC:
                 recip_rotations.append(R)
 
         kpts_full, full_to_irr, full_to_rot = [], [], []
+        irr_to_full = [[] for _ in range(len(self.kpoints))]
+
         for ikpt, k in enumerate(self.kpoints):
             star_kpts, star_rots = [], []
             for R in recip_rotations:
@@ -266,14 +268,18 @@ class PostWFC:
                 if not is_duplicate:
                     star_kpts.append(k_wrapped)
                     star_rots.append(R)
+
             for unique_k, R in zip(star_kpts, star_rots):
+                full_idx = len(kpts_full)
                 kpts_full.append(unique_k)
                 full_to_irr.append(ikpt)
                 full_to_rot.append(R)
+                irr_to_full[ikpt].append(full_idx)
 
         self._kpoints_full = np.array(kpts_full)
         self._full_to_irr_map = np.array(full_to_irr, dtype=int)
         self._full_to_rot_map = np.array(full_to_rot, dtype=int)
+        self._irr_to_full_map = [np.array(indices, dtype=int) for indices in irr_to_full]
 
     @property
     def kpoint_rotations(self) -> np.ndarray:
@@ -316,6 +322,12 @@ class PostWFC:
         if getattr(self, "_full_to_irr_map", None) is None:
             self._unfold_brillouin_zone()
         return self._full_to_irr_map
+    
+    @property
+    def irr_to_full_map(self):
+        if getattr(self, "_irr_to_full_map", None) is None:
+            self._unfold_brillouin_zone()
+        return self._irr_to_full_map
     
     @property
     def tetrahedra_indices(self):
@@ -1763,9 +1775,9 @@ class PostWFC:
                 # Calculate integration weights according to BZ domain and smearing model
                 if ikpt_is_fbz:
                     weight = (
-                        rspin / nkpts
+                        rspin
                         if self._smearing == "tetrahedron"
-                        else (rspin * spin_weight) / nkpts
+                        else rspin / nkpts
                     )
                 else:
                     weight = (
@@ -1784,13 +1796,11 @@ class PostWFC:
         if self._smearing == "tetrahedron":
             # Align band energies and metric arrays onto the FBZ micro-tetrahedra grid
             if ikpt_is_fbz:
-                # Raw data is already formatted on the Full BZ grid: transpose to (nspin, nkpts_full, nbands, num_metrics)
                 eigenvalues = self.energies[:, self.full_to_irr_map, :]
                 cached_metrics = np.ascontiguousarray(
                     np.transpose(raw_data, (1, 2, 3, 0))
                 )
             else:
-                # Map IBZ metric results onto the Full BZ micro-cell mesh
                 full_map = self.full_to_irr_map
                 eigenvalues = self.energies[:, full_map, :]
                 cached_metrics = np.ascontiguousarray(
@@ -1809,6 +1819,7 @@ class PostWFC:
                 tetra_weight,
             )
 
+            # Apply spin degeneracy scaling (rspin = 2.0 for nspin=1, 1.0 for nspin=2)
             results = [np.sum(smeared_output[i], axis=0) for i in range(num_metrics)]
 
             # Symmetrically smooth step features if convolution smoothing is active (sigma > 0)
