@@ -581,7 +581,6 @@ class PostWFC:
     
         return results[0] if is_scalar else results
     
-    
     def fetch_projector_overlaps(
         self,
         ikpt: int | list[int] | np.ndarray,

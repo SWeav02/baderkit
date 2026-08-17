@@ -1028,49 +1028,58 @@ class AtomicProjectionEnvironment:
         temperature: float = 300.0,
         align_aos: bool = True,
     ) -> None:
-        """Executes the complete IAO construction pipeline.
-
-        Parameters
-        ----------
-        temperature : float, optional
-            Smearing temperature in Kelvin (default is 300.0 K).
-        align_aos : bool, optional
-            If True, executes Pass 1 & Pass 2 to calculate canonical local SO(3)
-            coordinate rotations R_a for each atom before constructing frame-aligned
-            IAOs in Pass 3. If False, bypasses orientation optimization and constructs
-            IAOs using identity rotations (R_a = I) in a single pass (default is True).
-        """
+        """Executes the canonical IAO construction pipeline in a single projection pass."""
         rprint("\n" + "=" * 80)
         rprint("[bold green]          INITIATING CANONICAL IAO GENERATION PIPELINE          [/bold green]")
         rprint("=" * 80)
 
+        # Single FBZ Pass: Construct unaligned IAOs, populate HDF5, and compute M_k_list
+        M_k_list = self._project_system(temperature=temperature)
+
         if align_aos:
-            # Pass 1: Unaligned projection to compute M_a tensors
-            M_k_list = self._project_system(
-                temperature=temperature, 
-                atomic_rotations=None
-            )
-
-            if M_k_list is None:
-                raise RuntimeError("Pass 1 failed to return the overlap tensor list M_k_list.")
-
-            # Pass 2: Calculate canonical local rotations R_a per atom
+            # Calculate canonical local rotations R_a per atom
             atomic_rotations = self._optimize_atomic_orientations(
                 M_k_list=M_k_list, 
                 deg_tol=1e-4
             )
+
+            # In-place post-processing: Apply Wigner D-matrices directly to stored HDF5 datasets
+            self._apply_atomic_rotations(atomic_rotations)
         else:
             rprint("[bold yellow]INFO: Local frame alignment bypassed (align_aos=False). Using identity rotations (R_a = I).[/bold yellow]")
-            atomic_rotations = [np.eye(3, dtype=np.float64) for _ in range(len(self.basis_map))]
-
-        # Construct IAOs using rotations (optimized or identity) & save to HDF5
-        self._project_system(
-            temperature=temperature, 
-            atomic_rotations=atomic_rotations
-        )
 
         rprint("[bold green]SUCCESS: Canonical IAO construction completed successfully![/bold green]\n")
 
+    def _apply_atomic_rotations(self, atomic_rotations: list[np.ndarray]) -> None:
+        """Transforms stored FBZ IAO datasets in-place using global block-diagonal Wigner D-matrices."""
+        D_blocks = [
+            self._get_atom_wigner_d(basis, R_a)
+            for R_a, basis in zip(atomic_rotations, self.basis_map)
+        ]
+        D = block_diag(*D_blocks)
+        D_T = D.T
+
+        with h5py.File(self._iao_file, "r+") as file:
+            file["atomic_rotations"][...] = np.array(atomic_rotations)
+            nspin = int(file.attrs["nspin"])
+            nkpoints_full = int(file.attrs["nkpoints_full"])
+
+            # 1. Transform A_coeffs, A_depol_coeffs, and Hamiltonian matrices across FBZ
+            for ispin in range(nspin):
+                for ikpt in range(nkpoints_full):
+                    file["A_coeffs"][ispin, ikpt] = file["A_coeffs"][ispin, ikpt] @ D
+                    file["A_depol_coeffs"][ispin, ikpt] = file["A_depol_coeffs"][ispin, ikpt] @ D
+                    file["H"][ispin, ikpt] = D_T @ file["H"][ispin, ikpt] @ D
+
+            # 2. Transform plane-wave and PAW expansion datasets across FBZ
+            grid_group = file["grid_data"]
+            for ikpt in range(nkpoints_full):
+                k_group = grid_group[f"k_{ikpt}"]
+                for ispin in range(nspin):
+                    k_group["C_iao_pw"][ispin] = D_T @ k_group["C_iao_pw"][ispin]
+                    k_group["P_iao_paw"][ispin] = D_T @ k_group["P_iao_paw"][ispin]
+                    k_group["C_ao_pw"][ispin] = D_T @ k_group["C_ao_pw"][ispin]
+                    k_group["P_ao_paw"][ispin] = D_T @ k_group["P_ao_paw"][ispin]
 
     @staticmethod
     def _lowdin_ortho(M: np.ndarray, max_iter: int = 100, tol: float = 1e-12) -> np.ndarray:
@@ -1272,30 +1281,23 @@ class AtomicProjectionEnvironment:
     def _project_system(
         self, 
         temperature: float = 300.0, 
-        atomic_rotations: list[np.ndarray] | None = None
-    ) -> list[np.ndarray] | None:
-        """Constructs IAOs directly on the Full Brillouin Zone (FBZ) mesh using Fermi-Dirac 
-    
-        continuous occupations and Lowdin symmetric orthogonalization. Saves full standalone 
-        data to HDF5 during Pass 3.
-    
+    ) -> list[np.ndarray]:
+        """Constructs unaligned IAOs directly on the Full Brillouin Zone (FBZ) mesh using Fermi-Dirac
+
+        continuous occupations and Lowdin symmetric orthogonalization in a single pass. Saves initial
+        base datasets to HDF5 and returns the k-resolved overlap tensors M_k_list.
+
         Parameters
         ----------
         temperature : float, optional
             Smearing temperature in Kelvin (default is 300.0 K).
-        atomic_rotations : list[np.ndarray] | None, optional
-            List of 3x3 SO(3) rotation matrices R_a for each atom.
-            If None, computes initial unrotated IAOs and returns the k-resolved 
-            overlap tensors M_k_list across all k-points and spin channels.
-            If provided, applies R_a to reference basis functions and saves rotated IAOs to disk.
-    
+
         Returns
         -------
-        M_k_list : list[np.ndarray] | None
-            If atomic_rotations is None (Pass 1), returns a list of length natoms where each 
-            element is an array of shape (nspin, nkpoints_full, nbasis_atom, nbasis_atom) 
-            containing the k-resolved overlap matrices M_a(s, k) = S21_a(s, k) @ A_a(s, k).
-            Otherwise returns None (Pass 3).
+        M_k_list : list[np.ndarray]
+            List of length natoms where each element is an array of shape
+            (nspin, nkpoints_full, nbasis_atom, nbasis_atom) containing the k-resolved
+            overlap matrices M_a(s, k) = S21_a(s, k) @ A_a(s, k).
         """
         structure = self.structure
         atom_positions = structure.cart_coords
@@ -1325,28 +1327,15 @@ class AtomicProjectionEnvironment:
         self._spillage = np.zeros((nspin, nkpoints_full, nbands), dtype=np.float64)
         energies_fbz = np.zeros((nspin, nkpoints_full, nbands), dtype=np.float64)
     
-        # Pre-allocate 4D k-resolved overlap tensors for each atom in Pass 1:
+        # Pre-allocate 4D k-resolved overlap tensors for each atom:
         # Shape per atom: (nspin, nkpoints_full, nbasis_atom, nbasis_atom)
-        M_k_list = (
-            [
-                np.zeros((nspin, nkpoints_full, end_b - start_b, end_b - start_b), dtype=np.complex128)
-                for start_b, end_b in basis_offsets
-            ]
-            if atomic_rotations is None
-            else None
-        )
-    
-        # Precompute block-diagonal Wigner D-matrices for each atom if rotations are provided
-        wigner_D_blocks = []
-        if atomic_rotations is not None:
-            for atom_idx, local_basis in enumerate(self.basis_map):
-                R_a = atomic_rotations[atom_idx]
-                D_a = self._get_atom_wigner_d(local_basis, R_a)
-                wigner_D_blocks.append(D_a)
+        M_k_list = [
+            np.zeros((nspin, nkpoints_full, end_b - start_b, end_b - start_b), dtype=np.complex128)
+            for start_b, end_b in basis_offsets
+        ]
     
         rprint("\n" + "=" * 80)
-        pass_str = "PASS 1: UNALIGNED" if atomic_rotations is None else "PASS 3: FRAME-ALIGNED"
-        rprint(f"[bold green]          STARTING FBZ PROJECTION ({pass_str})          [/bold green]")
+        rprint("[bold green]          STARTING FBZ PROJECTION PASS          [/bold green]")
         rprint("=" * 80)
         rprint(f"[bold white]System Dimensions:[/bold white] Spin={nspin}, FBZ k-points={nkpoints_full}, Bands={nbands}")
         rprint(f"[bold white]Basis Dimensions :[/bold white] Total={nbasis}")
@@ -1366,55 +1355,55 @@ class AtomicProjectionEnvironment:
         max_cond_num_final = 0.0
     
         # -------------------------------------------------------------------------
-        # PASS 3: Open HDF5 File and Initialize Datasets / Metadata
+        # Open HDF5 File and Initialize Datasets / Metadata
         # -------------------------------------------------------------------------
-        h5_file = None
-        if atomic_rotations is not None:
-            h5_file = h5py.File(self._iao_file, "w")
-    
-            # Save Root Metadata Attributes
-            h5_file.attrs["structure_json"] = json.dumps(structure.as_dict())
-            h5_file.attrs["efermi"] = float(self.efermi)
-            h5_file.attrs["temperature"] = float(temperature)
-            h5_file.attrs["sigma"] = float(sigma)
-            h5_file.attrs["spillage_cutoff"] = float(self.spillage_cutoff)
-            h5_file.attrs["nspin"] = int(nspin)
-            h5_file.attrs["nkpoints_full"] = int(nkpoints_full)
-            h5_file.attrs["nbands"] = int(nbands)
-            h5_file.attrs["nbasis"] = int(nbasis)
-            h5_file.attrs["atom_to_basis_indices_json"] = json.dumps(
-                {int(k): [int(x) for x in v] for k, v in self.atom_to_basis_indices.items()}
-            )
-            h5_file.attrs["paw_offsets_json"] = json.dumps([(int(s), int(e)) for s, e in paw_offsets])
-            h5_file.attrs["basis_offsets_json"] = json.dumps([(int(s), int(e)) for s, e in basis_offsets])
-    
-            # Create Core Datasets
-            dset_H = h5_file.create_dataset(
-                "H",
-                shape=(nspin, nkpoints_full, nbasis, nbasis),
-                dtype=np.complex128,
-                chunks=(nspin, 1, nbasis, nbasis),
-                compression="lzf",
-            )
-    
-            dset_A = h5_file.create_dataset(
-                "A_coeffs",
-                shape=(nspin, nkpoints_full, nbands, nbasis),
-                dtype=np.complex128,
-                chunks=(nspin, 1, nbands, nbasis),
-                compression="lzf",
-            )
-    
-            dset_A_depol = h5_file.create_dataset(
-                "A_depol_coeffs",
-                shape=(nspin, nkpoints_full, nbands, nbasis),
-                dtype=np.complex128,
-                chunks=(nspin, 1, nbands, nbasis),
-                compression="lzf",
-            )
-    
-            h5_file.create_dataset("atomic_rotations", data=np.array(atomic_rotations))
-            grid_group = h5_file.create_group("grid_data")
+        h5_file = h5py.File(self._iao_file, "w")
+
+        # Save Root Metadata Attributes
+        h5_file.attrs["structure_json"] = json.dumps(structure.as_dict())
+        h5_file.attrs["efermi"] = float(self.efermi)
+        h5_file.attrs["temperature"] = float(temperature)
+        h5_file.attrs["sigma"] = float(sigma)
+        h5_file.attrs["spillage_cutoff"] = float(self.spillage_cutoff)
+        h5_file.attrs["nspin"] = int(nspin)
+        h5_file.attrs["nkpoints_full"] = int(nkpoints_full)
+        h5_file.attrs["nbands"] = int(nbands)
+        h5_file.attrs["nbasis"] = int(nbasis)
+        h5_file.attrs["atom_to_basis_indices_json"] = json.dumps(
+            {int(k): [int(x) for x in v] for k, v in self.atom_to_basis_indices.items()}
+        )
+        h5_file.attrs["paw_offsets_json"] = json.dumps([(int(s), int(e)) for s, e in paw_offsets])
+        h5_file.attrs["basis_offsets_json"] = json.dumps([(int(s), int(e)) for s, e in basis_offsets])
+
+        # Create Core Datasets
+        dset_H = h5_file.create_dataset(
+            "H",
+            shape=(nspin, nkpoints_full, nbasis, nbasis),
+            dtype=np.complex128,
+            chunks=(nspin, 1, nbasis, nbasis),
+            compression="lzf",
+        )
+
+        dset_A = h5_file.create_dataset(
+            "A_coeffs",
+            shape=(nspin, nkpoints_full, nbands, nbasis),
+            dtype=np.complex128,
+            chunks=(nspin, 1, nbands, nbasis),
+            compression="lzf",
+        )
+
+        dset_A_depol = h5_file.create_dataset(
+            "A_depol_coeffs",
+            shape=(nspin, nkpoints_full, nbands, nbasis),
+            dtype=np.complex128,
+            chunks=(nspin, 1, nbands, nbasis),
+            compression="lzf",
+        )
+
+        # Initialize rotation dataset with identity matrices
+        init_rotations = np.tile(np.eye(3, dtype=np.float64), (len(self.basis_map), 1, 1))
+        h5_file.create_dataset("atomic_rotations", data=init_rotations)
+        grid_group = h5_file.create_group("grid_data")
     
         try:
             # Loop over Full Brillouin Zone k points
@@ -1444,25 +1433,22 @@ class AtomicProjectionEnvironment:
     
                 local_basis_matrix = np.vstack(local_basis_matrices)
     
-                # Prepare per-kpoint grid dataset placeholders in HDF5 (Pass 3)
-                dset_C_pw, dset_P_paw = None, None
-                dset_C_ao_pw, dset_P_ao_paw = None, None
-                if h5_file is not None:
-                    k_group = grid_group.create_group(f"k_{ikpt_full}")
-                    k_group.create_dataset("K_vecs", data=K_vecs, compression="lzf")
-    
-                    dset_C_pw = k_group.create_dataset(
-                        "C_iao_pw", shape=(nspin, nbasis, n_gvecs), dtype=np.complex128, compression="lzf"
-                    )
-                    dset_P_paw = k_group.create_dataset(
-                        "P_iao_paw", shape=(nspin, nbasis, total_paw_channels), dtype=np.complex128, compression="lzf"
-                    )
-                    dset_C_ao_pw = k_group.create_dataset(
-                        "C_ao_pw", shape=(nspin, nbasis, n_gvecs), dtype=np.complex128, compression="lzf"
-                    )
-                    dset_P_ao_paw = k_group.create_dataset(
-                        "P_ao_paw", shape=(nspin, nbasis, total_paw_channels), dtype=np.complex128, compression="lzf"
-                    )
+                # Prepare per-kpoint grid dataset placeholders in HDF5
+                k_group = grid_group.create_group(f"k_{ikpt_full}")
+                k_group.create_dataset("K_vecs", data=K_vecs, compression="lzf")
+
+                dset_C_pw = k_group.create_dataset(
+                    "C_iao_pw", shape=(nspin, nbasis, n_gvecs), dtype=np.complex128, compression="lzf"
+                )
+                dset_P_paw = k_group.create_dataset(
+                    "P_iao_paw", shape=(nspin, nbasis, total_paw_channels), dtype=np.complex128, compression="lzf"
+                )
+                dset_C_ao_pw = k_group.create_dataset(
+                    "C_ao_pw", shape=(nspin, nbasis, n_gvecs), dtype=np.complex128, compression="lzf"
+                )
+                dset_P_ao_paw = k_group.create_dataset(
+                    "P_ao_paw", shape=(nspin, nbasis, total_paw_channels), dtype=np.complex128, compression="lzf"
+                )
     
                 for ispin in range(nspin):
     
@@ -1492,17 +1478,6 @@ class AtomicProjectionEnvironment:
     
                     # Construct unrotated S21
                     S21 = chi_psi_ps + chi_psi_aug
-    
-                    ###################################################################
-                    # Apply SO(3) Atomic Rotations to S21
-                    ###################################################################
-                    if atomic_rotations is not None:
-                        for atom_idx in range(len(self.basis_map)):
-                            start_b, end_b = basis_offsets[atom_idx]
-                            D_a = wigner_D_blocks[atom_idx]
-                            # Use D_a.T (or D_a.conj().T) to project into local atomic frame
-                            S21[start_b:end_b, :] = D_a.T @ S21[start_b:end_b, :]
-    
                     S12 = S21.conj().T
     
                     ###################################################################
@@ -1569,14 +1544,13 @@ class AtomicProjectionEnvironment:
                     max_cond_num_final = max(max_cond_num_final, cond_num_final)
     
                     ###################################################################
-                    # Store k-Resolved Overlap Tensor M_a(s, k) (Pass 1)
+                    # Store k-Resolved Overlap Tensor M_a(s, k)
                     ###################################################################
-                    if M_k_list is not None:
-                        for atom_idx in range(len(self.basis_map)):
-                            start_b, end_b = basis_offsets[atom_idx]
-                            S21_a = S21[start_b:end_b, :]  # Shape: (nbasis_atom, nbands)
-                            A_a = A[:, start_b:end_b]      # Shape: (nbands, nbasis_atom)
-                            M_k_list[atom_idx][ispin, ikpt_full] = S21_a @ A_a
+                    for atom_idx in range(len(self.basis_map)):
+                        start_b, end_b = basis_offsets[atom_idx]
+                        S21_a = S21[start_b:end_b, :]  # Shape: (nbasis_atom, nbands)
+                        A_a = A[:, start_b:end_b]      # Shape: (nbands, nbasis_atom)
+                        M_k_list[atom_idx][ispin, ikpt_full] = S21_a @ A_a
     
                     ###################################################################
                     # Spillage Calculation
@@ -1585,22 +1559,21 @@ class AtomicProjectionEnvironment:
                     self._spillage[ispin, ikpt_full] = np.maximum(0.0, spillage_k)
     
                     ###################################################################
-                    # H_IAO Construction & Disk Persistence (Pass 3)
+                    # H_IAO Construction & Disk Persistence
                     ###################################################################
                     H_IAO = A_T @ (E[:, None] * A)
     
-                    if h5_file is not None:
-                        dset_A[ispin, ikpt_full] = A
-                        dset_A_depol[ispin, ikpt_full] = A_depol
-                        dset_H[ispin, ikpt_full] = H_IAO
-    
-                        # Contract IAO plane waves & PAW overlaps
-                        dset_C_pw[ispin] = A.T @ psi_ps.T
-                        dset_P_paw[ispin] = A.T @ paw_psi_ps_all
-    
-                        # Contract Depolarized AO plane waves & PAW overlaps
-                        dset_C_ao_pw[ispin] = A_depol.T @ psi_ps.T
-                        dset_P_ao_paw[ispin] = A_depol.T @ paw_psi_ps_all
+                    dset_A[ispin, ikpt_full] = A
+                    dset_A_depol[ispin, ikpt_full] = A_depol
+                    dset_H[ispin, ikpt_full] = H_IAO
+
+                    # Contract IAO plane waves & PAW overlaps
+                    dset_C_pw[ispin] = A.T @ psi_ps.T
+                    dset_P_paw[ispin] = A.T @ paw_psi_ps_all
+
+                    # Contract Depolarized AO plane waves & PAW overlaps
+                    dset_C_ao_pw[ispin] = A_depol.T @ psi_ps.T
+                    dset_P_ao_paw[ispin] = A_depol.T @ paw_psi_ps_all
     
                     ###################################################################
                     # Verify Results
@@ -1632,16 +1605,14 @@ class AtomicProjectionEnvironment:
             # Evaluate energy range cutoff using helper method
             self.max_safe_energy, safe_range_str = self._evaluate_spillage()
     
-            # Finalize Pass 3 HDF5 persistence
-            if h5_file is not None:
-                h5_file.create_dataset("energies", data=energies_fbz)
-                h5_file.create_dataset("kpoints_cart", data=kpts_cart_full)
-                h5_file.create_dataset("spillage", data=self._spillage)
-                h5_file.attrs["max_safe_energy"] = float(self.max_safe_energy)
+            # Finalize HDF5 persistence
+            h5_file.create_dataset("energies", data=energies_fbz)
+            h5_file.create_dataset("kpoints_cart", data=kpts_cart_full)
+            h5_file.create_dataset("spillage", data=self._spillage)
+            h5_file.attrs["max_safe_energy"] = float(self.max_safe_energy)
     
         finally:
-            if h5_file is not None:
-                h5_file.close()
+            h5_file.close()
     
         # Print final summary
         status_energy = "[bold green]PASSED[/bold green]" if max_energy_err < 1e-6 else "[bold red]FAILED[/bold red]"
@@ -1651,7 +1622,7 @@ class AtomicProjectionEnvironment:
         status_cond_final = "[bold green]PASSED[/bold green]" if max_cond_num_final < 1.01 else "[bold red]FAILED[/bold red]"
     
         rprint("\n" + "=" * 80)
-        rprint(f"[bold green]          IAO PROJECTION DIAGNOSTIC SUMMARY ({pass_str})          [/bold green]")
+        rprint("[bold green]          IAO PROJECTION DIAGNOSTIC SUMMARY (FBZ PASS)          [/bold green]")
         rprint("=" * 80)
         rprint(f" • [bold white]Occupied Energy Recovery Max Err :[/bold white] {max_energy_err:.2e} eV  [{status_energy}]")
         rprint(f" • [bold white]Integrated Charge Max Err (Q_IAO):[/bold white] {max_charge_err:.2e}     [{status_charge}]")
@@ -2066,87 +2037,56 @@ class AtomicProjectionEnvironment:
         plot_range: tuple[float, float] | None = None,
         **kwargs,
     ) -> dict[str, np.ndarray] | np.ndarray:
-        """
-        Calculates the atom-pair Crystal Orbital Hamilton Population (COHP) between
-        site_idx_A and site_idx_B (shifted by cell_translation), matching LOBSTER.
-    
-        Parameters
-        ----------
-        site_idx_A : int
-            Index of the target site A.
-        site_idx_B : int
-            Index of the target site B.
-        cell_translation : tuple[int, int, int], default=(0, 0, 0)
-            Lattice unit cell translation vector [R_x, R_y, R_z] for site B.
-        spin_channel : int, default=-1
-            Spin channel index (-1 for total/both, 0 for spin up, 1 for spin down).
-        negative_cohp : bool, default=True
-            If True, returns -COHP (bonding states > 0, antibonding states < 0).
-        cumulative : bool, default=False
-            If True, computes integrated COHP (iCOHP).
-        return_plot : bool, default=False
-            If True, returns a Matplotlib Figure object.
-        plot_range : tuple[float, float], optional
-            (E_min, E_max) energy range for plotting.
-    
-        Returns
-        -------
-        np.ndarray | matplotlib.figure.Figure
-            1D numpy array containing COHP values or a Matplotlib Figure if `return_plot=True`.
-        """
         structure = self.structure
         spins, _ = self.post_wfc._get_spin_channels_weights(spin_channel)
     
         basis_A = self.atom_to_basis_indices[site_idx_A]
         basis_B = self.atom_to_basis_indices[site_idx_B]
     
+        # Unit cell lattice translation vector R_lattice
         R_cell = np.asarray(cell_translation, dtype=np.float64)
         R_lattice = R_cell @ structure.lattice.matrix
     
         kpts_cart_full = self.post_wfc.kpoints_cart_full
         n_kpts_full = len(kpts_cart_full)
     
-        # Precompute FBZ phase factors for real-space Fourier transforms
-        fbz_phases_minus = np.exp(-1j * (kpts_cart_full @ R_lattice))  # e^{-i k . R} for H(R)
-        fbz_phases_plus = np.exp(1j * (kpts_cart_full @ R_lattice))    # e^{+i k . R} for P(k)
+        # 1. Forward FT (k -> R): uses -1j to compress H(k) into H(R)
+        fbz_phases_H = np.exp(-1j * (kpts_cart_full @ R_lattice))
+        
+        # 2. Reverse FT (R -> k): uses +1j to reconstruct density matrix population
+        fbz_phases_pop = np.exp(-1j * (kpts_cart_full @ R_lattice))
     
-        # 1. Compute constant real-space Hamiltonian matrix H_{A,B}(R) via FBZ Fourier transform
+        # Keep H_AB_R as COMPLEX128 to preserve phases during callback contraction
         H_AB_R = np.zeros(
             (self.post_wfc.nspin, len(basis_A), len(basis_B)), dtype=np.complex128
         )
     
-        for ispin in spins:
-            H_sum = np.zeros((len(basis_A), len(basis_B)), dtype=np.complex128)
-            for ikpt_full in range(n_kpts_full):
-                H_k = self.fetch_iao_hamiltonian(
-                    ispin=ispin, ikpt=ikpt_full, ikpt_is_fbz=True
+        with h5py.File(self._iao_file, "r") as file:
+            for ispin in spins:
+                H_k_sub = file["H"][ispin, :, basis_A, :][:, :, basis_B]
+                # Fourier contraction without premature real-part truncation
+                H_AB_R[ispin] = (
+                    np.tensordot(fbz_phases_H, H_k_sub, axes=(0, 0)) / n_kpts_full
                 )
-                H_sub = H_k[np.ix_(basis_A, basis_B)]
-                H_sum += H_sub * fbz_phases_minus[ikpt_full]
-            H_AB_R[ispin] = H_sum / n_kpts_full
     
-        # 2. Define population callback using constant H_{A,B}(R) and FBZ density matrix
         def population_callback(ispin, ikpt, weight, **kwargs):
             C_k = self.fetch_iao_coeffs(ispin, ikpt, ikpt_is_fbz=True)
             if C_k is None or len(C_k) == 0:
                 return [None]
     
-            C_A = C_k[:, basis_A]  # Shape: (nbands, n_A)
-            C_B = C_k[:, basis_B]  # Shape: (nbands, n_B)
+            C_A = C_k[:, basis_A]
+            C_B = C_k[:, basis_B]
+            H_R = H_AB_R[ispin]
+            phase = fbz_phases_pop[ikpt]  # Uses +1j phase factor
     
-            H_R = H_AB_R[ispin]    # Shape: (n_A, n_B)
-            phase = fbz_phases_plus[ikpt]
-    
-            # Matrix contraction: Re[ Sum_{mu, nu} C_{j, mu}^* H_{mu, nu}(R) C_{j, nu} e^{i k . R} ]
+            # Contract complex matrices first, apply phase, then take real part
             band_pop = np.real(np.sum((C_A.conj() @ H_R) * C_B, axis=1) * phase)
-    
             band_pop *= weight
             if negative_cohp:
                 band_pop = -band_pop
     
             return [band_pop]
     
-        # 3. Execute spectral engine across FBZ k-points
         smeared = self.post_wfc._execute_spectral_engine(
             num_metrics=1,
             spin_channel=spin_channel,
@@ -2283,7 +2223,7 @@ class AtomicProjectionEnvironment:
         for i_pair, (_, g_A, _, g_B, R_rel) in enumerate(parsed_pairs):
             R_lattice = R_rel @ structure.lattice.matrix
             fbz_phase_minus = np.exp(-1j * (kpts_cart_full @ R_lattice))
-            fbz_phase_plus = np.exp(1j * (kpts_cart_full @ R_lattice))
+            fbz_phase_plus = np.exp(-1j * (kpts_cart_full @ R_lattice))
             fbz_phases_plus.append(fbz_phase_plus)
     
             for ispin in spins:
