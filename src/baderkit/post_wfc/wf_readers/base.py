@@ -6,6 +6,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 from rich.progress import track
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
 from baderkit.post_wfc.paw.paw_dataset import PAWSpecies
 from baderkit.toolkit import Structure
@@ -46,6 +47,7 @@ class WfcMetadata:
     max_nbands: int  # Maximum number of physical bands in WAVECAR file
     bands: np.ndarray  # 1D array of selected 0-indexed band coordinates
     cplx_dtype: complex  # Precision requirement datatype (complex64 or complex128)
+    has_time_reversal: bool = False  # Dynamic TRS status flag
 
 
 class BaseWfcReader(ABC):
@@ -63,17 +65,10 @@ class BaseWfcReader(ABC):
         force_recompute: bool = False,
         **kwargs,
     ):
-        """Initializes the Reader base class, loads metadata, and executes wave-
-
-        function precomputation if cached results are absent or invalid.
-        """
         self.directory = Path(directory)
         self.postwfc_file = Path(postwfc_file)
-        self._gvec_cache = (
-            {}
-        )  # Internal lifecycle cache to prevent re-building plane-wave spheres
+        self._gvec_cache = {}
 
-        # Load metadata directly from cache if valid, otherwise parse calculation folder
         metadata_exists = not force_recompute and self._is_cache_valid(
             nbands=nbands, bands=bands
         )
@@ -93,8 +88,8 @@ class BaseWfcReader(ABC):
         self.nbands = self.metadata.nbands
         self.occupations = self.metadata.occupancies
         self.kpoints_cart = self.metadata.kpoints @ self.reciprocal_lattice
+        self.has_time_reversal = self.metadata.has_time_reversal  # Expose TRS status
 
-        # save if metadata didn't already exist
         if not metadata_exists:
             self._save_psi()
 
@@ -151,26 +146,51 @@ class BaseWfcReader(ABC):
         reciprocal space Miller indices (h, k, l) for a target k-point.
         """
         pass
+    
+    def _reorder_projectors_to_cartesian(
+        self, proj: np.ndarray, paw_basis: PAWSpecies
+    ) -> np.ndarray:
+        """Reorders PAW projector channels from VASP native m-indexing (-l...+l)
+        to standard Cartesian orbital ordering ([px, py, pz] for l=1, etc.).
+        """
+        permuted_indices = []
+        curr_idx = 0
+    
+        # Iterates over angular momenta l for each projector channel
+        for l in paw_basis.projector_l:
+            num_m = 2 * l + 1
+            channel_indices = list(range(curr_idx, curr_idx + num_m))
+    
+            if l == 1:
+                # VASP native m=(-1, 0, +1) is [py, pz, px]
+                # Permute to Cartesian [px, py, pz]
+                perm = [channel_indices[2], channel_indices[0], channel_indices[1]]
+            elif l == 2:
+                # VASP native m=(-2, -1, 0, +1, +2) is [dxy, dyz, dz2, dxz, dx2-y2]
+                # Permute to Cartesian [dxy, dyz, dxz, dx2-y2, dz2]
+                perm = [
+                    channel_indices[0],  # dxy
+                    channel_indices[1],  # dyz
+                    channel_indices[3],  # dxz
+                    channel_indices[4],  # dx2-y2
+                    channel_indices[2],  # dz2
+                ]
+            else:
+                perm = channel_indices
+    
+            permuted_indices.extend(perm)
+            curr_idx += num_m
+    
+        return proj[permuted_indices, :]
 
     def _write_metadata(self, file: h5py.File):
         """Dynamically writes WfcMetadata parameters, structure, and arrays to an HDF5 group."""
         meta_grp = file.create_group("metadata")
 
-        # Save structure datasets for full independent reloading
-        meta_grp.create_dataset(
-            "cart_coords", data=self.structure.cart_coords
-        )
-        meta_grp.create_dataset(
-            "lattice_matrix", data=self.structure.lattice.matrix
-        )
-        species_symbols = [site.specie.symbol for site in self.structure]
-        meta_grp.create_dataset(
-            "species", data=np.array(species_symbols, dtype=h5py.string_dtype())
-        )
-
         # Dynamically write all fields of WfcMetadata
         for f in fields(self.metadata):
             if f.name == "structure":
+                meta_grp.attrs[f.name] = getattr(self.metadata, f.name).to_json()
                 continue
 
             val = getattr(self.metadata, f.name)
@@ -214,20 +234,13 @@ class BaseWfcReader(ABC):
         with h5py.File(self.postwfc_file, "r") as file:
             meta_grp = file["metadata"]
 
-            # Reconstruct Structure
-            lattice_matrix = meta_grp["lattice_matrix"][:]
-            species = [
-                s.decode("utf-8") if isinstance(s, bytes) else str(s)
-                for s in meta_grp["species"][:]
-            ]
-            cart_coords = meta_grp["cart_coords"][:]
-            structure = Structure(
-                lattice_matrix, species, cart_coords, coords_are_cartesian=True
-            )
+            struct_str = meta_grp.attrs["structure"]
+            if isinstance(struct_str, bytes):
+                struct_str = struct_str.decode("utf-8")
+            structure = Structure.from_str(struct_str, fmt="json")
 
             kwargs = {"structure": structure}
 
-            # Dynamically read dataclass fields
             for f in fields(WfcMetadata):
                 if f.name == "structure":
                     continue
@@ -269,6 +282,48 @@ class BaseWfcReader(ABC):
                 paw_datasets[symbol] = PAWSpecies(**kwargs)
 
         return paw_datasets
+    
+
+    def detect_time_reversal(self, structure: Structure, kpoints: np.ndarray) -> bool:
+        """Dynamically determines if Time-Reversal Symmetry (TRS) was used to reduce
+        the IBZ k-point mesh.
+        """
+        sga = SpacegroupAnalyzer(structure, symprec=1e-3)
+        symm_ops = sga.get_symmetry_operations()
+
+        spatial_recip_rotations = []
+        has_inversion = False
+        for op in symm_ops:
+            R_real = op.rotation_matrix
+            R_recip = np.round(np.linalg.inv(R_real).T).astype(int)
+            if not any(np.array_equal(R_recip, R) for R in spatial_recip_rotations):
+                spatial_recip_rotations.append(R_recip)
+            if np.array_equal(R_recip, -np.eye(3, dtype=int)):
+                has_inversion = True
+
+        # Centrosymmetric systems cover k -> -k via spatial inversion
+        if has_inversion:
+            return True
+
+        # For non-centrosymmetric systems, check if -k for any IBZ point
+        # is missing from all spatial orbits in the IBZ list.
+        for k in kpoints:
+            neg_k = -k
+            found_match = False
+            for k_ref in kpoints:
+                for R in spatial_recip_rotations:
+                    diff = np.mod(R @ k_ref - neg_k + 0.5, 1.0) - 0.5
+                    if np.all(np.abs(diff) < 1e-4):
+                        found_match = True
+                        break
+                if found_match:
+                    break
+
+            # If -k is absent from all spatial orbits, DFT used TRS to reduce the mesh
+            if not found_match:
+                return True
+
+        return False
 
     def _is_cache_valid(
         self, nbands: int = None, bands: list[int] = None
@@ -386,10 +441,14 @@ class BaseWfcReader(ABC):
                     paw_basis = self.paw_datasets[site.specie.symbol]
                     pos = atom_positions[atom_idx]
                     spatial_phase = np.exp(-1j * np.dot(K_vecs, pos))
-    
+                
                     proj = paw_basis.evaluate_q_projectors(
                         K_vecs, pos, spatial_phase=spatial_phase
                     )  # Shape: (n_proj_a, ngvecs)
+                
+                    # Reorder VASP spherical harmonics to standard Cartesian [x, y, z] order
+                    proj = self._reorder_projectors_to_cartesian(proj, paw_basis)
+                
                     paw_projector_matrices.append(proj)
     
                 paw_projector_matrix = np.vstack(paw_projector_matrices)  # (total_n_proj, ngvecs)

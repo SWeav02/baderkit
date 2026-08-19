@@ -11,9 +11,11 @@ import math
 import numpy as np
 from numpy.typing import NDArray
 from scipy.integrate import cumulative_trapezoid
+from scipy.linalg import block_diag
 from scipy.fft import fftn, ifftn, set_workers
 
 from baderkit.post_wfc.wf_readers.base import HSQDTM
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 
 from baderkit.post_wfc.wfc_numba import (
     integrate_tetrahedra_spectral_density, 
@@ -241,44 +243,80 @@ class PostWFC:
             self._kpoint_multiplicities = np.array(multiplicities)
         return self._kpoint_multiplicities
 
+    @property
+    def has_time_reversal(self):
+        return self._meta.has_time_reversal
+    
     def _unfold_brillouin_zone(self):
-        recp_symm_ops = self.structure.lattice.get_recp_symmetry_operation()
-        recip_rotations = []
-        for op in recp_symm_ops:
-            R_recip = np.round(op.rotation_matrix).astype(int)
-            if not any(np.array_equal(R_recip, R) for R in recip_rotations):
-                recip_rotations.append(R_recip)
-        for R in [-R for R in recip_rotations]:
-            if not any(np.array_equal(R, ex_R) for ex_R in recip_rotations):
-                recip_rotations.append(R)
-
-        kpts_full, full_to_irr, full_to_rot = [], [], []
+        """Unfolds the IBZ k-mesh to the FBZ using crystal point-group symmetry 
+        and Time-Reversal Symmetry (TRS), tracking time-reversal flags explicitly.
+        """
+        # 1. Fetch TRUE crystal symmetry operations (not just lattice box symmetry)
+        sga = SpacegroupAnalyzer(self.structure, symprec=1e-3)
+        symm_ops = sga.get_symmetry_operations()
+        
+        # Reciprocal rotation matrix for fractional k-coords under spatial operation R_real is (R_real^-1)^T
+        spatial_recip_rotations = []
+        for op in symm_ops:
+            R_real = op.rotation_matrix
+            R_recip = np.round(np.linalg.inv(R_real).T).astype(int)
+            if not any(np.array_equal(R_recip, R) for R in spatial_recip_rotations):
+                spatial_recip_rotations.append(R_recip)
+    
+        # 2. Build full symmetry operations list: (R_recip, is_time_reversal)
+        combined_ops = []
+        # Pure spatial operations
+        for R in spatial_recip_rotations:
+            combined_ops.append((R, False))
+            
+        # Time-Reversal operations (-R_recip) if active and not already present in point group
+        if self.has_time_reversal:
+            for R in spatial_recip_rotations:
+                R_trs = -R
+                if not any(np.array_equal(R_trs, op[0]) for op in combined_ops):
+                    combined_ops.append((R_trs, True))
+    
+        kpts_full = []
+        full_to_irr = []
+        full_to_rot = []
+        is_time_reversal_list = []
         irr_to_full = [[] for _ in range(len(self.kpoints))]
-
+    
+        # 3. Map IBZ k-points to FBZ star
         for ikpt, k in enumerate(self.kpoints):
-            star_kpts, star_rots = [], []
-            for R in recip_rotations:
-                k_wrapped = np.mod(R @ k, 1.0)
+            star_kpts = []
+            star_rots = []
+            star_trs = []
+    
+            for R_recip, is_trs in combined_ops:
+                k_wrapped = np.mod(R_recip @ k, 1.0)
+                
+                # Check for duplicate k-points in FBZ star
                 is_duplicate = False
                 for eq in star_kpts:
                     diff = np.mod(k_wrapped - eq, 1.0)
                     if np.all(np.minimum(diff, 1.0 - diff) < 1e-5):
                         is_duplicate = True
                         break
+    
                 if not is_duplicate:
                     star_kpts.append(k_wrapped)
-                    star_rots.append(R)
-
-            for unique_k, R in zip(star_kpts, star_rots):
+                    # Store the spatial part of the rotation (R_recip without time-reversal inversion)
+                    star_rots.append(-R_recip if is_trs else R_recip)
+                    star_trs.append(is_trs)
+    
+            for unique_k, R_spatial, is_trs in zip(star_kpts, star_rots, star_trs):
                 full_idx = len(kpts_full)
                 kpts_full.append(unique_k)
                 full_to_irr.append(ikpt)
-                full_to_rot.append(R)
+                full_to_rot.append(R_spatial)
+                is_time_reversal_list.append(is_trs)
                 irr_to_full[ikpt].append(full_idx)
-
+    
         self._kpoints_full = np.array(kpts_full)
         self._full_to_irr_map = np.array(full_to_irr, dtype=int)
         self._full_to_rot_map = np.array(full_to_rot, dtype=int)
+        self._is_time_reversal = np.array(is_time_reversal_list, dtype=bool)
         self._irr_to_full_map = [np.array(indices, dtype=int) for indices in irr_to_full]
 
     @property
@@ -316,6 +354,12 @@ class PostWFC:
         if getattr(self, "_kpoints_cart_full", None) is None:
             self._kpoints_cart_full = np.dot(self.kpoints_full, self.reciprocal_lattice)
         return self._kpoints_cart_full
+    
+    @property
+    def is_time_reversal(self):
+        if getattr(self, "_is_time_reversal", None) is None:
+            self._unfold_brillouin_zone()
+        return self._is_time_reversal
         
     @property
     def full_to_irr_map(self):
@@ -535,7 +579,6 @@ class PostWFC:
                 f"{name} index out of bounds. Requested: {idx}, valid range: [0, {max_val - 1}]"
             )
     
-    
     def fetch_psi(
         self,
         ikpt: int | list[int] | np.ndarray,
@@ -581,6 +624,27 @@ class PostWFC:
     
         return results[0] if is_scalar else results
     
+    def _get_atom_subshells(self, local_basis) -> list[int]:
+        """Extracts true subshell quantum numbers l from local_basis.angular_momenta."""
+        subshells = []
+        cursor = 0
+        l_list = list(local_basis.angular_momenta)
+        while cursor < len(l_list):
+            l = int(l_list[cursor])
+            subshells.append(l)
+            cursor += 2 * l + 1
+        return subshells
+    
+    def _get_atom_paw_wigner_d(self, local_basis, R_a: np.ndarray) -> np.ndarray:
+        """Builds the block-diagonal Wigner D-matrix for an atom using existing helper."""
+        blocks = []
+        subshells = self._get_atom_subshells(local_basis)
+        for l in subshells:
+            D_l = self._get_real_sph_rotation_matrix(l, R_a)
+            blocks.append(D_l)
+
+        return block_diag(*blocks)
+    
     def fetch_projector_overlaps(
         self,
         ikpt: int | list[int] | np.ndarray,
@@ -594,10 +658,11 @@ class PostWFC:
         ----------
         ikpt_is_fbz : bool, optional
             If True, treats `ikpt` as FBZ index/indices, maps to IBZ before fetching,
-            and rotates projector subshells (l > 0) with real spherical harmonic rotations.
+            applies atomic site permutations, Bloch phase shifts, and subshell rotations.
         """
         self._validate_indices(ispin, self.nspin, "Spin")
         self._validate_indices(iband, self.nbands, "Band")
+        paw_channel_offsets = self._get_atom_channel_offsets()
         k_ibz, k_orig, is_scalar = self._resolve_kpoints(ikpt, ikpt_is_fbz)
     
         results = []
@@ -607,14 +672,40 @@ class PostWFC:
                 if dataset_path not in file:
                     raise KeyError(f"Dataset '{dataset_path}' not found in HDF5 file.")
     
-                data = file[dataset_path][ispin, iband]
+                data = file[dataset_path][ispin, iband]  # Shape: (..., total_n_proj)
     
-                # Rotate subshell channels for l > 0 using Wigner D / spherical harmonic rotation matrices
                 if ikpt_is_fbz:
-                    for start, end, l in self._projector_subshells:
-                        if l > 0:
-                            D_l = self.get_spherical_rotation(k_src, l)
-                            data[..., start:end] = data[..., start:end] @ D_l.T
+                    R_cart = self.kpoint_cart_rotations[k_src]
+                    k_fbz = self.kpoints_cart_full[k_src]
+                    atom_positions = self.structure.cart_coords
+    
+                    # 1. Compute site permutation (a -> b) and lattice translation vectors R_lat
+                    pos_a_rot = atom_positions @ R_cart.T
+                    diff_cart = atom_positions[:, None, :] - pos_a_rot[None, :, :]
+                    diff_frac = diff_cart @ self.structure.lattice.inv_matrix
+                    r_lat_frac = np.round(diff_frac)
+                    matches = np.all(np.abs(diff_frac - r_lat_frac) < 1e-3, axis=-1)
+                    b_indices, a_indices = np.where(matches)
+                    r_lat_all = r_lat_frac[b_indices, a_indices] @ self.structure.lattice.matrix
+    
+                    # Bloch phase shift for bra projector: e^{-i k_fbz . R_lat}
+                    phase_shifts = np.exp(-1j * (r_lat_all @ k_fbz))
+    
+                    # 2. Re-assemble permuted, rotated, and phase-shifted projector channels
+                    data_transformed = np.zeros_like(data)
+                    for b_idx, a_idx, phase in zip(b_indices, a_indices, phase_shifts):
+                        start_a, end_a = paw_channel_offsets[a_idx]
+                        start_b, end_b = paw_channel_offsets[b_idx]
+    
+                        proj_a = data[..., start_a:end_a]
+    
+                        # Construct block Wigner-D rotation matrix for atom a's subshells
+                        D_atom = self._get_atom_paw_wigner_d(self.paw_datasets[self.structure[a_idx].specie.symbol], R_cart)
+                        proj_b = (proj_a @ D_atom.T) * phase
+    
+                        data_transformed[..., start_b:end_b] = proj_b
+    
+                    data = data_transformed
     
                 results.append(data)
     
