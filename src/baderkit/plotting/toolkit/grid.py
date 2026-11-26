@@ -528,11 +528,16 @@ class GridPlotter(StructurePlotter):
         ):
             pos = self._surface_mesh.copy(deep=False)
             neg = self._negative_surface_mesh.copy(deep=False)
-            pos["iso_colors"] = np.tile(self.surface_color.float_rgb, (pos.n_points, 1))
+            pos["iso_colors"] = np.tile(
+                np.asarray(self.surface_color.int_rgb, dtype=np.uint8),
+                (pos.n_points, 1),
+            )
             neg["iso_colors"] = np.tile(
-                self.negative_surface_color.float_rgb, (neg.n_points, 1)
+                np.asarray(self.negative_surface_color.int_rgb, dtype=np.uint8),
+                (neg.n_points, 1),
             )
             combined = pv.merge([pos, neg], merge_points=False)
+            combined.set_active_scalars("iso_colors")
 
             actor_neg = self.plotter.actors.get("iso_neg", None)
             if actor_neg is not None:
@@ -550,6 +555,9 @@ class GridPlotter(StructurePlotter):
                 name="iso",
             )
             self._surface_sorter = self._attach_depth_sorter(actor, combined)
+            actor.mapper.SelectColorArray("iso_colors")
+            actor.mapper.SetScalarModeToUsePointFieldData()
+            actor.mapper.SetColorModeToDirectScalars()
             return
 
         self._surface_sorter = None

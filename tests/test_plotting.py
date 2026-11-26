@@ -98,4 +98,9 @@ def test_grid_plotter_high_quality_signed_isosurfaces():
 
     img = gp.get_plot_screenshot(window_size=(200, 200), return_img=True)
     assert img.shape == (200, 200, 3)
+    # Verify signed surfaces render with distinct red and blue colors (not grayscale)
+    r = img[..., 0].astype(int)
+    b = img[..., 2].astype(int)
+    assert np.any((r - b) > 30)
+    assert np.any((b - r) > 30)
     gp.plotter.close()
