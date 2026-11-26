@@ -44,7 +44,7 @@ def test_structure_plotter_defaults_and_bonds():
     )
     assert sp.pbr is True
     assert sp.anti_aliasing == "ssaa"
-    assert sp.depth_peeling is True
+    assert sp.depth_peeling is False
     assert sp.sphere_resolution == 40
     assert sp.show_bonds is False
     assert "bonds" not in sp.plotter.actors
@@ -91,7 +91,7 @@ def test_grid_plotter_high_quality_signed_isosurfaces():
     assert gp.smooth_shading is True
     assert gp.negative_iso_value == -0.3
     assert "iso" in gp.plotter.actors
-    assert "iso_neg" in gp.plotter.actors
+    assert gp._surface_sorter is not None
     assert "bonds" in gp.plotter.actors
     # Upsampled grid should have (16*2 + 1) = 33 points per axis
     assert gp._structured_grid.dimensions == (33, 33, 33)

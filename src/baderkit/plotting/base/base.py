@@ -43,7 +43,7 @@ class VtkPlotter(ABC):
         parallel_projection=True,
         pbr=True,
         anti_aliasing: str | None = "ssaa",
-        depth_peeling: bool = True,
+        depth_peeling: bool = False,
         light_color="white",
         light_intensity=0.2,
         camera_dist: float = None,

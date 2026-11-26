@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pyvista as pv
+import vtk
 from numpy.typing import NDArray
 
 from baderkit.toolkit.grid import Grid
@@ -81,6 +82,7 @@ class GridPlotter(StructurePlotter):
         # meshes
         self._surface_mesh = None
         self._negative_surface_mesh = None
+        self._surface_sorter = None
         self._cap_mesh = None
         self._slice_meshes = {}
         self._slice_planes = {}
@@ -273,6 +275,9 @@ class GridPlotter(StructurePlotter):
         if color == self.surface_color:
             return
         self._surface_color = color
+        if self._surface_sorter is not None and self.show_negative_surface:
+            self._update_surface_actors()
+            return
         actor = self.plotter.actors.get("iso", None)
         if actor is not None:
             actor.prop.color = color
@@ -362,6 +367,9 @@ class GridPlotter(StructurePlotter):
         if color == self._negative_surface_color:
             return
         self._negative_surface_color = color
+        if self._surface_sorter is not None and self.show_surface:
+            self._update_surface_actors()
+            return
         actor = self.plotter.actors.get("iso_neg", None)
         if actor is not None:
             actor.prop.color = color
@@ -480,14 +488,89 @@ class GridPlotter(StructurePlotter):
         # generate initial surface meshes
         self._make_structured_grid()
         self._update_grid_meshes()
-        self._update_surface_actor()
-        self._update_negative_surface_actor()
+        self._update_surface_actors()
         self._update_cap_actor()
         for key, (hkl, d) in self._slice_hkls.items():
             self.add_slice(hkl, d, key)
         return plotter
 
+    def _attach_depth_sorter(self, actor, mesh: pv.PolyData) -> vtk.vtkDepthSortPolyData:
+        sorter = vtk.vtkDepthSortPolyData()
+        sorter.SetInputData(mesh)
+        sorter.SetDirectionToBackToFront()
+        sorter.SetDepthSortModeToBoundsCenter()
+        sorter.SetCamera(self.plotter.camera)
+        sorter.SortScalarsOff()
+        actor.mapper.SetInputConnection(sorter.GetOutputPort())
+        return sorter
+
+    def _update_surface_actors(self):
+        has_pos = (
+            self.show_surface
+            and self._surface_mesh is not None
+            and self._surface_mesh.n_points > 0
+        )
+        has_neg = (
+            self.show_negative_surface
+            and self._negative_surface_mesh is not None
+            and self._negative_surface_mesh.n_points > 0
+        )
+
+        # When both positive and negative translucent surfaces are displayed with
+        # solid colors and GPU depth peeling is off, merge them into a single
+        # camera-sorted mesh so overlapping lobes always blend in exact depth order.
+        if (
+            has_pos
+            and has_neg
+            and self.use_solid_surface_color
+            and self.surface_opacity < 1.0
+            and not self.depth_peeling
+        ):
+            pos = self._surface_mesh.copy(deep=False)
+            neg = self._negative_surface_mesh.copy(deep=False)
+            pos["iso_colors"] = np.tile(self.surface_color.float_rgb, (pos.n_points, 1))
+            neg["iso_colors"] = np.tile(
+                self.negative_surface_color.float_rgb, (neg.n_points, 1)
+            )
+            combined = pv.merge([pos, neg], merge_points=False)
+
+            actor_neg = self.plotter.actors.get("iso_neg", None)
+            if actor_neg is not None:
+                self.plotter.remove_actor(actor_neg)
+
+            actor = self.plotter.add_mesh(
+                combined,
+                scalars="iso_colors",
+                rgb=True,
+                opacity=self.surface_opacity,
+                pbr=self.pbr,
+                smooth_shading=False,
+                metallic=self.surface_metallicness,
+                roughness=self.surface_roughness,
+                name="iso",
+            )
+            self._surface_sorter = self._attach_depth_sorter(actor, combined)
+            return
+
+        self._surface_sorter = None
+        self._update_surface_actor()
+        self._update_negative_surface_actor()
+
     def _update_surface_actor(self):
+        if (
+            self.show_surface
+            and self.show_negative_surface
+            and self._surface_mesh is not None
+            and self._surface_mesh.n_points > 0
+            and self._negative_surface_mesh is not None
+            and self._negative_surface_mesh.n_points > 0
+            and self.use_solid_surface_color
+            and self.surface_opacity < 1.0
+            and not self.depth_peeling
+        ):
+            self._update_surface_actors()
+            return
+
         surface_kwargs = {
             "opacity": self.surface_opacity,
             "pbr": self.pbr,
@@ -513,13 +596,34 @@ class GridPlotter(StructurePlotter):
             and self._surface_mesh is not None
             and self._surface_mesh.n_points > 0
         ):
-            self.plotter.add_mesh(self._surface_mesh, **surface_kwargs)
+            if self.surface_opacity < 1.0 and not self.depth_peeling:
+                surface_kwargs["smooth_shading"] = False
+                actor = self.plotter.add_mesh(self._surface_mesh, **surface_kwargs)
+                self._surface_sorter = self._attach_depth_sorter(
+                    actor, self._surface_mesh
+                )
+            else:
+                self.plotter.add_mesh(self._surface_mesh, **surface_kwargs)
         else:
             actor = self.plotter.actors.get("iso", None)
             if actor is not None:
                 self.plotter.remove_actor(actor)
 
     def _update_negative_surface_actor(self):
+        if (
+            self.show_surface
+            and self.show_negative_surface
+            and self._surface_mesh is not None
+            and self._surface_mesh.n_points > 0
+            and self._negative_surface_mesh is not None
+            and self._negative_surface_mesh.n_points > 0
+            and self.use_solid_surface_color
+            and self.surface_opacity < 1.0
+            and not self.depth_peeling
+        ):
+            self._update_surface_actors()
+            return
+
         neg_kwargs = {
             "opacity": self.surface_opacity,
             "pbr": self.pbr,
@@ -571,6 +675,12 @@ class GridPlotter(StructurePlotter):
             mesh = mesh.smooth_taubin(
                 n_iter=self.smooth_iterations,
                 pass_band=self.smooth_pass_band,
+            )
+        if self.smooth_shading and mesh.n_points > 0 and mesh.n_cells > 0:
+            mesh = mesh.compute_normals(
+                point_normals=True,
+                cell_normals=False,
+                inplace=False,
             )
         return mesh
 
