@@ -41,7 +41,9 @@ class VtkPlotter(ABC):
         view_hkl: list[int] = [1, 0, 0],
         show_axes=True,
         parallel_projection=True,
-        pbr=False,
+        pbr=True,
+        anti_aliasing: str | None = "ssaa",
+        depth_peeling: bool = False,
         light_color="white",
         light_intensity=0.2,
         camera_dist: float = None,
@@ -75,6 +77,8 @@ class VtkPlotter(ABC):
         self._show_axes = show_axes
         self._parallel_projection = parallel_projection
         self._pbr = pbr
+        self._anti_aliasing = anti_aliasing
+        self._depth_peeling = depth_peeling
 
         if not pbr:
             true_light_intensity = light_intensity / 2.0
@@ -282,6 +286,42 @@ class VtkPlotter(ABC):
             self._pbr_light.switch_off()
         # pbr is set when adding a mesh, so we need to rebuild
         self.soft_rebuild()
+
+    @property
+    def anti_aliasing(self) -> str | None:
+        """
+        Returns
+        -------
+        str | None
+            Anti-aliasing technique ('ssaa', 'msaa', 'fxaa') or None if disabled.
+        """
+        return self._anti_aliasing
+
+    @anti_aliasing.setter
+    def anti_aliasing(self, anti_aliasing: str | None):
+        if anti_aliasing:
+            self.plotter.enable_anti_aliasing(anti_aliasing)
+        else:
+            self.plotter.disable_anti_aliasing()
+        self._anti_aliasing = anti_aliasing
+
+    @property
+    def depth_peeling(self) -> bool:
+        """
+        Returns
+        -------
+        bool
+            Whether depth peeling is enabled for accurate translucent rendering.
+        """
+        return self._depth_peeling
+
+    @depth_peeling.setter
+    def depth_peeling(self, depth_peeling: bool):
+        if depth_peeling:
+            self.plotter.enable_depth_peeling()
+        else:
+            self.plotter.disable_depth_peeling()
+        self._depth_peeling = depth_peeling
 
     def set_camera_to_hkl(self, h, k, l, rotation=0.0, dist=None):
         normal = self.structure.get_cart_from_miller(h, k, l)
@@ -591,6 +631,12 @@ class VtkPlotter(ABC):
 
         # ensure lighting is correct for pbr setting
         self.light_intensity = self.light_intensity
+
+        # set rendering quality options
+        if self.anti_aliasing:
+            plotter.enable_anti_aliasing(self.anti_aliasing)
+        if self.depth_peeling:
+            plotter.enable_depth_peeling()
 
         return plotter
 

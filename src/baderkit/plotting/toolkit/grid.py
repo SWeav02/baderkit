@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pyvista as pv
+import vtk
 from numpy.typing import NDArray
 
 from baderkit.toolkit.grid import Grid
@@ -28,6 +29,7 @@ class GridPlotter(StructurePlotter):
         self,
         grid: Grid,
         show_surface=True,
+        show_negative_surface: bool = False,
         show_caps=True,
         surface_opacity=0.8,
         cap_opacity=0.8,
@@ -35,12 +37,22 @@ class GridPlotter(StructurePlotter):
         use_solid_surface_color=False,
         use_solid_cap_color=False,
         surface_color="#BA8E23",
+        negative_surface_color="#1f77b4",
         cap_color="#BA8E23",
         iso_value=None,
+        negative_iso_value: float | None = None,
+        smooth_surface: bool = True,
+        smooth_iterations: int = 30,
+        smooth_pass_band: float = 0.1,
+        smooth_shading: bool = True,
+        surface_metallicness: float = 0.0,
+        surface_roughness: float = 0.35,
+        upsample_factor: float = 1.0,
         **structure_kwargs,
     ):
         self.grid = grid
         self._show_surface = show_surface
+        self._show_negative_surface = show_negative_surface
         self._show_caps = show_caps
         self._surface_opacity = surface_opacity
         self._cap_opacity = cap_opacity
@@ -48,7 +60,15 @@ class GridPlotter(StructurePlotter):
         self._use_solid_surface_color = use_solid_surface_color
         self._use_solid_cap_color = use_solid_cap_color
         self._surface_color = pv.Color(surface_color)
+        self._negative_surface_color = pv.Color(negative_surface_color)
         self._cap_color = pv.Color(cap_color)
+        self._smooth_surface = smooth_surface
+        self._smooth_iterations = int(smooth_iterations)
+        self._smooth_pass_band = float(smooth_pass_band)
+        self._smooth_shading = smooth_shading
+        self._surface_metallicness = float(surface_metallicness)
+        self._surface_roughness = float(surface_roughness)
+        self._upsample_factor = max(1.0, float(upsample_factor))
         self._hidden_mask = None  # for Bader class
 
         self._min_val = grid.total.min() + 0.0000001
@@ -57,9 +77,12 @@ class GridPlotter(StructurePlotter):
             self._iso_value = (self._min_val + self._max_val) / 4
         else:
             self._iso_value = max(self.min_val, min(iso_value, self.max_val))
+        self._negative_iso_value = negative_iso_value
 
         # meshes
         self._surface_mesh = None
+        self._negative_surface_mesh = None
+        self._surface_sorter = None
         self._cap_mesh = None
         self._slice_meshes = {}
         self._slice_planes = {}
@@ -120,9 +143,10 @@ class GridPlotter(StructurePlotter):
     def surface_opacity(self, surface_opacity: float):
         if surface_opacity == self.surface_opacity:
             return
-        actor = self.plotter.actors.get("iso", None)
-        if actor is not None:
-            actor.prop.opacity = surface_opacity
+        for actor_name in ("iso", "iso_neg"):
+            actor = self.plotter.actors.get(actor_name, None)
+            if actor is not None:
+                actor.prop.opacity = surface_opacity
         self._surface_opacity = surface_opacity
 
     @property
@@ -251,6 +275,9 @@ class GridPlotter(StructurePlotter):
         if color == self.surface_color:
             return
         self._surface_color = color
+        if self._surface_sorter is not None and self.show_negative_surface:
+            self._update_surface_actors()
+            return
         actor = self.plotter.actors.get("iso", None)
         if actor is not None:
             actor.prop.color = color
@@ -300,7 +327,149 @@ class GridPlotter(StructurePlotter):
         self._iso_value = iso_value
         self._update_grid_meshes()
         self._update_surface_actor()
+        self._update_negative_surface_actor()
         self._update_cap_actor()
+
+    @property
+    def show_negative_surface(self) -> bool:
+        """Whether to display the negative isosurface (e.g. for charge deformations)."""
+        return self._show_negative_surface
+
+    @show_negative_surface.setter
+    def show_negative_surface(self, show_negative_surface: bool):
+        if show_negative_surface != self._show_negative_surface:
+            self._show_negative_surface = show_negative_surface
+            if show_negative_surface and self._negative_surface_mesh is None:
+                self._update_grid_meshes()
+            self._update_negative_surface_actor()
+
+    @property
+    def negative_iso_value(self) -> float:
+        """The isovalue for the negative surface (defaults to -iso_value)."""
+        if self._negative_iso_value is None:
+            return -self._iso_value
+        return self._negative_iso_value
+
+    @negative_iso_value.setter
+    def negative_iso_value(self, value: float | None):
+        self._negative_iso_value = value
+        self._update_grid_meshes()
+        self._update_negative_surface_actor()
+
+    @property
+    def negative_surface_color(self) -> pv.Color:
+        """Solid color used for the negative isosurface."""
+        return self._negative_surface_color
+
+    @negative_surface_color.setter
+    def negative_surface_color(self, color: str):
+        color = pv.Color(color)
+        if color == self._negative_surface_color:
+            return
+        self._negative_surface_color = color
+        if self._surface_sorter is not None and self.show_surface:
+            self._update_surface_actors()
+            return
+        actor = self.plotter.actors.get("iso_neg", None)
+        if actor is not None:
+            actor.prop.color = color
+
+    @property
+    def smooth_surface(self) -> bool:
+        """Whether to apply volume-preserving Taubin smoothing to isosurface meshes."""
+        return self._smooth_surface
+
+    @smooth_surface.setter
+    def smooth_surface(self, smooth_surface: bool):
+        if smooth_surface != self._smooth_surface:
+            self._smooth_surface = smooth_surface
+            self._update_grid_meshes()
+            self._update_surface_actor()
+            self._update_negative_surface_actor()
+
+    @property
+    def smooth_iterations(self) -> int:
+        """Number of Taubin smoothing iterations."""
+        return self._smooth_iterations
+
+    @smooth_iterations.setter
+    def smooth_iterations(self, iterations: int):
+        iterations = max(0, int(iterations))
+        if iterations != self._smooth_iterations:
+            self._smooth_iterations = iterations
+            if self._smooth_surface:
+                self._update_grid_meshes()
+                self._update_surface_actor()
+                self._update_negative_surface_actor()
+
+    @property
+    def smooth_pass_band(self) -> float:
+        """Pass-band parameter for Taubin smoothing (smaller = stronger smoothing)."""
+        return self._smooth_pass_band
+
+    @smooth_pass_band.setter
+    def smooth_pass_band(self, pass_band: float):
+        pass_band = float(pass_band)
+        if pass_band != self._smooth_pass_band:
+            self._smooth_pass_band = pass_band
+            if self._smooth_surface:
+                self._update_grid_meshes()
+                self._update_surface_actor()
+                self._update_negative_surface_actor()
+
+    @property
+    def smooth_shading(self) -> bool:
+        """Whether to interpolate vertex normals for smooth isosurface shading."""
+        return self._smooth_shading
+
+    @smooth_shading.setter
+    def smooth_shading(self, smooth_shading: bool):
+        if smooth_shading != self._smooth_shading:
+            self._smooth_shading = smooth_shading
+            self._update_surface_actor()
+            self._update_negative_surface_actor()
+
+    @property
+    def surface_metallicness(self) -> float:
+        """PBR metallicness for isosurfaces."""
+        return self._surface_metallicness
+
+    @surface_metallicness.setter
+    def surface_metallicness(self, value: float):
+        self._surface_metallicness = float(value)
+        for actor_name in ("iso", "iso_neg"):
+            actor = self.plotter.actors.get(actor_name, None)
+            if actor is not None:
+                actor.prop.metallic = self._surface_metallicness
+
+    @property
+    def surface_roughness(self) -> float:
+        """PBR roughness for isosurfaces."""
+        return self._surface_roughness
+
+    @surface_roughness.setter
+    def surface_roughness(self, value: float):
+        self._surface_roughness = float(value)
+        for actor_name in ("iso", "iso_neg"):
+            actor = self.plotter.actors.get(actor_name, None)
+            if actor is not None:
+                actor.prop.roughness = self._surface_roughness
+
+    @property
+    def upsample_factor(self) -> float:
+        """Grid upsampling multiplier applied via cubic spline interpolation before contouring."""
+        return self._upsample_factor
+
+    @upsample_factor.setter
+    def upsample_factor(self, factor: float):
+        factor = max(1.0, float(factor))
+        if factor != self._upsample_factor:
+            self._upsample_factor = factor
+            self._make_structured_grid()
+            self._update_grid_meshes()
+            self._update_surface_actor()
+            self._update_negative_surface_actor()
+            self._update_cap_actor()
 
     def _create_plot(self) -> pv.Plotter():
         """
@@ -319,16 +488,103 @@ class GridPlotter(StructurePlotter):
         # generate initial surface meshes
         self._make_structured_grid()
         self._update_grid_meshes()
-        self._update_surface_actor()
+        self._update_surface_actors()
         self._update_cap_actor()
         for key, (hkl, d) in self._slice_hkls.items():
             self.add_slice(hkl, d, key)
         return plotter
 
+    def _attach_depth_sorter(self, actor, mesh: pv.PolyData) -> vtk.vtkDepthSortPolyData:
+        sorter = vtk.vtkDepthSortPolyData()
+        sorter.SetInputData(mesh)
+        sorter.SetDirectionToBackToFront()
+        sorter.SetDepthSortModeToBoundsCenter()
+        sorter.SetCamera(self.plotter.camera)
+        sorter.SortScalarsOff()
+        actor.mapper.SetInputConnection(sorter.GetOutputPort())
+        return sorter
+
+    def _update_surface_actors(self):
+        has_pos = (
+            self.show_surface
+            and self._surface_mesh is not None
+            and self._surface_mesh.n_points > 0
+        )
+        has_neg = (
+            self.show_negative_surface
+            and self._negative_surface_mesh is not None
+            and self._negative_surface_mesh.n_points > 0
+        )
+
+        # When both positive and negative translucent surfaces are displayed with
+        # solid colors and GPU depth peeling is off, merge them into a single
+        # camera-sorted mesh so overlapping lobes always blend in exact depth order.
+        if (
+            has_pos
+            and has_neg
+            and self.use_solid_surface_color
+            and self.surface_opacity < 1.0
+            and not self.depth_peeling
+        ):
+            pos = self._surface_mesh.copy(deep=False)
+            neg = self._negative_surface_mesh.copy(deep=False)
+            pos["iso_colors"] = np.tile(
+                np.asarray(self.surface_color.int_rgb, dtype=np.uint8),
+                (pos.n_points, 1),
+            )
+            neg["iso_colors"] = np.tile(
+                np.asarray(self.negative_surface_color.int_rgb, dtype=np.uint8),
+                (neg.n_points, 1),
+            )
+            combined = pv.merge([pos, neg], merge_points=False)
+            combined.set_active_scalars("iso_colors")
+
+            actor_neg = self.plotter.actors.get("iso_neg", None)
+            if actor_neg is not None:
+                self.plotter.remove_actor(actor_neg)
+
+            actor = self.plotter.add_mesh(
+                combined,
+                scalars="iso_colors",
+                rgb=True,
+                opacity=self.surface_opacity,
+                pbr=self.pbr,
+                smooth_shading=False,
+                metallic=self.surface_metallicness,
+                roughness=self.surface_roughness,
+                name="iso",
+            )
+            self._surface_sorter = self._attach_depth_sorter(actor, combined)
+            actor.mapper.SelectColorArray("iso_colors")
+            actor.mapper.SetScalarModeToUsePointFieldData()
+            actor.mapper.SetColorModeToDirectScalars()
+            return
+
+        self._surface_sorter = None
+        self._update_surface_actor()
+        self._update_negative_surface_actor()
+
     def _update_surface_actor(self):
+        if (
+            self.show_surface
+            and self.show_negative_surface
+            and self._surface_mesh is not None
+            and self._surface_mesh.n_points > 0
+            and self._negative_surface_mesh is not None
+            and self._negative_surface_mesh.n_points > 0
+            and self.use_solid_surface_color
+            and self.surface_opacity < 1.0
+            and not self.depth_peeling
+        ):
+            self._update_surface_actors()
+            return
+
         surface_kwargs = {
             "opacity": self.surface_opacity,
             "pbr": self.pbr,
+            "smooth_shading": self.smooth_shading,
+            "metallic": self.surface_metallicness,
+            "roughness": self.surface_roughness,
             "name": "iso",
             "color": self.surface_color,
         }
@@ -343,10 +599,57 @@ class GridPlotter(StructurePlotter):
                 }
             )
 
-        if self.show_surface and len(self._surface_mesh["values"]) > 0:
-            self.plotter.add_mesh(self._surface_mesh, **surface_kwargs)
+        if (
+            self.show_surface
+            and self._surface_mesh is not None
+            and self._surface_mesh.n_points > 0
+        ):
+            if self.surface_opacity < 1.0 and not self.depth_peeling:
+                surface_kwargs["smooth_shading"] = False
+                actor = self.plotter.add_mesh(self._surface_mesh, **surface_kwargs)
+                self._surface_sorter = self._attach_depth_sorter(
+                    actor, self._surface_mesh
+                )
+            else:
+                self.plotter.add_mesh(self._surface_mesh, **surface_kwargs)
         else:
             actor = self.plotter.actors.get("iso", None)
+            if actor is not None:
+                self.plotter.remove_actor(actor)
+
+    def _update_negative_surface_actor(self):
+        if (
+            self.show_surface
+            and self.show_negative_surface
+            and self._surface_mesh is not None
+            and self._surface_mesh.n_points > 0
+            and self._negative_surface_mesh is not None
+            and self._negative_surface_mesh.n_points > 0
+            and self.use_solid_surface_color
+            and self.surface_opacity < 1.0
+            and not self.depth_peeling
+        ):
+            self._update_surface_actors()
+            return
+
+        neg_kwargs = {
+            "opacity": self.surface_opacity,
+            "pbr": self.pbr,
+            "smooth_shading": self.smooth_shading,
+            "metallic": self.surface_metallicness,
+            "roughness": self.surface_roughness,
+            "name": "iso_neg",
+            "color": self.negative_surface_color,
+        }
+
+        if (
+            self.show_negative_surface
+            and self._negative_surface_mesh is not None
+            and self._negative_surface_mesh.n_points > 0
+        ):
+            self.plotter.add_mesh(self._negative_surface_mesh, **neg_kwargs)
+        else:
+            actor = self.plotter.actors.get("iso_neg", None)
             if actor is not None:
                 self.plotter.remove_actor(actor)
 
@@ -374,6 +677,21 @@ class GridPlotter(StructurePlotter):
             if actor is not None:
                 self.plotter.remove_actor(actor)
 
+    def _contour_and_smooth(self, value: float) -> pv.PolyData:
+        mesh = self._structured_grid.contour([value]).triangulate()
+        if self.smooth_surface and mesh.n_points > 0 and mesh.n_cells > 0:
+            mesh = mesh.smooth_taubin(
+                n_iter=self.smooth_iterations,
+                pass_band=self.smooth_pass_band,
+            )
+        if self.smooth_shading and mesh.n_points > 0 and mesh.n_cells > 0:
+            mesh = mesh.compute_normals(
+                point_normals=True,
+                cell_normals=False,
+                inplace=False,
+            )
+        return mesh
+
     def _update_grid_meshes(self):
         """
         Updates the surface meshes to the provided iso_value
@@ -385,12 +703,19 @@ class GridPlotter(StructurePlotter):
 
         """
 
-        self._surface_mesh = self._structured_grid.contour(
-            [self.iso_value]
-        ).triangulate()
-        self._cap_mesh = self._surface.contour_banded(
-            2, rng=[self.iso_value, self.max_val], generate_contour_edges=False
-        ).triangulate()
+        self._surface_mesh = self._contour_and_smooth(self.iso_value)
+        if self.show_negative_surface:
+            self._negative_surface_mesh = self._contour_and_smooth(
+                self.negative_iso_value
+            )
+        else:
+            self._negative_surface_mesh = None
+        if self.show_caps:
+            self._cap_mesh = self._surface.contour_banded(
+                2, rng=[self.iso_value, self.max_val], generate_contour_edges=False
+            ).triangulate()
+        else:
+            self._cap_mesh = pv.PolyData()
 
     def _update_clims_cmaps(self):
         actors = ["iso", "cap"]
@@ -414,6 +739,9 @@ class GridPlotter(StructurePlotter):
         """
 
         grid = self.grid
+        if self.upsample_factor > 1.0:
+            new_shape = np.round(grid.shape * self.upsample_factor).astype(np.int32)
+            grid = grid.regrid(new_shape=new_shape)
         values = np.pad(grid.total, pad_width=((0, 1), (0, 1), (0, 1)), mode="wrap")
         shape = values.shape
         indices = np.indices(shape).reshape(3, -1, order="F").T
