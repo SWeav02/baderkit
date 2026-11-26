@@ -180,6 +180,49 @@ def get_best_neighbor_with_shift(
     )
 
 
+@njit(cache=True, inline="always")
+def get_best_non_vac_neighbor_with_shift(
+    data: NDArray[np.float64],
+    vacuum_mask: NDArray[np.bool_],
+    i: np.int64,
+    j: np.int64,
+    k: np.int64,
+    neighbor_transforms: NDArray[np.int64],
+    neighbor_dists: NDArray[np.float64],
+    use_minima: bool = False,
+):
+    """
+    Like get_best_neighbor_with_shift, but skips neighbors marked in vacuum_mask.
+    """
+    nx, ny, nz = data.shape
+    base = data[i, j, k]
+    best = 0.0
+    bti, btj, btk = 0, 0, 0
+    bni, bnj, bnk = i, j, k
+    bsi, bsj, bsk = 0, 0, 0
+    for (si, sj, sk), dist in zip(neighbor_transforms, neighbor_dists):
+        ii, jj, kk, sii, sjj, skk = wrap_point_w_shift(
+            i + si, j + sj, k + sk, nx, ny, nz
+        )
+        if vacuum_mask[ii, jj, kk]:
+            continue
+        if use_minima:
+            diff = (base - data[ii, jj, kk]) / dist
+        else:
+            diff = (data[ii, jj, kk] - base) / dist
+        if diff > best:
+            best = diff
+            bti, btj, btk = (si, sj, sk)
+            bni, bnj, bnk = (ii, jj, kk)
+            bsi, bsj, bsk = (sii, sjj, skk)
+
+    return (
+        np.array((bti, btj, btk), dtype=np.int64),
+        np.array((bni, bnj, bnk), dtype=np.int64),
+        np.array((bsi, bsj, bsk), dtype=np.int8),
+    )
+
+
 ###############################################################################
 # Edge Finding Methods
 ###############################################################################

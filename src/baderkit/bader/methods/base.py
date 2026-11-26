@@ -170,6 +170,7 @@ class MethodBase:
             max_cart_offset=0.5,
             min_cart_offset=self.reference_grid.max_point_dist * 2,
             n_divide=3,
+            vacuum_mask=self.vacuum_mask,
         )
         t1 = time.time()
 

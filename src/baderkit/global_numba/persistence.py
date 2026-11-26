@@ -12,7 +12,7 @@ from baderkit.global_numba.basic import (
     get_transforms_in_voxels,
     wrap_point_w_shift,
 )
-from baderkit.global_numba.basins import get_best_neighbor_with_shift
+from baderkit.global_numba.basins import get_best_non_vac_neighbor_with_shift
 from baderkit.global_numba.critical_points import (  # refine_critical_points_targeted,
     refine_critical_points,
 )
@@ -578,14 +578,20 @@ def group_by_hill_climb(
     matrix,
     extrema_labels,
     extrema_vox,
+    vacuum_mask,
     use_minima,
 ):
     nx, ny, nz = data.shape
     ny_nz = ny * nz
+    num_labels = len(labels)
 
     # get transforms to 1st and 2nd neighbors
     transforms1, transform_dists1 = get_transforms_in_voxels(1, nx, ny, nz, matrix)
     transforms2, transform_dists2 = get_transforms_in_voxels(2, nx, ny, nz, matrix)
+
+    neigh_labels = np.empty(len(extrema_vox), dtype=labels.dtype)
+    neigh_shifts = np.zeros((len(extrema_vox), 3), dtype=np.int8)
+    valid_union = np.zeros(len(extrema_vox), dtype=np.bool_)
 
     for ext_idx in prange(len(extrema_vox)):
         # get initial coords
@@ -593,8 +599,9 @@ def group_by_hill_climb(
         image = np.zeros(3, dtype=np.int8)
         while True:
             # get neighbors within one voxel
-            _, (x, y, z), shift = get_best_neighbor_with_shift(
+            _, (x, y, z), shift = get_best_non_vac_neighbor_with_shift(
                 data=data,
+                vacuum_mask=vacuum_mask,
                 i=i,
                 j=j,
                 k=k,
@@ -610,8 +617,9 @@ def group_by_hill_climb(
                 image += shift
                 continue
             # get neighbors within two voxels
-            _, (x, y, z), shift = get_best_neighbor_with_shift(
+            _, (x, y, z), shift = get_best_non_vac_neighbor_with_shift(
                 data=data,
+                vacuum_mask=vacuum_mask,
                 i=i,
                 j=j,
                 k=k,
@@ -628,11 +636,21 @@ def group_by_hill_climb(
                 continue
             # if were still here, we call this our final stop and break
             break
-        # make a union to the final neighbor
+        # record union to the final neighbor if it is an initialized extremum
         label = extrema_labels[ext_idx]
         neigh_label = coords_to_flat(i, j, k, ny_nz, nz)
+        if neigh_label != label and labels[neigh_label] < num_labels:
+            neigh_labels[ext_idx] = neigh_label
+            neigh_shifts[ext_idx] = image
+            valid_union[ext_idx] = True
 
-        union_with_shift1(labels, images, label, neigh_label, image)
+    # apply unions serially to avoid data races on labels/images
+    for ext_idx in range(len(extrema_vox)):
+        if not valid_union[ext_idx]:
+            continue
+        label = extrema_labels[ext_idx]
+        neigh_label = neigh_labels[ext_idx]
+        union_with_shift1(labels, images, label, neigh_label, neigh_shifts[ext_idx])
 
     return labels, images
 
@@ -666,6 +684,7 @@ def init_by_approx_persistence(
     max_cart_offset,
     min_cart_offset,
     n_divide,
+    vacuum_mask,
     use_minima=False,
 ):
     shape = np.array(data.shape, dtype=np.int64)
@@ -786,6 +805,7 @@ def init_by_approx_persistence(
         matrix,
         extrema_labels[root_indices],
         extrema_vox[root_indices],
+        vacuum_mask,
         use_minima,
     )
     roots, root_indices = update_extrema_roots(extrema_labels, labels, images)

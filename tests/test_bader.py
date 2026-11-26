@@ -120,3 +120,35 @@ def test_running_bader_methods(tmp_path, method):
     # Exact text comparisons
     assert atom_results == expected_atom_results
     assert basin_results == expected_basin_results
+
+
+def test_hill_climb_with_masked_peak():
+    """
+    Regression test for segfault when hill climbing in init_by_approx_persistence
+    encounters a higher-valued voxel masked out by vacuum_mask.
+    """
+    from baderkit import Structure
+
+    shape = (12, 12, 12)
+    ref_data = np.ones(shape, dtype=np.float64)
+    # Local maximum at (6, 6, 6)
+    ref_data[6, 6, 6] = 10.0
+    # Higher peak at (6, 6, 8) (2 voxels away, reachable by transforms2)
+    ref_data[6, 6, 8] = 50.0
+    ref_data[6, 6, 7] = 5.0
+
+    # Charge grid has negative values at (6, 6, 8) so vacuum_mask is True there
+    chg_data = ref_data.copy()
+    chg_data[6, 6, 8] = -1.0
+
+    structure = Structure(
+        lattice=np.eye(3) * 10.0,
+        species=["Si"],
+        frac_coords=np.array([[0.5, 0.5, 0.5]]),
+    )
+    charge_grid = Grid(structure=structure, data={"total": chg_data})
+    reference_grid = Grid(structure=structure, data={"total": ref_data})
+
+    bader = Bader(charge_grid=charge_grid, reference_grid=reference_grid)
+    assert len(bader.maxima_frac) >= 1
+    assert np.isfinite(bader.basin_charges).all()
